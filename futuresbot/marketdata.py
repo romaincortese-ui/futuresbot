@@ -43,6 +43,17 @@ class MexcFuturesClient:
     def __init__(self, config: FuturesConfig):
         self.config = config
         self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+        )
 
     def public_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         response = self.session.get(self.config.futures_base_url + path, params=params or {}, timeout=15)
