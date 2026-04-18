@@ -177,6 +177,18 @@ def test_build_logs_message_uses_recent_activity(tmp_path):
     assert "Opened LONG BTC_USDT" in message
 
 
+def test_send_startup_message_uses_live_account_snapshot(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, telegram_token="token", telegram_chat_id="1"), StubClient())
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._send_startup_message()
+
+    assert len(sent_messages) == 1
+    assert "Avail: <b>$123.45</b> | Equity: <b>$150.50</b>" in sent_messages[0]
+    assert "Budget:" not in sent_messages[0]
+
+
 def test_handle_telegram_commands_supports_status_and_close(tmp_path):
     runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
     runtime.telegram.get_updates = lambda **kwargs: [

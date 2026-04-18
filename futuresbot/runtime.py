@@ -295,11 +295,19 @@ class FuturesRuntime:
         if not self.telegram.configured:
             return
         current_price = self._get_reference_price()
+        snapshot = self._account_snapshot(current_price)
+        if self.config.paper_trade:
+            balance_line = f"Budget: <b>${self.config.margin_budget_usdt:.2f}</b>"
+        else:
+            balance_line = (
+                f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | "
+                f"Equity: <b>${snapshot['equity_usdt']:.2f}</b>"
+            )
         self._notify(
             f"🚀 <b>BTC Futures Bot Started</b> [{self._mode_label()}]\n"
             f"━━━━━━━━━━━━━━━\n"
             f"Symbol: <b>{html.escape(self.config.symbol)}</b> | Price: <b>${self._format_price(current_price)}</b>\n"
-            f"Budget: <b>${self.config.margin_budget_usdt:.2f}</b> | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>\n"
+            f"{balance_line} | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>\n"
             f"Hourly checks: <b>{self.config.hourly_check_seconds}s</b> | Heartbeat: <b>{self.config.heartbeat_seconds}s</b>"
         )
 
