@@ -1,0 +1,9 @@
+backtest_cache/
+backtest_output/
+trades.log
+.env
+futures_runtime_state.json
+futures_runtime_status.json
+__pycache__/
+futuresbot/__pycache__/
+tests/__pycache__/
