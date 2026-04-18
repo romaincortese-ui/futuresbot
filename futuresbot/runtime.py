@@ -53,6 +53,33 @@ class FuturesRuntime:
         timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
         self._recent_activity.appendleft(f"{timestamp} {message}")
 
+    def _log_cycle_summary(self, *, price: float, signal: dict[str, Any] | None) -> None:
+        if self.open_position is not None:
+            pnl_usdt = self._position_pnl_usdt(self.open_position, price)
+            log.info(
+                "Futures cycle: open_position side=%s entry_signal=%s leverage=x%s price=%.2f pnl_usdt=%+.2f paused=%s",
+                self.open_position.side,
+                self.open_position.entry_signal,
+                self.open_position.leverage,
+                price,
+                pnl_usdt,
+                self._paused,
+            )
+            return
+        if signal is None:
+            log.info("Futures cycle: no signal price=%.2f paused=%s", price, self._paused)
+            return
+        log.info(
+            "Futures cycle: signal side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%% price=%.2f paused=%s",
+            str(signal.get("side") or "?"),
+            str(signal.get("entry_signal") or "SETUP"),
+            int(signal.get("leverage") or 0),
+            float(signal.get("score") or 0.0),
+            float(signal.get("certainty") or 0.0) * 100.0,
+            price,
+            self._paused,
+        )
+
     def _notify(self, message: str, *, parse_mode: str = "HTML") -> None:
         self.telegram.send_message(message, parse_mode=parse_mode)
 
@@ -450,6 +477,7 @@ class FuturesRuntime:
         self.trade_history = list(payload.get("trade_history", []) or [])
         self._paused = bool(payload.get("paused", False))
         self._recent_activity = deque((str(item) for item in payload.get("recent_activity", [])), maxlen=RECENT_ACTIVITY_LIMIT)
+        log.info("Loaded futures runtime state from %s", self._state_path)
 
     def _save_state(self) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -473,6 +501,7 @@ class FuturesRuntime:
         self._last_calibration_refresh_at = now_ts
         if data is None:
             self.calibration = None
+            log.info("No futures calibration found at %s", self.config.calibration_file)
             return
         valid, _reason = validate_trade_calibration_payload(
             data,
@@ -483,6 +512,8 @@ class FuturesRuntime:
         if valid:
             log.info("Loaded futures calibration from %s", source or self.config.calibration_file)
             self._record_activity("Calibration loaded")
+        else:
+            log.info("Ignoring futures calibration from %s: stale or insufficient sample", source or self.config.calibration_file)
 
     def refresh_daily_review(self, *, force: bool = False) -> None:
         now_ts = time.time()
@@ -492,7 +523,10 @@ class FuturesRuntime:
         self._last_review_refresh_at = now_ts
         self.daily_review = data
         if data:
+            log.info("Loaded futures daily review from %s", self.config.review_file)
             self._record_activity("Daily review loaded")
+        else:
+            log.info("No futures daily review found at %s", self.config.review_file)
 
     def _status_payload(self, *, signal: dict[str, Any] | None = None, price: float | None = None) -> dict[str, Any]:
         return {
@@ -630,6 +664,7 @@ class FuturesRuntime:
         frame = self.client.get_klines(self.config.symbol, interval="Min15", start=start, end=end)
         raw_signal = score_btc_futures_setup(frame, self.config)
         if raw_signal is None:
+            log.info("Signal scan produced no raw setup")
             return None
         calibrated = apply_signal_calibration(
             raw_signal,
@@ -637,6 +672,17 @@ class FuturesRuntime:
             base_threshold=self.config.min_confidence_score,
             leverage_min=self.config.leverage_min,
             leverage_max=self.config.leverage_max,
+        )
+        if calibrated is None:
+            log.info("Signal scan rejected by calibration or threshold gate")
+            return None
+        log.info(
+            "Signal scan accepted: side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%%",
+            calibrated.side,
+            calibrated.entry_signal,
+            calibrated.leverage,
+            calibrated.score,
+            calibrated.certainty * 100.0,
         )
         return calibrated.to_dict() if calibrated is not None else None
 
@@ -722,10 +768,19 @@ class FuturesRuntime:
 
     def run(self) -> None:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+        log.info(
+            "Starting futures runtime mode=%s symbol=%s hourly_check_seconds=%s heartbeat_seconds=%s paper_trade=%s",
+            self._mode_label(),
+            self.config.symbol,
+            self.config.hourly_check_seconds,
+            self.config.heartbeat_seconds,
+            self.config.paper_trade,
+        )
         self._send_startup_message()
         self._record_activity("Runtime started")
         while True:
             try:
+                log.info("Beginning futures cycle")
                 self._handle_telegram_commands()
                 self.refresh_calibration()
                 self.refresh_daily_review()
@@ -741,6 +796,7 @@ class FuturesRuntime:
                     self._write_status(signal=signal, price=current_price)
                     if signal is not None:
                         self._enter_trade(signal)
+                self._log_cycle_summary(price=current_price, signal=signal)
                 self._send_heartbeat(price=current_price, signal=signal)
             except Exception as exc:
                 log.exception("Futures runtime loop failed: %s", exc)
@@ -751,10 +807,16 @@ class FuturesRuntime:
                     f"━━━━━━━━━━━━━━━\n"
                     f"{html.escape(str(exc))}",
                 )
+            log.info("Sleeping %ss before next futures cycle", self.config.hourly_check_seconds)
             time.sleep(self.config.hourly_check_seconds)
 
 
 def run_runtime() -> None:
-    config = FuturesConfig.from_env()
-    client = MexcFuturesClient(config)
-    FuturesRuntime(config, client).run()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    try:
+        config = FuturesConfig.from_env()
+        client = MexcFuturesClient(config)
+        FuturesRuntime(config, client).run()
+    except Exception:
+        log.exception("Fatal futures runtime error before or during startup")
+        raise
