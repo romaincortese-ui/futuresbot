@@ -127,7 +127,7 @@ class FuturesConfig:
 
     @classmethod
     def from_env(cls) -> "FuturesConfig":
-        hourly_check_seconds = env_int("FUTURES_HOURLY_CHECK_SECONDS", 3600)
+        hourly_check_seconds = env_int("FUTURES_HOURLY_CHECK_SECONDS", 300)
         return cls(
             api_key=env_str("MEXC_API_KEY", ""),
             api_secret=env_str("MEXC_API_SECRET", ""),
@@ -135,12 +135,12 @@ class FuturesConfig:
             telegram_chat_id=env_str("FUTURES_TELEGRAM_CHAT_ID", env_str("TELEGRAM_CHAT_ID", "")),
             paper_trade=env_bool("FUTURES_PAPER_TRADE", True),
             symbol=env_str("FUTURES_SYMBOL", "BTC_USDT").upper(),
-            futures_base_url=env_str("MEXC_FUTURES_BASE_URL", "https://api.mexc.com"),
+            futures_base_url=env_str("MEXC_FUTURES_BASE_URL", "https://contract.mexc.com"),
             margin_budget_usdt=env_float("FUTURES_MARGIN_BUDGET_USDT", 75.0),
             max_margin_fraction=env_float("FUTURES_MAX_MARGIN_FRACTION", 0.85),
             min_confidence_score=env_float("FUTURES_SCORE_THRESHOLD", 56.0),
             hourly_check_seconds=hourly_check_seconds,
-            heartbeat_seconds=env_int("FUTURES_HEARTBEAT_SECONDS", env_int("HEARTBEAT_SECONDS", hourly_check_seconds)),
+            heartbeat_seconds=env_int("FUTURES_HEARTBEAT_SECONDS", env_int("HEARTBEAT_SECONDS", 3600)),
             calibration_file=resolve_repo_path(env_str("FUTURES_CALIBRATION_FILE", "backtest_output/calibration.json")),
             calibration_redis_key=env_str("FUTURES_CALIBRATION_REDIS_KEY", "mexc_futures_calibration"),
             calibration_refresh_seconds=env_int("FUTURES_CALIBRATION_REFRESH_SECONDS", 900),
