@@ -98,6 +98,7 @@ class FuturesConfig:
     calibration_min_total_trades: int
     review_file: str
     review_redis_key: str
+    redis_url: str
     anthropic_api_key: str
     runtime_state_file: str
     status_file: str
@@ -148,6 +149,7 @@ class FuturesConfig:
             calibration_min_total_trades=env_int("FUTURES_CALIBRATION_MIN_TOTAL_TRADES", 4),
             review_file=resolve_repo_path(env_str("FUTURES_DAILY_REVIEW_FILE", "backtest_output/daily_review.json")),
             review_redis_key=env_str("FUTURES_DAILY_REVIEW_REDIS_KEY", "mexc_futures_daily_review"),
+            redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=env_str("ANTHROPIC_API_KEY", ""),
             runtime_state_file=resolve_repo_path(env_str("FUTURES_RUNTIME_STATE_FILE", "futures_runtime_state.json")),
             status_file=resolve_repo_path(env_str("FUTURES_STATUS_FILE", "futures_runtime_status.json")),

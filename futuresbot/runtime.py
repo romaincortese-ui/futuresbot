@@ -494,7 +494,7 @@ class FuturesRuntime:
         if not force and now_ts - self._last_calibration_refresh_at < self.config.calibration_refresh_seconds:
             return
         data, source = load_trade_calibration(
-            redis_url="",
+            redis_url=self.config.redis_url,
             redis_key=self.config.calibration_redis_key,
             file_path=self.config.calibration_file,
         )
@@ -519,7 +519,7 @@ class FuturesRuntime:
         now_ts = time.time()
         if not force and now_ts - self._last_review_refresh_at < self.config.calibration_refresh_seconds:
             return
-        data, _source = load_daily_review(redis_url="", redis_key=self.config.review_redis_key, file_path=self.config.review_file)
+        data, _source = load_daily_review(redis_url=self.config.redis_url, redis_key=self.config.review_redis_key, file_path=self.config.review_file)
         self._last_review_refresh_at = now_ts
         self.daily_review = data
         if data:
