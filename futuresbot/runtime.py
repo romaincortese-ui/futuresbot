@@ -894,6 +894,8 @@ class FuturesRuntime:
                         rate = float(raw)
                     except (TypeError, ValueError):
                         rate = 0.0
+                elif isinstance(payload, (int, float)):
+                    rate = float(payload)
             self._funding_cache[sym] = (now_ts, rate)
         if abs(rate) > cap:
             log.info("Skipping %s: funding rate %.5f exceeds cap %.5f", sym, rate, cap)

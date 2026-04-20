@@ -127,6 +127,21 @@ class MexcFuturesClient:
         payload = self.public_get(f"/api/v1/contract/fair_price/{symbol}")
         return float((payload.get("data", {}) or {}).get("fairPrice", 0.0) or 0.0)
 
+    def get_funding_rate(self, symbol: str) -> float:
+        """Return the current funding rate for ``symbol`` as a signed fraction (e.g. 0.0001 = 1 bp).
+
+        Returns 0.0 when the endpoint response is missing or malformed so callers
+        that use this as a gate fail open rather than blocking all entries.
+        """
+        payload = self.public_get(f"/api/v1/contract/funding_rate/{symbol}")
+        data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        if not isinstance(data, dict):
+            return 0.0
+        try:
+            return float(data.get("fundingRate", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
     def get_account_asset(self, currency: str = "USDT") -> dict[str, Any]:
         payload = self.private_get(f"/api/v1/private/account/asset/{currency}")
         return payload.get("data", {}) if isinstance(payload, dict) else {}
