@@ -42,20 +42,11 @@ PER_SYMBOL_ENV: dict[str, dict[str, str]] = {
     "PEPE_USDT": {
         "LEVERAGE_MAX": "25",          # cap meme-coin leverage
     },
-    "TAO_USDT": {
-        # Bittensor trades with a very wide 15m range (p50=3.3%, p90=6.1%).
-        # The default coil-breakout consolidation cap (max(1.8%, ATR*1.55))
-        # rejects 91% of bars, which is why the baseline produced 0 trades.
-        # Widening the cap lets the strategy recognise TAO's natural coil
-        # patterns. ADX/trend gates already pass > 80% so leave those alone.
-        "CONSOLIDATION_MAX_RANGE_PCT": "0.040",
-        "CONSOLIDATION_ATR_MULT": "2.5",
-        # TAO's ATR is ~3% of price on 15m; without a slightly wider SL buffer
-        # the reward/risk filter rejects most otherwise-valid signals.
-        "SL_BUFFER_ATR_MULT": "1.10",
-        # Cap leverage - TAO is thinly traded on MEXC, keep slippage sane.
-        "LEVERAGE_MAX": "30",
-    },
+    # TAO_USDT: 60-day window produced 0 trades but 90-day window gives
+    # 2t / 100% WR / +$231 with default thresholds. The strategy DOES fire on
+    # TAO, it just fires rarely (~2-3 trades/quarter). Gate probe shows cons
+    # rejects 91% of bars but the 9% that pass convert cleanly. Leaving
+    # defaults alone; forcing wider gates did not improve PnL in testing.
 }
 
 
