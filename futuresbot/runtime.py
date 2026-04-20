@@ -36,7 +36,10 @@ class FuturesRuntime:
         self.client = client
         self.telegram = TelegramClient(config.telegram_token, config.telegram_chat_id)
         self._state_path = Path(self.config.runtime_state_file)
-        self.open_position: FuturesPosition | None = None
+        # Multi-position state (keyed by symbol). Insertion order is preserved so
+        # the "primary" position visible to legacy single-position display code is
+        # deterministic (first opened or first loaded from state).
+        self.open_positions: dict[str, FuturesPosition] = {}
         self.trade_history: list[dict[str, Any]] = []
         self.calibration: dict[str, Any] | None = None
         self.daily_review: dict[str, Any] | None = None
@@ -53,7 +56,58 @@ class FuturesRuntime:
         self._symbol_configs: dict[str, FuturesConfig] = {}
         self._active_symbols: tuple[str, ...] = tuple(config.symbols)
         self._symbols_validated = False
+        # Funding-rate cache: symbol -> (timestamp, rate). Refreshed lazily every hour.
+        self._funding_cache: dict[str, tuple[float, float]] = {}
         self._load_state()
+
+    # ------------------------------------------------------------------
+    # Legacy single-position accessors (preserved for display / status code)
+    # ------------------------------------------------------------------
+    @property
+    def open_position(self) -> FuturesPosition | None:
+        """Return the "primary" open position (config.symbol match, else first).
+
+        Provided purely for backwards-compatible read-only access in display code.
+        Write operations must go through :meth:`_register_position` and
+        :meth:`_clear_position` so the authoritative ``open_positions`` dict stays
+        in sync.
+        """
+
+        if not self.open_positions:
+            return None
+        primary = self.open_positions.get(self.config.symbol)
+        if primary is not None:
+            return primary
+        return next(iter(self.open_positions.values()))
+
+    @open_position.setter
+    def open_position(self, value: FuturesPosition | None) -> None:
+        """Legacy setter retained for tests / external callers.
+
+        ``None`` clears all tracked positions (single-position semantics).
+        Assigning a :class:`FuturesPosition` upserts it into the dict keyed by
+        its own ``symbol``.
+        """
+
+        if value is None:
+            self.open_positions.clear()
+            return
+        self.open_positions[value.symbol] = value
+
+    def _register_position(self, position: FuturesPosition) -> None:
+        self.open_positions[position.symbol] = position
+
+    def _clear_position(self, symbol: str) -> None:
+        self.open_positions.pop(symbol, None)
+
+    def _total_open_margin(self) -> float:
+        return float(sum(pos.margin_usdt for pos in self.open_positions.values()))
+
+    def _symbol_bucket(self, symbol: str) -> str:
+        return self.config.correlation_buckets.get(symbol.upper(), symbol.upper())
+
+    def _bucket_open_count(self, bucket: str) -> int:
+        return sum(1 for sym in self.open_positions if self._symbol_bucket(sym) == bucket)
 
     def _record_activity(self, message: str) -> None:
         timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -379,7 +433,7 @@ class FuturesRuntime:
         current_price = self._get_reference_price()
         if self.config.paper_trade:
             self._close_history_trade(position, exit_price=current_price, reason=reason)
-            self.open_position = None
+            self._clear_position(position.symbol)
             self._save_state()
             self._record_activity(f"Manual close: {position.side} {position.symbol} @ {current_price:,.2f}")
             return True, f"Closed paper {position.side} {position.symbol} at ${current_price:,.2f}."
@@ -401,7 +455,7 @@ class FuturesRuntime:
             detail = self.client.get_order(order_id)
             exit_price = float(detail.get("dealAvgPrice") or current_price)
         self._close_history_trade(position, exit_price=exit_price, reason=reason)
-        self.open_position = None
+        self._clear_position(position.symbol)
         self._save_state()
         self._record_activity(f"Manual close: {position.side} {position.symbol} @ {exit_price:,.2f}")
         return True, f"Closed live {position.side} {position.symbol} at ${exit_price:,.2f}."
@@ -542,9 +596,24 @@ class FuturesRuntime:
         except Exception as exc:
             log.warning("Failed to load futures state: %s", exc)
             return
-        trade_payload = payload.get("open_position")
-        if isinstance(trade_payload, dict):
-            self.open_position = FuturesPosition.from_dict(trade_payload)
+        # Prefer new multi-position key; fall back to the legacy single-position key.
+        positions_payload = payload.get("open_positions")
+        if isinstance(positions_payload, dict):
+            for sym, pos_dict in positions_payload.items():
+                if not isinstance(pos_dict, dict):
+                    continue
+                try:
+                    self.open_positions[str(sym).upper()] = FuturesPosition.from_dict(pos_dict)
+                except Exception as exc:
+                    log.warning("Failed to deserialize position for %s: %s", sym, exc)
+        else:
+            legacy = payload.get("open_position")
+            if isinstance(legacy, dict):
+                try:
+                    pos = FuturesPosition.from_dict(legacy)
+                    self.open_positions[pos.symbol] = pos
+                except Exception as exc:
+                    log.warning("Failed to deserialize legacy single position: %s", exc)
         self.trade_history = list(payload.get("trade_history", []) or [])
         self._paused = bool(payload.get("paused", False))
         self._recent_activity = deque((str(item) for item in payload.get("recent_activity", [])), maxlen=RECENT_ACTIVITY_LIMIT)
@@ -552,8 +621,13 @@ class FuturesRuntime:
 
     def _save_state(self) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        primary = self.open_position
         payload = {
-            "open_position": self.open_position.to_dict() if self.open_position is not None else None,
+            # Authoritative multi-position map
+            "open_positions": {sym: pos.to_dict() for sym, pos in self.open_positions.items()},
+            # Back-compat: also write the single-position slot so older code paths
+            # / external readers can still pick up the primary position.
+            "open_position": primary.to_dict() if primary is not None else None,
             "trade_history": self.trade_history[-200:],
             "paused": self._paused,
             "recent_activity": list(self._recent_activity),
@@ -617,12 +691,20 @@ class FuturesRuntime:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self._status_payload(signal=signal, price=price), indent=2), encoding="utf-8")
 
-    def _load_live_position(self) -> FuturesPosition | None:
+    def _refresh_live_positions(self) -> None:
+        """For live-trading, merge exchange-side open positions into our dict.
+
+        Positions the bot already tracks are left untouched (so the tp/sl/score
+        metadata we opened with is preserved). Untracked exchange positions are
+        added with a ``RECOVERED`` entry-signal so the hourly-exit logic can still
+        manage them (albeit conservatively — tp/sl set to 0 until resynced).
+        """
+
         if self.config.paper_trade:
-            return self.open_position
-        if self.open_position is not None:
-            return self.open_position
+            return
         for sym in self._active_symbols:
+            if sym in self.open_positions:
+                continue
             try:
                 rows = self.client.get_open_positions(sym)
             except Exception as exc:
@@ -631,12 +713,16 @@ class FuturesRuntime:
             if not rows:
                 continue
             latest = rows[0]
-            return FuturesPosition(
+            try:
+                contract_size = float(self.client.get_contract_detail(sym).get("contractSize", 0.0001) or 0.0001)
+            except Exception:
+                contract_size = 0.0001
+            recovered = FuturesPosition(
                 symbol=sym,
                 side="LONG" if int(latest.get("positionType", 1) or 1) == 1 else "SHORT",
                 entry_price=float(latest.get("holdAvgPrice") or latest.get("openAvgPrice") or 0.0),
                 contracts=int(float(latest.get("holdVol") or 0.0)),
-                contract_size=float(self.client.get_contract_detail(sym).get("contractSize", 0.0001) or 0.0001),
+                contract_size=contract_size,
                 leverage=int(float(latest.get("leverage") or 1)),
                 margin_usdt=float(latest.get("im") or latest.get("oim") or 0.0),
                 tp_price=0.0,
@@ -648,7 +734,8 @@ class FuturesRuntime:
                 certainty=0.0,
                 entry_signal="RECOVERED",
             )
-        return None
+            self._register_position(recovered)
+            log.info("Recovered untracked live position for %s", sym)
 
     def _close_history_trade(self, position: FuturesPosition, *, exit_price: float, reason: str) -> None:
         direction = 1.0 if position.side == "LONG" else -1.0
@@ -680,21 +767,31 @@ class FuturesRuntime:
         self._record_activity(f"Closed {position.side} {position.symbol}: {reason} ${pnl:+.2f}")
 
     def _reconcile_closed_position(self) -> None:
-        if self.open_position is None or self.config.paper_trade:
+        if not self.open_positions or self.config.paper_trade:
             return
-        pos_symbol = self.open_position.symbol
-        rows = self.client.get_open_positions(pos_symbol)
-        if rows:
-            return
-        history = self.client.get_historical_positions(pos_symbol, page_num=1, page_size=20)
-        for row in history:
-            if str(row.get("positionId") or "") != self.open_position.position_id:
+        # Iterate a snapshot because we may mutate the dict mid-loop.
+        for position in list(self.open_positions.values()):
+            pos_symbol = position.symbol
+            try:
+                rows = self.client.get_open_positions(pos_symbol)
+            except Exception as exc:
+                log.debug("Reconcile fetch failed for %s: %s", pos_symbol, exc)
                 continue
-            exit_price = float(row.get("closeAvgPrice") or row.get("newCloseAvgPrice") or self.open_position.entry_price)
-            self._close_history_trade(self.open_position, exit_price=exit_price, reason="EXCHANGE_CLOSE")
-            self.open_position = None
-            self._save_state()
-            return
+            if rows:
+                continue
+            try:
+                history = self.client.get_historical_positions(pos_symbol, page_num=1, page_size=20)
+            except Exception as exc:
+                log.debug("Reconcile history fetch failed for %s: %s", pos_symbol, exc)
+                continue
+            for row in history:
+                if str(row.get("positionId") or "") != position.position_id:
+                    continue
+                exit_price = float(row.get("closeAvgPrice") or row.get("newCloseAvgPrice") or position.entry_price)
+                self._close_history_trade(position, exit_price=exit_price, reason="EXCHANGE_CLOSE")
+                self._clear_position(pos_symbol)
+                self._save_state()
+                break
 
     def _hourly_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if position.side == "LONG":
@@ -709,11 +806,12 @@ class FuturesRuntime:
             return False
         progress = current_move / total_move
         raw_profit_pct = current_move / position.entry_price
-        if progress < self.config.early_exit_tp_progress or raw_profit_pct < self.config.early_exit_min_profit_pct:
+        scoped = self._config_for_symbol(position.symbol)
+        if progress < scoped.early_exit_tp_progress or raw_profit_pct < scoped.early_exit_min_profit_pct:
             return False
         if self.config.paper_trade:
             self._close_history_trade(position, exit_price=current_price, reason="HOURLY_TAKE_PROFIT")
-            self.open_position = None
+            self._clear_position(position.symbol)
             self._save_state()
             return True
         self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
@@ -732,16 +830,98 @@ class FuturesRuntime:
         else:
             exit_price = current_price
         self._close_history_trade(position, exit_price=exit_price, reason="HOURLY_TAKE_PROFIT")
-        self.open_position = None
+        self._clear_position(position.symbol)
         self._save_state()
         return True
 
+    def _is_in_session(self, scoped: FuturesConfig) -> bool:
+        """Check whether ``scoped.session_hours_utc`` permits entries right now.
+
+        Accepted formats: empty string (= 24/7 trading), ``"HH-HH"`` (inclusive start,
+        exclusive end, UTC). Wrapping ranges like ``"22-06"`` are supported.
+        Malformed values fall open (permissive) with a warning.
+        """
+
+        raw = (scoped.session_hours_utc or "").strip()
+        if not raw:
+            return True
+        try:
+            start_s, end_s = raw.split("-", 1)
+            start_h = int(start_s)
+            end_h = int(end_s)
+        except (ValueError, AttributeError):
+            log.warning("Invalid FUTURES_%s_SESSION_HOURS_UTC value %r; ignoring gate", scoped.symbol, raw)
+            return True
+        if not (0 <= start_h <= 24 and 0 <= end_h <= 24):
+            return True
+        now_hour = datetime.now(timezone.utc).hour
+        if start_h == end_h:
+            return True
+        if start_h < end_h:
+            return start_h <= now_hour < end_h
+        # wrap-around (e.g. 22-06)
+        return now_hour >= start_h or now_hour < end_h
+
+    def _funding_gate_ok(self, scoped: FuturesConfig) -> bool:
+        """Return False if the current funding rate for ``scoped.symbol`` exceeds
+        the per-symbol absolute cap. Zero cap disables the gate.
+
+        Rates are cached for 10 minutes per symbol to avoid hammering the REST
+        endpoint each cycle. Fetch failures fail open (permissive) — we warn but
+        do not block trading on transient network issues.
+        """
+
+        cap = float(scoped.funding_rate_abs_max or 0.0)
+        if cap <= 0:
+            return True
+        sym = scoped.symbol
+        now_ts = time.time()
+        cached = self._funding_cache.get(sym)
+        if cached is not None and now_ts - cached[0] < 600.0:
+            rate = cached[1]
+        else:
+            rate = 0.0
+            fetcher = getattr(self.client, "get_funding_rate", None)
+            if callable(fetcher):
+                try:
+                    payload = fetcher(sym)
+                except Exception as exc:
+                    log.debug("Futures funding rate fetch failed for %s: %s", sym, exc)
+                    payload = None
+                if isinstance(payload, dict):
+                    raw = payload.get("fundingRate") or payload.get("funding_rate") or payload.get("rate") or 0.0
+                    try:
+                        rate = float(raw)
+                    except (TypeError, ValueError):
+                        rate = 0.0
+            self._funding_cache[sym] = (now_ts, rate)
+        if abs(rate) > cap:
+            log.info("Skipping %s: funding rate %.5f exceeds cap %.5f", sym, rate, cap)
+            return False
+        return True
+
+    def _available_slots(self) -> int:
+        return max(0, int(self.config.max_concurrent_positions) - len(self.open_positions))
+
     def _fetch_signal(self) -> dict[str, Any] | None:
+        if self._available_slots() <= 0:
+            return None
         end = int(time.time())
         start = end - 900 * 260
         best: tuple[float, Any] | None = None
         for sym in self._active_symbols:
+            if sym in self.open_positions:
+                continue
+            bucket = self._symbol_bucket(sym)
+            if self._bucket_open_count(bucket) >= self.config.max_per_bucket:
+                log.info("Skipping %s: bucket %s already at cap (%d)", sym, bucket, self.config.max_per_bucket)
+                continue
             scoped = self._config_for_symbol(sym)
+            if not self._is_in_session(scoped):
+                log.info("Skipping %s: outside trading session %s", sym, scoped.session_hours_utc)
+                continue
+            if not self._funding_gate_ok(scoped):
+                continue
             try:
                 frame = self.client.get_klines(sym, interval="Min15", start=start, end=end)
             except Exception as exc:
@@ -777,14 +957,14 @@ class FuturesRuntime:
             return None
         return best[1].to_dict()
 
-    def _enter_trade(self, signal_payload: dict[str, Any]) -> None:
-        if self.open_position is not None:
-            return
+    def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
         side_name = str(signal_payload["side"])
         side = 1 if side_name == "LONG" else 3
         entry_price = float(signal_payload["entry_price"])
         leverage = int(signal_payload["leverage"])
         symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
+        if symbol in self.open_positions:
+            return False
         scoped = self._config_for_symbol(symbol)
         contract = self.client.get_contract_detail(symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
@@ -793,9 +973,23 @@ class FuturesRuntime:
         min_vol = int(float(contract.get("minVol", 1) or 1))
         if contracts < min_vol:
             log.info("Futures signal skipped: contracts below min volume")
-            return
+            return False
+        projected_margin = contracts * contract_size * entry_price / leverage
+        # Portfolio margin cap. Default 0 means: cap = max_concurrent_positions * margin_budget.
+        cap = self.config.max_total_margin_usdt
+        if cap <= 0:
+            cap = self.config.margin_budget_usdt * self.config.max_concurrent_positions
+        if self._total_open_margin() + projected_margin > cap * 1.0001:
+            log.info(
+                "Futures signal skipped for %s: portfolio margin cap (%.2f + %.2f > %.2f)",
+                symbol,
+                self._total_open_margin(),
+                projected_margin,
+                cap,
+            )
+            return False
         if self.config.paper_trade:
-            self.open_position = FuturesPosition(
+            position = FuturesPosition(
                 symbol=symbol,
                 side=side_name,
                 entry_price=entry_price,
@@ -813,10 +1007,11 @@ class FuturesRuntime:
                 entry_signal=str(signal_payload["entry_signal"]),
                 metadata=dict(signal_payload.get("metadata", {}) or {}),
             )
-            self._notify(self._entry_message(self.open_position))
+            self._register_position(position)
+            self._notify(self._entry_message(position))
             self._record_activity(f"Opened {side_name} {symbol} x{leverage} (paper)")
             self._save_state()
-            return
+            return True
         try:
             self.client.change_position_mode(self.config.position_mode)
         except Exception:
@@ -837,7 +1032,7 @@ class FuturesRuntime:
         detail = self.client.get_order(order_id) if order_id else {}
         position_id = str(detail.get("positionId") or "")
         fill_price = float(detail.get("dealAvgPrice") or entry_price)
-        self.open_position = FuturesPosition(
+        position = FuturesPosition(
             symbol=symbol,
             side=side_name,
             entry_price=fill_price,
@@ -855,9 +1050,11 @@ class FuturesRuntime:
             entry_signal=str(signal_payload["entry_signal"]),
             metadata=dict(signal_payload.get("metadata", {}) or {}),
         )
-        self._notify(self._entry_message(self.open_position))
+        self._register_position(position)
+        self._notify(self._entry_message(position))
         self._record_activity(f"Opened {side_name} {symbol} x{leverage} (live)")
         self._save_state()
+        return True
 
     def run(self) -> None:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -879,17 +1076,26 @@ class FuturesRuntime:
                 self.refresh_calibration()
                 self.refresh_daily_review()
                 self._reconcile_closed_position()
+                self._refresh_live_positions()
                 current_price = self._get_reference_price()
-                self.open_position = self._load_live_position()
                 signal: dict[str, Any] | None = None
-                if self.open_position is not None:
-                    self._hourly_exit(self.open_position, current_price)
-                    self._write_status(price=current_price)
-                else:
-                    signal = None if self._paused else self._fetch_signal()
-                    self._write_status(signal=signal, price=current_price)
-                    if signal is not None:
-                        self._enter_trade(signal)
+                # Per-position hourly exit check. Snapshot the dict so that mid-loop
+                # mutations from exits don't affect iteration order.
+                for position in list(self.open_positions.values()):
+                    try:
+                        pos_price = self.client.get_fair_price(position.symbol)
+                        if pos_price <= 0:
+                            pos_price = current_price
+                    except Exception:
+                        pos_price = current_price
+                    self._hourly_exit(position, pos_price)
+                # Attempt new entries for any remaining slots (highest-score signal wins
+                # each cycle; bucket / concurrency / session / funding gates enforced inside).
+                if not self._paused and self._available_slots() > 0:
+                    signal = self._fetch_signal()
+                self._write_status(signal=signal, price=current_price)
+                if signal is not None:
+                    self._enter_trade(signal)
                 self._log_cycle_summary(price=current_price, signal=signal)
                 self._send_heartbeat(price=current_price, signal=signal)
             except Exception as exc:

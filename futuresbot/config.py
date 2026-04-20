@@ -92,6 +92,27 @@ def parse_symbol_list(raw: str, fallback: str) -> tuple[str, ...]:
     return tuple(seen) if seen else (fallback.upper(),)
 
 
+def parse_correlation_buckets(raw: str) -> dict[str, str]:
+    """Parse ``SYMBOL:bucket,SYMBOL:bucket`` into a dict.
+
+    Unknown or malformed entries are silently skipped. Symbols without an
+    explicit bucket default to their own name downstream.
+    """
+
+    result: dict[str, str] = {}
+    if not raw.strip():
+        return result
+    for entry in raw.split(","):
+        if ":" not in entry:
+            continue
+        sym, bucket = entry.split(":", 1)
+        sym = sym.strip().upper()
+        bucket = bucket.strip().lower()
+        if sym and bucket:
+            result[sym] = bucket
+    return result
+
+
 def resolve_repo_path(value: str) -> str:
     raw_path = Path(value)
     if raw_path.is_absolute():
@@ -176,6 +197,12 @@ class FuturesConfig:
     early_exit_tp_progress: float
     early_exit_min_profit_pct: float
     early_exit_buffer_pct: float
+    max_concurrent_positions: int = 1
+    max_total_margin_usdt: float = 0.0
+    correlation_buckets: dict[str, str] = dataclasses.field(default_factory=dict)
+    max_per_bucket: int = 1
+    session_hours_utc: str = ""
+    funding_rate_abs_max: float = 0.0
     open_type: int = 1
     position_mode: int = 2
 
@@ -230,6 +257,12 @@ class FuturesConfig:
             early_exit_tp_progress=env_float("FUTURES_EARLY_EXIT_TP_PROGRESS", 0.90),
             early_exit_min_profit_pct=env_float("FUTURES_EARLY_EXIT_MIN_PROFIT_PCT", 0.012),
             early_exit_buffer_pct=env_float("FUTURES_EARLY_EXIT_BUFFER_PCT", 0.10),
+            max_concurrent_positions=max(1, env_int("FUTURES_MAX_CONCURRENT_POSITIONS", 1)),
+            max_total_margin_usdt=env_float("FUTURES_MAX_TOTAL_MARGIN_USDT", 0.0),
+            correlation_buckets=parse_correlation_buckets(env_str("FUTURES_CORRELATION_BUCKETS", "")),
+            max_per_bucket=max(1, env_int("FUTURES_MAX_PER_BUCKET", 1)),
+            session_hours_utc=env_str("FUTURES_SESSION_HOURS_UTC", ""),
+            funding_rate_abs_max=env_float("FUTURES_FUNDING_RATE_ABS_MAX", 0.0),
             open_type=env_int("FUTURES_OPEN_TYPE", 1),
             position_mode=env_int("FUTURES_POSITION_MODE", 2),
         )
@@ -269,6 +302,8 @@ class FuturesConfig:
             early_exit_tp_progress=env_float_for_symbol(sym, "EARLY_EXIT_TP_PROGRESS", self.early_exit_tp_progress),
             early_exit_min_profit_pct=env_float_for_symbol(sym, "EARLY_EXIT_MIN_PROFIT_PCT", self.early_exit_min_profit_pct),
             early_exit_buffer_pct=env_float_for_symbol(sym, "EARLY_EXIT_BUFFER_PCT", self.early_exit_buffer_pct),
+            session_hours_utc=env_str_for_symbol(sym, "SESSION_HOURS_UTC", self.session_hours_utc),
+            funding_rate_abs_max=env_float_for_symbol(sym, "FUNDING_RATE_ABS_MAX", self.funding_rate_abs_max),
         )
 
 
@@ -294,6 +329,8 @@ _SYMBOL_OVERRIDE_SUFFIXES: tuple[str, ...] = (
     "EARLY_EXIT_TP_PROGRESS",
     "EARLY_EXIT_MIN_PROFIT_PCT",
     "EARLY_EXIT_BUFFER_PCT",
+    "SESSION_HOURS_UTC",
+    "FUNDING_RATE_ABS_MAX",
 )
 
 
