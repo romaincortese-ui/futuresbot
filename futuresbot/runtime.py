@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import dataclasses
 import html
 import json
 import logging
@@ -47,6 +48,11 @@ class FuturesRuntime:
         self._btc_trend_cache: dict[str, float] = {"1h": 0.0, "24h": 0.0}
         self._paused = False
         self._recent_activity: deque[str] = deque(maxlen=RECENT_ACTIVITY_LIMIT)
+        # Per-symbol scoped configs (populated on first call; keyed by uppercased symbol).
+        # A miss means the symbol has not been validated against exchange contract specs yet.
+        self._symbol_configs: dict[str, FuturesConfig] = {}
+        self._active_symbols: tuple[str, ...] = tuple(config.symbols)
+        self._symbols_validated = False
         self._load_state()
 
     def _record_activity(self, message: str) -> None:
@@ -447,14 +453,15 @@ class FuturesRuntime:
                 self._record_activity("Telegram: /help")
 
     def _get_reference_price(self) -> float:
+        ref_symbol = self.open_position.symbol if self.open_position is not None else (self._active_symbols[0] if self._active_symbols else self.config.symbol)
         try:
-            price = self.client.get_fair_price(self.config.symbol)
+            price = self.client.get_fair_price(ref_symbol)
             if price > 0:
                 return price
         except Exception as exc:
             log.debug("Futures fair price fetch failed: %s", exc)
         try:
-            ticker = self.client.get_ticker(self.config.symbol)
+            ticker = self.client.get_ticker(ref_symbol)
             if isinstance(ticker, dict):
                 return self._safe_float(ticker, "fairPrice", "lastPrice", "lastDealPrice", "indexPrice", default=0.0)
         except Exception as exc:
@@ -462,6 +469,70 @@ class FuturesRuntime:
         if self.open_position is not None:
             return self.open_position.entry_price
         return 0.0
+
+    def _config_for_symbol(self, symbol: str) -> FuturesConfig:
+        sym = symbol.upper()
+        cached = self._symbol_configs.get(sym)
+        if cached is not None:
+            return cached
+        scoped = self.config.for_symbol(sym)
+        self._symbol_configs[sym] = scoped
+        return scoped
+
+    def _validate_symbols(self) -> None:
+        """Verify each configured symbol exists on the exchange and clamp leverage_max.
+
+        Runs once at first use. Symbols whose contract detail cannot be fetched or
+        that return no maxLeverage are dropped from the active list (with a loud
+        warning). If the primary symbol is dropped, entries are paused until the
+        operator intervenes.
+        """
+
+        if self._symbols_validated:
+            return
+        self._symbols_validated = True
+        active: list[str] = []
+        for sym in self.config.symbols:
+            try:
+                contract = self.client.get_contract_detail(sym)
+            except Exception as exc:
+                log.warning("Futures symbol %s rejected: contract detail fetch failed (%s)", sym, exc)
+                self._record_activity(f"Symbol {sym} unavailable: {type(exc).__name__}")
+                continue
+            if not isinstance(contract, dict) or not contract:
+                log.warning("Futures symbol %s rejected: empty contract detail", sym)
+                self._record_activity(f"Symbol {sym} unavailable: no contract detail")
+                continue
+            exchange_max_lev_raw = contract.get("maxLeverage") or contract.get("max_leverage") or 0
+            try:
+                exchange_max_lev = int(float(exchange_max_lev_raw))
+            except (TypeError, ValueError):
+                exchange_max_lev = 0
+            scoped = self.config.for_symbol(sym)
+            if exchange_max_lev > 0 and scoped.leverage_max > exchange_max_lev:
+                log.info(
+                    "Clamping %s leverage_max %d -> %d (exchange cap)",
+                    sym,
+                    scoped.leverage_max,
+                    exchange_max_lev,
+                )
+                scoped = dataclasses.replace(
+                    scoped,
+                    leverage_max=exchange_max_lev,
+                    leverage_min=min(scoped.leverage_min, exchange_max_lev),
+                )
+            self._symbol_configs[sym] = scoped
+            active.append(sym)
+        if not active:
+            log.error("No futures symbols available after validation; entries paused")
+            self._record_activity("No symbols available — entries paused")
+            self._paused = True
+            self._active_symbols = tuple(self.config.symbols)
+            return
+        self._active_symbols = tuple(active)
+        if len(active) > 1:
+            log.info("Futures multi-symbol scan active: %s", ",".join(active))
+            self._record_activity(f"Scanning {len(active)} symbols: {','.join(active)}")
 
     def _load_state(self) -> None:
         if not self._state_path.exists():
@@ -549,29 +620,35 @@ class FuturesRuntime:
     def _load_live_position(self) -> FuturesPosition | None:
         if self.config.paper_trade:
             return self.open_position
-        rows = self.client.get_open_positions(self.config.symbol)
-        if not rows:
-            return None
-        latest = rows[0]
         if self.open_position is not None:
             return self.open_position
-        return FuturesPosition(
-            symbol=self.config.symbol,
-            side="LONG" if int(latest.get("positionType", 1) or 1) == 1 else "SHORT",
-            entry_price=float(latest.get("holdAvgPrice") or latest.get("openAvgPrice") or 0.0),
-            contracts=int(float(latest.get("holdVol") or 0.0)),
-            contract_size=float(self.client.get_contract_detail(self.config.symbol).get("contractSize", 0.0001) or 0.0001),
-            leverage=int(float(latest.get("leverage") or 1)),
-            margin_usdt=float(latest.get("im") or latest.get("oim") or 0.0),
-            tp_price=0.0,
-            sl_price=0.0,
-            position_id=str(latest.get("positionId") or ""),
-            order_id="",
-            opened_at=datetime.now(timezone.utc),
-            score=0.0,
-            certainty=0.0,
-            entry_signal="RECOVERED",
-        )
+        for sym in self._active_symbols:
+            try:
+                rows = self.client.get_open_positions(sym)
+            except Exception as exc:
+                log.debug("Futures open-positions fetch failed for %s: %s", sym, exc)
+                continue
+            if not rows:
+                continue
+            latest = rows[0]
+            return FuturesPosition(
+                symbol=sym,
+                side="LONG" if int(latest.get("positionType", 1) or 1) == 1 else "SHORT",
+                entry_price=float(latest.get("holdAvgPrice") or latest.get("openAvgPrice") or 0.0),
+                contracts=int(float(latest.get("holdVol") or 0.0)),
+                contract_size=float(self.client.get_contract_detail(sym).get("contractSize", 0.0001) or 0.0001),
+                leverage=int(float(latest.get("leverage") or 1)),
+                margin_usdt=float(latest.get("im") or latest.get("oim") or 0.0),
+                tp_price=0.0,
+                sl_price=0.0,
+                position_id=str(latest.get("positionId") or ""),
+                order_id="",
+                opened_at=datetime.now(timezone.utc),
+                score=0.0,
+                certainty=0.0,
+                entry_signal="RECOVERED",
+            )
+        return None
 
     def _close_history_trade(self, position: FuturesPosition, *, exit_price: float, reason: str) -> None:
         direction = 1.0 if position.side == "LONG" else -1.0
@@ -605,10 +682,11 @@ class FuturesRuntime:
     def _reconcile_closed_position(self) -> None:
         if self.open_position is None or self.config.paper_trade:
             return
-        rows = self.client.get_open_positions(self.config.symbol)
+        pos_symbol = self.open_position.symbol
+        rows = self.client.get_open_positions(pos_symbol)
         if rows:
             return
-        history = self.client.get_historical_positions(self.config.symbol, page_num=1, page_size=20)
+        history = self.client.get_historical_positions(pos_symbol, page_num=1, page_size=20)
         for row in history:
             if str(row.get("positionId") or "") != self.open_position.position_id:
                 continue
@@ -661,30 +739,43 @@ class FuturesRuntime:
     def _fetch_signal(self) -> dict[str, Any] | None:
         end = int(time.time())
         start = end - 900 * 260
-        frame = self.client.get_klines(self.config.symbol, interval="Min15", start=start, end=end)
-        raw_signal = score_btc_futures_setup(frame, self.config)
-        if raw_signal is None:
-            log.info("Signal scan produced no raw setup")
+        best: tuple[float, Any] | None = None
+        for sym in self._active_symbols:
+            scoped = self._config_for_symbol(sym)
+            try:
+                frame = self.client.get_klines(sym, interval="Min15", start=start, end=end)
+            except Exception as exc:
+                log.warning("Futures klines fetch failed for %s: %s", sym, exc)
+                continue
+            raw_signal = score_btc_futures_setup(frame, scoped)
+            if raw_signal is None:
+                log.info("Signal scan: no raw setup for %s", sym)
+                continue
+            calibrated = apply_signal_calibration(
+                raw_signal,
+                self.calibration,
+                base_threshold=scoped.min_confidence_score,
+                leverage_min=scoped.leverage_min,
+                leverage_max=scoped.leverage_max,
+            )
+            if calibrated is None:
+                log.info("Signal scan: %s rejected by calibration/threshold", sym)
+                continue
+            log.info(
+                "Signal scan accepted for %s: side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%%",
+                sym,
+                calibrated.side,
+                calibrated.entry_signal,
+                calibrated.leverage,
+                calibrated.score,
+                calibrated.certainty * 100.0,
+            )
+            score = float(calibrated.score)
+            if best is None or score > best[0]:
+                best = (score, calibrated)
+        if best is None:
             return None
-        calibrated = apply_signal_calibration(
-            raw_signal,
-            self.calibration,
-            base_threshold=self.config.min_confidence_score,
-            leverage_min=self.config.leverage_min,
-            leverage_max=self.config.leverage_max,
-        )
-        if calibrated is None:
-            log.info("Signal scan rejected by calibration or threshold gate")
-            return None
-        log.info(
-            "Signal scan accepted: side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%%",
-            calibrated.side,
-            calibrated.entry_signal,
-            calibrated.leverage,
-            calibrated.score,
-            calibrated.certainty * 100.0,
-        )
-        return calibrated.to_dict() if calibrated is not None else None
+        return best[1].to_dict()
 
     def _enter_trade(self, signal_payload: dict[str, Any]) -> None:
         if self.open_position is not None:
@@ -693,9 +784,11 @@ class FuturesRuntime:
         side = 1 if side_name == "LONG" else 3
         entry_price = float(signal_payload["entry_price"])
         leverage = int(signal_payload["leverage"])
-        contract = self.client.get_contract_detail(self.config.symbol)
+        symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
+        scoped = self._config_for_symbol(symbol)
+        contract = self.client.get_contract_detail(symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
-        margin_budget = self.config.margin_budget_usdt
+        margin_budget = scoped.margin_budget_usdt
         contracts = int((margin_budget * leverage / entry_price) / contract_size)
         min_vol = int(float(contract.get("minVol", 1) or 1))
         if contracts < min_vol:
@@ -703,7 +796,7 @@ class FuturesRuntime:
             return
         if self.config.paper_trade:
             self.open_position = FuturesPosition(
-                symbol=self.config.symbol,
+                symbol=symbol,
                 side=side_name,
                 entry_price=entry_price,
                 contracts=contracts,
@@ -721,16 +814,16 @@ class FuturesRuntime:
                 metadata=dict(signal_payload.get("metadata", {}) or {}),
             )
             self._notify(self._entry_message(self.open_position))
-            self._record_activity(f"Opened {side_name} {self.config.symbol} x{leverage} (paper)")
+            self._record_activity(f"Opened {side_name} {symbol} x{leverage} (paper)")
             self._save_state()
             return
         try:
             self.client.change_position_mode(self.config.position_mode)
         except Exception:
             pass
-        self.client.change_leverage(symbol=self.config.symbol, leverage=leverage, position_type=1 if side_name == "LONG" else 2, open_type=self.config.open_type)
+        self.client.change_leverage(symbol=symbol, leverage=leverage, position_type=1 if side_name == "LONG" else 2, open_type=self.config.open_type)
         order = self.client.place_order(
-            symbol=self.config.symbol,
+            symbol=symbol,
             side=side,
             vol=contracts,
             leverage=leverage,
@@ -745,7 +838,7 @@ class FuturesRuntime:
         position_id = str(detail.get("positionId") or "")
         fill_price = float(detail.get("dealAvgPrice") or entry_price)
         self.open_position = FuturesPosition(
-            symbol=self.config.symbol,
+            symbol=symbol,
             side=side_name,
             entry_price=fill_price,
             contracts=int(float(detail.get("dealVol") or contracts)),
@@ -763,15 +856,15 @@ class FuturesRuntime:
             metadata=dict(signal_payload.get("metadata", {}) or {}),
         )
         self._notify(self._entry_message(self.open_position))
-        self._record_activity(f"Opened {side_name} {self.config.symbol} x{leverage} (live)")
+        self._record_activity(f"Opened {side_name} {symbol} x{leverage} (live)")
         self._save_state()
 
     def run(self) -> None:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
         log.info(
-            "Starting futures runtime mode=%s symbol=%s hourly_check_seconds=%s heartbeat_seconds=%s paper_trade=%s",
+            "Starting futures runtime mode=%s symbols=%s hourly_check_seconds=%s heartbeat_seconds=%s paper_trade=%s",
             self._mode_label(),
-            self.config.symbol,
+            ",".join(self.config.symbols),
             self.config.hourly_check_seconds,
             self.config.heartbeat_seconds,
             self.config.paper_trade,
@@ -782,6 +875,7 @@ class FuturesRuntime:
             try:
                 log.info("Beginning futures cycle")
                 self._handle_telegram_commands()
+                self._validate_symbols()
                 self.refresh_calibration()
                 self.refresh_daily_review()
                 self._reconcile_closed_position()

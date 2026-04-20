@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,57 @@ def env_float(name: str, default: float) -> float:
     if value is None or value.strip() == "":
         return default
     return float(value)
+
+
+def _symbol_env_prefix(symbol: str) -> str:
+    """Normalize a symbol for use in per-symbol env var names.
+
+    Strips non-alphanumerics so that e.g. ``XAUT_USDT`` -> ``FUTURES_XAUTUSDT_...``.
+    This keeps env var names unambiguous (no consecutive underscores).
+    """
+
+    cleaned = "".join(ch for ch in symbol.upper() if ch.isalnum())
+    return f"FUTURES_{cleaned}"
+
+
+def env_str_for_symbol(symbol: str, suffix: str, default: str) -> str:
+    value = os.getenv(f"{_symbol_env_prefix(symbol)}_{suffix}")
+    if value is None or value.strip() == "":
+        return default
+    return value.strip()
+
+
+def env_float_for_symbol(symbol: str, suffix: str, default: float) -> float:
+    value = os.getenv(f"{_symbol_env_prefix(symbol)}_{suffix}")
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def env_int_for_symbol(symbol: str, suffix: str, default: int) -> int:
+    value = os.getenv(f"{_symbol_env_prefix(symbol)}_{suffix}")
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def parse_symbol_list(raw: str, fallback: str) -> tuple[str, ...]:
+    """Parse a comma-separated symbol list, preserving order and deduplicating."""
+
+    if not raw.strip():
+        return (fallback.upper(),)
+    seen: list[str] = []
+    for part in raw.split(","):
+        symbol = part.strip().upper()
+        if symbol and symbol not in seen:
+            seen.append(symbol)
+    return tuple(seen) if seen else (fallback.upper(),)
 
 
 def resolve_repo_path(value: str) -> str:
@@ -85,6 +137,7 @@ class FuturesConfig:
     telegram_chat_id: str
     paper_trade: bool
     symbol: str
+    symbols: tuple[str, ...]
     futures_base_url: str
     margin_budget_usdt: float
     max_margin_fraction: float
@@ -129,13 +182,16 @@ class FuturesConfig:
     @classmethod
     def from_env(cls) -> "FuturesConfig":
         hourly_check_seconds = env_int("FUTURES_HOURLY_CHECK_SECONDS", 300)
+        primary_symbol = env_str("FUTURES_SYMBOL", "BTC_USDT").upper()
+        symbols = parse_symbol_list(env_str("FUTURES_SYMBOLS", ""), primary_symbol)
         return cls(
             api_key=env_str("MEXC_API_KEY", ""),
             api_secret=env_str("MEXC_API_SECRET", ""),
             telegram_token=env_str("FUTURES_TELEGRAM_TOKEN", env_str("TELEGRAM_TOKEN", "")),
             telegram_chat_id=env_str("FUTURES_TELEGRAM_CHAT_ID", env_str("TELEGRAM_CHAT_ID", "")),
             paper_trade=env_bool("FUTURES_PAPER_TRADE", True),
-            symbol=env_str("FUTURES_SYMBOL", "BTC_USDT").upper(),
+            symbol=symbols[0],
+            symbols=symbols,
             futures_base_url=env_str("MEXC_FUTURES_BASE_URL", "https://contract.mexc.com"),
             margin_budget_usdt=env_float("FUTURES_MARGIN_BUDGET_USDT", 75.0),
             max_margin_fraction=env_float("FUTURES_MAX_MARGIN_FRACTION", 0.85),
@@ -177,6 +233,76 @@ class FuturesConfig:
             open_type=env_int("FUTURES_OPEN_TYPE", 1),
             position_mode=env_int("FUTURES_POSITION_MODE", 2),
         )
+
+    def for_symbol(self, symbol: str) -> "FuturesConfig":
+        """Return a copy of this config scoped to ``symbol`` with per-symbol env overrides.
+
+        Looks up ``FUTURES_<SYMBOL>_<PARAM>`` env vars (symbol with non-alphanumerics
+        stripped) for each tunable strategy / risk parameter. Missing overrides fall
+        back to the values loaded on the base config.
+        """
+
+        sym = symbol.upper()
+        if sym == self.symbol and not _has_symbol_overrides(sym):
+            return self
+        return dataclasses.replace(
+            self,
+            symbol=sym,
+            leverage_min=env_int_for_symbol(sym, "LEVERAGE_MIN", self.leverage_min),
+            leverage_max=env_int_for_symbol(sym, "LEVERAGE_MAX", self.leverage_max),
+            min_confidence_score=env_float_for_symbol(sym, "SCORE_THRESHOLD", self.min_confidence_score),
+            hard_loss_cap_pct=env_float_for_symbol(sym, "HARD_LOSS_CAP_PCT", self.hard_loss_cap_pct),
+            adx_floor=env_float_for_symbol(sym, "ADX_FLOOR", self.adx_floor),
+            trend_24h_floor=env_float_for_symbol(sym, "TREND_24H_FLOOR", self.trend_24h_floor),
+            trend_6h_floor=env_float_for_symbol(sym, "TREND_6H_FLOOR", self.trend_6h_floor),
+            breakout_buffer_atr=env_float_for_symbol(sym, "BREAKOUT_BUFFER_ATR", self.breakout_buffer_atr),
+            consolidation_window_bars=env_int_for_symbol(sym, "CONSOLIDATION_WINDOW_BARS", self.consolidation_window_bars),
+            consolidation_max_range_pct=env_float_for_symbol(sym, "CONSOLIDATION_MAX_RANGE_PCT", self.consolidation_max_range_pct),
+            consolidation_atr_mult=env_float_for_symbol(sym, "CONSOLIDATION_ATR_MULT", self.consolidation_atr_mult),
+            volume_ratio_floor=env_float_for_symbol(sym, "VOLUME_RATIO_FLOOR", self.volume_ratio_floor),
+            tp_atr_mult=env_float_for_symbol(sym, "TP_ATR_MULT", self.tp_atr_mult),
+            tp_range_mult=env_float_for_symbol(sym, "TP_RANGE_MULT", self.tp_range_mult),
+            tp_floor_pct=env_float_for_symbol(sym, "TP_FLOOR_PCT", self.tp_floor_pct),
+            sl_buffer_atr_mult=env_float_for_symbol(sym, "SL_BUFFER_ATR_MULT", self.sl_buffer_atr_mult),
+            sl_trend_atr_mult=env_float_for_symbol(sym, "SL_TREND_ATR_MULT", self.sl_trend_atr_mult),
+            min_reward_risk=env_float_for_symbol(sym, "MIN_REWARD_RISK", self.min_reward_risk),
+            early_exit_tp_progress=env_float_for_symbol(sym, "EARLY_EXIT_TP_PROGRESS", self.early_exit_tp_progress),
+            early_exit_min_profit_pct=env_float_for_symbol(sym, "EARLY_EXIT_MIN_PROFIT_PCT", self.early_exit_min_profit_pct),
+            early_exit_buffer_pct=env_float_for_symbol(sym, "EARLY_EXIT_BUFFER_PCT", self.early_exit_buffer_pct),
+        )
+
+
+_SYMBOL_OVERRIDE_SUFFIXES: tuple[str, ...] = (
+    "LEVERAGE_MIN",
+    "LEVERAGE_MAX",
+    "SCORE_THRESHOLD",
+    "HARD_LOSS_CAP_PCT",
+    "ADX_FLOOR",
+    "TREND_24H_FLOOR",
+    "TREND_6H_FLOOR",
+    "BREAKOUT_BUFFER_ATR",
+    "CONSOLIDATION_WINDOW_BARS",
+    "CONSOLIDATION_MAX_RANGE_PCT",
+    "CONSOLIDATION_ATR_MULT",
+    "VOLUME_RATIO_FLOOR",
+    "TP_ATR_MULT",
+    "TP_RANGE_MULT",
+    "TP_FLOOR_PCT",
+    "SL_BUFFER_ATR_MULT",
+    "SL_TREND_ATR_MULT",
+    "MIN_REWARD_RISK",
+    "EARLY_EXIT_TP_PROGRESS",
+    "EARLY_EXIT_MIN_PROFIT_PCT",
+    "EARLY_EXIT_BUFFER_PCT",
+)
+
+
+def _has_symbol_overrides(symbol: str) -> bool:
+    prefix = _symbol_env_prefix(symbol)
+    for suffix in _SYMBOL_OVERRIDE_SUFFIXES:
+        if os.getenv(f"{prefix}_{suffix}"):
+            return True
+    return False
 
 
 @dataclass(slots=True)
