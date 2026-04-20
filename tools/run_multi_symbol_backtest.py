@@ -19,7 +19,11 @@ from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClie
 
 SYMBOLS = [
     "BTC_USDT", "ETH_USDT", "SOL_USDT", "PEPE_USDT",
-    "TRUMP_USDT", "XAUT_USDT", "TAO_USDT", "SILVER_USDT", "XRP_USDT",
+    "XAUT_USDT", "TAO_USDT", "SILVER_USDT", "XRP_USDT",
+    # TRUMP_USDT dropped: MEXC futures contract exists but returns 0 kline
+    # history on /contract/kline for any window tested (2025-04 through
+    # 2026-04). The contract is listed but has no tradable market data -
+    # gate analysis in _probe_zero_trade_symbols.py confirms NO DATA.
 ]
 
 # Per-symbol env overrides applied during the calibrated run.
@@ -38,10 +42,24 @@ PER_SYMBOL_ENV: dict[str, dict[str, str]] = {
     "PEPE_USDT": {
         "LEVERAGE_MAX": "25",          # cap meme-coin leverage
     },
+    "TAO_USDT": {
+        # Bittensor trades with a very wide 15m range (p50=3.3%, p90=6.1%).
+        # The default coil-breakout consolidation cap (max(1.8%, ATR*1.55))
+        # rejects 91% of bars, which is why the baseline produced 0 trades.
+        # Widening the cap lets the strategy recognise TAO's natural coil
+        # patterns. ADX/trend gates already pass > 80% so leave those alone.
+        "CONSOLIDATION_MAX_RANGE_PCT": "0.040",
+        "CONSOLIDATION_ATR_MULT": "2.5",
+        # TAO's ATR is ~3% of price on 15m; without a slightly wider SL buffer
+        # the reward/risk filter rejects most otherwise-valid signals.
+        "SL_BUFFER_ATR_MULT": "1.10",
+        # Cap leverage - TAO is thinly traded on MEXC, keep slippage sane.
+        "LEVERAGE_MAX": "30",
+    },
 }
 
 
-def run_one(symbol: str, start: str, end: str, out_root: Path, calib_path: Path) -> dict:
+def run_one(symbol: str, start: str, end: str, out_root: Path, calib_path: Path | None, apply_overrides: bool) -> dict:
     # Clear any stale env from earlier iterations
     for key in list(os.environ):
         if key.startswith("FUTURES_") and key not in {
@@ -59,8 +77,9 @@ def run_one(symbol: str, start: str, end: str, out_root: Path, calib_path: Path)
 
     # Apply per-symbol overrides
     sanitized = "".join(ch for ch in symbol.upper() if ch.isalnum())
-    for suffix, value in PER_SYMBOL_ENV.get(symbol, {}).items():
-        os.environ[f"FUTURES_{sanitized}_{suffix}"] = value
+    if apply_overrides:
+        for suffix, value in PER_SYMBOL_ENV.get(symbol, {}).items():
+            os.environ[f"FUTURES_{sanitized}_{suffix}"] = value
 
     config = FuturesBacktestConfig.from_env()
     config.start = parse_utc_datetime(start)
@@ -70,8 +89,10 @@ def run_one(symbol: str, start: str, end: str, out_root: Path, calib_path: Path)
     client = MexcFuturesClient(live)
     provider = FuturesHistoricalDataProvider(client, cache_dir=config.cache_dir)
 
-    # Load hand-tuned calibration and scope it to this symbol via the per-symbol config.
-    calibration = json.loads(calib_path.read_text(encoding="utf-8"))
+    # Load hand-tuned calibration if requested.
+    calibration = None
+    if calib_path is not None:
+        calibration = json.loads(calib_path.read_text(encoding="utf-8"))
 
     engine = FuturesBacktestEngine(config, provider, client, calibration=calibration)
     equity_curve, trades = engine.run()
@@ -89,8 +110,8 @@ def run_one(symbol: str, start: str, end: str, out_root: Path, calib_path: Path)
     }
 
 
-def load_baseline(symbol: str) -> dict | None:
-    p = Path("backtest_output/multi") / symbol / "summary.json"
+def load_baseline(symbol: str, baseline_root: Path) -> dict | None:
+    p = baseline_root / symbol / "summary.json"
     if not p.exists():
         return None
     return json.loads(p.read_text())
@@ -105,58 +126,94 @@ def main() -> None:
     parser.add_argument("--start", default="2026-02-20")
     parser.add_argument("--end", default="2026-04-20")
     parser.add_argument("--out", default="backtest_output/multi_calibrated")
+    parser.add_argument("--baseline-out", default="backtest_output/multi")
     parser.add_argument("--calibration", default="calibration/multi_symbol_calibration.json")
+    parser.add_argument(
+        "--mode",
+        choices=["calibrated", "baseline", "both"],
+        default="calibrated",
+        help="calibrated: single pass w/ calibration+overrides; baseline: no calibration; both: two passes",
+    )
     args = parser.parse_args()
 
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
     calib_path = Path(args.calibration)
+    baseline_root = Path(args.baseline_out)
+    calibrated_root = Path(args.out)
 
-    rows: list[dict] = []
-    for s in SYMBOLS:
-        print(f"\n=== Running (calibrated) {s} {args.start} -> {args.end} ===", flush=True)
-        try:
-            row = run_one(s, args.start, args.end, out, calib_path)
-            rows.append(row)
-            print(
-                f"  trades={row['trades']} pnl=${row['total_pnl']:+.2f} "
-                f"wr={row['win_rate']*100:.1f}% pf={fmt_pf(row['profit_factor'])} "
-                f"dd={row['max_dd']*100:.1f}%",
-                flush=True,
-            )
-        except Exception as exc:
-            traceback.print_exc()
-            rows.append({"symbol": s, "error": f"{type(exc).__name__}: {exc}"})
+    # ---- Baseline pass (optional) ----
+    baseline_rows: list[dict] = []
+    if args.mode in ("baseline", "both"):
+        baseline_root.mkdir(parents=True, exist_ok=True)
+        print(f"\n{'#' * 100}\n# BASELINE pass (no calibration, no overrides) -> {baseline_root}\n{'#' * 100}", flush=True)
+        for s in SYMBOLS:
+            print(f"\n=== Running (baseline) {s} {args.start} -> {args.end} ===", flush=True)
+            try:
+                row = run_one(s, args.start, args.end, baseline_root, calib_path=None, apply_overrides=False)
+                baseline_rows.append(row)
+                print(
+                    f"  trades={row['trades']} pnl=${row['total_pnl']:+.2f} "
+                    f"wr={row['win_rate']*100:.1f}% pf={fmt_pf(row['profit_factor'])} "
+                    f"dd={row['max_dd']*100:.1f}%",
+                    flush=True,
+                )
+            except Exception as exc:
+                traceback.print_exc()
+                baseline_rows.append({"symbol": s, "error": f"{type(exc).__name__}: {exc}"})
 
-    header = f"{'SYMBOL':<13}{'BASELINE':>30}  {'CALIBRATED':>30}  DELTA"
+    # ---- Calibrated pass ----
+    calib_rows: list[dict] = []
+    if args.mode in ("calibrated", "both"):
+        calibrated_root.mkdir(parents=True, exist_ok=True)
+        print(f"\n{'#' * 100}\n# CALIBRATED pass (calibration={calib_path.name} + per-symbol overrides) -> {calibrated_root}\n{'#' * 100}", flush=True)
+        for s in SYMBOLS:
+            print(f"\n=== Running (calibrated) {s} {args.start} -> {args.end} ===", flush=True)
+            try:
+                row = run_one(s, args.start, args.end, calibrated_root, calib_path=calib_path, apply_overrides=True)
+                calib_rows.append(row)
+                print(
+                    f"  trades={row['trades']} pnl=${row['total_pnl']:+.2f} "
+                    f"wr={row['win_rate']*100:.1f}% pf={fmt_pf(row['profit_factor'])} "
+                    f"dd={row['max_dd']*100:.1f}%",
+                    flush=True,
+                )
+            except Exception as exc:
+                traceback.print_exc()
+                calib_rows.append({"symbol": s, "error": f"{type(exc).__name__}: {exc}"})
+
+    # ---- Comparison table ----
     print("\n" + "=" * 100)
-    print("CALIBRATED vs BASELINE (60-day 2026-02-20 -> 2026-04-20, $300 per symbol)")
+    print(f"CALIBRATED vs BASELINE ({args.start} -> {args.end}, $300 per symbol)")
     print("=" * 100)
     print(f"{'SYMBOL':<13}{'trades/wr/pnl (baseline)':>34}   {'trades/wr/pnl (calibrated)':>36}   DELTA_PNL")
     print("-" * 100)
     total_base = 0.0
     total_calib = 0.0
-    for r in rows:
-        if "error" in r:
-            print(f"{r['symbol']:<13}  ERROR: {r['error']}")
-            continue
-        b = load_baseline(r["symbol"]) or {}
+    reference_rows = calib_rows if calib_rows else baseline_rows
+    for r in reference_rows:
+        sym = r.get("symbol")
+        b = load_baseline(sym, baseline_root) or {}
         b_trades = int(b.get("total_trades", 0))
         b_wr = float(b.get("win_rate", 0.0)) * 100
         b_pnl = float(b.get("total_pnl", 0.0))
         total_base += b_pnl
+        if "error" in r:
+            print(f"{sym:<13}  ERROR: {r['error']}")
+            continue
         total_calib += r["total_pnl"]
         base_str = f"{b_trades}t / {b_wr:4.1f}% / ${b_pnl:+8.2f}"
         calib_str = f"{r['trades']}t / {r['win_rate']*100:4.1f}% / ${r['total_pnl']:+8.2f}"
         delta = r["total_pnl"] - b_pnl
-        print(f"{r['symbol']:<13}{base_str:>34}   {calib_str:>36}   ${delta:+8.2f}")
+        print(f"{sym:<13}{base_str:>34}   {calib_str:>36}   ${delta:+8.2f}")
     print("-" * 100)
     print(f"{'TOTAL':<13}{'':>34}   {'':>36}   ${total_calib - total_base:+8.2f}")
-    print(f"  baseline total  = ${total_base:+.2f}")
+    print(f"  baseline total   = ${total_base:+.2f}")
     print(f"  calibrated total = ${total_calib:+.2f}")
     print("=" * 100)
 
-    (out / "multi_summary.json").write_text(json.dumps(rows, indent=2, default=str))
+    if calib_rows:
+        (calibrated_root / "multi_summary.json").write_text(json.dumps(calib_rows, indent=2, default=str))
+    if baseline_rows:
+        (baseline_root / "multi_summary.json").write_text(json.dumps(baseline_rows, indent=2, default=str))
 
 
 if __name__ == "__main__":
