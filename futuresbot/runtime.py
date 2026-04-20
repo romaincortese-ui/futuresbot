@@ -168,10 +168,40 @@ class FuturesRuntime:
                 continue
         return float(default)
 
+    def _symbol_current_prices(self, symbols: list[str] | tuple[str, ...]) -> dict[str, float]:
+        """Best-effort per-symbol mark price lookup. Missing entries are omitted."""
+        out: dict[str, float] = {}
+        for sym in symbols:
+            try:
+                price = self.client.get_fair_price(sym)
+            except Exception:
+                price = 0.0
+            if price and price > 0:
+                out[sym] = float(price)
+        return out
+
+    def _portfolio_unrealized_pnl(self, price_map: dict[str, float] | None = None) -> float:
+        if not self.open_positions:
+            return 0.0
+        if price_map is None:
+            price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))
+        total = 0.0
+        for sym, position in self.open_positions.items():
+            total += self._position_pnl_usdt(position, price_map.get(sym))
+        return total
+
     def _account_snapshot(self, current_price: float | None = None) -> dict[str, float]:
-        unrealized = self._position_pnl_usdt(self.open_position, current_price)
+        # Compute aggregate unrealized PnL across every open position.
+        price_map: dict[str, float] = {}
+        if self.open_positions:
+            price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))
+            # If caller supplied a current_price for the primary symbol, let it win.
+            primary = self.open_position
+            if primary is not None and current_price and current_price > 0:
+                price_map[primary.symbol] = float(current_price)
+        unrealized = self._portfolio_unrealized_pnl(price_map)
+        margin_in_use = self._total_open_margin()
         if self.config.paper_trade:
-            margin_in_use = float(self.open_position.margin_usdt) if self.open_position is not None else 0.0
             available = max(0.0, self.config.margin_budget_usdt - margin_in_use)
             equity = self.config.margin_budget_usdt + unrealized
             return {"available_usdt": available, "equity_usdt": equity, "unrealized_pnl_usdt": unrealized}
@@ -179,7 +209,6 @@ class FuturesRuntime:
             asset = self.client.get_account_asset("USDT")
         except Exception as exc:
             log.debug("Futures account snapshot failed: %s", exc)
-            margin_in_use = float(self.open_position.margin_usdt) if self.open_position is not None else 0.0
             available = max(0.0, self.config.margin_budget_usdt - margin_in_use)
             equity = self.config.margin_budget_usdt + unrealized
             return {"available_usdt": available, "equity_usdt": equity, "unrealized_pnl_usdt": unrealized}
@@ -281,36 +310,45 @@ class FuturesRuntime:
         title = "💓 <b>Heartbeat</b>" if heartbeat else "📋 <b>Status</b>"
         current_price = price if price and price > 0 else None
         snapshot = self._account_snapshot(current_price)
+        active_syms = list(self._active_symbols) or [self.config.symbol]
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
-            f"Symbol: <b>{html.escape(self.config.symbol)}</b> | Price: <b>${self._format_price(current_price or 0.0)}</b>",
+            f"Scanning <b>{len(active_syms)}</b>: {html.escape(', '.join(active_syms))}",
             self._btc_trend_line(),
             f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
             f"Entries: {'⏸️ paused' if self._paused else '▶️ active'}",
             f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
+            f"Open positions: <b>{len(self.open_positions)}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
             "━━━━━━━━━━━━━━━",
         ]
-        if self.open_position is None:
-            lines.append("No open position.")
+        if not self.open_positions:
+            lines.append("No open positions.")
             lines.append(self._signal_line(signal))
         else:
-            position = self.open_position
-            pnl_usdt = self._position_pnl_usdt(position, current_price)
-            pnl_pct = self._position_pnl_pct(position, current_price)
-            progress = self._tp_progress(position, current_price)
-            progress_text = f" | TP progress {progress * 100:.0f}%" if progress is not None and math.isfinite(progress) else ""
-            pnl_text = f"${pnl_usdt:+.2f}" if current_price is not None else "n/a"
-            pct_text = f" ({pnl_pct:+.2f}%)" if pnl_pct is not None else ""
-            lines.append(
-                f"<b>{html.escape(position.side)}</b> x{position.leverage} | {html.escape(position.entry_signal)} | "
-                f"margin <b>${position.margin_usdt:.2f}</b>"
-            )
-            lines.append(
-                f"Entry <b>${self._format_price(position.entry_price)}</b> | TP <b>${self._format_price(position.tp_price)}</b> | "
-                f"SL <b>${self._format_price(position.sl_price)}</b>"
-            )
-            lines.append(f"PnL: <b>{pnl_text}</b>{pct_text}{progress_text}")
+            price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))
+            if self.open_position is not None and current_price and current_price > 0:
+                price_map[self.open_position.symbol] = float(current_price)
+            for position in self.open_positions.values():
+                mark = price_map.get(position.symbol)
+                pnl_usdt = self._position_pnl_usdt(position, mark)
+                pnl_pct = self._position_pnl_pct(position, mark)
+                progress = self._tp_progress(position, mark)
+                progress_text = f" | TP {progress * 100:.0f}%" if progress is not None and math.isfinite(progress) else ""
+                pnl_text = f"${pnl_usdt:+.2f}" if mark is not None else "n/a"
+                pct_text = f" ({pnl_pct:+.2f}%)" if pnl_pct is not None else ""
+                mark_text = f"${self._format_price(mark)}" if mark else "n/a"
+                lines.append(
+                    f"<b>{html.escape(position.side)}</b> {html.escape(position.symbol)} x{position.leverage} | "
+                    f"{html.escape(position.entry_signal)} | margin <b>${position.margin_usdt:.2f}</b>"
+                )
+                lines.append(
+                    f"  Entry <b>${self._format_price(position.entry_price)}</b> | Mark <b>{mark_text}</b> | "
+                    f"TP <b>${self._format_price(position.tp_price)}</b> | SL <b>${self._format_price(position.sl_price)}</b>"
+                )
+                lines.append(f"  PnL: <b>{pnl_text}</b>{pct_text}{progress_text}")
+            if self._available_slots() > 0:
+                lines.append(self._signal_line(signal))
         last_trade = self._last_trade_line()
         if last_trade:
             lines.append("━━━━━━━━━━━━━━━")
@@ -336,14 +374,19 @@ class FuturesRuntime:
             f"Today: <b>${today_realized:+.2f}</b> | Closed trades: <b>{len(today_trades)}</b>",
             f"Session: <b>${total_realized:+.2f}</b> | {wins}W {losses}L",
             f"Open P&L: <b>${unrealized:+.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b>",
+            f"Open positions: <b>{len(self.open_positions)}</b>/{self.config.max_concurrent_positions}",
         ]
-        if self.open_position is not None:
-            pnl_pct = self._position_pnl_pct(self.open_position, current_price)
-            pct_text = f" ({pnl_pct:+.2f}%)" if pnl_pct is not None else ""
-            lines.append(
-                f"Open: <b>{html.escape(self.open_position.side)}</b> {html.escape(self.open_position.symbol)} | "
-                f"entry ${self._format_price(self.open_position.entry_price)} | unrealized <b>${unrealized:+.2f}</b>{pct_text}"
-            )
+        if self.open_positions:
+            price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))
+            for position in self.open_positions.values():
+                mark = price_map.get(position.symbol)
+                pnl_usdt = self._position_pnl_usdt(position, mark)
+                pnl_pct = self._position_pnl_pct(position, mark)
+                pct_text = f" ({pnl_pct:+.2f}%)" if pnl_pct is not None else ""
+                lines.append(
+                    f"• <b>{html.escape(position.side)}</b> {html.escape(position.symbol)} | "
+                    f"entry ${self._format_price(position.entry_price)} | unrealized <b>${pnl_usdt:+.2f}</b>{pct_text}"
+                )
         last_trade = self._last_trade_line()
         if last_trade:
             lines.append("━━━━━━━━━━━━━━━")
@@ -390,11 +433,27 @@ class FuturesRuntime:
                 f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | "
                 f"Equity: <b>${snapshot['equity_usdt']:.2f}</b>"
             )
+        active_syms = list(self._active_symbols) or [self.config.symbol]
+        price_map = self._symbol_current_prices(active_syms)
+        symbol_lines: list[str] = []
+        for sym in active_syms:
+            mark = price_map.get(sym)
+            if mark:
+                symbol_lines.append(f"  • <b>{html.escape(sym)}</b>: ${self._format_price(mark)}")
+            else:
+                symbol_lines.append(f"  • <b>{html.escape(sym)}</b>: n/a")
+        caps_line = (
+            f"Max concurrent: <b>{self.config.max_concurrent_positions}</b> | "
+            f"Max per bucket: <b>{self.config.max_per_bucket}</b>"
+        )
         self._notify(
-            f"🚀 <b>BTC Futures Bot Started</b> [{self._mode_label()}]\n"
+            f"🚀 <b>Futures Bot Started</b> [{self._mode_label()}]\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"Symbol: <b>{html.escape(self.config.symbol)}</b> | Price: <b>${self._format_price(current_price)}</b>\n"
+            f"Scanning <b>{len(active_syms)}</b> symbols:\n"
+            + "\n".join(symbol_lines)
+            + "\n━━━━━━━━━━━━━━━\n"
             f"{balance_line} | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>\n"
+            f"{caps_line}\n"
             f"Hourly checks: <b>{self.config.hourly_check_seconds}s</b> | Heartbeat: <b>{self.config.heartbeat_seconds}s</b>"
         )
 
@@ -408,29 +467,42 @@ class FuturesRuntime:
         self._notify(self._build_status_message(price=price, signal=signal, heartbeat=True))
 
     def _commands_hint(self) -> str:
-        return "/status /pnl /logs /pause /resume /close /help"
+        return "/status /pnl /logs /pause /resume /close [SYMBOL|all] /help"
 
     def _build_help_message(self) -> str:
         return (
             "🤖 <b>Futures Telegram Commands</b>\n"
             "━━━━━━━━━━━━━━━\n"
-            "/status — Futures status and open position\n"
-            "/pnl — Realized and open futures P&L\n"
+            "/status — Futures status and every open position\n"
+            "/pnl — Realized and open futures P&L across all symbols\n"
             "/logs — Recent runtime activity\n"
-            "/pause — Pause new entries\n"
+            "/pause — Pause new entries (open positions stay managed)\n"
             "/resume — Resume new entries\n"
-            "/close — Close the current BTC futures position\n"
+            "/close — Close the first open position\n"
+            "/close SYMBOL — Close a specific position (e.g. /close ETH_USDT)\n"
+            "/close all — Close every open position\n"
             "/help — Show this command list"
         )
 
     def _close_side(self, position: FuturesPosition) -> int:
         return 4 if position.side == "LONG" else 2
 
-    def _force_close_position(self, *, reason: str = "MANUAL_CLOSE") -> tuple[bool, str]:
-        position = self.open_position
-        if position is None:
-            return False, "No open futures position to close."
-        current_price = self._get_reference_price()
+    def _force_close_position(self, *, reason: str = "MANUAL_CLOSE", symbol: str | None = None) -> tuple[bool, str]:
+        if symbol:
+            position = self.open_positions.get(symbol.upper())
+            if position is None:
+                return False, f"No open position for {symbol.upper()}."
+        else:
+            position = self.open_position
+            if position is None:
+                return False, "No open futures position to close."
+        current_price = 0.0
+        try:
+            current_price = self.client.get_fair_price(position.symbol)
+        except Exception as exc:
+            log.debug("Futures fair price fetch failed for %s: %s", position.symbol, exc)
+        if not current_price:
+            current_price = self._get_reference_price()
         if self.config.paper_trade:
             self._close_history_trade(position, exit_price=current_price, reason=reason)
             self._clear_position(position.symbol)
@@ -497,11 +569,27 @@ class FuturesRuntime:
                 self._save_state()
                 self._record_activity("Telegram: entries resumed")
                 self._notify("▶️ <b>Futures entries resumed.</b>")
-            elif text == "/close":
-                ok, message_text = self._force_close_position(reason="MANUAL_CLOSE")
-                prefix = "🚨" if ok else "⚠️"
-                self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
-                self._record_activity(f"Telegram: /close ({'ok' if ok else 'noop'})")
+            elif text == "/close" or text.startswith("/close ") or text.startswith("/close@"):
+                # Parse optional argument: /close, /close SYMBOL, /close all
+                parts = raw_text.split(maxsplit=1)
+                arg = parts[1].strip() if len(parts) > 1 else ""
+                if arg.lower() == "all":
+                    if not self.open_positions:
+                        self._notify("⚠️ <b>Futures Close</b>\n━━━━━━━━━━━━━━━\nNo open positions to close.")
+                        self._record_activity("Telegram: /close all (noop)")
+                    else:
+                        results: list[str] = []
+                        for sym in list(self.open_positions.keys()):
+                            ok, msg = self._force_close_position(reason="MANUAL_CLOSE", symbol=sym)
+                            results.append(f"{'✅' if ok else '⚠️'} {html.escape(msg)}")
+                        self._notify("🚨 <b>Futures Close (all)</b>\n━━━━━━━━━━━━━━━\n" + "\n".join(results))
+                        self._record_activity(f"Telegram: /close all ({len(self.open_positions)} remaining)")
+                else:
+                    target = arg.upper() if arg else None
+                    ok, message_text = self._force_close_position(reason="MANUAL_CLOSE", symbol=target)
+                    prefix = "🚨" if ok else "⚠️"
+                    self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
+                    self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
             elif text in {"/help", "/start"}:
                 self._notify(self._build_help_message())
                 self._record_activity("Telegram: /help")

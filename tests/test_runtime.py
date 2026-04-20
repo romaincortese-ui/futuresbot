@@ -102,8 +102,8 @@ def test_build_status_message_includes_open_position_pnl_and_last_trade(tmp_path
 
     message = runtime._build_status_message(price=91500.0)
 
-    assert "<b>LONG</b> x25 | COIL_BREAKOUT_LONG | margin <b>$36.00</b>" in message
-    assert "PnL: <b>$+15.00</b> (+41.67%) | TP progress 50%" in message
+    assert "<b>LONG</b> BTC_USDT x25 | COIL_BREAKOUT_LONG | margin <b>$36.00</b>" in message
+    assert "PnL: <b>$+15.00</b> (+41.67%) | TP 50%" in message
     assert "Last: <b>BTC_USDT</b> TAKE_PROFIT | <b>$+24.50</b> (+8.10%)" in message
 
 
