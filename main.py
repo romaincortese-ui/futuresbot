@@ -41,6 +41,11 @@ os.environ.setdefault("USE_PORTFOLIO_VAR", "1")            # §3.6 cross-symbol 
 os.environ.setdefault("USE_WALK_FORWARD_GATE", "1")        # §3.4 walk-forward calibration gate
 os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "1")     # §3.9 weekly slippage report
 
+# Quarter 2 monitor-only probes (no execution — require cross-venue infra).
+os.environ.setdefault("USE_FUNDING_CARRY_MONITOR", "1")    # §3.8 funding-delta-neutral carry alerts
+os.environ.setdefault("USE_BASIS_TRADE_MONITOR", "1")      # §4.1 quarterly basis-trade alerts
+os.environ.setdefault("USE_LIQUIDATION_CASCADE_MONITOR", "0")  # §3.7 needs Coinglass feed; off by default
+
 try:
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)

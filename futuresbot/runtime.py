@@ -6,6 +6,7 @@ import html
 import json
 import logging
 import math
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -1822,6 +1823,73 @@ class FuturesRuntime:
             log.debug("Portfolio VaR skipped: %s", exc)
             return True
 
+    # ----- Quarter 2 §3.8 / §4.1 monitor-only alpha probes ------------------
+    def _monitor_quarter2_funding_carry(self) -> None:
+        """Scan cached funding rates and emit Telegram alerts when any symbol
+        offers a carry above the threshold. Monitor-only: execution requires
+        simultaneous spot + perp books on different venues (out of scope for
+        this single-venue runtime)."""
+
+        if not self._flag("USE_FUNDING_CARRY_MONITOR"):
+            return
+        try:
+            from .funding_carry import evaluate_carry
+        except Exception:
+            return
+        try:
+            for sym, cached in list(self._funding_cache.items()):
+                try:
+                    _, rate = cached
+                    op = evaluate_carry(funding_8h=float(rate))
+                except Exception:
+                    continue
+                if op.action == "HOLD":
+                    continue
+                key = f"q2_funding_carry::{sym}::{op.action}"
+                self._notify_once(
+                    key,
+                    f"[Q2 §3.8] <b>{sym}</b> funding-carry opportunity\n"
+                    f"action={op.action} net_ann={op.net_annualised_carry * 100:.2f}% "
+                    f"funding_8h={op.eight_hour_funding * 100:.4f}%",
+                    cooldown_seconds=6 * 3600,
+                )
+        except Exception as exc:
+            log.debug("Funding-carry monitor skipped: %s", exc)
+
+    def _monitor_quarter2_basis(self) -> None:
+        """Emit basis-trade alerts when a quarterly future price is provided
+        via env override. No-op unless Q2_BASIS_SPOT_PRICE, Q2_BASIS_FUTURE_PRICE
+        and Q2_BASIS_DTE are all set (operator-driven probe)."""
+
+        if not self._flag("USE_BASIS_TRADE_MONITOR"):
+            return
+        try:
+            spot = float(os.environ.get("Q2_BASIS_SPOT_PRICE") or 0.0)
+            future = float(os.environ.get("Q2_BASIS_FUTURE_PRICE") or 0.0)
+            dte = float(os.environ.get("Q2_BASIS_DTE") or 0.0)
+        except Exception:
+            return
+        if spot <= 0 or future <= 0 or dte <= 0:
+            return
+        try:
+            from .basis_trade import evaluate_basis
+        except Exception:
+            return
+        try:
+            op = evaluate_basis(spot_price=spot, future_price=future, days_to_expiry=dte)
+            if op.action == "HOLD":
+                return
+            key = f"q2_basis::{op.action}::{int(dte)}"
+            self._notify_once(
+                key,
+                f"[Q2 §4.1] basis-trade opportunity\n"
+                f"action={op.action} ann_basis={op.annualised_basis * 100:.2f}% "
+                f"raw={op.raw_basis_pct * 100:.3f}% dte={op.days_to_expiry:.1f}",
+                cooldown_seconds=6 * 3600,
+            )
+        except Exception as exc:
+            log.debug("Basis-trade monitor skipped: %s", exc)
+
     def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
         side_name = str(signal_payload["side"])
         side = 1 if side_name == "LONG" else 3
@@ -2035,6 +2103,8 @@ class FuturesRuntime:
                     self._enter_trade(signal)
                 self._log_cycle_summary(price=current_price, signal=signal)
                 self._send_heartbeat(price=current_price, signal=signal)
+                self._monitor_quarter2_funding_carry()
+                self._monitor_quarter2_basis()
             except Exception as exc:
                 log.exception("Futures runtime loop failed: %s", exc)
                 self._record_activity(f"Runtime error: {type(exc).__name__}")
