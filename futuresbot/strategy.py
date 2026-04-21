@@ -62,6 +62,53 @@ def _leverage_for_signal(certainty: float, sl_distance_pct: float, config: Strat
     return max(config.leverage_min, min(config.leverage_max, int(round(target)), risk_cap))
 
 
+def _passes_cost_budget_gate(
+    *,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    leverage: int,
+) -> bool:
+    """Sprint 1 §2.2 — cost-adjusted reward/risk gate.
+
+    Off by default. When ``USE_COST_BUDGET_RR=1`` is set, require that
+    ``tp_distance / (sl_distance + expected_cost)`` clears ``MIN_NET_RR``
+    (default 1.8). Expected cost uses a conservative funding + slippage
+    estimate scaled by leverage.
+
+    Never raises — any import or arithmetic failure falls open (legacy gate
+    behaviour) so live trading is not interrupted by a Sprint 1 plumbing bug.
+    """
+
+    if os.environ.get("USE_COST_BUDGET_RR", "0").strip() not in {"1", "true", "yes", "y", "on"}:
+        return True
+    try:
+        from futuresbot.cost_budget import compute_cost_bps, passes_cost_adjusted_rr
+
+        if entry_price <= 0:
+            return True
+        tp_distance_pct = abs(tp_price - entry_price) / entry_price
+        sl_distance_pct = abs(entry_price - sl_price) / entry_price
+        hold_hours = _env_float("COST_BUDGET_HOLD_HOURS", 4.0)
+        funding_rate = _env_float("COST_BUDGET_FUNDING_RATE_8H", 0.0001)
+        taker_fee = _env_float("COST_BUDGET_TAKER_FEE_RATE", 0.0004)
+        cost = compute_cost_bps(
+            leverage=leverage,
+            hold_hours=hold_hours,
+            funding_rate_8h=funding_rate,
+            taker_fee_rate=taker_fee,
+        )
+        min_rr = _env_float("MIN_NET_RR", 1.8)
+        return passes_cost_adjusted_rr(
+            tp_distance_pct=tp_distance_pct,
+            sl_distance_pct=sl_distance_pct,
+            cost_bps=cost.total_bps,
+            min_rr=min_rr,
+        )
+    except Exception:
+        return True
+
+
 def _build_signal(
     *,
     side: str,
@@ -77,6 +124,13 @@ def _build_signal(
     certainty = _confidence(score, config.min_confidence_score)
     leverage = _leverage_for_signal(certainty, sl_distance_pct, config)
     if leverage is None:
+        return None
+    if not _passes_cost_budget_gate(
+        entry_price=entry_price,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        leverage=leverage,
+    ):
         return None
     return FuturesSignal(
         symbol=config.symbol,

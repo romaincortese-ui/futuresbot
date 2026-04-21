@@ -1047,6 +1047,231 @@ class FuturesRuntime:
             return None
         return best[1].to_dict()
 
+    # ------------------------------------------------------------------
+    # Sprint 1 helpers — all no-ops unless the matching env flag is set.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _flag(name: str) -> bool:
+        import os
+
+        return os.environ.get(name, "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        import os
+
+        try:
+            raw = os.environ.get(name)
+            if raw is None or raw.strip() == "":
+                return default
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    def _apply_session_leverage_cap(self, leverage: int) -> int:
+        """§2.8 — clamp leverage by current UTC session. No-op when flag off."""
+
+        if not self._flag("USE_SESSION_LEVERAGE"):
+            return leverage
+        try:
+            from futuresbot.session_leverage import session_policy
+
+            hour = datetime.now(timezone.utc).hour
+            full_cap = int(self._env_float("SESSION_FULL_LEVERAGE_CAP", self.config.leverage_max))
+            asia_cap = int(self._env_float("SESSION_ASIA_LEVERAGE_CAP", 5))
+            policy = session_policy(
+                hour,
+                full_leverage_cap=full_cap,
+                asia_leverage_cap=asia_cap,
+            )
+            capped = min(leverage, policy.leverage_cap)
+            if capped != leverage:
+                log.info(
+                    "Session %s capped leverage %d -> %d", policy.session, leverage, capped
+                )
+            return max(1, capped)
+        except Exception as exc:
+            log.debug("Session leverage cap skipped: %s", exc)
+            return leverage
+
+    def _drawdown_size_multiplier(self) -> float:
+        """§2.7 — return size multiplier in [0,1] from portfolio drawdown state."""
+
+        if not self._flag("USE_DRAWDOWN_KILL"):
+            return 1.0
+        try:
+            from futuresbot.drawdown_kill import compute_drawdown_state
+
+            curve = self._build_equity_curve()
+            if not curve:
+                return 1.0
+            state = compute_drawdown_state(
+                curve,
+                soft_pct=self._env_float("DRAWDOWN_SOFT_PCT", 0.08),
+                hard_pct=self._env_float("DRAWDOWN_HALT_PCT", 0.15),
+            )
+            if state.label == "HALT":
+                if not self._paused:
+                    self._paused = True
+                    self._notify_once(
+                        "futures_dd_halt",
+                        f"⛔ <b>Futures Drawdown HALT</b> [{self._mode_label()}]\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"90d DD {state.dd_90d:.1%} exceeded halt threshold. New entries paused.",
+                    )
+                return 0.0
+            if state.label == "THROTTLE":
+                self._notify_once(
+                    "futures_dd_throttle",
+                    f"⚠️ <b>Futures Drawdown THROTTLE</b> [{self._mode_label()}]\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"30d DD {state.dd_30d:.1%} — position sizes halved.",
+                )
+            return state.size_multiplier
+        except Exception as exc:
+            log.debug("Drawdown kill helper skipped: %s", exc)
+            return 1.0
+
+    def _build_equity_curve(self) -> list[tuple[float, float]]:
+        """Reconstruct a cumulative-equity timeseries from closed trades.
+
+        Starting NAV = ``margin_budget_usdt``; each closed trade adds its
+        realised P&L. Returns ``[(unix_ts, nav_usdt), ...]`` sorted ascending.
+        """
+
+        baseline = float(self.config.margin_budget_usdt)
+        if baseline <= 0 or not self.trade_history:
+            return []
+        points: list[tuple[float, float]] = []
+        running = baseline
+        for trade in self.trade_history:
+            pnl = 0.0
+            for key in ("pnl_usdt", "pnl", "realized_pnl"):
+                raw = trade.get(key)
+                if raw is None:
+                    continue
+                try:
+                    pnl = float(raw)
+                    break
+                except (TypeError, ValueError):
+                    continue
+            ts_raw = trade.get("closed_at") or trade.get("exit_time") or trade.get("timestamp")
+            ts_value: float | None = None
+            if isinstance(ts_raw, (int, float)):
+                ts_value = float(ts_raw)
+            elif isinstance(ts_raw, str) and ts_raw:
+                try:
+                    ts_value = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    ts_value = None
+            if ts_value is None:
+                continue
+            running += pnl
+            points.append((ts_value, running))
+        points.sort(key=lambda pair: pair[0])
+        return points
+
+    def _apply_nav_risk_sizing(
+        self,
+        *,
+        entry_price: float,
+        sl_price: float,
+        contract_size: float,
+        available_margin: float,
+        size_multiplier: float,
+    ) -> tuple[int, int] | None:
+        """§2.1 — NAV-anchored sizing. Returns ``(contracts, leverage)`` or None.
+
+        No-op (returns None → caller uses legacy path) when flag is off or
+        inputs are unusable.
+        """
+
+        if not self._flag("USE_NAV_RISK_SIZING"):
+            return None
+        try:
+            from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
+
+            nav = float(self.config.margin_budget_usdt)
+            risk_pct = self._env_float("NAV_RISK_PCT", 0.01) * max(0.0, size_multiplier)
+            lev_min = int(self._env_float("NAV_LEVERAGE_MIN", 5))
+            lev_max = int(self._env_float("NAV_LEVERAGE_MAX", 10))
+            result = compute_nav_risk_sizing(
+                nav_usdt=nav,
+                entry_price=entry_price,
+                sl_price=sl_price,
+                contract_size=contract_size,
+                risk_pct=risk_pct,
+                leverage_min=lev_min,
+                leverage_max=lev_max,
+                available_margin_usdt=available_margin,
+            )
+            if result is None:
+                return None
+            return result.qty_contracts, result.applied_leverage
+        except Exception as exc:
+            log.debug("NAV risk sizing helper skipped: %s", exc)
+            return None
+
+    def _liq_buffer_force_close(self, position: FuturesPosition, current_price: float) -> bool:
+        """§2.5 — force-close when distance-to-liquidation < threshold ATRs.
+
+        Returns True if the position was closed. No-op when flag is off or the
+        position model does not expose a liquidation price.
+        """
+
+        if not self._flag("USE_LIQ_BUFFER_GUARD"):
+            return False
+        liq_price = getattr(position, "liq_price", None)
+        if liq_price is None:
+            liq_price = getattr(position, "liquidation_price", None)
+        try:
+            liq_value = float(liq_price) if liq_price is not None else 0.0
+        except (TypeError, ValueError):
+            liq_value = 0.0
+        if liq_value <= 0:
+            # Approximate from isolated-margin formula: ≈ entry × (1 − 1/lev) for long,
+            # entry × (1 + 1/lev) for short. Conservative — treats maintenance-margin
+            # buffer as zero.
+            if position.leverage <= 0:
+                return False
+            if position.side == "LONG":
+                liq_value = position.entry_price * (1.0 - 1.0 / position.leverage)
+            else:
+                liq_value = position.entry_price * (1.0 + 1.0 / position.leverage)
+        atr = self._env_float(f"FUTURES_{position.symbol.replace('_', '')}_ATR", 0.0)
+        if atr <= 0:
+            # Fall back to a simple percent buffer: if price within X% of liq, close.
+            pct_buffer = self._env_float("LIQ_BUFFER_PCT", 0.005)
+            distance_pct = abs(current_price - liq_value) / current_price if current_price > 0 else 0.0
+            if distance_pct < pct_buffer:
+                self._force_close_position(reason="LIQ_BUFFER", symbol=position.symbol)
+                return True
+            return False
+        try:
+            from futuresbot.liq_buffer import should_force_close
+
+            threshold = self._env_float("LIQ_BUFFER_ATR_THRESHOLD", 2.0)
+            check = should_force_close(
+                entry_price=position.entry_price,
+                liq_price=liq_value,
+                current_price=current_price,
+                atr=atr,
+                side=position.side,
+                threshold_atr=threshold,
+            )
+            if check.force_close:
+                log.warning(
+                    "Liq-buffer force-close %s: distance %.2f ATR < %.2f",
+                    position.symbol,
+                    check.distance_atr,
+                    threshold,
+                )
+                self._force_close_position(reason="LIQ_BUFFER", symbol=position.symbol)
+                return True
+        except Exception as exc:
+            log.debug("Liq buffer check skipped for %s: %s", position.symbol, exc)
+        return False
+
     def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
         side_name = str(signal_payload["side"])
         side = 1 if side_name == "LONG" else 3
@@ -1059,7 +1284,29 @@ class FuturesRuntime:
         contract = self.client.get_contract_detail(symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         margin_budget = scoped.margin_budget_usdt
-        contracts = int((margin_budget * leverage / entry_price) / contract_size)
+        # Sprint 1 §2.8 — session-aligned leverage cap (no-op when flag off).
+        leverage = self._apply_session_leverage_cap(leverage)
+        # Sprint 1 §2.7 — portfolio drawdown kill (returns size_multiplier in [0,1]).
+        size_multiplier = self._drawdown_size_multiplier()
+        if size_multiplier <= 0:
+            log.info("Futures signal skipped for %s: drawdown HALT gate active", symbol)
+            return False
+        # Sprint 1 §2.1 — NAV-anchored sizing. Replaces the legacy
+        # (margin_budget × leverage / price) formula when USE_NAV_RISK_SIZING=1.
+        sl_price_for_sizing = float(signal_payload.get("sl_price") or 0.0)
+        nav_sized = self._apply_nav_risk_sizing(
+            entry_price=entry_price,
+            sl_price=sl_price_for_sizing,
+            contract_size=contract_size,
+            available_margin=margin_budget,
+            size_multiplier=size_multiplier,
+        )
+        if nav_sized is not None:
+            contracts, leverage = nav_sized
+        else:
+            contracts = int((margin_budget * leverage / entry_price) / contract_size)
+            if size_multiplier < 1.0:
+                contracts = max(0, int(contracts * size_multiplier))
         min_vol = int(float(contract.get("minVol", 1) or 1))
         if contracts < min_vol:
             log.info("Futures signal skipped: contracts below min volume")
@@ -1178,6 +1425,9 @@ class FuturesRuntime:
                             pos_price = current_price
                     except Exception:
                         pos_price = current_price
+                    # Sprint 1 §2.5 — pre-liquidation force-close. No-op when flag off.
+                    if self._liq_buffer_force_close(position, pos_price):
+                        continue
                     self._hourly_exit(position, pos_price)
                 # Attempt new entries for any remaining slots (highest-score signal wins
                 # each cycle; bucket / concurrency / session / funding gates enforced inside).

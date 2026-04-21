@@ -211,7 +211,7 @@ class FuturesConfig:
         hourly_check_seconds = env_int("FUTURES_HOURLY_CHECK_SECONDS", 300)
         primary_symbol = env_str("FUTURES_SYMBOL", "BTC_USDT").upper()
         symbols = parse_symbol_list(env_str("FUTURES_SYMBOLS", ""), primary_symbol)
-        return cls(
+        instance = cls(
             api_key=env_str("MEXC_API_KEY", ""),
             api_secret=env_str("MEXC_API_SECRET", ""),
             telegram_token=env_str("FUTURES_TELEGRAM_TOKEN", env_str("TELEGRAM_TOKEN", "")),
@@ -266,6 +266,24 @@ class FuturesConfig:
             open_type=env_int("FUTURES_OPEN_TYPE", 1),
             position_mode=env_int("FUTURES_POSITION_MODE", 2),
         )
+        # Sprint 1 — §2.4 strict recv_window. Opt-in via USE_STRICT_RECV_WINDOW=1
+        # clamps recv_window_seconds to the institutional-standard 5s.
+        if env_bool("USE_STRICT_RECV_WINDOW", False):
+            strict_cap = env_int("STRICT_RECV_WINDOW_SECONDS", 5)
+            if strict_cap > 0:
+                instance = dataclasses.replace(
+                    instance, recv_window_seconds=min(instance.recv_window_seconds, strict_cap)
+                )
+        # Sprint 1 — §2.6 tight hard-loss cap. Opt-in via USE_HARD_LOSS_CAP_TIGHT=1
+        # clamps hard_loss_cap_pct to HARD_LOSS_CAP_TIGHT_PCT (default 0.40) so a
+        # single trade cannot lose more than that fraction of posted margin.
+        if env_bool("USE_HARD_LOSS_CAP_TIGHT", False):
+            tight_cap = env_float("HARD_LOSS_CAP_TIGHT_PCT", 0.40)
+            if tight_cap > 0:
+                instance = dataclasses.replace(
+                    instance, hard_loss_cap_pct=min(instance.hard_loss_cap_pct, tight_cap)
+                )
+        return instance
 
     def for_symbol(self, symbol: str) -> "FuturesConfig":
         """Return a copy of this config scoped to ``symbol`` with per-symbol env overrides.
