@@ -1,0 +1,57 @@
+{
+  "initial_balance_per_symbol": 300.0,
+  "symbols": [
+    "BTC_USDT",
+    "ETH_USDT",
+    "PEPE_USDT",
+    "TAO_USDT",
+    "SILVER_USDT"
+  ],
+  "total_trades": 28,
+  "total_pnl": 34.64862264,
+  "portfolio_win_rate": 0.4643,
+  "portfolio_profit_factor_approx": 159.3517,
+  "worst_symbol_max_drawdown": -0.036894,
+  "per_symbol": {
+    "BTC_USDT": {
+      "total_trades": 3,
+      "total_pnl": -0.2188080000000001,
+      "win_rate": 0.3333333333333333,
+      "profit_factor": 0.9619201146280985,
+      "max_drawdown": -0.025963738521244558,
+      "ending_balance": 299.781192
+    },
+    "ETH_USDT": {
+      "total_trades": 6,
+      "total_pnl": 8.44127944,
+      "win_rate": 0.5,
+      "profit_factor": 2.0805311899813264,
+      "max_drawdown": -0.02196235558226641,
+      "ending_balance": 308.44127944
+    },
+    "PEPE_USDT": {
+      "total_trades": 8,
+      "total_pnl": 4.981804100000001,
+      "win_rate": 0.375,
+      "profit_factor": 1.4062354141012465,
+      "max_drawdown": -0.036894365160566364,
+      "ending_balance": 304.9818041
+    },
+    "TAO_USDT": {
+      "total_trades": 11,
+      "total_pnl": 21.444347099999998,
+      "win_rate": 0.5454545454545454,
+      "profit_factor": 2.3372900709719544,
+      "max_drawdown": -0.0235790837299765,
+      "ending_balance": 321.4443471
+    },
+    "SILVER_USDT": {
+      "total_trades": 0,
+      "total_pnl": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown": 0.0,
+      "ending_balance": 300.0
+    }
+  }
+}

@@ -48,12 +48,17 @@ os.environ.setdefault("USE_LIQUIDATION_CASCADE_MONITOR", "0")  # §3.7 needs Coi
 
 # ---------------------------------------------------------------------------
 # Production symbol list. Gold is handled by the dedicated Gold-bot sleeve, so
-# XAUT is intentionally excluded here. PEPE is excluded until the backtest
-# engine fixes sub-cent price precision (180d sim produced bogus -800% PnL on
-# PEPE trades because prices were stored as 0.0). Operators can override with
-# the FUTURES_SYMBOLS env var on Railway.
+# XAUT is intentionally excluded here. PEPE is back in the book now that the
+# backtest engine's sub-cent price precision bug is fixed (round(px, 2) was
+# flattening PEPE's ~0.00002 prices to 0.0 in the signal + journal).
+# Operators can override with the FUTURES_SYMBOLS env var on Railway.
 # ---------------------------------------------------------------------------
-os.environ.setdefault("FUTURES_SYMBOLS", "BTC_USDT,ETH_USDT,TAO_USDT,SILVER_USDT")
+os.environ.setdefault("FUTURES_SYMBOLS", "BTC_USDT,ETH_USDT,PEPE_USDT,TAO_USDT,SILVER_USDT")
+
+# Per-symbol leverage caps. TAO printed the book's worst single-symbol MDD
+# (-20.9% on 180d) so we cap its leverage ceiling at 8x while leaving the
+# rest of the book at the 10x default.
+os.environ.setdefault("FUTURES_TAOUSDT_LEVERAGE_MAX", "8")
 
 try:
     sys.stdout.reconfigure(line_buffering=True)

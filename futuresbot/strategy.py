@@ -48,6 +48,30 @@ def _safe_float(value: float | int | None) -> float:
     return float(value)
 
 
+def _round_price_precision(price: float) -> float:
+    """Round prices to a scale-appropriate precision.
+
+    Fixes sub-cent-coin pricing (PEPE, SHIB, etc.): rounding to 2 decimals
+    flattens them to 0.00 and silently corrupts every downstream calc that
+    reads ``signal.entry_price`` / ``tp_price`` / ``sl_price``.
+    """
+
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return 0.0
+    ax = abs(px)
+    if ax <= 0:
+        return 0.0
+    if ax < 0.001:
+        return round(px, 10)
+    if ax < 0.1:
+        return round(px, 6)
+    if ax < 100:
+        return round(px, 4)
+    return round(px, 2)
+
+
 def _confidence(score: float, threshold: float) -> float:
     return max(0.35, min(0.99, 0.35 + max(0.0, score - threshold) / 40.0))
 
@@ -137,9 +161,9 @@ def _build_signal(
         side=side,
         score=round(score, 2),
         certainty=round(certainty, 4),
-        entry_price=round(entry_price, 2),
-        tp_price=round(tp_price, 2),
-        sl_price=round(sl_price, 2),
+        entry_price=_round_price_precision(entry_price),
+        tp_price=_round_price_precision(tp_price),
+        sl_price=_round_price_precision(sl_price),
         leverage=leverage,
         entry_signal=entry_signal,
         metadata={
