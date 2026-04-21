@@ -1,0 +1,39 @@
+{
+  "initial_balance_per_symbol": 300.0,
+  "symbols": [
+    "BTC_USDT",
+    "ETH_USDT",
+    "TAO_USDT"
+  ],
+  "total_trades": 9,
+  "total_pnl": 146.43043627,
+  "portfolio_win_rate": 0.6667,
+  "portfolio_profit_factor_approx": 4.3371,
+  "worst_symbol_max_drawdown": -0.247588,
+  "per_symbol": {
+    "BTC_USDT": {
+      "total_trades": 5,
+      "total_pnl": 141.07219743,
+      "win_rate": 0.8,
+      "profit_factor": 6.997074023975656,
+      "max_drawdown": -0.07617651770307945,
+      "ending_balance": 441.07219743
+    },
+    "ETH_USDT": {
+      "total_trades": 3,
+      "total_pnl": 49.23737848,
+      "win_rate": 0.6666666666666666,
+      "profit_factor": 1.9635961243500097,
+      "max_drawdown": -0.24758788115226266,
+      "ending_balance": 349.23737848
+    },
+    "TAO_USDT": {
+      "total_trades": 1,
+      "total_pnl": -43.87913964,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown": -0.14890644429047817,
+      "ending_balance": 256.12086036
+    }
+  }
+}
