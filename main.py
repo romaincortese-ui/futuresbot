@@ -26,6 +26,21 @@ os.environ.setdefault("USE_FUNDING_AWARE_ENTRY", "1")      # §2.3 block entries
 os.environ.setdefault("USE_FUNDING_STOP_MULT", "1")        # §2.9 tighten crowded / widen counter stops
 os.environ.setdefault("USE_REALISTIC_BACKTEST", "1")       # §3.1 funding + liquidation + leverage slippage in backtest
 
+# ---------------------------------------------------------------------------
+# Sprint 3 (FUTURES_BOT_INVESTMENT_REVIEW.md §7) — mixed defaults.
+# §3.3 regime gate is ON (post-filter on coil-breakout signals). The
+# remaining modules (mean_reversion strategy, maker_ladder execution,
+# portfolio_var, walk_forward calibration gate, slippage_attribution) ship
+# as tested pure modules; live wiring lands in a follow-up. They default
+# OFF so the library remains behaviour-compatible.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("USE_REGIME_CLASSIFIER", "1")        # §3.3 regime post-filter on entries
+os.environ.setdefault("USE_MEAN_REVERSION", "0")           # §3.2 mean-reversion in CHOP (wiring pending)
+os.environ.setdefault("USE_MAKER_LADDER", "0")             # §3.5 maker-first execution (wiring pending)
+os.environ.setdefault("USE_PORTFOLIO_VAR", "0")            # §3.6 cross-symbol VaR cap (wiring pending)
+os.environ.setdefault("USE_WALK_FORWARD_GATE", "0")        # §3.4 walk-forward calibration gate (wiring pending)
+os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "0")     # §3.9 weekly slippage report (wiring pending)
+
 try:
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)

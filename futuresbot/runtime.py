@@ -1031,6 +1031,19 @@ class FuturesRuntime:
             if calibrated is None:
                 log.info("Signal scan: %s rejected by calibration/threshold", sym)
                 continue
+            # Sprint 3 §3.3 — regime gate. When USE_REGIME_CLASSIFIER=1, reject
+            # signals whose side is blocked by the current portfolio regime
+            # (e.g. longs in TREND_DOWN, anything in VOL_SHOCK).
+            regime = self._classify_regime(frame)
+            if regime is not None and not self._regime_allows(regime, calibrated.side, "coil_breakout"):
+                log.info(
+                    "Signal scan: %s %s blocked by regime %s (%s)",
+                    sym,
+                    calibrated.side,
+                    regime.label,
+                    regime.reason,
+                )
+                continue
             log.info(
                 "Signal scan accepted for %s: side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%%",
                 sym,
@@ -1375,6 +1388,77 @@ class FuturesRuntime:
         except Exception as exc:
             log.debug("Funding stop multiplier skipped: %s", exc)
             return sl_price
+
+    # ------------------------------------------------------------------
+    # Sprint 3 helpers — regime classifier + slippage attribution.
+    # All no-ops unless the matching env flag is set.
+    # ------------------------------------------------------------------
+    def _classify_regime(self, frame_15m: "pd.DataFrame | None") -> Any | None:
+        """§3.3 — classify current regime from a 15m OHLCV frame.
+
+        Returns a ``RegimeClassification`` or None (flag off / insufficient
+        data). Callers must tolerate None.
+        """
+
+        if not self._flag("USE_REGIME_CLASSIFIER"):
+            return None
+        if frame_15m is None or len(frame_15m) < 260:
+            return None
+        try:
+            from futuresbot.indicators import calc_adx, resample_ohlcv
+            from futuresbot.regime_classifier import classify_regime
+
+            frame_1h = resample_ohlcv(frame_15m, "1h")
+            if len(frame_1h) < 30:
+                return None
+            close = frame_1h["close"].astype(float)
+            # 20d slope from daily close (240 1h bars ≈ 10d; use what we have).
+            lookback = min(len(close) - 1, 480)  # up to 20d of 1h bars
+            slope = (float(close.iloc[-1]) / float(close.iloc[-lookback - 1])) - 1.0
+            adx_series = calc_adx(frame_1h, 14)
+            adx = float(adx_series.iloc[-1])
+            # Realised-vol percentile: rolling 20-bar std of log returns vs
+            # its own trailing distribution.
+            import numpy as np
+
+            log_ret = np.log(close / close.shift(1)).dropna()
+            if len(log_ret) < 40:
+                return None
+            rv = log_ret.rolling(20).std().dropna()
+            current = float(rv.iloc[-1])
+            pct = float((rv <= current).mean() * 100.0)
+            vol_shock_pct = self._env_float("REGIME_VOL_SHOCK_PCT", 90.0)
+            chop_adx = self._env_float("REGIME_CHOP_ADX_MAX", 18.0)
+            chop_vol_pct = self._env_float("REGIME_CHOP_VOL_PCT_MAX", 30.0)
+            trend_slope = self._env_float("REGIME_TREND_SLOPE_ABS", 0.02)
+            return classify_regime(
+                slope_20d=slope,
+                adx_1h=adx,
+                realised_vol_pct=pct,
+                trend_slope_abs_threshold=trend_slope,
+                chop_adx_max=chop_adx,
+                chop_vol_pct_max=chop_vol_pct,
+                vol_shock_pct_min=vol_shock_pct,
+            )
+        except Exception as exc:
+            log.debug("Regime classifier skipped: %s", exc)
+            return None
+
+    def _regime_allows(self, classification: Any, side: str, strategy: str = "coil_breakout") -> bool:
+        """Return True if the signal passes the regime filter.
+
+        When ``classification`` is None (flag off or insufficient data) we
+        always pass — Sprint 3 behaviour is opt-in.
+        """
+
+        if classification is None:
+            return True
+        try:
+            from futuresbot.regime_classifier import signal_allowed
+
+            return signal_allowed(classification, side=side, strategy=strategy)
+        except Exception:
+            return True
 
     def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
         side_name = str(signal_payload["side"])
