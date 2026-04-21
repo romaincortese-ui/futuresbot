@@ -1,0 +1,7 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python run_daily_calibration.py"
+requiredMountPath = "/data"
+restartPolicyType = "NEVER"

@@ -19,6 +19,13 @@ os.environ.setdefault("USE_HARD_LOSS_CAP_TIGHT", "1")      # §2.6 hard_loss_cap
 os.environ.setdefault("USE_DRAWDOWN_KILL", "1")            # §2.7 30d/90d drawdown kill
 os.environ.setdefault("USE_SESSION_LEVERAGE", "1")         # §2.8 session-aligned leverage
 
+# ---------------------------------------------------------------------------
+# Sprint 2 (FUTURES_BOT_INVESTMENT_REVIEW.md §7) — default ON for prod.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("USE_FUNDING_AWARE_ENTRY", "1")      # §2.3 block entries 2min pre-funding unless receiving
+os.environ.setdefault("USE_FUNDING_STOP_MULT", "1")        # §2.9 tighten crowded / widen counter stops
+os.environ.setdefault("USE_REALISTIC_BACKTEST", "1")       # §3.1 funding + liquidation + leverage slippage in backtest
+
 try:
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)

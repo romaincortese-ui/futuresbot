@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,16 @@ from futuresbot.config import FuturesBacktestConfig
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.strategy import score_btc_futures_setup
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass(slots=True)
@@ -168,13 +179,66 @@ class FuturesBacktestEngine:
 			metadata=dict(signal.metadata),
 		)
 
-	def _close_position(self, position: FuturesPosition, exit_time: pd.Timestamp, exit_price: float, reason: str) -> dict[str, Any]:
+	def _close_position(
+		self,
+		position: FuturesPosition,
+		exit_time: pd.Timestamp,
+		exit_price: float,
+		reason: str,
+		*,
+		liquidated: bool = False,
+		liq_price: float | None = None,
+	) -> dict[str, Any]:
 		direction = 1.0 if position.side == "LONG" else -1.0
 		entry_notional = position.base_qty * position.entry_price
-		exit_notional = position.base_qty * exit_price
-		gross_pnl = position.base_qty * (exit_price - position.entry_price) * direction
-		fees = (entry_notional + exit_notional) * self.config.taker_fee_rate
-		pnl = gross_pnl - fees
+		# Sprint 2 §3.1 — realistic close (slippage + funding + liquidation) when
+		# USE_REALISTIC_BACKTEST=1. Falls back to the legacy fee-only model when off
+		# so backward comparisons remain apples-to-apples.
+		if os.environ.get("USE_REALISTIC_BACKTEST", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
+			try:
+				from futuresbot.realistic_costs import simulate_position_close
+
+				funding_rate = _env_float("REALISTIC_FUNDING_RATE_8H", 0.0001)
+				slip_per_lev = _env_float("REALISTIC_SLIPPAGE_BPS_PER_LEV", 0.5)
+				exit_mult = _env_float("REALISTIC_EXIT_SLIP_MULT", 1.5)
+				liq_slip = _env_float("REALISTIC_LIQ_SLIPPAGE", 0.005)
+				result = simulate_position_close(
+					side=position.side,
+					entry_price=position.entry_price,
+					exit_price=exit_price,
+					base_qty=position.base_qty,
+					leverage=position.leverage,
+					open_at=position.opened_at,
+					close_at=exit_time.to_pydatetime(),
+					liquidated=liquidated,
+					liq_price=liq_price,
+					taker_fee_rate=self.config.taker_fee_rate,
+					slip_bps_per_lev=slip_per_lev,
+					exit_slip_mult=exit_mult,
+					funding_rate_8h=funding_rate,
+					liq_extra_slippage=liq_slip,
+				)
+				pnl = result.net_pnl
+				effective_exit = result.effective_exit_price
+				fees = result.fees_usdt
+				funding_usdt = result.funding_usdt
+				slippage_usdt = result.slippage_usdt
+			except Exception:
+				exit_notional = position.base_qty * exit_price
+				gross_pnl = position.base_qty * (exit_price - position.entry_price) * direction
+				fees = (entry_notional + exit_notional) * self.config.taker_fee_rate
+				pnl = gross_pnl - fees
+				effective_exit = exit_price
+				funding_usdt = 0.0
+				slippage_usdt = 0.0
+		else:
+			exit_notional = position.base_qty * exit_price
+			gross_pnl = position.base_qty * (exit_price - position.entry_price) * direction
+			fees = (entry_notional + exit_notional) * self.config.taker_fee_rate
+			pnl = gross_pnl - fees
+			effective_exit = exit_price
+			funding_usdt = 0.0
+			slippage_usdt = 0.0
 		pnl_pct = (pnl / position.margin_usdt * 100.0) if position.margin_usdt > 0 else 0.0
 		return {
 			"symbol": position.symbol,
@@ -183,7 +247,8 @@ class FuturesBacktestEngine:
 			"entry_time": position.opened_at.isoformat(),
 			"exit_time": exit_time.to_pydatetime().isoformat(),
 			"entry_price": round(position.entry_price, 2),
-			"exit_price": round(exit_price, 2),
+			"exit_price": round(effective_exit, 4),
+			"quoted_exit_price": round(exit_price, 2),
 			"contracts": position.contracts,
 			"base_qty": round(position.base_qty, 8),
 			"leverage": position.leverage,
@@ -196,11 +261,38 @@ class FuturesBacktestEngine:
 			"sl_price": round(position.sl_price, 2),
 			"pnl_usdt": round(pnl, 8),
 			"pnl_pct": round(pnl_pct, 4),
+			"fees_usdt": round(float(fees), 8),
+			"funding_usdt": round(float(funding_usdt), 8),
+			"slippage_usdt": round(float(slippage_usdt), 8),
+			"liquidated": bool(liquidated),
 		}
 
 	def _bar_exit(self, position: FuturesPosition, bar: pd.Series) -> tuple[float, str] | None:
 		high = float(bar["high"])
 		low = float(bar["low"])
+		# Sprint 2 §3.1 — liquidation check fires before TP/SL when flag on.
+		if os.environ.get("USE_REALISTIC_BACKTEST", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
+			try:
+				from futuresbot.realistic_costs import check_liquidation_breach, compute_liq_price
+
+				mm_rate = _env_float("REALISTIC_MAINTENANCE_MARGIN_RATE", 0.005)
+				liq = compute_liq_price(
+					entry_price=position.entry_price,
+					leverage=position.leverage,
+					side=position.side,
+					maintenance_margin_rate=mm_rate,
+				)
+				if liq is not None and check_liquidation_breach(
+					liq_price=liq.price,
+					side=position.side,
+					bar_high=high,
+					bar_low=low,
+				):
+					# Sentinel signals a liquidation fill to run(); the fill price
+					# (slippage-adjusted) is computed inside _close_position.
+					return liq.price, "LIQUIDATED"
+			except Exception:
+				pass
 		if position.side == "LONG":
 			if low <= position.sl_price:
 				return position.sl_price, "STOP_LOSS"
@@ -253,7 +345,15 @@ class FuturesBacktestEngine:
 				bar_exit = self._bar_exit(state.open_position, bar)
 				if bar_exit is not None:
 					exit_price, reason = bar_exit
-					trade = self._close_position(state.open_position, timestamp + step, exit_price, reason)
+					liquidated = reason == "LIQUIDATED"
+					trade = self._close_position(
+						state.open_position,
+						timestamp + step,
+						exit_price,
+						reason,
+						liquidated=liquidated,
+						liq_price=exit_price if liquidated else None,
+					)
 					state.balance += float(trade["pnl_usdt"])
 					trades.append(trade)
 					state.open_position = None

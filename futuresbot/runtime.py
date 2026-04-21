@@ -1272,6 +1272,110 @@ class FuturesRuntime:
             log.debug("Liq buffer check skipped for %s: %s", position.symbol, exc)
         return False
 
+    def _current_funding_rate(self, scoped: "FuturesConfig") -> float:
+        """Return the cached 8h funding rate for ``scoped.symbol`` or 0.0.
+
+        Shares the ``_funding_cache`` populated by ``_funding_gate_ok`` so the
+        settlement-window gate and stop-multiplier logic do not trigger extra
+        REST calls. A fresh fetch is attempted only if nothing is cached.
+        """
+
+        sym = scoped.symbol
+        now_ts = time.time()
+        cached = self._funding_cache.get(sym)
+        if cached is not None and now_ts - cached[0] < 600.0:
+            return float(cached[1])
+        rate = 0.0
+        fetcher = getattr(self.client, "get_funding_rate", None)
+        if callable(fetcher):
+            try:
+                payload = fetcher(sym)
+            except Exception as exc:
+                log.debug("Futures funding rate fetch failed for %s: %s", sym, exc)
+                payload = None
+            if isinstance(payload, dict):
+                raw = payload.get("fundingRate") or payload.get("funding_rate") or payload.get("rate") or 0.0
+                try:
+                    rate = float(raw)
+                except (TypeError, ValueError):
+                    rate = 0.0
+            elif isinstance(payload, (int, float)):
+                rate = float(payload)
+        self._funding_cache[sym] = (now_ts, rate)
+        return rate
+
+    def _funding_entry_ok(self, scoped: "FuturesConfig", side: str) -> bool:
+        """§2.3 — block entries in the pre-funding window unless we *receive*."""
+
+        if not self._flag("USE_FUNDING_AWARE_ENTRY"):
+            return True
+        try:
+            from futuresbot.funding_policy import evaluate_entry
+
+            rate = self._current_funding_rate(scoped)
+            block_window = int(self._env_float("FUNDING_BLOCK_WINDOW_SECONDS", 120))
+            decision = evaluate_entry(
+                side=side,
+                funding_rate_8h=rate,
+                now=datetime.now(timezone.utc),
+                block_window_seconds=block_window,
+            )
+            if not decision.allowed:
+                log.info(
+                    "Skipping %s %s: %s (rate=%.5f, %ss to settlement)",
+                    scoped.symbol,
+                    side,
+                    decision.reason,
+                    rate,
+                    decision.seconds_to_settlement,
+                )
+            return decision.allowed
+        except Exception as exc:
+            log.debug("Funding entry gate skipped for %s: %s", scoped.symbol, exc)
+            return True
+
+    def _adjust_sl_for_funding(
+        self,
+        *,
+        scoped: "FuturesConfig",
+        side: str,
+        entry_price: float,
+        sl_price: float,
+    ) -> float:
+        """§2.9 — scale the stop-loss distance by the funding-regime multiplier."""
+
+        if not self._flag("USE_FUNDING_STOP_MULT"):
+            return sl_price
+        try:
+            from futuresbot.funding_policy import stop_multiplier_for_funding
+
+            rate = self._current_funding_rate(scoped)
+            threshold = self._env_float("FUNDING_HIGH_THRESHOLD", 0.0006)
+            crowded = self._env_float("FUNDING_CROWDED_STOP_MULT", 0.7)
+            counter = self._env_float("FUNDING_COUNTER_STOP_MULT", 1.2)
+            policy = stop_multiplier_for_funding(
+                side=side,
+                funding_rate_8h=rate,
+                high_funding_threshold=threshold,
+                crowded_stop_mult=crowded,
+                counter_stop_mult=counter,
+            )
+            if policy.stop_multiplier == 1.0:
+                return sl_price
+            distance = abs(entry_price - sl_price) * policy.stop_multiplier
+            new_sl = entry_price - distance if side.upper() == "LONG" else entry_price + distance
+            log.info(
+                "Funding %s stop mult %.2f: SL %.4f -> %.4f",
+                policy.label,
+                policy.stop_multiplier,
+                sl_price,
+                new_sl,
+            )
+            return new_sl
+        except Exception as exc:
+            log.debug("Funding stop multiplier skipped: %s", exc)
+            return sl_price
+
     def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
         side_name = str(signal_payload["side"])
         side = 1 if side_name == "LONG" else 3
@@ -1281,6 +1385,20 @@ class FuturesRuntime:
         if symbol in self.open_positions:
             return False
         scoped = self._config_for_symbol(symbol)
+        # Sprint 2 §2.3 — pre-funding-settlement gate.
+        if not self._funding_entry_ok(scoped, side_name):
+            return False
+        # Sprint 2 §2.9 — funding-regime stop-loss adjustment. Mutates the
+        # payload so the order submitted to the exchange reflects the new SL.
+        original_sl = float(signal_payload.get("sl_price") or 0.0)
+        adjusted_sl = self._adjust_sl_for_funding(
+            scoped=scoped,
+            side=side_name,
+            entry_price=entry_price,
+            sl_price=original_sl,
+        )
+        if adjusted_sl != original_sl:
+            signal_payload["sl_price"] = adjusted_sl
         contract = self.client.get_contract_detail(symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         margin_budget = scoped.margin_budget_usdt
