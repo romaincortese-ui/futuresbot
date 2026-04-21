@@ -16,7 +16,6 @@ from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClie
 DEFAULT_LIVE_SYMBOLS = (
     "BTC_USDT",
     "ETH_USDT",
-    "XAUT_USDT",
     "PEPE_USDT",
     "TAO_USDT",
     "SILVER_USDT",

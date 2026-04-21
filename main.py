@@ -46,6 +46,13 @@ os.environ.setdefault("USE_FUNDING_CARRY_MONITOR", "1")    # §3.8 funding-delta
 os.environ.setdefault("USE_BASIS_TRADE_MONITOR", "1")      # §4.1 quarterly basis-trade alerts
 os.environ.setdefault("USE_LIQUIDATION_CASCADE_MONITOR", "0")  # §3.7 needs Coinglass feed; off by default
 
+# ---------------------------------------------------------------------------
+# Production symbol list. Gold is handled by the dedicated Gold-bot sleeve, so
+# XAUT is intentionally excluded here. Operators can still override with the
+# FUTURES_SYMBOLS env var on Railway.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("FUTURES_SYMBOLS", "BTC_USDT,ETH_USDT,PEPE_USDT,TAO_USDT,SILVER_USDT")
+
 try:
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
