@@ -58,6 +58,8 @@ class FuturesRuntime:
         self._symbols_validated = False
         # Funding-rate cache: symbol -> (timestamp, rate). Refreshed lazily every hour.
         self._funding_cache: dict[str, tuple[float, float]] = {}
+        # Sprint 3 §3.9 — rolling slippage attribution store (lazy).
+        self._slippage_store: Any | None = None
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -747,6 +749,15 @@ class FuturesRuntime:
             self._record_activity("Calibration loaded")
         else:
             log.info("Ignoring futures calibration from %s: stale or insufficient sample", source or self.config.calibration_file)
+        # Sprint 3 §3.4 — walk-forward stability gate. When enabled, reject
+        # calibration payloads whose OOS PF drops >40% vs IS or fails the
+        # absolute OOS PF floor. Neuters self.calibration -> None so the
+        # strategy falls back to threshold defaults.
+        if valid and self.calibration is not None and self._flag("USE_WALK_FORWARD_GATE"):
+            if not self._walk_forward_gate_passes(self.trade_history):
+                log.info("Calibration rejected by walk-forward gate")
+                self._record_activity("Calibration rejected (walk-forward)")
+                self.calibration = None
 
     def refresh_daily_review(self, *, force: bool = False) -> None:
         now_ts = time.time()
@@ -1018,6 +1029,14 @@ class FuturesRuntime:
                 log.warning("Futures klines fetch failed for %s: %s", sym, exc)
                 continue
             raw_signal = score_btc_futures_setup(frame, scoped)
+            # Sprint 3 §3.2 — mean-reversion fallback. When regime is CHOP (or the
+            # primary coil-breakout scorer returned nothing) and
+            # USE_MEAN_REVERSION=1, attempt a mean-reversion signal via the pure
+            # Bollinger+RSI module. Uses the 1h frame resampled from the 15m feed.
+            if self._flag("USE_MEAN_REVERSION"):
+                mr_signal = self._mean_reversion_candidate(sym, scoped, frame, raw_signal)
+                if mr_signal is not None:
+                    raw_signal = mr_signal
             if raw_signal is None:
                 log.info("Signal scan: no raw setup for %s", sym)
                 continue
@@ -1033,9 +1052,15 @@ class FuturesRuntime:
                 continue
             # Sprint 3 §3.3 — regime gate. When USE_REGIME_CLASSIFIER=1, reject
             # signals whose side is blocked by the current portfolio regime
-            # (e.g. longs in TREND_DOWN, anything in VOL_SHOCK).
+            # (e.g. longs in TREND_DOWN, anything in VOL_SHOCK). Mean-reversion
+            # signals carry a metadata flag that swaps the strategy kind.
             regime = self._classify_regime(frame)
-            if regime is not None and not self._regime_allows(regime, calibrated.side, "coil_breakout"):
+            strategy_kind = (
+                "mean_reversion"
+                if (calibrated.metadata or {}).get("strategy") == "mean_reversion"
+                else "coil_breakout"
+            )
+            if regime is not None and not self._regime_allows(regime, calibrated.side, strategy_kind):
                 log.info(
                     "Signal scan: %s %s blocked by regime %s (%s)",
                     sym,
@@ -1460,6 +1485,343 @@ class FuturesRuntime:
         except Exception:
             return True
 
+    # ----- Sprint 3 §3.2 mean-reversion fallback ----------------------------
+    def _mean_reversion_candidate(
+        self,
+        symbol: str,
+        scoped: "FuturesConfig",
+        frame_15m: "pd.DataFrame",
+        primary: Any,
+    ) -> Any | None:
+        """Return a ``FuturesSignal``-shaped payload for a mean-reversion setup.
+
+        Only fires when the regime classifier flags CHOP. Returns None if the
+        regime isn't CHOP, frames are too short, or no valid MR setup.
+        """
+
+        try:
+            from futuresbot.mean_reversion import score_mean_reversion_setup
+            from futuresbot.indicators import resample_ohlcv
+            from futuresbot.models import FuturesSignal
+
+            regime = self._classify_regime(frame_15m)
+            if regime is None or regime.label != "CHOP":
+                return None
+            frame_1h = resample_ohlcv(frame_15m, "1h")
+            sig = score_mean_reversion_setup(frame_1h)
+            if sig is None:
+                return None
+            # Build a minimal FuturesSignal so downstream calibration /
+            # cost-budget / regime code treats it uniformly with coil-breakout.
+            sl_distance_pct = abs(sig.entry_price - sig.sl_price) / max(sig.entry_price, 1e-9)
+            tp_distance_pct = abs(sig.tp_price - sig.entry_price) / max(sig.entry_price, 1e-9)
+            # Score mean-reversion setups on how stretched the band is (sigma)
+            # and how extreme RSI is. Keep it conservative (70-85 range) so
+            # calibration thresholds can filter.
+            rsi_extremity = abs(sig.rsi - 50.0) / 50.0  # 0..1
+            score = 60.0 + 15.0 * min(sig.band_distance_sigma / 2.5, 1.0) + 15.0 * rsi_extremity
+            # Pick leverage cap mid-range; mean-reversion is smaller-move,
+            # higher-frequency; stay conservative.
+            leverage = max(scoped.leverage_min, min(scoped.leverage_max, 5))
+            return FuturesSignal(
+                symbol=symbol,
+                side=sig.side,
+                score=round(score, 2),
+                certainty=0.55,
+                entry_price=round(sig.entry_price, 4),
+                tp_price=round(sig.tp_price, 4),
+                sl_price=round(sig.sl_price, 4),
+                leverage=leverage,
+                entry_signal="MEAN_REVERSION",
+                metadata={
+                    "strategy": "mean_reversion",
+                    "rsi": round(sig.rsi, 2),
+                    "band_distance_sigma": round(sig.band_distance_sigma, 3),
+                    "sl_distance_pct": round(sl_distance_pct, 6),
+                    "tp_distance_pct": round(tp_distance_pct, 6),
+                },
+            )
+        except Exception as exc:
+            log.debug("Mean-reversion candidate skipped: %s", exc)
+            return None
+
+    # ----- Sprint 3 §3.4 walk-forward calibration gate ----------------------
+    def _walk_forward_gate_passes(self, trade_history: list[dict[str, Any]]) -> bool:
+        """80/20 time split over closed trades; reject if OOS degrades too much."""
+
+        try:
+            from futuresbot.walk_forward import WalkForwardMetrics, evaluate_walk_forward
+
+            min_total = int(self._env_float("WALK_FORWARD_MIN_TRADES", 50))
+            if len(trade_history) < min_total:
+                return True  # not enough data — fall open
+            ordered = sorted(
+                trade_history,
+                key=lambda t: str(t.get("exit_time") or t.get("entry_time") or ""),
+            )
+            cutoff = int(len(ordered) * 0.8)
+            is_slice = ordered[:cutoff]
+            oos_slice = ordered[cutoff:]
+            if not oos_slice:
+                return True
+
+            def _pf(trades: list[dict[str, Any]]) -> tuple[int, float, float, float]:
+                if not trades:
+                    return 0, 0.0, 0.0, 0.0
+                pnls = [float(t.get("pnl_usdt") or 0.0) for t in trades]
+                wins = sum(p for p in pnls if p > 0)
+                losses = -sum(p for p in pnls if p < 0)
+                pf = (wins / losses) if losses > 0 else 999.0
+                wr = sum(1 for p in pnls if p > 0) / len(pnls)
+                exp = sum(pnls) / len(pnls)
+                return len(pnls), pf, wr, exp
+
+            is_n, is_pf, is_wr, is_exp = _pf(is_slice)
+            oos_n, oos_pf, oos_wr, oos_exp = _pf(oos_slice)
+            gate = evaluate_walk_forward(
+                is_metrics=WalkForwardMetrics(trades=is_n, profit_factor=is_pf, win_rate=is_wr, expectancy=is_exp),
+                oos_metrics=WalkForwardMetrics(trades=oos_n, profit_factor=oos_pf, win_rate=oos_wr, expectancy=oos_exp),
+                min_oos_pf=self._env_float("WALK_FORWARD_MIN_OOS_PF", 1.15),
+                min_oos_trades=int(self._env_float("WALK_FORWARD_MIN_OOS_TRADES", 20)),
+                max_is_oos_degradation=self._env_float("WALK_FORWARD_MAX_DEGRADATION", 0.40),
+            )
+            if not gate.accepted:
+                log.info("Walk-forward gate failed: %s", gate.reason)
+            return bool(gate.accepted)
+        except Exception as exc:
+            log.debug("Walk-forward gate skipped: %s", exc)
+            return True
+
+    # ----- Sprint 3 §3.9 slippage attribution -------------------------------
+    def _ensure_slippage_store(self) -> Any:
+        if self._slippage_store is None:
+            try:
+                from futuresbot.slippage_attribution import SlippageAttribution
+
+                window = self._env_float("SLIPPAGE_WINDOW_DAYS", 7.0)
+                self._slippage_store = SlippageAttribution(window_days=window)
+            except Exception:
+                return None
+        return self._slippage_store
+
+    def _record_fill(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quoted_price: float,
+        fill_price: float,
+        maker: bool,
+        leverage: int,
+    ) -> None:
+        """Record a fill for weekly slippage attribution. No-op unless flag on."""
+
+        if not self._flag("USE_SLIPPAGE_ATTRIBUTION"):
+            return
+        store = self._ensure_slippage_store()
+        if store is None:
+            return
+        try:
+            from futuresbot.slippage_attribution import FillRecord
+            from futuresbot.funding_policy import seconds_to_next_settlement
+
+            now = datetime.now(timezone.utc)
+            store.record(
+                FillRecord(
+                    timestamp=now,
+                    symbol=symbol,
+                    side=side,
+                    quoted_price=float(quoted_price),
+                    fill_price=float(fill_price),
+                    maker=bool(maker),
+                    seconds_to_funding=float(seconds_to_next_settlement(now)),
+                    leverage=int(leverage),
+                )
+            )
+        except Exception as exc:
+            log.debug("Slippage record skipped: %s", exc)
+
+    # ----- Sprint 3 §3.5 maker-first entry ladder ---------------------------
+    def _attempt_maker_ladder(
+        self,
+        *,
+        symbol: str,
+        side: int,
+        side_name: str,
+        contracts: int,
+        leverage: int,
+        entry_price: float,
+        tp_price: float,
+        sl_price: float,
+    ) -> tuple[str, dict[str, Any], bool] | None:
+        """Place a post-only limit; poll for fill; cancel on timeout.
+
+        Returns ``(order_id, detail, maker_filled=True)`` on maker fill.
+        Returns None on timeout/error so caller falls back to market order.
+        No-op (returns None) unless USE_MAKER_LADDER=1.
+        """
+
+        if not self._flag("USE_MAKER_LADDER"):
+            return None
+        try:
+            from futuresbot.maker_ladder import (
+                MakerLadderConfig,
+                decide_next_action,
+            )
+            from futuresbot.funding_policy import seconds_to_next_settlement
+
+            ticker = self.client.get_ticker(symbol) or {}
+            best_bid = float(ticker.get("bid1") or 0.0)
+            best_ask = float(ticker.get("ask1") or 0.0)
+            if best_bid <= 0 or best_ask <= 0 or best_ask <= best_bid:
+                return None
+            tick_size = self._env_float(f"TICK_SIZE_{symbol.replace('_','')}", 0.01)
+            cfg = MakerLadderConfig()
+            now_utc = datetime.now(timezone.utc)
+            seconds_to_funding = float(seconds_to_next_settlement(now_utc))
+            signal_ts = time.time()
+            working_order_id: str | None = None
+            polls = 0
+            max_polls = int(self._env_float("MAKER_LADDER_MAX_POLLS", 8))
+            poll_interval = self._env_float("MAKER_LADDER_POLL_SECONDS", 0.5)
+            while polls < max_polls:
+                elapsed = time.time() - signal_ts
+                # Refresh quote.
+                tick = self.client.get_ticker(symbol) or {}
+                bb = float(tick.get("bid1") or best_bid)
+                ba = float(tick.get("ask1") or best_ask)
+                # Check current working order for fill.
+                filled = False
+                if working_order_id:
+                    detail = self.client.get_order(working_order_id) or {}
+                    if float(detail.get("dealVol") or 0) >= contracts:
+                        log.info("Maker ladder: filled %s order=%s", symbol, working_order_id)
+                        return working_order_id, detail, True
+                decision = decide_next_action(
+                    side=side_name,
+                    seconds_since_signal=elapsed,
+                    best_bid=bb,
+                    best_ask=ba,
+                    tick_size=tick_size,
+                    seconds_to_funding=seconds_to_funding,
+                    filled=filled,
+                    config=cfg,
+                )
+                if decision.action == "ABORT":
+                    log.info("Maker ladder abort: %s", decision.reason)
+                    break
+                if decision.action == "CROSS_TAKER":
+                    # Cancel working order then let caller place market.
+                    if working_order_id:
+                        try:
+                            self.client.cancel_order(working_order_id)
+                        except Exception:
+                            pass
+                    log.info("Maker ladder crossing: %s", decision.reason)
+                    return None
+                if decision.action in ("POST_MAKER", "REPOST_MAKER"):
+                    if working_order_id:
+                        try:
+                            self.client.cancel_order(working_order_id)
+                        except Exception:
+                            pass
+                        working_order_id = None
+                    try:
+                        order = self.client.place_order(
+                            symbol=symbol,
+                            side=side,
+                            vol=contracts,
+                            leverage=leverage,
+                            order_type=2,  # post-only maker
+                            price=float(decision.price),
+                            open_type=self.config.open_type,
+                            position_mode=self.config.position_mode,
+                            take_profit_price=tp_price,
+                            stop_loss_price=sl_price,
+                        )
+                        working_order_id = str(order.get("orderId") or "") or None
+                        log.info(
+                            "Maker ladder post: %s %s @ %s (%s)",
+                            symbol,
+                            side_name,
+                            decision.price,
+                            decision.reason,
+                        )
+                    except Exception as post_exc:
+                        log.debug("Maker post failed, falling back to market: %s", post_exc)
+                        return None
+                polls += 1
+                time.sleep(poll_interval)
+            # Exhausted polls without fill.
+            if working_order_id:
+                try:
+                    self.client.cancel_order(working_order_id)
+                except Exception:
+                    pass
+            return None
+        except Exception as exc:
+            log.debug("Maker ladder skipped: %s", exc)
+            return None
+
+    # ----- Sprint 3 §3.6 portfolio VaR --------------------------------------
+    def _portfolio_var_accepts(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        notional_usdt: float,
+    ) -> bool:
+        """Check candidate position against cross-symbol VaR cap.
+
+        Returns True if acceptable (or flag off / insufficient inputs).
+        Default model: per-symbol annualised vol from env
+        ``PORTFOLIO_VAR_VOL_<SYM>`` (fallback 0.8 for majors) and a single
+        default cross-correlation ``PORTFOLIO_VAR_CORR`` (fallback 0.85).
+        """
+
+        if not self._flag("USE_PORTFOLIO_VAR"):
+            return True
+        try:
+            from futuresbot.portfolio_var import PositionWeight, check_new_position
+
+            import os
+
+            nav = float(self.config.margin_budget_usdt) * float(self.config.max_concurrent_positions)
+            if nav <= 0:
+                return True
+            default_vol = self._env_float("PORTFOLIO_VAR_DEFAULT_VOL", 0.80)
+            default_corr = self._env_float("PORTFOLIO_VAR_DEFAULT_CORR", 0.85)
+            cap = self._env_float("PORTFOLIO_VAR_CAP_VOL", 0.08)
+            all_symbols = list(self.open_positions.keys()) + [symbol]
+            annualised_vol: dict[str, float] = {}
+            for sym in all_symbols:
+                raw = os.environ.get(f"PORTFOLIO_VAR_VOL_{sym.replace('_', '')}")
+                annualised_vol[sym] = float(raw) if raw else default_vol
+            correlation: dict[tuple[str, str], float] = {}
+            for i, a in enumerate(all_symbols):
+                for b in all_symbols[i + 1:]:
+                    correlation[(a, b)] = default_corr
+            existing = []
+            for sym, pos in self.open_positions.items():
+                sign = 1.0 if pos.side == "LONG" else -1.0
+                existing.append(PositionWeight(symbol=sym, signed_notional_usdt=sign * pos.contracts * pos.contract_size * pos.entry_price))
+            cand_sign = 1.0 if side.upper() == "LONG" else -1.0
+            cand = PositionWeight(symbol=symbol, signed_notional_usdt=cand_sign * notional_usdt)
+            check = check_new_position(
+                existing=existing,
+                candidate=cand,
+                nav_usdt=nav,
+                annualised_vol=annualised_vol,
+                correlation=correlation,
+                cap_vol=cap,
+            )
+            if not check.accepted:
+                log.info("Portfolio VaR blocks %s %s: %s", symbol, side, check.reason)
+            return bool(check.accepted)
+        except Exception as exc:
+            log.debug("Portfolio VaR skipped: %s", exc)
+            return True
+
     def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
         side_name = str(signal_payload["side"])
         side = 1 if side_name == "LONG" else 3
@@ -1527,6 +1889,14 @@ class FuturesRuntime:
                 cap,
             )
             return False
+        # Sprint 3 §3.6 — cross-symbol VaR cap (no-op unless flag on).
+        projected_notional = contracts * contract_size * entry_price
+        if not self._portfolio_var_accepts(
+            symbol=symbol,
+            side=side_name,
+            notional_usdt=projected_notional,
+        ):
+            return False
         if self.config.paper_trade:
             position = FuturesPosition(
                 symbol=symbol,
@@ -1556,21 +1926,46 @@ class FuturesRuntime:
         except Exception:
             pass
         self.client.change_leverage(symbol=symbol, leverage=leverage, position_type=1 if side_name == "LONG" else 2, open_type=self.config.open_type)
-        order = self.client.place_order(
+        # Sprint 3 §3.5 — try maker-ladder first; on timeout/failure, fall back
+        # to taker market order (original behaviour). No-op unless flag on.
+        maker_result = self._attempt_maker_ladder(
             symbol=symbol,
             side=side,
-            vol=contracts,
+            side_name=side_name,
+            contracts=contracts,
             leverage=leverage,
-            order_type=5,
-            open_type=self.config.open_type,
-            position_mode=self.config.position_mode,
-            take_profit_price=float(signal_payload["tp_price"]),
-            stop_loss_price=float(signal_payload["sl_price"]),
+            entry_price=entry_price,
+            tp_price=float(signal_payload["tp_price"]),
+            sl_price=float(signal_payload["sl_price"]),
         )
-        order_id = str(order.get("orderId") or "")
-        detail = self.client.get_order(order_id) if order_id else {}
+        if maker_result is not None:
+            order_id, detail, maker_filled = maker_result
+        else:
+            order = self.client.place_order(
+                symbol=symbol,
+                side=side,
+                vol=contracts,
+                leverage=leverage,
+                order_type=5,
+                open_type=self.config.open_type,
+                position_mode=self.config.position_mode,
+                take_profit_price=float(signal_payload["tp_price"]),
+                stop_loss_price=float(signal_payload["sl_price"]),
+            )
+            order_id = str(order.get("orderId") or "")
+            detail = self.client.get_order(order_id) if order_id else {}
+            maker_filled = False
         position_id = str(detail.get("positionId") or "")
         fill_price = float(detail.get("dealAvgPrice") or entry_price)
+        # Sprint 3 §3.9 — record entry slippage for weekly attribution report.
+        self._record_fill(
+            symbol=symbol,
+            side=side_name,
+            quoted_price=entry_price,
+            fill_price=fill_price,
+            maker=maker_filled,
+            leverage=leverage,
+        )
         position = FuturesPosition(
             symbol=symbol,
             side=side_name,

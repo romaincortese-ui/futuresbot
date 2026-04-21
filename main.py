@@ -35,11 +35,11 @@ os.environ.setdefault("USE_REALISTIC_BACKTEST", "1")       # §3.1 funding + liq
 # OFF so the library remains behaviour-compatible.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("USE_REGIME_CLASSIFIER", "1")        # §3.3 regime post-filter on entries
-os.environ.setdefault("USE_MEAN_REVERSION", "0")           # §3.2 mean-reversion in CHOP (wiring pending)
-os.environ.setdefault("USE_MAKER_LADDER", "0")             # §3.5 maker-first execution (wiring pending)
-os.environ.setdefault("USE_PORTFOLIO_VAR", "0")            # §3.6 cross-symbol VaR cap (wiring pending)
-os.environ.setdefault("USE_WALK_FORWARD_GATE", "0")        # §3.4 walk-forward calibration gate (wiring pending)
-os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "0")     # §3.9 weekly slippage report (wiring pending)
+os.environ.setdefault("USE_MEAN_REVERSION", "1")           # §3.2 mean-reversion in CHOP
+os.environ.setdefault("USE_MAKER_LADDER", "1")             # §3.5 maker-first execution
+os.environ.setdefault("USE_PORTFOLIO_VAR", "1")            # §3.6 cross-symbol VaR cap
+os.environ.setdefault("USE_WALK_FORWARD_GATE", "1")        # §3.4 walk-forward calibration gate
+os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "1")     # §3.9 weekly slippage report
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
