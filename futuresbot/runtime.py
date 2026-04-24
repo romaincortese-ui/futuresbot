@@ -1039,7 +1039,16 @@ class FuturesRuntime:
                 if mr_signal is not None:
                     raw_signal = mr_signal
             if raw_signal is None:
-                log.info("Signal scan: no raw setup for %s", sym)
+                # Gate A A5 (memo 1 §7): structured gate-block telemetry so the
+                # operator can distinguish "market was quiet" from "filters are
+                # mathematically unreachable for this symbol" (BTC-tuned gates
+                # blocking every PEPE / TAO bar).
+                try:
+                    from futuresbot.strategy import diagnose_setup_rejection
+                    reason = diagnose_setup_rejection(frame, scoped)
+                except Exception as diag_exc:  # pragma: no cover — defensive
+                    reason = f"diagnostic_error={type(diag_exc).__name__}"
+                log.info("[GATE_BLOCK] symbol=%s reason=%s", sym, reason)
                 continue
             calibrated = apply_signal_calibration(
                 raw_signal,
@@ -2058,6 +2067,90 @@ class FuturesRuntime:
         self._save_state()
         return True
 
+    def _log_boot_manifest(self) -> None:
+        """Gate A A6 (memo 1 §7): single ``[BOOT]`` log line with all live-config state."""
+        import os as _os
+
+        cfg = self.config
+        # Per-symbol effective config snapshot — surfaces any symbol that is
+        # running an override so the operator can see it without env diffing.
+        per_symbol_overrides: list[str] = []
+        for sym in cfg.symbols:
+            scoped = self._config_for_symbol(sym) if hasattr(self, "_config_for_symbol") else cfg
+            if scoped is cfg:
+                continue
+            deltas: list[str] = []
+            for field_name in (
+                "consolidation_max_range_pct",
+                "adx_floor",
+                "trend_24h_floor",
+                "volume_ratio_floor",
+                "leverage_max",
+                "hard_loss_cap_pct",
+                "funding_rate_abs_max",
+            ):
+                if getattr(scoped, field_name, None) != getattr(cfg, field_name, None):
+                    deltas.append(f"{field_name}={getattr(scoped, field_name)}")
+            if deltas:
+                per_symbol_overrides.append(f"{sym}[{' '.join(deltas)}]")
+
+        # Sprint flag state — reveal which opt-in overlays are actually live.
+        sprint_flags = [
+            name
+            for name in (
+                "USE_NAV_RISK_SIZING",
+                "USE_COST_BUDGET_RR",
+                "USE_STRICT_RECV_WINDOW",
+                "USE_LIQ_BUFFER_GUARD",
+                "USE_HARD_LOSS_CAP_TIGHT",
+                "USE_DRAWDOWN_KILL",
+                "USE_SESSION_LEVERAGE",
+                "USE_FUNDING_AWARE_ENTRY",
+                "USE_FUNDING_STOP_MULT",
+                "USE_REALISTIC_BACKTEST",
+                "USE_REGIME_CLASSIFIER",
+                "USE_MEAN_REVERSION",
+                "USE_MAKER_LADDER",
+                "USE_PORTFOLIO_VAR",
+                "USE_WALK_FORWARD_GATE",
+                "USE_SLIPPAGE_ATTRIBUTION",
+                "USE_FUNDING_CARRY_MONITOR",
+                "USE_BASIS_TRADE_MONITOR",
+                "USE_LIQUIDATION_CASCADE_MONITOR",
+            )
+            if str(_os.environ.get(name, "0")).lower() in {"1", "true", "yes", "on"}
+        ]
+
+        log.info(
+            "[BOOT] mode=%s paper=%s symbols=%s leverage=x%d-x%d hard_loss_cap=%.2f "
+            "consolidation_max=%.4f adx_floor=%.1f trend_24h_floor=%.4f volume_floor=%.2f "
+            "min_rr=%.2f funding_gate=%.5f calib_min_trades=%d overrides=%s sprint_flags=%s",
+            "LIVE" if not cfg.paper_trade else "PAPER",
+            cfg.paper_trade,
+            ",".join(cfg.symbols),
+            cfg.leverage_min,
+            cfg.leverage_max,
+            cfg.hard_loss_cap_pct,
+            cfg.consolidation_max_range_pct,
+            cfg.adx_floor,
+            cfg.trend_24h_floor,
+            cfg.volume_ratio_floor,
+            cfg.min_reward_risk,
+            cfg.funding_rate_abs_max,
+            cfg.calibration_min_total_trades,
+            ";".join(per_symbol_overrides) if per_symbol_overrides else "none",
+            ",".join(sprint_flags) if sprint_flags else "none",
+        )
+
+        # Loud warning for the combination that produces silent idleness: gate
+        # so tight that every symbol is rejected (the 4-of-6 symbol problem
+        # flagged in memo 1 §3) or funding gate disabled in live mode.
+        if cfg.funding_rate_abs_max <= 0 and not cfg.paper_trade:
+            log.warning(
+                "[BOOT] FUTURES_FUNDING_RATE_ABS_MAX=0 in LIVE mode — "
+                "funding-rate gate is disabled; x20-x50 perps may bleed funding in crowded regimes."
+            )
+
     def run(self) -> None:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
         log.info(
@@ -2068,6 +2161,11 @@ class FuturesRuntime:
             self.config.heartbeat_seconds,
             self.config.paper_trade,
         )
+        # Gate A A6 (memo 1 §7): single structured [BOOT] manifest line so the
+        # operator can read the full live-config state (filter thresholds,
+        # funding-gate state, leverage band, Sprint flags) on redeploy without
+        # diffing Railway env against code defaults.
+        self._log_boot_manifest()
         self._send_startup_message()
         self._record_activity("Runtime started")
         while True:
