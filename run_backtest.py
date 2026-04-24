@@ -10,6 +10,7 @@ from typing import Any
 from futuresbot.calibration import build_trade_calibration, publish_trade_calibration, write_trade_calibration
 from futuresbot.backtest import FuturesBacktestEngine, build_report, build_signal_summary, export_artifacts
 from futuresbot.config import FuturesBacktestConfig, FuturesConfig, parse_utc_datetime
+from futuresbot.gate_b_readiness import SymbolResult, evaluate_gate_b_readiness
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 
 
@@ -173,6 +174,42 @@ def main() -> None:
         json.dumps(aggregate, indent=2), encoding="utf-8"
     )
 
+    # Gate B B3 (memo 1 §7): feed the per-symbol OOS metrics into the
+    # allocation-readiness aggregator so the backtest emits an explicit
+    # pass/fail verdict alongside the portfolio summary.
+    symbol_results: dict[str, SymbolResult] = {}
+    for sym, rep in per_symbol_report.items():
+        symbol_results[sym] = SymbolResult(
+            symbol=sym,
+            oos_trades=int(rep.get("total_trades") or 0),
+            oos_profit_factor=float(rep.get("profit_factor") or 0.0),
+            total_pnl_usdt=float(rep.get("total_pnl") or 0.0),
+            # ``max_drawdown`` from build_report is a negative fraction of the
+            # equity peak. Convert to an absolute USDT figure on the per-symbol
+            # initial balance so the aggregator can compare against the total
+            # margin budget.
+            max_drawdown_usdt=abs(float(rep.get("max_drawdown") or 0.0)) * float(config.initial_balance),
+        )
+    margin_budget = float(config.initial_balance) * max(1, len(symbol_results))
+    readiness = evaluate_gate_b_readiness(
+        symbol_results=symbol_results,
+        margin_budget_usdt=margin_budget,
+    )
+    readiness_payload = {
+        "passed": readiness.passed,
+        "reasons": readiness.reasons,
+        "per_symbol_pf": readiness.per_symbol_pf,
+        "per_symbol_trades": readiness.per_symbol_trades,
+        "concentration": readiness.concentration,
+        "aggregate_pnl_usdt": readiness.aggregate_pnl_usdt,
+        "aggregate_max_drawdown_usdt": readiness.aggregate_max_drawdown_usdt,
+        "aggregate_drawdown_pct": readiness.aggregate_drawdown_pct,
+        "thresholds": readiness.thresholds,
+    }
+    (Path(config.output_dir) / "gate_b_readiness.json").write_text(
+        json.dumps(readiness_payload, indent=2), encoding="utf-8"
+    )
+
     print(json.dumps({
         "calibration": {
             "file": config.calibration_file,
@@ -181,6 +218,7 @@ def main() -> None:
         }
     }, indent=2))
     print(json.dumps({"portfolio_summary": aggregate}, indent=2))
+    print(json.dumps({"gate_b_readiness": readiness_payload}, indent=2))
 
 
 if __name__ == "__main__":
