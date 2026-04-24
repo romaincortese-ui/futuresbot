@@ -426,6 +426,12 @@ def test_runtime_exchange_spec_validator_accepts_correct_specs(monkeypatch, capl
 
 def test_default_expectations_cover_active_symbols():
     # Ensure the hardcoded defaults match the bot's current active symbol set.
+    # taker_fee_rate is intentionally NOT enforced in DEFAULT_EXPECTATIONS
+    # (MEXC runs symbol-level promotional / VIP-tier fee changes that would
+    # otherwise block boot). Only the sizing-critical fields are required.
     for sym in ("BTC_USDT", "ETH_USDT", "TAO_USDT", "SILVER_USDT"):
         assert sym in DEFAULT_EXPECTATIONS
-        assert DEFAULT_EXPECTATIONS[sym].taker_fee_rate == 0.0004
+        assert DEFAULT_EXPECTATIONS[sym].min_vol == 1
+        assert DEFAULT_EXPECTATIONS[sym].taker_fee_rate is None
+    # XAUT contract size was live-verified 2026-04-24 as 0.001, not 0.0001.
+    assert DEFAULT_EXPECTATIONS["XAUT_USDT"].contract_size == 0.001

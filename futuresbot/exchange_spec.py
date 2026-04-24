@@ -150,35 +150,42 @@ def validate_specs(
 #
 # Sourced from MEXC contract-detail endpoint snapshots (2026-04). If MEXC
 # re-tiers a symbol we want a loud failure at boot, not silent mispricing.
+#
+# NOTE: taker_fee_rate is intentionally NOT included in DEFAULT_EXPECTATIONS.
+# MEXC runs symbol-level promotions (PEPE/TAO/SILVER/XAUT currently at 0.0 on
+# live account) and VIP-tier fee discounts (BTC/ETH at 0.0001 rather than the
+# documented 0.0004). Fee drift is a calibration concern — the backtest uses
+# its own configured ``taker_fee_rate`` — not a margin-safety concern, so
+# refusing to boot on fee drift creates false-positive downtime. The
+# sizing-critical fields (contractSize, minVol, priceUnit) ARE enforced: a
+# wrong contractSize would silently mis-size every position. Operators who
+# want the old fee check can still set ``taker_fee_rate`` in an override map
+# and pass it to ``validate_specs``.
 DEFAULT_EXPECTATIONS: dict[str, ExpectedContract] = {
     "BTC_USDT": ExpectedContract(
         contract_size=0.0001,
         min_vol=1,
-        taker_fee_rate=0.0004,
     ),
     "ETH_USDT": ExpectedContract(
         contract_size=0.01,
         min_vol=1,
-        taker_fee_rate=0.0004,
     ),
     "TAO_USDT": ExpectedContract(
         contract_size=0.01,
         min_vol=1,
-        taker_fee_rate=0.0004,
     ),
     "SILVER_USDT": ExpectedContract(
         contract_size=0.01,
         min_vol=1,
-        taker_fee_rate=0.0004,
     ),
     "XAUT_USDT": ExpectedContract(
-        contract_size=0.0001,
+        # MEXC XAUT_USDT uses 0.001 XAUT per contract (live-verified 2026-04-24).
+        contract_size=0.001,
         min_vol=1,
-        taker_fee_rate=0.0004,
     ),
     "PEPE_USDT": ExpectedContract(
         # PEPE uses large contract size (10_000_000 PEPE per contract on MEXC).
-        # Leaving contract_size=None until re-verified; still validate taker fee.
-        taker_fee_rate=0.0004,
+        # Leaving contract_size=None until re-verified; minVol still enforced.
+        min_vol=1,
     ),
 }
