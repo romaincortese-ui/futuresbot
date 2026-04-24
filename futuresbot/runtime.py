@@ -1018,7 +1018,17 @@ class FuturesRuntime:
                     rate = float(payload)
             self._funding_cache[sym] = (now_ts, rate)
         if abs(rate) > cap:
-            log.info("Skipping %s: funding rate %.5f exceeds cap %.5f", sym, rate, cap)
+            # Gate B B2 (memo 1 §7): structured [FUNDING_BLOCK] so ops can
+            # distinguish funding-gate rejections from other skip reasons and
+            # measure blocked-trade rate against realised funding PnL.
+            direction = "long" if rate > 0 else "short"
+            log.info(
+                "[FUNDING_BLOCK] symbol=%s funding_rate=%.5f cap=%.5f direction=%s",
+                sym,
+                rate,
+                cap,
+                direction,
+            )
             return False
         return True
 
@@ -2014,6 +2024,15 @@ class FuturesRuntime:
                 metadata=dict(signal_payload.get("metadata", {}) or {}),
             )
             self._register_position(position)
+            self._log_entry_fill(
+                position=position,
+                intended_price=entry_price,
+                fill_price=entry_price,
+                mode="paper",
+                order_id="PAPER",
+                maker_filled=False,
+                scoped=scoped,
+            )
             self._notify(self._entry_message(position))
             self._record_activity(f"Opened {side_name} {symbol} x{leverage} (paper)")
             self._save_state()
@@ -2082,10 +2101,75 @@ class FuturesRuntime:
             metadata=dict(signal_payload.get("metadata", {}) or {}),
         )
         self._register_position(position)
+        self._log_entry_fill(
+            position=position,
+            intended_price=entry_price,
+            fill_price=fill_price,
+            mode="live",
+            order_id=order_id,
+            maker_filled=maker_filled,
+            scoped=scoped,
+        )
         self._notify(self._entry_message(position))
         self._record_activity(f"Opened {side_name} {symbol} x{leverage} (live)")
         self._save_state()
         return True
+
+    def _log_entry_fill(
+        self,
+        *,
+        position: "FuturesPosition",
+        intended_price: float,
+        fill_price: float,
+        mode: str,
+        order_id: str,
+        maker_filled: bool,
+        scoped: "FuturesConfig",
+    ) -> None:
+        """Gate B B2 (memo 1 §7): structured [ENTRY] audit line per fill.
+
+        One line, key=value, covering everything needed to reconcile the
+        backtest cost model against live microstructure: intended vs filled
+        price, signed slippage in bps, leverage used, position size in
+        contracts/notional/margin, and the current 8h funding rate so
+        post-hoc funding accrual can be estimated from hold duration.
+        """
+
+        try:
+            intended = float(intended_price) if intended_price else 0.0
+            fill = float(fill_price) if fill_price else intended
+            if intended > 0:
+                raw_bps = (fill - intended) / intended * 10_000.0
+                slippage_bps = raw_bps if position.side == "LONG" else -raw_bps
+            else:
+                slippage_bps = 0.0
+            notional = float(position.contracts) * float(position.contract_size) * fill
+            funding_rate = 0.0
+            try:
+                funding_rate = float(self._current_funding_rate(scoped))
+            except Exception:
+                funding_rate = 0.0
+            log.info(
+                "[ENTRY] symbol=%s side=%s mode=%s maker=%s intended=%s fill=%s "
+                "slippage_bps=%+.2f leverage=x%d contracts=%d notional_usdt=%.2f "
+                "margin_usdt=%.4f funding_8h=%+.5f score=%.2f order=%s",
+                position.symbol,
+                position.side,
+                mode,
+                "true" if maker_filled else "false",
+                self._format_price(intended),
+                self._format_price(fill),
+                slippage_bps,
+                int(position.leverage),
+                int(position.contracts),
+                notional,
+                float(position.margin_usdt),
+                funding_rate,
+                float(position.score),
+                order_id or "",
+            )
+        except Exception as exc:  # pragma: no cover — never block an entry on log failure
+            log.debug("Entry fill log skipped: %s", exc)
 
     def _log_boot_manifest(self) -> None:
         """Gate A A6 (memo 1 §7): single ``[BOOT]`` log line with all live-config state."""
@@ -2171,6 +2255,88 @@ class FuturesRuntime:
                 "funding-rate gate is disabled; x20-x50 perps may bleed funding in crowded regimes."
             )
 
+        # Gate B B1 (memo 1 §7): loud [LIVE] banner on every boot in live mode
+        # so the first fill after a paper→live flip is unmistakable in the
+        # log. Lists the money-at-risk knobs in one place.
+        if not cfg.paper_trade:
+            max_margin = cfg.max_total_margin_usdt
+            if max_margin <= 0:
+                max_margin = cfg.margin_budget_usdt * cfg.max_concurrent_positions
+            log.warning(
+                "[LIVE] real-money mode active | symbols=%s | leverage=x%d-x%d | "
+                "per_trade_margin=$%.2f | max_total_margin=$%.2f | max_concurrent=%d | "
+                "hard_loss_cap_pct=%.2f%% | funding_gate=%.5f",
+                ",".join(cfg.symbols),
+                cfg.leverage_min,
+                cfg.leverage_max,
+                cfg.margin_budget_usdt,
+                max_margin,
+                cfg.max_concurrent_positions,
+                cfg.hard_loss_cap_pct * 100.0,
+                cfg.funding_rate_abs_max,
+            )
+
+    def _validate_exchange_specs_on_boot(self) -> None:
+        """Gate B B4 (memo 1 §7): boot-time MEXC contract-spec check.
+
+        Fetches ``get_contract_detail`` for each active symbol and validates
+        ``contractSize``, ``minVol``, ``priceUnit``, ``takerFeeRate`` against
+        known expected values in ``exchange_spec.DEFAULT_EXPECTATIONS``.
+
+        Behaviour is controlled by ``FUTURES_EXCHANGE_SPEC_STRICT`` (default
+        true). Strict mode raises SystemExit on any mismatch; warn mode logs
+        but lets the runtime start.
+
+        Opt-out entirely with ``FUTURES_EXCHANGE_SPEC_CHECK=false`` (default
+        true) — useful for unit tests that stub out the client.
+        """
+
+        import os as _os
+
+        check_on = str(_os.environ.get("FUTURES_EXCHANGE_SPEC_CHECK", "true")).lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not check_on:
+            return
+        strict = str(_os.environ.get("FUTURES_EXCHANGE_SPEC_STRICT", "true")).lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        try:
+            from futuresbot.exchange_spec import (
+                DEFAULT_EXPECTATIONS,
+                validate_specs,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            log.warning("Exchange-spec validator unavailable: %s", exc)
+            return
+
+        symbols = list(self.config.symbols)
+        all_ok, reasons = validate_specs(
+            symbols=symbols,
+            fetcher=self.client.get_contract_detail,
+            expectations=DEFAULT_EXPECTATIONS,
+        )
+        if all_ok:
+            log.info("[EXCHANGE_SPEC_OK] validated %d symbols: %s", len(symbols), ",".join(symbols))
+            return
+        for reason in reasons:
+            log.error("[EXCHANGE_SPEC_FAIL] %s", reason)
+        if strict:
+            raise SystemExit(
+                "Gate B B4: exchange-spec mismatch blocked startup. "
+                f"Reasons: {reasons}. Set FUTURES_EXCHANGE_SPEC_STRICT=false to downgrade to warn."
+            )
+        log.warning(
+            "[EXCHANGE_SPEC_WARN] %d mismatches accepted (strict mode off)",
+            len(reasons),
+        )
+
     def run(self) -> None:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
         log.info(
@@ -2186,6 +2352,10 @@ class FuturesRuntime:
         # funding-gate state, leverage band, Sprint flags) on redeploy without
         # diffing Railway env against code defaults.
         self._log_boot_manifest()
+        # Gate B B4 (memo 1 §7): validate MEXC contract-spec for every active
+        # symbol before the first cycle — refuses to start in strict mode if
+        # contractSize/minVol/takerFeeRate don't match expected values.
+        self._validate_exchange_specs_on_boot()
         self._send_startup_message()
         self._record_activity("Runtime started")
         while True:

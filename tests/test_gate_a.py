@@ -273,6 +273,10 @@ def _runtime_stub() -> FuturesRuntime:
     cfg.min_reward_risk = 1.15
     cfg.funding_rate_abs_max = 0.0008
     cfg.calibration_min_total_trades = 15
+    # Gate B B1 — [LIVE] banner needs these to compute real-money exposure.
+    cfg.margin_budget_usdt = 75.0
+    cfg.max_total_margin_usdt = 0.0
+    cfg.max_concurrent_positions = 2
     r.config = cfg
     # Bypass per-symbol override lookup (return base config unchanged)
     r._config_for_symbol = lambda sym: cfg  # type: ignore[method-assign]
