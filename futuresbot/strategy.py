@@ -92,6 +92,7 @@ def _passes_cost_budget_gate(
     tp_price: float,
     sl_price: float,
     leverage: int,
+    symbol: str | None = None,
 ) -> bool:
     """Sprint 1 §2.2 — cost-adjusted reward/risk gate.
 
@@ -115,7 +116,21 @@ def _passes_cost_budget_gate(
         sl_distance_pct = abs(entry_price - sl_price) / entry_price
         hold_hours = _env_float("COST_BUDGET_HOLD_HOURS", 4.0)
         funding_rate = _env_float("COST_BUDGET_FUNDING_RATE_8H", 0.0001)
+        # P1 (third assessment) §5 #1+#2 — prefer the per-symbol taker fee
+        # resolved at boot from the venue contract-detail endpoint
+        # (``COST_BUDGET_TAKER_FEE_RATE_<NORMALIZED_SYMBOL>``) over the
+        # global env default. Falls back to the global default when the
+        # runtime hasn't populated a per-symbol entry (e.g. tests or first
+        # boot before ``_emit_contract_specs`` runs).
         taker_fee = _env_float("COST_BUDGET_TAKER_FEE_RATE", 0.0004)
+        if symbol:
+            normalized = "".join(ch if ch.isalnum() else "_" for ch in symbol.upper())
+            override = os.environ.get(f"COST_BUDGET_TAKER_FEE_RATE_{normalized}")
+            if override is not None:
+                try:
+                    taker_fee = float(override)
+                except (TypeError, ValueError):
+                    pass
         cost = compute_cost_bps(
             leverage=leverage,
             hold_hours=hold_hours,
@@ -154,6 +169,7 @@ def _build_signal(
         tp_price=tp_price,
         sl_price=sl_price,
         leverage=leverage,
+        symbol=getattr(config, "symbol", None),
     ):
         return None
     return FuturesSignal(

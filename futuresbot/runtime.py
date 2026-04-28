@@ -68,6 +68,13 @@ class FuturesRuntime:
         self._cycle_counter: int = 0
         # Sprint 3 §3.9 — rolling slippage attribution store (lazy).
         self._slippage_store: Any | None = None
+        # P1 (third assessment) §5 #1+#2 — resolved per-symbol taker fee rate
+        # used by the live cost-budget RR gate. Populated by
+        # ``_emit_contract_specs`` at boot from the MEXC contract-detail
+        # endpoint, with a documented fallback chain (api > default) so the
+        # strategy gate stops silently using the global env default for
+        # symbols where the venue reports a different rate.
+        self._symbol_taker_fee: dict[str, tuple[float, str]] = {}
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -230,16 +237,85 @@ class FuturesRuntime:
     # include the per-symbol details an operator needs to debug a 400 reject
     # (contract size, min volume, price unit). We add an explicit per-symbol
     # CONTRACT_SPEC line on every boot so this is observable.
+    #
+    # P1 (third assessment) §5 #1+#2 — also resolves and persists the per-
+    # symbol taker-fee rate for the cost-budget RR gate. The MEXC public
+    # ``/contract/detail`` endpoint returns ``takerFeeRate`` for some
+    # contracts (BTC, ETH at 1 bp on this account's tier) and omits it for
+    # others (XAUT, PEPE, TAO, SILVER). When the API value is missing or
+    # implausibly low (< 2 bp — almost certainly a maker rate or
+    # promotional override that won't survive a stop-out), we fall back to
+    # the venue default ``MEXC_PERP_DEFAULT_TAKER_FEE_RATE`` (default
+    # 0.0004 = 4 bp, MEXC's standard taker tier). Source is logged
+    # explicitly (``src=api`` / ``src=default`` / ``src=default_low_api``)
+    # so operators can audit fee assumptions without reading the source.
     # ------------------------------------------------------------------
+    _DEFAULT_TAKER_FEE_RATE = float(os.environ.get("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", "0.0004") or "0.0004")
+    # Below this threshold we treat the API value as "implausibly low"
+    # (almost certainly a maker rate mis-mapped or a tier promo that won't
+    # survive a stop-out) and fall back to the venue default. MEXC's
+    # cheapest published perp taker tier is 2 bp; 1 bp is the maker rate.
+    _IMPLAUSIBLE_TAKER_FEE_FLOOR = 0.0002
+
+    @staticmethod
+    def _coerce_fee_rate(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if value <= 0.0 or value > 0.01:
+            # 1% taker is well above any plausible perp tier; treat as junk.
+            return None
+        return value
+
+    @staticmethod
+    def _normalize_symbol_for_env(symbol: str) -> str:
+        return "".join(ch if ch.isalnum() else "_" for ch in symbol.upper())
+
+    def _resolve_taker_fee(self, contract: dict[str, Any]) -> tuple[float, str, float | None]:
+        """Return ``(taker_fee_rate, source, raw_api_value_or_None)``.
+
+        ``source`` is one of:
+
+        - ``api`` — venue returned a plausible taker rate; used as-is.
+        - ``default_low_api`` — venue returned a value below
+          ``_IMPLAUSIBLE_TAKER_FEE_FLOOR`` (likely a maker-rate or promo);
+          we fall back to the venue default to keep cost-budget RR honest.
+        - ``default`` — venue returned no taker field at all.
+        """
+
+        api_taker = self._coerce_fee_rate(
+            contract.get("takerFeeRate")
+            if "takerFeeRate" in contract
+            else contract.get("taker_fee_rate")
+        )
+        if api_taker is None:
+            return self._DEFAULT_TAKER_FEE_RATE, "default", None
+        if api_taker < self._IMPLAUSIBLE_TAKER_FEE_FLOOR:
+            return self._DEFAULT_TAKER_FEE_RATE, "default_low_api", api_taker
+        return api_taker, "api", api_taker
+
     def _emit_contract_specs(self) -> None:
         for sym in self._active_symbols:
             try:
                 contract = self.client.get_contract_detail(sym)
             except Exception as exc:
                 log.warning("[CONTRACT_SPEC] symbol=%s lookup_failed=%s", sym, exc)
+                # Even on lookup failure, seed the per-symbol fee with the
+                # venue default so the cost-budget gate has something safe.
+                self._symbol_taker_fee[sym.upper()] = (self._DEFAULT_TAKER_FEE_RATE, "default")
+                os.environ[
+                    f"COST_BUDGET_TAKER_FEE_RATE_{self._normalize_symbol_for_env(sym)}"
+                ] = f"{self._DEFAULT_TAKER_FEE_RATE:.6f}"
                 continue
             if not isinstance(contract, dict) or not contract:
                 log.warning("[CONTRACT_SPEC] symbol=%s empty_contract_detail", sym)
+                self._symbol_taker_fee[sym.upper()] = (self._DEFAULT_TAKER_FEE_RATE, "default")
+                os.environ[
+                    f"COST_BUDGET_TAKER_FEE_RATE_{self._normalize_symbol_for_env(sym)}"
+                ] = f"{self._DEFAULT_TAKER_FEE_RATE:.6f}"
                 continue
             try:
                 contract_size = float(contract.get("contractSize") or 0.0)
@@ -249,18 +325,55 @@ class FuturesRuntime:
             price_unit = contract.get("priceUnit") or contract.get("price_unit") or "?"
             vol_unit = contract.get("volUnit") or contract.get("vol_unit") or "?"
             max_lev = contract.get("maxLeverage") or contract.get("max_leverage") or "?"
-            taker_fee = contract.get("takerFeeRate") or contract.get("taker_fee_rate") or "?"
+            api_maker = self._coerce_fee_rate(
+                contract.get("makerFeeRate")
+                if "makerFeeRate" in contract
+                else contract.get("maker_fee_rate")
+            )
+            taker_resolved, taker_src, api_taker_raw = self._resolve_taker_fee(contract)
+            self._symbol_taker_fee[sym.upper()] = (taker_resolved, taker_src)
+            # Push the resolved rate into a per-symbol env var so the
+            # strategy-level cost-budget gate (which is a pure function
+            # without a runtime handle) can pick it up without further
+            # plumbing. Format kept identical to the global env var so the
+            # gate's float-parse path is reused.
+            os.environ[
+                f"COST_BUDGET_TAKER_FEE_RATE_{self._normalize_symbol_for_env(sym)}"
+            ] = f"{taker_resolved:.6f}"
             log.info(
                 "[CONTRACT_SPEC] symbol=%s contract_size=%s min_vol=%s price_unit=%s "
-                "vol_unit=%s max_leverage=%s taker_fee_rate=%s",
+                "vol_unit=%s max_leverage=%s taker_fee_rate=%.6f src=%s "
+                "api_taker_fee_rate=%s api_maker_fee_rate=%s",
                 sym,
                 contract_size,
                 min_vol,
                 price_unit,
                 vol_unit,
                 max_lev,
-                taker_fee,
+                taker_resolved,
+                taker_src,
+                "?" if api_taker_raw is None else f"{api_taker_raw:.6f}",
+                "?" if api_maker is None else f"{api_maker:.6f}",
             )
+            if taker_src == "default_low_api":
+                log.warning(
+                    "[CONTRACT_SPEC] symbol=%s api_taker_fee_rate=%.6f below "
+                    "implausible-low floor=%.4f; using default=%.6f to keep "
+                    "cost-budget RR honest. Override with "
+                    "MEXC_PERP_DEFAULT_TAKER_FEE_RATE if your venue tier is "
+                    "genuinely below %.4f.",
+                    sym,
+                    api_taker_raw or 0.0,
+                    self._IMPLAUSIBLE_TAKER_FEE_FLOOR,
+                    self._DEFAULT_TAKER_FEE_RATE,
+                    self._IMPLAUSIBLE_TAKER_FEE_FLOOR,
+                )
+
+    def get_symbol_taker_fee_rate(self, symbol: str) -> float:
+        """Return the resolved per-symbol taker fee rate (post-fallback)."""
+
+        rate, _src = self._symbol_taker_fee.get(symbol.upper(), (self._DEFAULT_TAKER_FEE_RATE, "default"))
+        return float(rate)
 
     def _notify(self, message: str, *, parse_mode: str = "HTML") -> None:
         self.telegram.send_message(message, parse_mode=parse_mode)
@@ -875,33 +988,78 @@ class FuturesRuntime:
         )
         self._last_calibration_refresh_at = now_ts
         if data is None:
-            self.calibration = None
-            log.info("No futures calibration found at %s", self.config.calibration_file)
-            return
-        valid, _reason = validate_trade_calibration_payload(
-            data,
-            max_age_hours=self.config.calibration_max_age_hours,
-            min_total_trades=self.config.calibration_min_total_trades,
-        )
-        self.calibration = data if valid else None
-        if valid:
+            primary_reason = "no payload found"
+            primary_valid = False
+        else:
+            primary_valid, primary_reason = validate_trade_calibration_payload(
+                data,
+                max_age_hours=self.config.calibration_max_age_hours,
+                min_total_trades=self.config.calibration_min_total_trades,
+            )
+        if data is not None and primary_valid:
+            self.calibration = data
             log.info("Loaded futures calibration from %s", source or self.config.calibration_file)
             self._record_activity("Calibration loaded")
         else:
-            # Assessment §2 — surface the actual rejection reason at WARNING
-            # so the operator can see whether it's a freshness problem (fix
-            # cron) or a sample-size problem (wait or lower the floor)
-            # without having to read the validator source.
-            log.warning(
-                "Ignoring futures calibration from %s: %s",
-                source or self.config.calibration_file,
-                _reason or "stale or insufficient sample",
-            )
+            # P1 (third assessment) §5 #3 — when the live (rolling 60-day)
+            # calibration fails the freshness or sample-size gate (a frequent
+            # occurrence early in a deployment or after a long outage),
+            # consult a long-window backtest "seed" calibration before
+            # falling through to ``self.calibration = None``. The seed has
+            # ≥90 days of synthetic trades so it always clears the sample
+            # floor; the freshness gate is intentionally bypassed for the
+            # seed because a stale seed is strictly preferable to no
+            # calibration at all.
+            seed_data: dict[str, Any] | None = None
+            seed_source: str | None = None
+            seed_reason: str | None = None
+            seed_key = getattr(self.config, "calibration_seed_redis_key", "") or ""
+            if seed_key:
+                seed_data, seed_source = load_trade_calibration(
+                    redis_url=self.config.redis_url,
+                    redis_key=seed_key,
+                    file_path="",  # seed lives only in Redis; no file fallback
+                )
+                if seed_data is not None:
+                    seed_valid, seed_reason = validate_trade_calibration_payload(
+                        seed_data,
+                        max_age_hours=float("inf"),  # freshness intentionally relaxed
+                        min_total_trades=self.config.calibration_min_total_trades,
+                    )
+                else:
+                    seed_valid = False
+                    seed_reason = "no seed payload found"
+            else:
+                seed_valid = False
+            if seed_valid and seed_data is not None:
+                self.calibration = seed_data
+                log.warning(
+                    "[CALIBRATION_SEED_FALLBACK] live calibration rejected (%s); "
+                    "using seed from %s instead.",
+                    primary_reason or "stale or insufficient sample",
+                    seed_source or seed_key,
+                )
+                self._record_activity("Calibration loaded from seed (live invalid)")
+            else:
+                self.calibration = None
+                if data is None and not seed_key:
+                    log.info("No futures calibration found at %s", self.config.calibration_file)
+                else:
+                    # Surface BOTH rejection reasons so the operator can act
+                    # on the right side (live-cron freshness vs seed
+                    # population) without having to read the validator.
+                    log.warning(
+                        "Ignoring futures calibration from %s: %s; seed_key=%s seed_reason=%s",
+                        source or self.config.calibration_file,
+                        primary_reason or "stale or insufficient sample",
+                        seed_key or "(disabled)",
+                        seed_reason or "not consulted",
+                    )
         # Sprint 3 §3.4 — walk-forward stability gate. When enabled, reject
         # calibration payloads whose OOS PF drops >40% vs IS or fails the
         # absolute OOS PF floor. Neuters self.calibration -> None so the
         # strategy falls back to threshold defaults.
-        if valid and self.calibration is not None and self._flag("USE_WALK_FORWARD_GATE"):
+        if self.calibration is not None and self._flag("USE_WALK_FORWARD_GATE"):
             if not self._walk_forward_gate_passes(self.trade_history):
                 log.info("Calibration rejected by walk-forward gate")
                 self._record_activity("Calibration rejected (walk-forward)")

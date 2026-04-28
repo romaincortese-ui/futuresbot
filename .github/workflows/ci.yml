@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run pytest
+        run: python -m pytest -q
+      - name: Repo-sync self-check (standalone tree shape)
+        # P1 (third assessment) §5 #5 — guard against accidental commits of
+        # __pycache__ or .pyc into the standalone source-of-truth tree.
+        # Cross-repo drift detection (standalone vs vendored mexc-bot2) runs
+        # in the vendored repo's CI where both trees are checked out; this
+        # job catches the common case of a stray bytecode commit before it
+        # propagates downstream.
+        run: |
+          set -e
+          if find futuresbot -type d -name __pycache__ | grep . ; then
+            echo "::error::__pycache__ directories committed under futuresbot/"
+            exit 1
+          fi
+          if find futuresbot -type f \( -name '*.pyc' -o -name '*.pyo' \) | grep . ; then
+            echo "::error::compiled bytecode committed under futuresbot/"
+            exit 1
+          fi
+          echo "[REPO_SYNC_SELFCHECK] standalone tree clean."

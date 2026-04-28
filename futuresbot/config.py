@@ -205,6 +205,11 @@ class FuturesConfig:
     funding_rate_abs_max: float = 0.0
     open_type: int = 1
     position_mode: int = 2
+    # P1 (third assessment) §5 #3 — separate Redis key for a long-window
+    # backtest "seed" calibration, consulted as a fallback when the live
+    # calibration (``calibration_redis_key``) fails the freshness or
+    # sample-size gate. Empty string disables the fallback.
+    calibration_seed_redis_key: str = ""
     # P1 §6 #5 — cross-bot synergy: Redis key the futures bot publishes
     # funding-rate observations under, consumed by the spot bot's funding
     # carry sleeve (mexc-bot-v2/mexcbot/funding_carry.py).
@@ -239,6 +244,9 @@ class FuturesConfig:
             calibration_refresh_seconds=env_int("FUTURES_CALIBRATION_REFRESH_SECONDS", 900),
             calibration_max_age_hours=env_float("FUTURES_CALIBRATION_MAX_AGE_HOURS", 72.0),
             calibration_min_total_trades=env_int("FUTURES_CALIBRATION_MIN_TOTAL_TRADES", 15),
+            calibration_seed_redis_key=env_str(
+                "FUTURES_CALIBRATION_SEED_REDIS_KEY", "mexc_futures_calibration_seed"
+            ),
             review_file=resolve_repo_path(env_str("FUTURES_DAILY_REVIEW_FILE", "backtest_output/daily_review.json")),
             review_redis_key=env_str("FUTURES_DAILY_REVIEW_REDIS_KEY", "mexc_futures_daily_review"),
             funding_observations_redis_key=env_str(
