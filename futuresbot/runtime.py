@@ -1002,6 +1002,29 @@ class FuturesRuntime:
             }
         )
         self.trade_history.append(trade)
+        # P2 §6 #13 — structured JSON audit line for after-the-fact P&L
+        # reconstruction independent of broker statements.
+        self._emit_audit_event(
+            "EXIT",
+            {
+                "symbol": position.symbol,
+                "side": position.side,
+                "entry_price": float(position.entry_price),
+                "exit_price": float(exit_price),
+                "contracts": int(position.contracts),
+                "base_qty": float(position.base_qty),
+                "leverage": int(position.leverage),
+                "margin_usdt": float(position.margin_usdt),
+                "gross_pnl_usdt": float(gross_pnl),
+                "fees_usdt": float(fees),
+                "pnl_usdt": float(pnl),
+                "pnl_pct": float(trade["pnl_pct"]),
+                "entry_signal": position.entry_signal,
+                "exit_reason": reason,
+                "opened_at": position.opened_at.isoformat(),
+                "closed_at": trade["exit_time"],
+            },
+        )
         self._notify(self._close_message(trade))
         self._record_activity(f"Closed {position.side} {position.symbol}: {reason} ${pnl:+.2f}")
 
@@ -1996,79 +2019,16 @@ class FuturesRuntime:
             log.debug("Portfolio VaR skipped: %s", exc)
             return True
 
-    # ----- Quarter 2 §3.8 / §4.1 monitor-only alpha probes ------------------
-    def _monitor_quarter2_funding_carry(self) -> None:
-        """Legacy Telegram-alert path for funding-carry observations.
-
-        Default-OFF after the assessment (§3.3): on a single-venue futures bot
-        these alerts are not actionable — a carry trade is a two-leg spot+perp
-        position the runtime cannot execute. The new path is
-        ``_publish_funding_observations`` (default-ON) which writes structured
-        funding data to Redis for the *spot* bot (mexc-bot-v2) to consume
-        through ``mexcbot/funding_carry.evaluate_carry_entry``. Operators who
-        explicitly want the legacy Telegram alerts can re-enable them with
-        ``USE_FUNDING_CARRY_MONITOR=1``.
-        """
-
-        if not self._flag("USE_FUNDING_CARRY_MONITOR"):
-            return
-        try:
-            from .funding_carry import evaluate_carry
-        except Exception:
-            return
-        try:
-            for sym, cached in list(self._funding_cache.items()):
-                try:
-                    _, rate = cached
-                    op = evaluate_carry(funding_8h=float(rate))
-                except Exception:
-                    continue
-                if op.action == "HOLD":
-                    continue
-                key = f"q2_funding_carry::{sym}::{op.action}"
-                self._notify_once(
-                    key,
-                    f"[Q2 §3.8] <b>{sym}</b> funding-carry opportunity\n"
-                    f"action={op.action} net_ann={op.net_annualised_carry * 100:.2f}% "
-                    f"funding_8h={op.eight_hour_funding * 100:.4f}%",
-                    cooldown_seconds=6 * 3600,
-                )
-        except Exception as exc:
-            log.debug("Funding-carry monitor skipped: %s", exc)
-
-    def _monitor_quarter2_basis(self) -> None:
-        """Emit basis-trade alerts when a quarterly future price is provided
-        via env override. No-op unless Q2_BASIS_SPOT_PRICE, Q2_BASIS_FUTURE_PRICE
-        and Q2_BASIS_DTE are all set (operator-driven probe)."""
-
-        if not self._flag("USE_BASIS_TRADE_MONITOR"):
-            return
-        try:
-            spot = float(os.environ.get("Q2_BASIS_SPOT_PRICE") or 0.0)
-            future = float(os.environ.get("Q2_BASIS_FUTURE_PRICE") or 0.0)
-            dte = float(os.environ.get("Q2_BASIS_DTE") or 0.0)
-        except Exception:
-            return
-        if spot <= 0 or future <= 0 or dte <= 0:
-            return
-        try:
-            from .basis_trade import evaluate_basis
-        except Exception:
-            return
-        try:
-            op = evaluate_basis(spot_price=spot, future_price=future, days_to_expiry=dte)
-            if op.action == "HOLD":
-                return
-            key = f"q2_basis::{op.action}::{int(dte)}"
-            self._notify_once(
-                key,
-                f"[Q2 §4.1] basis-trade opportunity\n"
-                f"action={op.action} ann_basis={op.annualised_basis * 100:.2f}% "
-                f"raw={op.raw_basis_pct * 100:.3f}% dte={op.days_to_expiry:.1f}",
-                cooldown_seconds=6 * 3600,
-            )
-        except Exception as exc:
-            log.debug("Basis-trade monitor skipped: %s", exc)
+    # ----- P2 §6 #11 — carry/basis monitor decommission -----------------
+    # The legacy ``_monitor_quarter2_funding_carry`` and ``_monitor_quarter2_basis``
+    # Telegram-alert paths were removed per the assessment's product decision
+    # (option 1 of §3.3). The futures bot is single-venue and directional; the
+    # carry leg lives in the spot bot ``mexc-bot-v2`` which now consumes funding
+    # observations published by ``_publish_funding_observations`` (P1 §6 #5).
+    # Operators who set the legacy ``USE_FUNDING_CARRY_MONITOR`` /
+    # ``USE_BASIS_TRADE_MONITOR`` env flags receive a one-time deprecation
+    # warning at boot (see ``_warn_deprecated_monitor_flags``) instead of an
+    # always-on Telegram noise loop.
 
     def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
         side_name = str(signal_payload["side"])
@@ -2309,8 +2269,95 @@ class FuturesRuntime:
                 float(position.score),
                 order_id or "",
             )
+            # P2 §6 #13 — companion JSON audit event with the same fields.
+            self._emit_audit_event(
+                "ENTRY",
+                {
+                    "symbol": position.symbol,
+                    "side": position.side,
+                    "mode": mode,
+                    "maker_filled": bool(maker_filled),
+                    "intended_price": float(intended),
+                    "fill_price": float(fill),
+                    "slippage_bps": float(slippage_bps),
+                    "leverage": int(position.leverage),
+                    "contracts": int(position.contracts),
+                    "notional_usdt": float(notional),
+                    "margin_usdt": float(position.margin_usdt),
+                    "funding_rate_8h": float(funding_rate),
+                    "score": float(position.score),
+                    "certainty": float(position.certainty),
+                    "entry_signal": position.entry_signal,
+                    "order_id": order_id or "",
+                    "opened_at": position.opened_at.isoformat(),
+                },
+            )
         except Exception as exc:  # pragma: no cover — never block an entry on log failure
             log.debug("Entry fill log skipped: %s", exc)
+
+    # ------------------------------------------------------------------
+    # P2 §6 #13 — structured trade audit log.
+    # Each lifecycle event (ENTRY / EXIT / FUNDING / FEE / etc.) produces a
+    # single ``[AUDIT] {json}`` line. JSON is sorted-keys + compact-separators
+    # so downstream log-shippers can parse without ambiguity. The emitter is
+    # best-effort: a malformed payload must never block trading.
+    # ------------------------------------------------------------------
+    def _emit_audit_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        try:
+            import json as _json
+
+            envelope = {
+                "schema_version": 1,
+                "event_type": str(event_type).upper(),
+                "emitted_at": datetime.now(timezone.utc).isoformat(),
+                "mode": "paper" if self.config.paper_trade else "live",
+                "payload": payload,
+            }
+            log.info("[AUDIT] %s", _json.dumps(envelope, separators=(",", ":"), sort_keys=True, default=str))
+        except Exception as exc:  # pragma: no cover — defensive
+            log.debug("Audit emit failed event=%s: %s", event_type, exc)
+
+    # ------------------------------------------------------------------
+    # P2 §6 #11 — boot-time deprecation warning for the legacy in-bot
+    # carry/basis monitor flags. Operators who still set these get a single
+    # warning pointing them at the new spot-bot consumer instead of the
+    # decommissioned Telegram alerts.
+    # ------------------------------------------------------------------
+    def _warn_deprecated_monitor_flags(self) -> None:
+        import os as _os
+
+        deprecated = []
+        for name in ("USE_FUNDING_CARRY_MONITOR", "USE_BASIS_TRADE_MONITOR"):
+            if _os.environ.get(name, "0").strip().lower() in {"1", "true", "yes", "on"}:
+                deprecated.append(name)
+        if not deprecated:
+            return
+        log.warning(
+            "[DEPRECATED] %s is set but the in-bot Telegram carry/basis monitor "
+            "was decommissioned in P2 (assessment §6 #11). Funding intelligence "
+            "is now published to Redis via _publish_funding_observations and "
+            "consumed by the spot bot mexc-bot-v2. Unset these env flags.",
+            ",".join(deprecated),
+        )
+
+    # ------------------------------------------------------------------
+    # P2 §6 #12 — boot-time warning when SILVER_USDT / XAUT_USDT are in the
+    # active symbol list. The assessment recommends dropping these from a
+    # momentum bot until a session-aware mean-reversion sleeve exists; the
+    # warning is non-blocking so operators can opt in deliberately.
+    # ------------------------------------------------------------------
+    def _warn_unsuitable_symbols(self) -> None:
+        unsuitable = {"SILVER_USDT", "XAUT_USDT"}
+        flagged = [s for s in self._active_symbols if s.upper() in unsuitable]
+        if not flagged:
+            return
+        log.warning(
+            "[SYMBOL_NOTICE] %s in active symbols. The assessment §3.5 flags "
+            "these as poor strategy instruments for this BTC-tuned momentum "
+            "bot (thin perp books, FX-correlated). Consider dropping until a "
+            "session-aware mean-reversion sleeve exists.",
+            ",".join(flagged),
+        )
 
     def _log_boot_manifest(self) -> None:
         """Gate A A6 (memo 1 §7): single ``[BOOT]`` log line with all live-config state."""
@@ -2504,6 +2551,11 @@ class FuturesRuntime:
         # passed strict mode (symbols that failed are absent from active).
         self._validate_symbols()
         self._emit_contract_specs()
+        # P2 §6 #11 / §6 #12 — surface deprecation + unsuitable-symbol notices
+        # exactly once at boot, after symbol validation has settled the active
+        # list (so we don't warn about symbols the validator already dropped).
+        self._warn_deprecated_monitor_flags()
+        self._warn_unsuitable_symbols()
         self._send_startup_message()
         self._record_activity("Runtime started")
         while True:
@@ -2544,8 +2596,9 @@ class FuturesRuntime:
                 self._publish_funding_observations()
                 self._log_cycle_summary(price=current_price, signal=signal)
                 self._send_heartbeat(price=current_price, signal=signal)
-                self._monitor_quarter2_funding_carry()
-                self._monitor_quarter2_basis()
+                # P2 §6 #11 — carry/basis monitor calls intentionally removed.
+                # Funding-carry intelligence is now published to Redis for the
+                # spot bot via ``_publish_funding_observations`` (P1 §6 #5).
             except Exception as exc:
                 log.exception("Futures runtime loop failed: %s", exc)
                 self._record_activity(f"Runtime error: {type(exc).__name__}")
