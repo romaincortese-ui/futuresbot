@@ -59,6 +59,13 @@ class FuturesRuntime:
         self._symbols_validated = False
         # Funding-rate cache: symbol -> (timestamp, rate). Refreshed lazily every hour.
         self._funding_cache: dict[str, tuple[float, float]] = {}
+        # P1 §8 (assessment): per-cycle gate-block aggregator. Populated by
+        # ``_fetch_signal`` and consumed by ``_log_cycle_summary`` to emit a
+        # single ``[CYCLE_SUMMARY]`` line instead of one ``[GATE_BLOCK]`` line
+        # per (cycle x symbol). Drastically reduces log volume on Railway and
+        # makes the "why isn't it trading?" signal unambiguous to the operator.
+        self._last_cycle_gate_blocks: dict[str, str] = {}
+        self._cycle_counter: int = 0
         # Sprint 3 §3.9 — rolling slippage attribution store (lazy).
         self._slippage_store: Any | None = None
         self._load_state()
@@ -117,6 +124,30 @@ class FuturesRuntime:
         self._recent_activity.appendleft(f"{timestamp} {message}")
 
     def _log_cycle_summary(self, *, price: float, signal: dict[str, Any] | None) -> None:
+        # P1 §8 — emit gate-block aggregate first so the "why didn't we trade?"
+        # answer sits next to the cycle outcome, not buried in a wall of
+        # per-symbol [GATE_BLOCK] INFO lines.
+        if self._last_cycle_gate_blocks:
+            reason_counts: dict[str, int] = {}
+            for reason in self._last_cycle_gate_blocks.values():
+                # Strip the "=<n><120" tail so cycles where the bar count drifts
+                # by 1 don't fragment the histogram (e.g. insufficient_1h_bars=65
+                # vs =66 collapse to one bucket).
+                bucket = reason.split("=", 1)[0] if "=" in reason else reason
+                reason_counts[bucket] = reason_counts.get(bucket, 0) + 1
+            histogram = ",".join(
+                f"{name}:{count}" for name, count in sorted(
+                    reason_counts.items(), key=lambda kv: (-kv[1], kv[0])
+                )
+            )
+            log.info(
+                "[CYCLE_SUMMARY] cycle=%d symbols=%d gate_blocks=%d histogram={%s} signal=%s",
+                self._cycle_counter,
+                len(self._active_symbols),
+                len(self._last_cycle_gate_blocks),
+                histogram,
+                "yes" if signal is not None else "no",
+            )
         if self.open_position is not None:
             pnl_usdt = self._position_pnl_usdt(self.open_position, price)
             log.info(
@@ -142,6 +173,94 @@ class FuturesRuntime:
             price,
             self._paused,
         )
+
+    # ------------------------------------------------------------------
+    # P1 §6 #5 — cross-bot funding-observations publisher.
+    # Synergy with the spot bot (mexc-bot-v2): the futures bot already polls
+    # MEXC perp funding rates for its own funding gate, so publishing those
+    # observations to Redis lets the spot bot's
+    # ``mexcbot/funding_carry.evaluate_carry_entry`` size a real carry sleeve
+    # without standing up its own perp connector. The futures bot stays
+    # single-venue and directional; the spot bot owns the carry leg.
+    # ------------------------------------------------------------------
+    def _publish_funding_observations(self) -> None:
+        # Default-ON. Opt out with USE_FUNDING_OBSERVATIONS_PUBLISH=0.
+        import os as _os
+
+        if _os.environ.get("USE_FUNDING_OBSERVATIONS_PUBLISH", "1").strip().lower() in {
+            "0", "false", "no", "off", ""
+        }:
+            return
+        if not self.config.redis_url:
+            return
+        if not self._funding_cache:
+            return
+        try:
+            from futuresbot.funding_publisher import (
+                build_payload,
+                observations_from_cache,
+                publish_via_url,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            log.debug("Funding publisher import failed: %s", exc)
+            return
+        try:
+            observations = observations_from_cache(self._funding_cache)
+            if not observations:
+                return
+            payload = build_payload(observations)
+            ok = publish_via_url(
+                self.config.redis_url,
+                payload,
+                key=self.config.funding_observations_redis_key,
+                ttl_seconds=900,
+            )
+            if ok:
+                log.info(
+                    "[FUNDING_PUBLISH] key=%s symbols=%d ttl=900s",
+                    self.config.funding_observations_redis_key,
+                    len(observations),
+                )
+        except Exception as exc:  # pragma: no cover — defensive
+            log.debug("Funding publisher loop step failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # P1 §6 #9 — boot-time MEXC contract spec log line.
+    # The existing Gate B B4 validator emits [EXCHANGE_SPEC_OK] but does not
+    # include the per-symbol details an operator needs to debug a 400 reject
+    # (contract size, min volume, price unit). We add an explicit per-symbol
+    # CONTRACT_SPEC line on every boot so this is observable.
+    # ------------------------------------------------------------------
+    def _emit_contract_specs(self) -> None:
+        for sym in self._active_symbols:
+            try:
+                contract = self.client.get_contract_detail(sym)
+            except Exception as exc:
+                log.warning("[CONTRACT_SPEC] symbol=%s lookup_failed=%s", sym, exc)
+                continue
+            if not isinstance(contract, dict) or not contract:
+                log.warning("[CONTRACT_SPEC] symbol=%s empty_contract_detail", sym)
+                continue
+            try:
+                contract_size = float(contract.get("contractSize") or 0.0)
+            except (TypeError, ValueError):
+                contract_size = 0.0
+            min_vol = contract.get("minVol") or contract.get("min_vol") or "?"
+            price_unit = contract.get("priceUnit") or contract.get("price_unit") or "?"
+            vol_unit = contract.get("volUnit") or contract.get("vol_unit") or "?"
+            max_lev = contract.get("maxLeverage") or contract.get("max_leverage") or "?"
+            taker_fee = contract.get("takerFeeRate") or contract.get("taker_fee_rate") or "?"
+            log.info(
+                "[CONTRACT_SPEC] symbol=%s contract_size=%s min_vol=%s price_unit=%s "
+                "vol_unit=%s max_leverage=%s taker_fee_rate=%s",
+                sym,
+                contract_size,
+                min_vol,
+                price_unit,
+                vol_unit,
+                max_lev,
+                taker_fee,
+            )
 
     def _notify(self, message: str, *, parse_mode: str = "HTML") -> None:
         self.telegram.send_message(message, parse_mode=parse_mode)
@@ -1038,6 +1157,9 @@ class FuturesRuntime:
     def _fetch_signal(self) -> dict[str, Any] | None:
         if self._available_slots() <= 0:
             return None
+        # P1 §8 — reset the per-cycle aggregator at the start of every scan.
+        self._cycle_counter += 1
+        self._last_cycle_gate_blocks = {}
         end = int(time.time())
         # P0 fix (assessment §1): the strategy resamples 15m -> 1h and requires
         # >=120 1h bars (see strategy.score_btc_futures_setup / diagnose_setup_rejection).
@@ -1085,6 +1207,11 @@ class FuturesRuntime:
                     reason = diagnose_setup_rejection(frame, scoped)
                 except Exception as diag_exc:  # pragma: no cover — defensive
                     reason = f"diagnostic_error={type(diag_exc).__name__}"
+                # Track in the per-cycle aggregator (P1 §8). Keep the per-symbol
+                # INFO line as well so individual symbol diagnoses remain visible
+                # at debug-grain; volume reduction comes from the consolidated
+                # CYCLE_SUMMARY line that follows.
+                self._last_cycle_gate_blocks[sym] = reason
                 log.info("[GATE_BLOCK] symbol=%s reason=%s", sym, reason)
                 continue
             calibrated = apply_signal_calibration(
@@ -1871,10 +1998,17 @@ class FuturesRuntime:
 
     # ----- Quarter 2 §3.8 / §4.1 monitor-only alpha probes ------------------
     def _monitor_quarter2_funding_carry(self) -> None:
-        """Scan cached funding rates and emit Telegram alerts when any symbol
-        offers a carry above the threshold. Monitor-only: execution requires
-        simultaneous spot + perp books on different venues (out of scope for
-        this single-venue runtime)."""
+        """Legacy Telegram-alert path for funding-carry observations.
+
+        Default-OFF after the assessment (§3.3): on a single-venue futures bot
+        these alerts are not actionable — a carry trade is a two-leg spot+perp
+        position the runtime cannot execute. The new path is
+        ``_publish_funding_observations`` (default-ON) which writes structured
+        funding data to Redis for the *spot* bot (mexc-bot-v2) to consume
+        through ``mexcbot/funding_carry.evaluate_carry_entry``. Operators who
+        explicitly want the legacy Telegram alerts can re-enable them with
+        ``USE_FUNDING_CARRY_MONITOR=1``.
+        """
 
         if not self._flag("USE_FUNDING_CARRY_MONITOR"):
             return
@@ -2345,7 +2479,7 @@ class FuturesRuntime:
         )
 
     def run(self) -> None:
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+        _configure_logging()
         log.info(
             "Starting futures runtime mode=%s symbols=%s hourly_check_seconds=%s heartbeat_seconds=%s paper_trade=%s",
             self._mode_label(),
@@ -2363,6 +2497,13 @@ class FuturesRuntime:
         # symbol before the first cycle — refuses to start in strict mode if
         # contractSize/minVol/takerFeeRate don't match expected values.
         self._validate_exchange_specs_on_boot()
+        # P1 §6 #9 — boot-time per-symbol [CONTRACT_SPEC] log, listing the
+        # MEXC contractSize / minVol / priceUnit / maxLeverage / takerFeeRate
+        # so an operator can debug a 400 reject without reading the validator
+        # source. Kicks off after exchange-spec validation so we only log what
+        # passed strict mode (symbols that failed are absent from active).
+        self._validate_symbols()
+        self._emit_contract_specs()
         self._send_startup_message()
         self._record_activity("Runtime started")
         while True:
@@ -2396,6 +2537,11 @@ class FuturesRuntime:
                 self._write_status(signal=signal, price=current_price)
                 if signal is not None:
                     self._enter_trade(signal)
+                # P1 §6 #5 (assessment) + cross-bot synergy with mexc-bot-v2:
+                # publish the funding-rate observations gathered this cycle to
+                # Redis. The spot bot consumes them via mexcbot/funding_carry.
+                # Default ON; opt out with USE_FUNDING_OBSERVATIONS_PUBLISH=0.
+                self._publish_funding_observations()
                 self._log_cycle_summary(price=current_price, signal=signal)
                 self._send_heartbeat(price=current_price, signal=signal)
                 self._monitor_quarter2_funding_carry()
@@ -2413,8 +2559,44 @@ class FuturesRuntime:
             time.sleep(self.config.hourly_check_seconds)
 
 
+def _configure_logging() -> None:
+    """P1 §6 #7 — split healthy/error streams so Railway stops painting every
+    INFO line with severity=error.
+
+    INFO/DEBUG → stdout (Railway treats stdout as severity=info)
+    WARNING+   → stderr (Railway treats stderr as severity=error)
+
+    Idempotent: subsequent calls are a no-op when our handlers are already
+    installed on the root logger.
+    """
+
+    import sys as _sys
+
+    root = logging.getLogger()
+    # Detect prior install via a tagged attribute on the handler.
+    for h in root.handlers:
+        if getattr(h, "_futuresbot_split_handler", False):
+            return
+    # Tear down any default handlers (basicConfig from prior boot, libraries).
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    stdout_handler = logging.StreamHandler(_sys.stdout)
+    stdout_handler.setLevel(logging.DEBUG)
+    stdout_handler.addFilter(lambda record: record.levelno < logging.WARNING)
+    stdout_handler.setFormatter(fmt)
+    stdout_handler._futuresbot_split_handler = True  # type: ignore[attr-defined]
+    stderr_handler = logging.StreamHandler(_sys.stderr)
+    stderr_handler.setLevel(logging.WARNING)
+    stderr_handler.setFormatter(fmt)
+    stderr_handler._futuresbot_split_handler = True  # type: ignore[attr-defined]
+    root.addHandler(stdout_handler)
+    root.addHandler(stderr_handler)
+    root.setLevel(logging.INFO)
+
+
 def run_runtime() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    _configure_logging()
     try:
         config = FuturesConfig.from_env()
         client = MexcFuturesClient(config)

@@ -156,7 +156,10 @@ def test_funding_rate_abs_max_default(monkeypatch):
         if name.startswith("FUTURES_") or name.startswith("USE_") or name in {"MEXC_API_KEY", "MEXC_API_SECRET"}:
             monkeypatch.delenv(name, raising=False)
     cfg = FuturesConfig.from_env()
-    assert cfg.funding_rate_abs_max == pytest.approx(0.0008)
+    # P1 fix (assessment §4.2 / §6 #6): default tightened from 0.0008/8h
+    # (~87% APR) to 0.0002/8h (~22% APR). Per-symbol overrides (e.g. PEPE)
+    # remain authoritative.
+    assert cfg.funding_rate_abs_max == pytest.approx(0.0002)
 
 
 def test_calibration_min_total_trades_default(monkeypatch):

@@ -205,6 +205,10 @@ class FuturesConfig:
     funding_rate_abs_max: float = 0.0
     open_type: int = 1
     position_mode: int = 2
+    # P1 §6 #5 — cross-bot synergy: Redis key the futures bot publishes
+    # funding-rate observations under, consumed by the spot bot's funding
+    # carry sleeve (mexc-bot-v2/mexcbot/funding_carry.py).
+    funding_observations_redis_key: str = "mexc_funding_observations"
 
     @classmethod
     def from_env(cls) -> "FuturesConfig":
@@ -237,6 +241,9 @@ class FuturesConfig:
             calibration_min_total_trades=env_int("FUTURES_CALIBRATION_MIN_TOTAL_TRADES", 15),
             review_file=resolve_repo_path(env_str("FUTURES_DAILY_REVIEW_FILE", "backtest_output/daily_review.json")),
             review_redis_key=env_str("FUTURES_DAILY_REVIEW_REDIS_KEY", "mexc_futures_daily_review"),
+            funding_observations_redis_key=env_str(
+                "FUTURES_FUNDING_OBSERVATIONS_REDIS_KEY", "mexc_funding_observations"
+            ),
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=env_str("ANTHROPIC_API_KEY", ""),
             runtime_state_file=resolve_repo_path(env_str("FUTURES_RUNTIME_STATE_FILE", "futures_runtime_state.json")),
@@ -267,7 +274,13 @@ class FuturesConfig:
             correlation_buckets=parse_correlation_buckets(env_str("FUTURES_CORRELATION_BUCKETS", "")),
             max_per_bucket=max(1, env_int("FUTURES_MAX_PER_BUCKET", 1)),
             session_hours_utc=env_str("FUTURES_SESSION_HOURS_UTC", ""),
-            funding_rate_abs_max=env_float("FUTURES_FUNDING_RATE_ABS_MAX", 0.0008),
+            # P1 fix (assessment §4.2 / §6 #6): tighten the global funding-rate cap
+            # default. The previous 0.0008/8h (≈87%/yr APR) is permissive to the
+            # point of being decorative on a momentum strategy whose holds straddle
+            # one funding interval. 0.0002/8h (≈22%/yr) keeps the gate meaningful.
+            # Per-symbol overrides remain authoritative (e.g. PEPE memecoin can be
+            # widened back to 0.00025 via FUTURES_PEPEUSDT_FUNDING_RATE_ABS_MAX).
+            funding_rate_abs_max=env_float("FUTURES_FUNDING_RATE_ABS_MAX", 0.0002),
             open_type=env_int("FUTURES_OPEN_TYPE", 1),
             position_mode=env_int("FUTURES_POSITION_MODE", 2),
         )
