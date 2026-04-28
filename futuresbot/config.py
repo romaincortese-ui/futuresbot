@@ -211,6 +211,11 @@ class FuturesConfig:
         hourly_check_seconds = env_int("FUTURES_HOURLY_CHECK_SECONDS", 300)
         primary_symbol = env_str("FUTURES_SYMBOL", "BTC_USDT").upper()
         symbols = parse_symbol_list(env_str("FUTURES_SYMBOLS", ""), primary_symbol)
+        # P0 fix (assessment §3.2): fail fast on misnamed per-symbol env vars
+        # (e.g. FUTURES_PEPE_USDT_LEVERAGE_MAX is silently ignored because
+        # _symbol_env_prefix strips underscores -> FUTURES_PEPEUSDT). This
+        # prevents silent leverage-cap / funding-gate bypasses in production.
+        _enforce_symbol_env_key_hygiene(symbols)
         instance = cls(
             api_key=env_str("MEXC_API_KEY", ""),
             api_secret=env_str("MEXC_API_SECRET", ""),
@@ -358,6 +363,53 @@ def _has_symbol_overrides(symbol: str) -> bool:
         if os.getenv(f"{prefix}_{suffix}"):
             return True
     return False
+
+
+def detect_misnamed_symbol_env_keys(symbols: tuple[str, ...]) -> list[tuple[str, str]]:
+    """P0 fix (assessment §3.2): detect per-symbol env vars that use the natural
+    underscore form (e.g. ``FUTURES_PEPE_USDT_LEVERAGE_MAX``) instead of the
+    canonical alphanumeric form expected by ``_symbol_env_prefix``
+    (``FUTURES_PEPEUSDT_LEVERAGE_MAX``). Such vars are silently ignored at
+    runtime, which can nullify a per-symbol leverage cap or funding gate
+    without warning.
+
+    Returns a list of ``(misnamed_key, suggested_canonical_key)`` pairs.
+    Empty list means clean.
+    """
+
+    findings: list[tuple[str, str]] = []
+    for symbol in symbols:
+        sym_upper = symbol.upper()
+        canonical_prefix = _symbol_env_prefix(sym_upper)  # e.g. FUTURES_PEPEUSDT
+        natural_prefix = f"FUTURES_{sym_upper}"           # e.g. FUTURES_PEPE_USDT
+        if natural_prefix == canonical_prefix:
+            continue  # symbol has no underscores (e.g. BTCUSDT) -> no ambiguity
+        for suffix in _SYMBOL_OVERRIDE_SUFFIXES:
+            misnamed = f"{natural_prefix}_{suffix}"
+            canonical = f"{canonical_prefix}_{suffix}"
+            if os.getenv(misnamed) is not None and os.getenv(canonical) is None:
+                findings.append((misnamed, canonical))
+    return findings
+
+
+class MisnamedSymbolEnvKeyError(ValueError):
+    """Raised at boot when per-symbol env vars use a non-canonical form."""
+
+
+def _enforce_symbol_env_key_hygiene(symbols: tuple[str, ...]) -> None:
+    if env_bool("FUTURES_DISABLE_ENV_KEY_VALIDATION", False):
+        return
+    findings = detect_misnamed_symbol_env_keys(symbols)
+    if not findings:
+        return
+    lines = [f"  - {bad}  ->  {good}" for bad, good in findings]
+    raise MisnamedSymbolEnvKeyError(
+        "Per-symbol env vars use non-canonical form (underscores in symbol are "
+        "stripped by _symbol_env_prefix, so the keys below are silently ignored). "
+        "Rename them to the canonical form, or set "
+        "FUTURES_DISABLE_ENV_KEY_VALIDATION=1 to bypass (not recommended):\n"
+        + "\n".join(lines)
+    )
 
 
 @dataclass(slots=True)

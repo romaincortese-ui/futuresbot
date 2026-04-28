@@ -1039,7 +1039,14 @@ class FuturesRuntime:
         if self._available_slots() <= 0:
             return None
         end = int(time.time())
-        start = end - 900 * 260
+        # P0 fix (assessment §1): the strategy resamples 15m -> 1h and requires
+        # >=120 1h bars (see strategy.score_btc_futures_setup / diagnose_setup_rejection).
+        # The previous 900*260 window (~65h) made the bar-count gate mathematically
+        # unreachable on every cycle, blocking every symbol with
+        # `insufficient_1h_bars=65<120` and producing zero trades. 900*720 = 180h
+        # (~7.5d) yields ~180 1h bars after resample, giving a 1.5x margin of
+        # safety over the 120 minimum and adequate warm-up for ATR/ADX/EMA100.
+        start = end - 900 * 720
         best: tuple[float, Any] | None = None
         for sym in self._active_symbols:
             if sym in self.open_positions:
