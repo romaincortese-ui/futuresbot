@@ -888,7 +888,15 @@ class FuturesRuntime:
             log.info("Loaded futures calibration from %s", source or self.config.calibration_file)
             self._record_activity("Calibration loaded")
         else:
-            log.info("Ignoring futures calibration from %s: stale or insufficient sample", source or self.config.calibration_file)
+            # Assessment §2 — surface the actual rejection reason at WARNING
+            # so the operator can see whether it's a freshness problem (fix
+            # cron) or a sample-size problem (wait or lower the floor)
+            # without having to read the validator source.
+            log.warning(
+                "Ignoring futures calibration from %s: %s",
+                source or self.config.calibration_file,
+                _reason or "stale or insufficient sample",
+            )
         # Sprint 3 §3.4 — walk-forward stability gate. When enabled, reject
         # calibration payloads whose OOS PF drops >40% vs IS or fails the
         # absolute OOS PF floor. Neuters self.calibration -> None so the
