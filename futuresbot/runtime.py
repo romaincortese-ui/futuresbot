@@ -19,6 +19,7 @@ from futuresbot.telegram import TelegramClient
 
 from futuresbot.calibration import load_trade_calibration, validate_trade_calibration_payload
 from futuresbot.config import FuturesConfig
+from futuresbot.event_policy import EventPolicyDecision, evaluate_event_policy
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -68,6 +69,8 @@ class FuturesRuntime:
         self._cycle_counter: int = 0
         # Sprint 3 §3.9 — rolling slippage attribution store (lazy).
         self._slippage_store: Any | None = None
+        self._crypto_event_state: dict[str, Any] | None = None
+        self._last_crypto_event_refresh_at = 0.0
         # P1 (third assessment) §5 #1+#2 — resolved per-symbol taker fee rate
         # used by the live cost-budget RR gate. Populated by
         # ``_emit_contract_specs`` at boot from the MEXC contract-detail
@@ -1343,6 +1346,65 @@ class FuturesRuntime:
     def _available_slots(self) -> int:
         return max(0, int(self.config.max_concurrent_positions) - len(self.open_positions))
 
+    def _refresh_crypto_event_state(self) -> None:
+        if not self.config.crypto_event_enabled:
+            return
+        now_ts = time.time()
+        if now_ts - self._last_crypto_event_refresh_at < max(30, int(self.config.crypto_event_refresh_seconds)):
+            return
+        self._last_crypto_event_refresh_at = now_ts
+        if self.config.crypto_event_state_file:
+            try:
+                self._crypto_event_state = json.loads(Path(self.config.crypto_event_state_file).read_text(encoding="utf-8"))
+            except Exception as exc:
+                log.debug("Crypto event state file load failed: %s", exc)
+            return
+        if not self.config.redis_url or not self.config.crypto_event_redis_key:
+            return
+        try:
+            import redis
+
+            client = redis.Redis.from_url(self.config.redis_url, socket_timeout=2.0, socket_connect_timeout=2.0)
+            raw = client.get(self.config.crypto_event_redis_key)
+            if not raw:
+                return
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            payload = json.loads(str(raw))
+            if isinstance(payload, dict):
+                self._crypto_event_state = payload
+        except Exception as exc:
+            log.debug("Crypto event Redis load failed: %s", exc)
+
+    def _event_policy_decision(self, *, symbol: str, side: str) -> EventPolicyDecision:
+        if not self.config.crypto_event_enabled:
+            return EventPolicyDecision(symbol.upper(), side.upper(), False, 1.0, 1.0, ())
+        self._refresh_crypto_event_state()
+        try:
+            return evaluate_event_policy(
+                symbol=symbol,
+                side=side,
+                state=self._crypto_event_state,
+                now=datetime.now(timezone.utc),
+                stale_after_seconds=int(self.config.crypto_event_stale_seconds),
+            )
+        except Exception as exc:
+            log.debug("Crypto event policy evaluation failed for %s: %s", symbol, exc)
+            return EventPolicyDecision(symbol.upper(), side.upper(), False, 1.0, 1.0, ())
+
+    def _apply_event_policy_to_signal(self, signal: Any, decision: EventPolicyDecision) -> Any:
+        if not decision.reasons:
+            return signal
+        metadata = dict(getattr(signal, "metadata", {}) or {})
+        metadata["event_policy_size_multiplier"] = round(decision.size_multiplier, 4)
+        metadata["event_policy_leverage_multiplier"] = round(decision.leverage_multiplier, 4)
+        metadata["event_policy_reasons"] = list(decision.reasons)
+        if decision.state_age_seconds is not None:
+            metadata["event_policy_state_age_seconds"] = round(decision.state_age_seconds, 1)
+        current_leverage = int(getattr(signal, "leverage", 1) or 1)
+        adjusted_leverage = max(1, int(math.floor(current_leverage * decision.leverage_multiplier)))
+        return dataclasses.replace(signal, leverage=adjusted_leverage, metadata=metadata)
+
     def _fetch_signal(self) -> dict[str, Any] | None:
         if self._available_slots() <= 0:
             return None
@@ -1432,6 +1494,17 @@ class FuturesRuntime:
                     regime.reason,
                 )
                 continue
+            event_decision = self._event_policy_decision(symbol=sym, side=calibrated.side)
+            if event_decision.block_entry:
+                self._last_cycle_gate_blocks[sym] = "crypto_event_policy"
+                log.info(
+                    "Signal scan: %s %s blocked by crypto event policy: %s",
+                    sym,
+                    calibrated.side,
+                    ",".join(event_decision.reasons),
+                )
+                continue
+            calibrated = self._apply_event_policy_to_signal(calibrated, event_decision)
             log.info(
                 "Signal scan accepted for %s: side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%%",
                 sym,
@@ -2228,6 +2301,15 @@ class FuturesRuntime:
         size_multiplier = self._drawdown_size_multiplier()
         if size_multiplier <= 0:
             log.info("Futures signal skipped for %s: drawdown HALT gate active", symbol)
+            return False
+        metadata = dict(signal_payload.get("metadata", {}) or {})
+        try:
+            event_size_multiplier = float(metadata.get("event_policy_size_multiplier", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            event_size_multiplier = 1.0
+        size_multiplier *= max(0.0, min(1.0, event_size_multiplier))
+        if size_multiplier <= 0:
+            log.info("Futures signal skipped for %s: crypto event size gate active", symbol)
             return False
         # Sprint 1 §2.1 — NAV-anchored sizing. Replaces the legacy
         # (margin_budget × leverage / price) formula when USE_NAV_RISK_SIZING=1.

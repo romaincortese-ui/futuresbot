@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ import pandas as pd
 
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.config import FuturesBacktestConfig
+from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.strategy import score_btc_futures_setup
@@ -148,9 +150,44 @@ class FuturesBacktestEngine:
 		self.contract = self.client.get_contract_detail(self.config.symbol)
 		self.contract_size = float(self.contract.get("contractSize", 0.0001) or 0.0001)
 		self.min_vol = int(float(self.contract.get("minVol", 1) or 1))
+		self.crypto_event_state = self._load_crypto_event_state()
 
-	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None) -> tuple[int, float, int]:
-		margin = min(self.config.margin_budget_usdt, balance)
+	def _load_crypto_event_state(self) -> dict[str, Any] | None:
+		path = os.environ.get("CRYPTO_EVENT_STATE_FILE", "").strip()
+		if not path:
+			return None
+		try:
+			payload = json.loads(Path(path).read_text(encoding="utf-8"))
+		except Exception:
+			return None
+		return payload if isinstance(payload, dict) else None
+
+	def _apply_crypto_event_policy(self, signal: FuturesSignal, timestamp: pd.Timestamp) -> FuturesSignal | None:
+		if os.environ.get("USE_CRYPTO_EVENT_POLICY", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+			return signal
+		if self.crypto_event_state is None:
+			return signal
+		decision = evaluate_event_policy(
+			symbol=signal.symbol,
+			side=signal.side,
+			state=self.crypto_event_state,
+			now=timestamp.to_pydatetime(),
+			stale_after_seconds=int(_env_float("CRYPTO_EVENT_STALE_SECONDS", 1800.0)),
+		)
+		if decision.block_entry:
+			return None
+		if not decision.reasons:
+			return signal
+		metadata = dict(signal.metadata)
+		metadata["event_policy_size_multiplier"] = round(decision.size_multiplier, 4)
+		metadata["event_policy_leverage_multiplier"] = round(decision.leverage_multiplier, 4)
+		metadata["event_policy_reasons"] = list(decision.reasons)
+		adjusted_leverage = max(1, int(float(signal.leverage) * decision.leverage_multiplier))
+		return dataclasses.replace(signal, leverage=adjusted_leverage, metadata=metadata)
+
+	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, size_multiplier: float = 1.0) -> tuple[int, float, int]:
+		bounded_size_multiplier = max(0.0, min(1.0, float(size_multiplier)))
+		margin = min(self.config.margin_budget_usdt, balance) * bounded_size_multiplier
 		if entry_price <= 0 or leverage <= 0 or margin <= 0:
 			return 0, 0.0, leverage
 		# §2.1 — NAV-risk sizing. When USE_NAV_RISK_SIZING=1 the contract count
@@ -163,7 +200,7 @@ class FuturesBacktestEngine:
 			try:
 				from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
 
-				risk_pct = _env_float("NAV_RISK_PCT", 0.01)
+				risk_pct = _env_float("NAV_RISK_PCT", 0.01) * bounded_size_multiplier
 				nav_lev_min = int(_env_float("NAV_LEVERAGE_MIN", 5))
 				nav_lev_max = int(_env_float("NAV_LEVERAGE_MAX", 10))
 				nav = compute_nav_risk_sizing(
@@ -195,8 +232,13 @@ class FuturesBacktestEngine:
 		return position.base_qty * (price - position.entry_price) * direction
 
 	def _open_position(self, signal: FuturesSignal, entry_time: pd.Timestamp, entry_price: float, balance: float) -> FuturesPosition | None:
+		metadata = dict(signal.metadata)
+		try:
+			size_multiplier = float(metadata.get("event_policy_size_multiplier", 1.0) or 1.0)
+		except (TypeError, ValueError):
+			size_multiplier = 1.0
 		contracts, used_margin, applied_leverage = self._contracts_for_entry(
-			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price),
+			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price), size_multiplier=size_multiplier,
 		)
 		if contracts <= 0:
 			return None
@@ -216,7 +258,7 @@ class FuturesBacktestEngine:
 			score=float(signal.score),
 			certainty=float(signal.certainty),
 			entry_signal=signal.entry_signal,
-			metadata=dict(signal.metadata),
+			metadata=metadata,
 		)
 
 	def _close_position(
@@ -434,6 +476,8 @@ class FuturesBacktestEngine:
 					if raw_signal is not None
 					else None
 				)
+				if calibrated is not None:
+					calibrated = self._apply_crypto_event_policy(calibrated, timestamp)
 				if calibrated is not None:
 					state.pending_signal = calibrated
 					state.pending_entry_time = frame_15m.index[index + 1]

@@ -214,6 +214,11 @@ class FuturesConfig:
     # funding-rate observations under, consumed by the spot bot's funding
     # carry sleeve (mexc-bot-v2/mexcbot/funding_carry.py).
     funding_observations_redis_key: str = "mexc_funding_observations"
+    crypto_event_enabled: bool = True
+    crypto_event_redis_key: str = "mexc:crypto_event_intelligence"
+    crypto_event_state_file: str = ""
+    crypto_event_refresh_seconds: int = 300
+    crypto_event_stale_seconds: int = 1800
 
     @classmethod
     def from_env(cls) -> "FuturesConfig":
@@ -252,6 +257,11 @@ class FuturesConfig:
             funding_observations_redis_key=env_str(
                 "FUTURES_FUNDING_OBSERVATIONS_REDIS_KEY", "mexc_funding_observations"
             ),
+            crypto_event_enabled=env_bool("USE_CRYPTO_EVENT_POLICY", True),
+            crypto_event_redis_key=env_str("CRYPTO_EVENT_REDIS_KEY", "mexc:crypto_event_intelligence"),
+            crypto_event_state_file=env_str("CRYPTO_EVENT_STATE_FILE", ""),
+            crypto_event_refresh_seconds=env_int("CRYPTO_EVENT_REFRESH_SECONDS", 300),
+            crypto_event_stale_seconds=env_int("CRYPTO_EVENT_STALE_SECONDS", 1800),
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=env_str("ANTHROPIC_API_KEY", ""),
             runtime_state_file=resolve_repo_path(env_str("FUTURES_RUNTIME_STATE_FILE", "futures_runtime_state.json")),
