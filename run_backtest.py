@@ -14,6 +14,14 @@ from futuresbot.gate_b_readiness import SymbolResult, evaluate_gate_b_readiness
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 
 
+def _calibration_output_file() -> str:
+    raw = os.getenv("FUTURES_CALIBRATION_OUTPUT_FILE", "backtest_output/calibration.json")
+    path = Path(raw)
+    if path.is_absolute():
+        return str(path)
+    return str((Path(__file__).resolve().parent / path).resolve())
+
+
 DEFAULT_LIVE_SYMBOLS = (
     "BTC_USDT",
     "ETH_USDT",
@@ -165,7 +173,8 @@ def main() -> None:
         min_strategy_trades=config.calibration_min_total_trades,
         min_symbol_trades=config.calibration_min_total_trades,
     )
-    write_trade_calibration(config.calibration_file, calibration)
+    calibration_file = _calibration_output_file()
+    write_trade_calibration(calibration_file, calibration)
     published = publish_trade_calibration(config.redis_url, config.calibration_redis_key, calibration)
 
     aggregate = _aggregate_report(per_symbol_report, config.initial_balance)
@@ -212,7 +221,7 @@ def main() -> None:
 
     print(json.dumps({
         "calibration": {
-            "file": config.calibration_file,
+            "file": calibration_file,
             "redis_key": config.calibration_redis_key,
             "published": published,
         }
