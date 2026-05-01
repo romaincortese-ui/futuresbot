@@ -14,8 +14,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import runpy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -284,6 +286,24 @@ def test_backtest_config_uses_scoped_symbol_profile(monkeypatch):
     assert config.leverage_max == 20
     assert config.consolidation_max_range_pct == pytest.approx(0.045)
     assert config.min_reward_risk == pytest.approx(1.30)
+
+
+def test_main_defaults_match_production_universe():
+    preserved_env = dict(os.environ)
+    repo_root = Path(__file__).resolve().parents[1]
+
+    try:
+        os.environ.pop("FUTURES_SYMBOL", None)
+        os.environ.pop("FUTURES_SYMBOLS", None)
+        os.environ.pop("FUTURES_TAOUSDT_LEVERAGE_MAX", None)
+
+        runpy.run_path(str(repo_root / "main.py"), run_name="__futuresbot_main_defaults_test__")
+
+        assert os.environ["FUTURES_SYMBOLS"] == ",".join(DEFAULT_FUTURES_SYMBOLS)
+        assert os.environ.get("FUTURES_TAOUSDT_LEVERAGE_MAX") is None
+    finally:
+        os.environ.clear()
+        os.environ.update(preserved_env)
 
 
 # ---------------------------------------------------------------------------

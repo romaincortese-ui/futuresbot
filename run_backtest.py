@@ -9,7 +9,7 @@ from typing import Any
 
 from futuresbot.calibration import build_trade_calibration, publish_trade_calibration, write_trade_calibration
 from futuresbot.backtest import FuturesBacktestEngine, build_report, build_signal_summary, export_artifacts
-from futuresbot.config import FuturesBacktestConfig, FuturesConfig, parse_utc_datetime
+from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesBacktestConfig, FuturesConfig, parse_utc_datetime
 from futuresbot.gate_b_readiness import SymbolResult, evaluate_gate_b_readiness
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 
@@ -22,13 +22,7 @@ def _calibration_output_file() -> str:
     return str((Path(__file__).resolve().parent / path).resolve())
 
 
-DEFAULT_LIVE_SYMBOLS = (
-    "BTC_USDT",
-    "ETH_USDT",
-    "PEPE_USDT",
-    "TAO_USDT",
-    "SILVER_USDT",
-)
+DEFAULT_LIVE_SYMBOLS = DEFAULT_FUTURES_SYMBOLS
 
 
 def _resolve_symbols(cli_symbols: str | None, config: FuturesBacktestConfig) -> list[str]:

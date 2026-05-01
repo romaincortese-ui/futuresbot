@@ -2,6 +2,8 @@ import os
 import sys
 import traceback
 
+from futuresbot.config import DEFAULT_FUTURES_SYMBOLS
+
 # Ensure logs flow to Railway/Docker stdout immediately rather than sitting in
 # a block buffer until the container dies.
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
@@ -41,24 +43,18 @@ os.environ.setdefault("USE_PORTFOLIO_VAR", "1")            # §3.6 cross-symbol 
 os.environ.setdefault("USE_WALK_FORWARD_GATE", "1")        # §3.4 walk-forward calibration gate
 os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "1")     # §3.9 weekly slippage report
 
-# Quarter 2 monitor-only probes (no execution — require cross-venue infra).
-os.environ.setdefault("USE_FUNDING_CARRY_MONITOR", "1")    # §3.8 funding-delta-neutral carry alerts
-os.environ.setdefault("USE_BASIS_TRADE_MONITOR", "1")      # §4.1 quarterly basis-trade alerts
+# Legacy Quarter 2 monitor-only probes. Funding observations are now published
+# to Redis for the spot bot, so the old in-bot Telegram carry/basis alerts stay
+# off unless an operator explicitly opts back in.
+os.environ.setdefault("USE_FUNDING_CARRY_MONITOR", "0")    # §3.8 funding-delta-neutral carry alerts
+os.environ.setdefault("USE_BASIS_TRADE_MONITOR", "0")      # §4.1 quarterly basis-trade alerts
 os.environ.setdefault("USE_LIQUIDATION_CASCADE_MONITOR", "0")  # §3.7 needs Coinglass feed; off by default
 
 # ---------------------------------------------------------------------------
-# Production symbol list. Gold is handled by the dedicated Gold-bot sleeve, so
-# XAUT is intentionally excluded here. PEPE is back in the book now that the
-# backtest engine's sub-cent price precision bug is fixed (round(px, 2) was
-# flattening PEPE's ~0.00002 prices to 0.0 in the signal + journal).
-# Operators can override with the FUTURES_SYMBOLS env var on Railway.
+# Production symbol list. Operators can override with the FUTURES_SYMBOLS env
+# var on Railway; otherwise keep main.py in lockstep with futuresbot.config.
 # ---------------------------------------------------------------------------
-os.environ.setdefault("FUTURES_SYMBOLS", "BTC_USDT,ETH_USDT,PEPE_USDT,TAO_USDT,SILVER_USDT")
-
-# Per-symbol leverage caps. TAO printed the book's worst single-symbol MDD
-# (-20.9% on 180d) so we cap its leverage ceiling at 8x while leaving the
-# rest of the book at the 10x default.
-os.environ.setdefault("FUTURES_TAOUSDT_LEVERAGE_MAX", "8")
+os.environ.setdefault("FUTURES_SYMBOLS", ",".join(DEFAULT_FUTURES_SYMBOLS))
 
 try:
     sys.stdout.reconfigure(line_buffering=True)

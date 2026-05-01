@@ -18,7 +18,7 @@ import pandas as pd
 from futuresbot.telegram import TelegramClient
 
 from futuresbot.calibration import load_trade_calibration, setup_regime_for_signal, validate_trade_calibration_payload
-from futuresbot.config import FuturesConfig
+from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -416,6 +416,19 @@ class FuturesRuntime:
     def _mode_label(self) -> str:
         return "📝 PAPER" if self.config.paper_trade else "💰 LIVE"
 
+    def _universe_label(self, symbols: list[str] | tuple[str, ...] | None = None) -> str:
+        active = tuple(str(sym).upper() for sym in (symbols or self._active_symbols or self.config.symbols))
+        if active == DEFAULT_FUTURES_SYMBOLS:
+            return "production 10-pair universe"
+        return f"custom override; production default is {len(DEFAULT_FUTURES_SYMBOLS)} pairs"
+
+    def _universe_warning_line(self, symbols: list[str] | tuple[str, ...]) -> str | None:
+        active = tuple(str(sym).upper() for sym in symbols)
+        if active == DEFAULT_FUTURES_SYMBOLS:
+            return None
+        default_list = ", ".join(DEFAULT_FUTURES_SYMBOLS)
+        return f"⚠️ Active symbols differ from the production 10-pair default: {html.escape(default_list)}"
+
     def _format_price(self, value: float) -> str:
         # Sub-cent coins (PEPE ~$3.88e-6, SHIB, etc.) must not be rounded to
         # "$0.00" or TP/SL lines become indistinguishable from entry. Keep 2
@@ -596,7 +609,7 @@ class FuturesRuntime:
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
-            f"Scanning <b>{len(active_syms)}</b>: {html.escape(', '.join(active_syms))}",
+            f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}): {html.escape(', '.join(active_syms))}",
             self._btc_trend_line(),
             f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
             f"Entries: {'⏸️ paused' if self._paused else '▶️ active'}",
@@ -728,15 +741,24 @@ class FuturesRuntime:
             f"Max concurrent: <b>{self.config.max_concurrent_positions}</b> | "
             f"Max per bucket: <b>{self.config.max_per_bucket}</b>"
         )
+        warning_line = self._universe_warning_line(active_syms)
+        universe_note = f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}):"
+        message_parts = [
+            f"🚀 <b>Futures Bot Started</b> [{self._mode_label()}]",
+            "━━━━━━━━━━━━━━━",
+            universe_note,
+            *symbol_lines,
+        ]
+        if warning_line:
+            message_parts.extend(["━━━━━━━━━━━━━━━", warning_line])
+        message_parts.extend([
+            "━━━━━━━━━━━━━━━",
+            f"{balance_line} | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>",
+            caps_line,
+            f"Hourly checks: <b>{self.config.hourly_check_seconds}s</b> | Heartbeat: <b>{self.config.heartbeat_seconds}s</b>",
+        ])
         self._notify(
-            f"🚀 <b>Futures Bot Started</b> [{self._mode_label()}]\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"Scanning <b>{len(active_syms)}</b> symbols:\n"
-            + "\n".join(symbol_lines)
-            + "\n━━━━━━━━━━━━━━━\n"
-            f"{balance_line} | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>\n"
-            f"{caps_line}\n"
-            f"Hourly checks: <b>{self.config.hourly_check_seconds}s</b> | Heartbeat: <b>{self.config.heartbeat_seconds}s</b>"
+            "\n".join(message_parts)
         )
 
     def _send_heartbeat(self, *, price: float | None = None, signal: dict[str, Any] | None = None) -> None:
@@ -3231,9 +3253,8 @@ class FuturesRuntime:
 
     # ------------------------------------------------------------------
     # P2 §6 #12 — boot-time warning when SILVER_USDT / XAUT_USDT are in the
-    # active symbol list. The assessment recommends dropping these from a
-    # momentum bot until a session-aware mean-reversion sleeve exists; the
-    # warning is non-blocking so operators can opt in deliberately.
+    # active symbol list. These are outside the current calibrated 10-crypto-pair
+    # universe; the warning is non-blocking so operators can opt in deliberately.
     # ------------------------------------------------------------------
     def _warn_unsuitable_symbols(self) -> None:
         unsuitable = {"SILVER_USDT", "XAUT_USDT"}
@@ -3242,9 +3263,9 @@ class FuturesRuntime:
             return
         log.warning(
             "[SYMBOL_NOTICE] %s in active symbols. The assessment §3.5 flags "
-            "these as poor strategy instruments for this BTC-tuned momentum "
-            "bot (thin perp books, FX-correlated). Consider dropping until a "
-            "session-aware mean-reversion sleeve exists.",
+            "these as outside the calibrated 10-crypto-pair production universe "
+            "(thin perp books, FX-correlated). Consider dropping until a "
+            "dedicated session-aware sleeve exists.",
             ",".join(flagged),
         )
 
