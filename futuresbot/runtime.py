@@ -19,12 +19,12 @@ from futuresbot.telegram import TelegramClient
 
 from futuresbot.calibration import load_trade_calibration, validate_trade_calibration_payload
 from futuresbot.config import FuturesConfig
-from futuresbot.event_policy import EventPolicyDecision, evaluate_event_policy
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
 from futuresbot.strategy import score_btc_futures_setup
 from futuresbot.calibration import apply_signal_calibration
+from futuresbot.event_overlay import evaluate_crypto_event_overlay
 
 
 log = logging.getLogger(__name__)
@@ -69,8 +69,6 @@ class FuturesRuntime:
         self._cycle_counter: int = 0
         # Sprint 3 §3.9 — rolling slippage attribution store (lazy).
         self._slippage_store: Any | None = None
-        self._crypto_event_state: dict[str, Any] | None = None
-        self._last_crypto_event_refresh_at = 0.0
         # P1 (third assessment) §5 #1+#2 — resolved per-symbol taker fee rate
         # used by the live cost-budget RR gate. Populated by
         # ``_emit_contract_specs`` at boot from the MEXC contract-detail
@@ -78,6 +76,9 @@ class FuturesRuntime:
         # strategy gate stops silently using the global env default for
         # symbols where the venue reports a different rate.
         self._symbol_taker_fee: dict[str, tuple[float, str]] = {}
+        self._crypto_event_state: dict[str, Any] | None = None
+        self._last_crypto_event_refresh_at = 0.0
+        self._last_crypto_event_error_at = 0.0
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -1004,6 +1005,38 @@ class FuturesRuntime:
             log.info("Loaded futures calibration from %s", source or self.config.calibration_file)
             self._record_activity("Calibration loaded")
         else:
+            file_data: dict[str, Any] | None = None
+            file_source: str | None = None
+            file_reason: str | None = None
+            file_valid = False
+            if self.config.calibration_file and (source or "").startswith("Redis key"):
+                file_data, file_source = load_trade_calibration(
+                    redis_url="",
+                    redis_key="",
+                    file_path=self.config.calibration_file,
+                )
+                if file_data is not None:
+                    file_valid, file_reason = validate_trade_calibration_payload(
+                        file_data,
+                        max_age_hours=self.config.calibration_max_age_hours,
+                        min_total_trades=self.config.calibration_min_total_trades,
+                    )
+                else:
+                    file_reason = "no file payload found"
+            if file_valid and file_data is not None:
+                self.calibration = file_data
+                log.warning(
+                    "[CALIBRATION_FILE_FALLBACK] live Redis calibration rejected (%s); using valid file %s instead.",
+                    primary_reason or "stale or insufficient sample",
+                    file_source or self.config.calibration_file,
+                )
+                self._record_activity("Calibration loaded from file (Redis invalid)")
+                if self._flag("USE_WALK_FORWARD_GATE"):
+                    if not self._walk_forward_gate_passes(self.trade_history):
+                        log.info("Calibration rejected by walk-forward gate")
+                        self._record_activity("Calibration rejected (walk-forward)")
+                        self.calibration = None
+                return
             # P1 (third assessment) §5 #3 — when the live (rolling 60-day)
             # calibration fails the freshness or sample-size gate (a frequent
             # occurrence early in a deployment or after a long outage),
@@ -1034,13 +1067,32 @@ class FuturesRuntime:
                     seed_reason = "no seed payload found"
             else:
                 seed_valid = False
+            if not seed_valid and self.config.calibration_file:
+                file_seed, file_seed_source = load_trade_calibration(
+                    redis_url="",
+                    redis_key="",
+                    file_path=self.config.calibration_file,
+                )
+                if file_seed is not None:
+                    file_seed_valid, file_seed_reason = validate_trade_calibration_payload(
+                        file_seed,
+                        max_age_hours=float("inf"),
+                        min_total_trades=self.config.calibration_min_total_trades,
+                    )
+                    if file_seed_valid:
+                        seed_data = file_seed
+                        seed_source = file_seed_source or self.config.calibration_file
+                        seed_valid = True
+                        seed_reason = None
+                    else:
+                        seed_reason = f"{seed_reason}; file_seed_reason={file_seed_reason}" if seed_reason else file_seed_reason
             if seed_valid and seed_data is not None:
                 self.calibration = seed_data
                 log.warning(
                     "[CALIBRATION_SEED_FALLBACK] live calibration rejected (%s); "
                     "using seed from %s instead.",
                     primary_reason or "stale or insufficient sample",
-                    seed_source or seed_key,
+                    seed_source or seed_key or self.config.calibration_file,
                 )
                 self._record_activity("Calibration loaded from seed (live invalid)")
             else:
@@ -1056,7 +1108,7 @@ class FuturesRuntime:
                         source or self.config.calibration_file,
                         primary_reason or "stale or insufficient sample",
                         seed_key or "(disabled)",
-                        seed_reason or "not consulted",
+                        (seed_reason or "not consulted") + (f"; file_reason={file_reason}" if file_reason else ""),
                     )
         # Sprint 3 §3.4 — walk-forward stability gate. When enabled, reject
         # calibration payloads whose OOS PF drops >40% vs IS or fails the
@@ -1346,65 +1398,6 @@ class FuturesRuntime:
     def _available_slots(self) -> int:
         return max(0, int(self.config.max_concurrent_positions) - len(self.open_positions))
 
-    def _refresh_crypto_event_state(self) -> None:
-        if not self.config.crypto_event_enabled:
-            return
-        now_ts = time.time()
-        if now_ts - self._last_crypto_event_refresh_at < max(30, int(self.config.crypto_event_refresh_seconds)):
-            return
-        self._last_crypto_event_refresh_at = now_ts
-        if self.config.crypto_event_state_file:
-            try:
-                self._crypto_event_state = json.loads(Path(self.config.crypto_event_state_file).read_text(encoding="utf-8"))
-            except Exception as exc:
-                log.debug("Crypto event state file load failed: %s", exc)
-            return
-        if not self.config.redis_url or not self.config.crypto_event_redis_key:
-            return
-        try:
-            import redis
-
-            client = redis.Redis.from_url(self.config.redis_url, socket_timeout=2.0, socket_connect_timeout=2.0)
-            raw = client.get(self.config.crypto_event_redis_key)
-            if not raw:
-                return
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8")
-            payload = json.loads(str(raw))
-            if isinstance(payload, dict):
-                self._crypto_event_state = payload
-        except Exception as exc:
-            log.debug("Crypto event Redis load failed: %s", exc)
-
-    def _event_policy_decision(self, *, symbol: str, side: str) -> EventPolicyDecision:
-        if not self.config.crypto_event_enabled:
-            return EventPolicyDecision(symbol.upper(), side.upper(), False, 1.0, 1.0, ())
-        self._refresh_crypto_event_state()
-        try:
-            return evaluate_event_policy(
-                symbol=symbol,
-                side=side,
-                state=self._crypto_event_state,
-                now=datetime.now(timezone.utc),
-                stale_after_seconds=int(self.config.crypto_event_stale_seconds),
-            )
-        except Exception as exc:
-            log.debug("Crypto event policy evaluation failed for %s: %s", symbol, exc)
-            return EventPolicyDecision(symbol.upper(), side.upper(), False, 1.0, 1.0, ())
-
-    def _apply_event_policy_to_signal(self, signal: Any, decision: EventPolicyDecision) -> Any:
-        if not decision.reasons:
-            return signal
-        metadata = dict(getattr(signal, "metadata", {}) or {})
-        metadata["event_policy_size_multiplier"] = round(decision.size_multiplier, 4)
-        metadata["event_policy_leverage_multiplier"] = round(decision.leverage_multiplier, 4)
-        metadata["event_policy_reasons"] = list(decision.reasons)
-        if decision.state_age_seconds is not None:
-            metadata["event_policy_state_age_seconds"] = round(decision.state_age_seconds, 1)
-        current_leverage = int(getattr(signal, "leverage", 1) or 1)
-        adjusted_leverage = max(1, int(math.floor(current_leverage * decision.leverage_multiplier)))
-        return dataclasses.replace(signal, leverage=adjusted_leverage, metadata=metadata)
-
     def _fetch_signal(self) -> dict[str, Any] | None:
         if self._available_slots() <= 0:
             return None
@@ -1421,6 +1414,8 @@ class FuturesRuntime:
         # safety over the 120 minimum and adequate warm-up for ATR/ADX/EMA100.
         start = end - 900 * 720
         best: tuple[float, Any] | None = None
+        crypto_event_state = self._refresh_crypto_event_state()
+        event_now = datetime.now(timezone.utc)
         for sym in self._active_symbols:
             if sym in self.open_positions:
                 continue
@@ -1439,13 +1434,44 @@ class FuturesRuntime:
             except Exception as exc:
                 log.warning("Futures klines fetch failed for %s: %s", sym, exc)
                 continue
-            raw_signal = score_btc_futures_setup(frame, scoped)
+            event_scan_decision = evaluate_crypto_event_overlay(
+                crypto_event_state,
+                symbol=sym,
+                now=event_now,
+                stale_seconds=int(self.config.crypto_event_stale_seconds),
+                min_abs_bias=float(self.config.crypto_event_min_abs_bias),
+                threshold_relief_points=float(self.config.crypto_event_threshold_relief),
+                score_boost_points=float(self.config.crypto_event_score_boost),
+                adverse_score_penalty_points=float(self.config.crypto_event_adverse_score_penalty),
+            )
+            scoring_config = scoped
+            long_threshold_offset = 0.0
+            short_threshold_offset = 0.0
+            if self.config.crypto_event_overlay_enabled and event_scan_decision.threshold_relief > 0:
+                relief_side = "LONG" if event_scan_decision.bias_score > 0 else "SHORT"
+                if relief_side == "LONG":
+                    long_threshold_offset = -event_scan_decision.threshold_relief
+                else:
+                    short_threshold_offset = -event_scan_decision.threshold_relief
+                log.info(
+                    "Crypto event threshold relief for %s: %.2f points (bias=%.2f applies_to=%s)",
+                    sym,
+                    event_scan_decision.threshold_relief,
+                    event_scan_decision.bias_score,
+                    relief_side,
+                )
+            raw_signal = score_btc_futures_setup(
+                frame,
+                scoring_config,
+                long_threshold_offset=long_threshold_offset,
+                short_threshold_offset=short_threshold_offset,
+            )
             # Sprint 3 §3.2 — mean-reversion fallback. When regime is CHOP (or the
             # primary coil-breakout scorer returned nothing) and
             # USE_MEAN_REVERSION=1, attempt a mean-reversion signal via the pure
             # Bollinger+RSI module. Uses the 1h frame resampled from the 15m feed.
             if self._flag("USE_MEAN_REVERSION"):
-                mr_signal = self._mean_reversion_candidate(sym, scoped, frame, raw_signal)
+                mr_signal = self._mean_reversion_candidate(sym, scoring_config, frame, raw_signal)
                 if mr_signal is not None:
                     raw_signal = mr_signal
             if raw_signal is None:
@@ -1454,16 +1480,22 @@ class FuturesRuntime:
                 # mathematically unreachable for this symbol" (BTC-tuned gates
                 # blocking every PEPE / TAO bar).
                 try:
-                    from futuresbot.strategy import diagnose_setup_rejection
+                    from futuresbot.strategy import diagnose_impulse_rejection, diagnose_setup_rejection
                     reason = diagnose_setup_rejection(frame, scoped)
+                    impulse_reason = diagnose_impulse_rejection(frame, scoped)
                 except Exception as diag_exc:  # pragma: no cover — defensive
                     reason = f"diagnostic_error={type(diag_exc).__name__}"
+                    impulse_reason = f"impulse_diagnostic_error={type(diag_exc).__name__}"
                 # Track in the per-cycle aggregator (P1 §8). Keep the per-symbol
                 # INFO line as well so individual symbol diagnoses remain visible
                 # at debug-grain; volume reduction comes from the consolidated
                 # CYCLE_SUMMARY line that follows.
                 self._last_cycle_gate_blocks[sym] = reason
                 log.info("[GATE_BLOCK] symbol=%s reason=%s", sym, reason)
+                log.info("[IMPULSE_GATE_BLOCK] symbol=%s reason=%s", sym, impulse_reason)
+                continue
+            raw_signal = self._apply_crypto_event_overlay(raw_signal, crypto_event_state, event_now)
+            if raw_signal is None:
                 continue
             calibrated = apply_signal_calibration(
                 raw_signal,
@@ -1494,17 +1526,6 @@ class FuturesRuntime:
                     regime.reason,
                 )
                 continue
-            event_decision = self._event_policy_decision(symbol=sym, side=calibrated.side)
-            if event_decision.block_entry:
-                self._last_cycle_gate_blocks[sym] = "crypto_event_policy"
-                log.info(
-                    "Signal scan: %s %s blocked by crypto event policy: %s",
-                    sym,
-                    calibrated.side,
-                    ",".join(event_decision.reasons),
-                )
-                continue
-            calibrated = self._apply_event_policy_to_signal(calibrated, event_decision)
             log.info(
                 "Signal scan accepted for %s: side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%%",
                 sym,
@@ -1520,6 +1541,79 @@ class FuturesRuntime:
         if best is None:
             return None
         return best[1].to_dict()
+
+    def _refresh_crypto_event_state(self) -> dict[str, Any] | None:
+        if not getattr(self.config, "crypto_event_overlay_enabled", True):
+            return None
+        if not self.config.redis_url or not self.config.crypto_event_redis_key:
+            return None
+        now = time.monotonic()
+        if (
+            self._crypto_event_state is not None
+            and now - self._last_crypto_event_refresh_at < self.config.crypto_event_refresh_seconds
+        ):
+            return self._crypto_event_state
+        self._last_crypto_event_refresh_at = now
+        try:
+            import redis
+
+            client = redis.from_url(self.config.redis_url, socket_timeout=2.0, socket_connect_timeout=2.0)
+            raw = client.get(self.config.crypto_event_redis_key)
+            if raw is None:
+                self._crypto_event_state = None
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            parsed = json.loads(raw)
+            self._crypto_event_state = parsed if isinstance(parsed, dict) else None
+            return self._crypto_event_state
+        except Exception as exc:
+            if now - self._last_crypto_event_error_at >= 900:
+                log.warning("Crypto event state refresh failed; continuing without event boost: %s", exc)
+                self._last_crypto_event_error_at = now
+            return self._crypto_event_state
+
+    def _apply_crypto_event_overlay(self, signal: Any, state: dict[str, Any] | None, now: datetime) -> Any | None:
+        if not getattr(self.config, "crypto_event_overlay_enabled", True):
+            return signal
+        decision = evaluate_crypto_event_overlay(
+            state,
+            symbol=signal.symbol,
+            side=signal.side,
+            now=now,
+            stale_seconds=int(self.config.crypto_event_stale_seconds),
+            min_abs_bias=float(self.config.crypto_event_min_abs_bias),
+            threshold_relief_points=float(self.config.crypto_event_threshold_relief),
+            score_boost_points=float(self.config.crypto_event_score_boost),
+            adverse_score_penalty_points=float(self.config.crypto_event_adverse_score_penalty),
+        )
+        if decision.reason == "no_fresh_crypto_event_state":
+            return signal
+        metadata = {
+            **(signal.metadata or {}),
+            **decision.metadata,
+            "crypto_event_reason": decision.reason,
+        }
+        if not decision.allowed:
+            log.info(
+                "Signal scan: %s %s blocked by crypto event overlay (%s bias=%.2f)",
+                signal.symbol,
+                signal.side,
+                decision.reason,
+                decision.bias_score,
+            )
+            return None
+        score = max(0.0, float(signal.score) + float(decision.score_offset))
+        if abs(decision.score_offset) > 1e-9:
+            log.info(
+                "Crypto event overlay %s for %s %s: score %.1f -> %.1f",
+                decision.reason,
+                signal.symbol,
+                signal.side,
+                signal.score,
+                score,
+            )
+        return dataclasses.replace(signal, score=round(score, 2), metadata=metadata)
 
     # ------------------------------------------------------------------
     # Sprint 1 helpers — all no-ops unless the matching env flag is set.
@@ -2301,15 +2395,6 @@ class FuturesRuntime:
         size_multiplier = self._drawdown_size_multiplier()
         if size_multiplier <= 0:
             log.info("Futures signal skipped for %s: drawdown HALT gate active", symbol)
-            return False
-        metadata = dict(signal_payload.get("metadata", {}) or {})
-        try:
-            event_size_multiplier = float(metadata.get("event_policy_size_multiplier", 1.0) or 1.0)
-        except (TypeError, ValueError):
-            event_size_multiplier = 1.0
-        size_multiplier *= max(0.0, min(1.0, event_size_multiplier))
-        if size_multiplier <= 0:
-            log.info("Futures signal skipped for %s: crypto event size gate active", symbol)
             return False
         # Sprint 1 §2.1 — NAV-anchored sizing. Replaces the legacy
         # (margin_budget × leverage / price) formula when USE_NAV_RISK_SIZING=1.

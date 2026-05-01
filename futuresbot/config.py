@@ -214,11 +214,14 @@ class FuturesConfig:
     # funding-rate observations under, consumed by the spot bot's funding
     # carry sleeve (mexc-bot-v2/mexcbot/funding_carry.py).
     funding_observations_redis_key: str = "mexc_funding_observations"
-    crypto_event_enabled: bool = True
+    crypto_event_overlay_enabled: bool = True
     crypto_event_redis_key: str = "mexc:crypto_event_intelligence"
-    crypto_event_state_file: str = ""
     crypto_event_refresh_seconds: int = 300
     crypto_event_stale_seconds: int = 1800
+    crypto_event_min_abs_bias: float = 0.35
+    crypto_event_threshold_relief: float = 4.0
+    crypto_event_score_boost: float = 5.0
+    crypto_event_adverse_score_penalty: float = 4.0
 
     @classmethod
     def from_env(cls) -> "FuturesConfig":
@@ -257,11 +260,14 @@ class FuturesConfig:
             funding_observations_redis_key=env_str(
                 "FUTURES_FUNDING_OBSERVATIONS_REDIS_KEY", "mexc_funding_observations"
             ),
-            crypto_event_enabled=env_bool("USE_CRYPTO_EVENT_POLICY", True),
-            crypto_event_redis_key=env_str("CRYPTO_EVENT_REDIS_KEY", "mexc:crypto_event_intelligence"),
-            crypto_event_state_file=env_str("CRYPTO_EVENT_STATE_FILE", ""),
-            crypto_event_refresh_seconds=env_int("CRYPTO_EVENT_REFRESH_SECONDS", 300),
-            crypto_event_stale_seconds=env_int("CRYPTO_EVENT_STALE_SECONDS", 1800),
+            crypto_event_overlay_enabled=env_bool("FUTURES_CRYPTO_EVENT_OVERLAY_ENABLED", True),
+            crypto_event_redis_key=env_str("FUTURES_CRYPTO_EVENT_REDIS_KEY", "mexc:crypto_event_intelligence"),
+            crypto_event_refresh_seconds=env_int("FUTURES_CRYPTO_EVENT_REFRESH_SECONDS", 300),
+            crypto_event_stale_seconds=env_int("FUTURES_CRYPTO_EVENT_STALE_SECONDS", 1800),
+            crypto_event_min_abs_bias=env_float("FUTURES_CRYPTO_EVENT_MIN_ABS_BIAS", 0.35),
+            crypto_event_threshold_relief=env_float("FUTURES_CRYPTO_EVENT_THRESHOLD_RELIEF", 4.0),
+            crypto_event_score_boost=env_float("FUTURES_CRYPTO_EVENT_SCORE_BOOST", 5.0),
+            crypto_event_adverse_score_penalty=env_float("FUTURES_CRYPTO_EVENT_ADVERSE_SCORE_PENALTY", 4.0),
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=env_str("ANTHROPIC_API_KEY", ""),
             runtime_state_file=resolve_repo_path(env_str("FUTURES_RUNTIME_STATE_FILE", "futures_runtime_state.json")),
@@ -332,11 +338,13 @@ class FuturesConfig:
         sym = symbol.upper()
         if sym == self.symbol and not _has_symbol_overrides(sym):
             return self
+        leverage_max = env_int_for_symbol(sym, "LEVERAGE_MAX", self.leverage_max)
+        leverage_min = min(env_int_for_symbol(sym, "LEVERAGE_MIN", self.leverage_min), leverage_max)
         return dataclasses.replace(
             self,
             symbol=sym,
-            leverage_min=env_int_for_symbol(sym, "LEVERAGE_MIN", self.leverage_min),
-            leverage_max=env_int_for_symbol(sym, "LEVERAGE_MAX", self.leverage_max),
+            leverage_min=leverage_min,
+            leverage_max=leverage_max,
             min_confidence_score=env_float_for_symbol(sym, "SCORE_THRESHOLD", self.min_confidence_score),
             hard_loss_cap_pct=env_float_for_symbol(sym, "HARD_LOSS_CAP_PCT", self.hard_loss_cap_pct),
             adx_floor=env_float_for_symbol(sym, "ADX_FLOOR", self.adx_floor),

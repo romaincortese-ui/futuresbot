@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from futuresbot.config import FuturesConfig
-from futuresbot.models import FuturesPosition, FuturesSignal
+from futuresbot.models import FuturesPosition
 from futuresbot.runtime import FuturesRuntime
 
 
@@ -77,35 +77,6 @@ def test_build_status_message_includes_signal_context_and_btc_trends(tmp_path):
     assert "BTC: 1h" in message
     assert "Signal: <b>LONG</b> COIL_BREAKOUT_LONG | x32 | score 63.5 | cert 78%" in message
     assert "Avail: <b>$123.45</b> | Equity: <b>$150.50</b> | Trades: <b>0</b>" in message
-
-
-def test_crypto_event_policy_adjusts_signal_leverage_and_metadata(tmp_path):
-    runtime = FuturesRuntime(_config(tmp_path), StubClient())
-    runtime._crypto_event_state = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "ttl_seconds": 1800,
-        "market_risk_score": 0.82,
-    }
-    runtime._last_crypto_event_refresh_at = 10**12
-    signal = FuturesSignal(
-        symbol="BTC_USDT",
-        side="LONG",
-        score=70.0,
-        certainty=0.8,
-        entry_price=91000.0,
-        tp_price=93000.0,
-        sl_price=90000.0,
-        leverage=20,
-        entry_signal="COIL_BREAKOUT_LONG",
-    )
-
-    decision = runtime._event_policy_decision(symbol="BTC_USDT", side="LONG")
-    adjusted = runtime._apply_event_policy_to_signal(signal, decision)
-
-    assert adjusted.leverage == 10
-    assert adjusted.metadata["event_policy_size_multiplier"] == 0.4
-    assert adjusted.metadata["event_policy_leverage_multiplier"] == 0.5
-    assert "crypto_event_risk:0.82" in adjusted.metadata["event_policy_reasons"]
 
 
 def test_build_status_message_includes_open_position_pnl_and_last_trade(tmp_path):
