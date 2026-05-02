@@ -157,6 +157,8 @@ class MexcFuturesClient:
             {"symbol": symbol, "page_num": page_num, "page_size": page_size},
         )
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
+        if isinstance(data, list):
+            return data
         result = data.get("resultList", []) if isinstance(data, dict) else []
         return result if isinstance(result, list) else []
 

@@ -25,6 +25,11 @@
     "by_strategy_symbol_signal": {
       "BTC_FUTURES": {
         "BTC_USDT": {
+          "IMPULSE_EVENT_CONTINUATION_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "Manual MEXC history crosscheck found 6/6 BTC-style impulse long matches lost about 100 USDT realised; recent calibrated replay did not need this lane for BTC edge."
+          },
           "IMPULSE_EVENT_CONTINUATION_SHORT": {
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
