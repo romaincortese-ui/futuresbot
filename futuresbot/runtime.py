@@ -1690,8 +1690,8 @@ class FuturesRuntime:
                 adverse_score_penalty_points=float(self.config.crypto_event_adverse_score_penalty),
             )
             scoring_config = scoped
-            long_threshold_offset = 0.0
-            short_threshold_offset = 0.0
+            long_threshold_offset = float(getattr(scoring_config, "long_threshold_offset", 0.0) or 0.0)
+            short_threshold_offset = float(getattr(scoring_config, "short_threshold_offset", 0.0) or 0.0)
             if self.config.crypto_event_overlay_enabled and event_scan_decision.threshold_relief > 0:
                 relief_side = "LONG" if event_scan_decision.bias_score > 0 else "SHORT"
                 if relief_side == "LONG":

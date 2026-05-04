@@ -18,6 +18,10 @@ from futuresbot.config import FuturesConfig
 log = logging.getLogger(__name__)
 
 
+_HTTP_RETRY_ATTEMPTS = 3
+_HTTP_RETRY_SLEEP_SECONDS = 0.75
+
+
 def build_contract_frame(payload: dict[str, Any]) -> pd.DataFrame:
     data = payload.get("data", {}) if isinstance(payload, dict) else {}
     frame = pd.DataFrame(
@@ -56,12 +60,22 @@ class MexcFuturesClient:
         )
 
     def public_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = self.session.get(self.config.futures_base_url + path, params=params or {}, timeout=15)
-        response.raise_for_status()
-        payload = response.json()
-        if isinstance(payload, dict) and payload.get("success") is False:
-            raise RuntimeError(f"MEXC futures public call failed for {path}: {payload}")
-        return payload
+        last_error: Exception | None = None
+        for attempt in range(_HTTP_RETRY_ATTEMPTS):
+            try:
+                response = self.session.get(self.config.futures_base_url + path, params=params or {}, timeout=15)
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict) and payload.get("success") is False:
+                    raise RuntimeError(f"MEXC futures public call failed for {path}: {payload}")
+                return payload
+            except (requests.RequestException, ValueError, RuntimeError) as exc:
+                last_error = exc
+                if attempt >= _HTTP_RETRY_ATTEMPTS - 1:
+                    break
+                time.sleep(_HTTP_RETRY_SLEEP_SECONDS * (attempt + 1))
+        assert last_error is not None
+        raise last_error
 
     def _headers(self, *, method: str, params: dict[str, Any] | None = None, body: dict[str, Any] | None = None) -> dict[str, str]:
         timestamp = str(int(time.time() * 1000))
@@ -82,32 +96,58 @@ class MexcFuturesClient:
         }
 
     def private_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = self.session.get(
-            self.config.futures_base_url + path,
-            params={key: value for key, value in (params or {}).items() if value is not None},
-            headers=self._headers(method="GET", params=params),
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if isinstance(payload, dict) and payload.get("success") is False:
-            raise RuntimeError(f"MEXC futures private GET failed for {path}: {payload}")
-        return payload
+        last_error: Exception | None = None
+        filtered_params = {key: value for key, value in (params or {}).items() if value is not None}
+        for attempt in range(_HTTP_RETRY_ATTEMPTS):
+            try:
+                response = self.session.get(
+                    self.config.futures_base_url + path,
+                    params=filtered_params,
+                    headers=self._headers(method="GET", params=filtered_params),
+                    timeout=15,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict) and payload.get("success") is False:
+                    raise RuntimeError(f"MEXC futures private GET failed for {path}: {payload}")
+                return payload
+            except (requests.RequestException, ValueError, RuntimeError) as exc:
+                last_error = exc
+                if attempt >= _HTTP_RETRY_ATTEMPTS - 1:
+                    break
+                time.sleep(_HTTP_RETRY_SLEEP_SECONDS * (attempt + 1))
+        assert last_error is not None
+        raise last_error
 
     def private_post(self, path: str, body: dict[str, Any] | list[Any] | None = None) -> Any:
         payload_body = body or {}
-        headers = self._headers(method="POST", body=payload_body if isinstance(payload_body, dict) else None)
-        response = self.session.post(
-            self.config.futures_base_url + path,
-            data=json.dumps(payload_body, separators=(",", ":")),
-            headers=headers,
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if isinstance(payload, dict) and payload.get("success") is False:
-            raise RuntimeError(f"MEXC futures private POST failed for {path}: {payload}")
-        return payload
+        if isinstance(payload_body, dict):
+            # Signature is computed over filtered body values; send the same
+            # filtered payload to prevent signature/body mismatch on endpoints
+            # where optional fields are omitted (e.g. change_leverage positionId).
+            payload_body = {key: value for key, value in payload_body.items() if value is not None}
+        last_error: Exception | None = None
+        body_json = json.dumps(payload_body, separators=(",", ":"))
+        for attempt in range(_HTTP_RETRY_ATTEMPTS):
+            try:
+                response = self.session.post(
+                    self.config.futures_base_url + path,
+                    data=body_json,
+                    headers=self._headers(method="POST", body=payload_body if isinstance(payload_body, dict) else None),
+                    timeout=15,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict) and payload.get("success") is False:
+                    raise RuntimeError(f"MEXC futures private POST failed for {path}: {payload}")
+                return payload
+            except (requests.RequestException, ValueError, RuntimeError) as exc:
+                last_error = exc
+                if attempt >= _HTTP_RETRY_ATTEMPTS - 1:
+                    break
+                time.sleep(_HTTP_RETRY_SLEEP_SECONDS * (attempt + 1))
+        assert last_error is not None
+        raise last_error
 
     def get_contract_detail(self, symbol: str) -> dict[str, Any]:
         payload = self.public_get("/api/v1/contract/detail", {"symbol": symbol})

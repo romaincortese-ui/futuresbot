@@ -422,7 +422,12 @@ class FuturesBacktestEngine:
 					state.open_position = None
 
 			if state.open_position is None and close_time.minute == 0 and index + 1 < len(frame_15m):
-				raw_signal = score_btc_futures_setup(frame_15m.iloc[: index + 1], self.config)
+				raw_signal = score_btc_futures_setup(
+					frame_15m.iloc[: index + 1],
+					self.config,
+					long_threshold_offset=self.config.long_threshold_offset,
+					short_threshold_offset=self.config.short_threshold_offset,
+				)
 				calibrated = (
 					apply_signal_calibration(
 						raw_signal,

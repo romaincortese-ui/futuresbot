@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import copy
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -52,9 +52,23 @@ def _run_single_symbol(
     provider: FuturesHistoricalDataProvider,
     symbol: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    cfg = copy.copy(base_config)
-    cfg.symbol = symbol
-    cfg.output_dir = str(Path(base_config.output_dir) / symbol.lower())
+    old_symbol = os.environ.get("FUTURES_SYMBOL")
+    os.environ["FUTURES_SYMBOL"] = symbol
+    try:
+        scoped_config = FuturesBacktestConfig.from_env()
+    finally:
+        if old_symbol is None:
+            os.environ.pop("FUTURES_SYMBOL", None)
+        else:
+            os.environ["FUTURES_SYMBOL"] = old_symbol
+    cfg = dataclasses.replace(
+        scoped_config,
+        start=base_config.start,
+        end=base_config.end,
+        initial_balance=base_config.initial_balance,
+        output_dir=str(Path(base_config.output_dir) / symbol.lower()),
+        cache_dir=base_config.cache_dir,
+    )
     engine = FuturesBacktestEngine(cfg, provider, client)
     equity_curve, trades = engine.run()
     report = build_report(equity_curve, trades, cfg.initial_balance)

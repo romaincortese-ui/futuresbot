@@ -44,13 +44,16 @@ DEFAULT_CORRELATION_BUCKETS = (
 
 
 DEFAULT_SYMBOL_PARAMETER_PROFILES: dict[str, dict[str, float | int]] = {
-    # BTC remains the reference profile; values intentionally match the global defaults.
-    "BTC_USDT": {},
+    # BTC uses a higher threshold so breakaway entries remain selective.
+    "BTC_USDT": {
+        "min_confidence_score": 80.0,
+    },
     "ETH_USDT": {
         "trend_24h_floor": 0.008,
         "trend_6h_floor": 0.0025,
         "consolidation_max_range_pct": 0.020,
         "adx_floor": 17.0,
+        "leverage_max": 8,
     },
     "SOL_USDT": {
         "trend_24h_floor": 0.010,
@@ -65,18 +68,19 @@ DEFAULT_SYMBOL_PARAMETER_PROFILES: dict[str, dict[str, float | int]] = {
         "adx_floor": 17.0,
     },
     "PEPE_USDT": {
-        "min_confidence_score": 60.0,
+        "min_confidence_score": 78.0,
         "trend_24h_floor": 0.018,
         "trend_6h_floor": 0.0045,
         "consolidation_max_range_pct": 0.045,
         "consolidation_atr_mult": 2.20,
         "volume_ratio_floor": 1.10,
-        "leverage_max": 25,
-        "min_reward_risk": 1.25,
+        "leverage_max": 10,
+        "min_reward_risk": 1.50,
+        "short_threshold_offset": 5.0,
         "funding_rate_abs_max": 0.00025,
     },
     "TAO_USDT": {
-        "min_confidence_score": 57.0,
+        "min_confidence_score": 72.0,
         "trend_24h_floor": 0.014,
         "trend_6h_floor": 0.002,
         "consolidation_max_range_pct": 0.040,
@@ -99,14 +103,14 @@ DEFAULT_SYMBOL_PARAMETER_PROFILES: dict[str, dict[str, float | int]] = {
         "funding_rate_abs_max": 0.00020,
     },
     "SEI_USDT": {
-        "min_confidence_score": 58.0,
+        "min_confidence_score": 85.0,
         "trend_24h_floor": 0.010,
         "trend_6h_floor": 0.0025,
         "consolidation_max_range_pct": 0.035,
         "consolidation_atr_mult": 2.00,
         "volume_ratio_floor": 1.08,
         "adx_floor": 16.0,
-        "leverage_max": 30,
+        "leverage_max": 8,
         "min_reward_risk": 1.25,
         "funding_rate_abs_max": 0.00035,
     },
@@ -285,6 +289,8 @@ class FuturesConfig:
     margin_budget_usdt: float
     max_margin_fraction: float
     min_confidence_score: float
+    long_threshold_offset: float
+    short_threshold_offset: float
     hourly_check_seconds: int
     heartbeat_seconds: int
     calibration_file: str
@@ -353,6 +359,8 @@ class FuturesConfig:
         if raw_symbols:
             primary_symbol = explicit_primary_symbol or "BTC_USDT"
             symbols = parse_symbol_list(raw_symbols, primary_symbol)
+            if explicit_primary_symbol:
+                symbols = (explicit_primary_symbol, *(sym for sym in symbols if sym != explicit_primary_symbol))
         elif explicit_primary_symbol:
             primary_symbol = explicit_primary_symbol
             symbols = (primary_symbol,)
@@ -376,6 +384,8 @@ class FuturesConfig:
             margin_budget_usdt=env_float("FUTURES_MARGIN_BUDGET_USDT", 75.0),
             max_margin_fraction=env_float("FUTURES_MAX_MARGIN_FRACTION", 0.85),
             min_confidence_score=env_float("FUTURES_SCORE_THRESHOLD", 56.0),
+            long_threshold_offset=env_float("FUTURES_LONG_THRESHOLD_OFFSET", 0.0),
+            short_threshold_offset=env_float("FUTURES_SHORT_THRESHOLD_OFFSET", 0.0),
             hourly_check_seconds=hourly_check_seconds,
             heartbeat_seconds=env_int("FUTURES_HEARTBEAT_SECONDS", env_int("HEARTBEAT_SECONDS", 3600)),
             calibration_file=resolve_repo_path(env_str("FUTURES_CALIBRATION_FILE", "calibration/multi_symbol_calibration.json")),
@@ -493,6 +503,8 @@ class FuturesConfig:
             leverage_min=leverage_min,
             leverage_max=leverage_max,
             min_confidence_score=env_float_for_symbol(sym, "SCORE_THRESHOLD", prof_float("min_confidence_score", self.min_confidence_score)),
+            long_threshold_offset=env_float_for_symbol(sym, "LONG_THRESHOLD_OFFSET", prof_float("long_threshold_offset", self.long_threshold_offset)),
+            short_threshold_offset=env_float_for_symbol(sym, "SHORT_THRESHOLD_OFFSET", prof_float("short_threshold_offset", self.short_threshold_offset)),
             hard_loss_cap_pct=env_float_for_symbol(sym, "HARD_LOSS_CAP_PCT", prof_float("hard_loss_cap_pct", self.hard_loss_cap_pct)),
             adx_floor=env_float_for_symbol(sym, "ADX_FLOOR", prof_float("adx_floor", self.adx_floor)),
             trend_24h_floor=env_float_for_symbol(sym, "TREND_24H_FLOOR", prof_float("trend_24h_floor", self.trend_24h_floor)),
@@ -520,6 +532,8 @@ _SYMBOL_OVERRIDE_SUFFIXES: tuple[str, ...] = (
     "LEVERAGE_MIN",
     "LEVERAGE_MAX",
     "SCORE_THRESHOLD",
+    "LONG_THRESHOLD_OFFSET",
+    "SHORT_THRESHOLD_OFFSET",
     "HARD_LOSS_CAP_PCT",
     "ADX_FLOOR",
     "TREND_24H_FLOOR",
@@ -620,6 +634,8 @@ class FuturesBacktestConfig:
     output_dir: str
     cache_dir: str
     min_confidence_score: float
+    long_threshold_offset: float
+    short_threshold_offset: float
     leverage_min: int
     leverage_max: int
     hard_loss_cap_pct: float
@@ -663,6 +679,8 @@ class FuturesBacktestConfig:
             output_dir=resolve_repo_path(env_str("FUTURES_BACKTEST_OUTPUT_DIR", "backtest_output")),
             cache_dir=resolve_repo_path(env_str("FUTURES_BACKTEST_CACHE_DIR", "backtest_cache")),
             min_confidence_score=env_float("FUTURES_BACKTEST_SCORE_THRESHOLD", scoped.min_confidence_score),
+            long_threshold_offset=scoped.long_threshold_offset,
+            short_threshold_offset=scoped.short_threshold_offset,
             leverage_min=scoped.leverage_min,
             leverage_max=scoped.leverage_max,
             hard_loss_cap_pct=scoped.hard_loss_cap_pct,

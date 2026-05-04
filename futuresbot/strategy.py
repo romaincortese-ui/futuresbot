@@ -109,6 +109,8 @@ def _cost_budget_projection(
 class StrategyConfig(Protocol):
     symbol: str
     min_confidence_score: float
+    long_threshold_offset: float
+    short_threshold_offset: float
     leverage_min: int
     leverage_max: int
     hard_loss_cap_pct: float
@@ -425,6 +427,15 @@ def score_btc_futures_setup(
     impulse_close_near_low = current_price <= impulse_recent_close_low + current_atr_15 * impulse_close_buffer_atr
     impulse_ema_extension = abs(current_price - current_ema20) / current_atr_1h if current_atr_1h > 0 else 999.0
     impulse_volume_ok = volume_ratio >= impulse_volume_floor
+    prior_volume_end = max(0, len(volume_15) - impulse_lookback_bars)
+    prior_volume_start = max(0, prior_volume_end - config.consolidation_window_bars)
+    prior_volume = volume_15.iloc[prior_volume_start:prior_volume_end]
+    if prior_volume.empty:
+        prior_volume = volume_15.iloc[-(config.consolidation_window_bars + 1):-1]
+    impulse_window_volume_baseline = max(1e-9, float(prior_volume.mean()))
+    impulse_window_volume_ratio = float(volume_15.iloc[-impulse_lookback_bars:].sum()) / (
+        impulse_window_volume_baseline * impulse_lookback_bars
+    )
     impulse_body = abs(float(close_15.iloc[-1]) - float(open_15.iloc[-1])) / current_atr_15 if current_atr_15 > 0 else 0.0
     long_stack = current_ema20 > current_ema50 > current_ema100
     short_stack = current_ema20 < current_ema50 < current_ema100
@@ -502,6 +513,61 @@ def score_btc_futures_setup(
     range_is_wide_but_tradeable = (
         consolidation_range_pct > max(consolidation_cap, range_min_range_pct)
         and consolidation_range_pct <= range_max_range_pct
+    )
+
+    breakaway_symbol_ok = _symbol_enabled(
+        "FUTURES_BREAKAWAY_SYMBOLS",
+        getattr(config, "symbol", ""),
+        "BTC_USDT,ETH_USDT,PEPE_USDT,TAO_USDT,BCH_USDT,SEI_USDT",
+    )
+    breakaway_enabled = _env_bool("FUTURES_BREAKAWAY_ENABLED", True) and breakaway_symbol_ok
+    breakaway_min_move_pct = _env_float("FUTURES_BREAKAWAY_MIN_MOVE_PCT", 0.006)
+    breakaway_min_move_atr = _env_float("FUTURES_BREAKAWAY_MIN_MOVE_ATR", 1.45)
+    breakaway_trigger_volume_floor = _env_float("FUTURES_BREAKAWAY_TRIGGER_VOLUME_FLOOR", 0.20)
+    breakaway_window_volume_floor = _env_float("FUTURES_BREAKAWAY_WINDOW_VOLUME_FLOOR", 0.70)
+    breakaway_adx_min = _env_float("FUTURES_BREAKAWAY_ADX_MIN", impulse_adx_min)
+    breakaway_counter_trend_24h_max = _env_float("FUTURES_BREAKAWAY_COUNTER_TREND_24H_MAX", 0.018)
+    breakaway_counter_trend_6h_max = _env_float("FUTURES_BREAKAWAY_COUNTER_TREND_6H_MAX", 0.012)
+    breakaway_rsi_1h_long_min = _env_float("FUTURES_BREAKAWAY_RSI_1H_LONG_MIN", 48.0)
+    breakaway_rsi_15_long_min = _env_float("FUTURES_BREAKAWAY_RSI_15_LONG_MIN", 46.0)
+    breakaway_rsi_15_long_max = _env_float("FUTURES_BREAKAWAY_RSI_15_LONG_MAX", 82.0)
+    breakaway_rsi_1h_short_max = _env_float("FUTURES_BREAKAWAY_RSI_1H_SHORT_MAX", 55.0)
+    breakaway_rsi_15_short_max = _env_float("FUTURES_BREAKAWAY_RSI_15_SHORT_MAX", 54.0)
+    breakaway_rsi_15_short_min = _env_float("FUTURES_BREAKAWAY_RSI_15_SHORT_MIN", 18.0)
+    breakaway_max_ema_extension_atr = _env_float("FUTURES_BREAKAWAY_MAX_EMA_EXTENSION_ATR", 3.10)
+    breakaway_volume_ok = (
+        volume_ratio >= breakaway_trigger_volume_floor
+        or impulse_window_volume_ratio >= breakaway_window_volume_floor
+    )
+    breakaway_long_ok = (
+        breakaway_enabled
+        and impulse_move_pct >= breakaway_min_move_pct
+        and impulse_move_atr >= breakaway_min_move_atr
+        and breakaway_volume_ok
+        and current_adx >= breakaway_adx_min
+        and trend_24h >= -breakaway_counter_trend_24h_max
+        and trend_6h >= -breakaway_counter_trend_6h_max
+        and current_rsi_1h >= breakaway_rsi_1h_long_min
+        and current_rsi_15 >= breakaway_rsi_15_long_min
+        and current_rsi_15 <= breakaway_rsi_15_long_max
+        and (current_price > current_ema20 or ema_slope > 0 or impulse_move_atr >= breakaway_min_move_atr * 1.35)
+        and (impulse_close_near_high or impulse_body >= 0.35)
+        and impulse_ema_extension <= breakaway_max_ema_extension_atr
+    )
+    breakaway_short_ok = (
+        breakaway_enabled
+        and impulse_move_pct <= -breakaway_min_move_pct
+        and impulse_move_atr >= breakaway_min_move_atr
+        and breakaway_volume_ok
+        and current_adx >= breakaway_adx_min
+        and trend_24h <= breakaway_counter_trend_24h_max
+        and trend_6h <= breakaway_counter_trend_6h_max
+        and current_rsi_1h <= breakaway_rsi_1h_short_max
+        and current_rsi_15 <= breakaway_rsi_15_short_max
+        and current_rsi_15 >= breakaway_rsi_15_short_min
+        and (current_price < current_ema20 or ema_slope < 0 or impulse_move_atr >= breakaway_min_move_atr * 1.35)
+        and (impulse_close_near_low or impulse_body >= 0.35)
+        and impulse_ema_extension <= breakaway_max_ema_extension_atr
     )
     impulse_long_ok = (
         impulse_enabled
@@ -647,6 +713,15 @@ def score_btc_futures_setup(
         long_score += 4.0 if trend_6h > 0 else 0.0
         long_score += 3.0 if current_ema20 > current_ema50 or ema_slope > 0 else 0.0
         long_score -= impulse_long_penalty
+    elif breakaway_long_ok:
+        long_score += min(16.0, max(0.0, impulse_move_pct * 950.0))
+        long_score += min(12.0, max(0.0, impulse_move_atr * 2.8))
+        long_score += min(7.0, max(0.0, (max(volume_ratio, impulse_window_volume_ratio) - breakaway_window_volume_floor) * 7.0))
+        long_score += min(6.0, max(0.0, (current_adx - breakaway_adx_min) * 0.75))
+        long_score += 4.0 if impulse_close_near_high else 1.5
+        long_score += 3.0 if trend_6h > 0 or ema_slope > 0 else 0.0
+        if trend_24h < 0:
+            long_score -= min(5.0, abs(trend_24h) * 220.0)
     elif range_expansion_long_ok:
         long_score += min(16.0, max(0.0, trend_24h * 230.0))
         long_score += min(10.0, max(0.0, impulse_move_atr * 2.0))
@@ -688,6 +763,15 @@ def score_btc_futures_setup(
         short_score += 4.0 if trend_6h < 0 else 0.0
         short_score += 3.0 if current_ema20 < current_ema50 or ema_slope < 0 else 0.0
         short_score -= impulse_short_penalty
+    elif breakaway_short_ok:
+        short_score += min(16.0, max(0.0, abs(impulse_move_pct) * 950.0))
+        short_score += min(12.0, max(0.0, impulse_move_atr * 2.8))
+        short_score += min(7.0, max(0.0, (max(volume_ratio, impulse_window_volume_ratio) - breakaway_window_volume_floor) * 7.0))
+        short_score += min(6.0, max(0.0, (current_adx - breakaway_adx_min) * 0.75))
+        short_score += 4.0 if impulse_close_near_low else 1.5
+        short_score += 3.0 if trend_6h < 0 or ema_slope < 0 else 0.0
+        if trend_24h > 0:
+            short_score -= min(5.0, trend_24h * 220.0)
     elif range_expansion_short_ok:
         short_score += min(16.0, max(0.0, abs(trend_24h) * 230.0))
         short_score += min(10.0, max(0.0, impulse_move_atr * 2.0))
@@ -715,9 +799,10 @@ def score_btc_futures_setup(
     def build_direction(side: str) -> FuturesSignal | None:
         if side == "LONG":
             impulse_path = impulse_long_ok and not (long_ok or continuation_long_ok)
-            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok)
-            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or range_expansion_long_ok)
-            if impulse_path or range_expansion_path or event_path:
+            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok)
+            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakaway_long_ok)
+            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakaway_long_ok or range_expansion_long_ok)
+            if impulse_path or breakaway_path or range_expansion_path or event_path:
                 default_cap = min(float(config.leverage_max), 8.0)
                 leverage_var = "FUTURES_EVENT_CATALYST_LEVERAGE_MAX" if event_path else "FUTURES_IMPULSE_LEVERAGE_MAX"
                 leverage_max = max(1, int(_env_float(leverage_var, _env_float("FUTURES_IMPULSE_LEVERAGE_MAX", default_cap))))
@@ -748,6 +833,7 @@ def score_btc_futures_setup(
                     else "PRESSURE_BREAK_LONG" if long_ok and pressure_long
                     else "TREND_CONTINUATION_LONG" if continuation_long_ok
                     else "IMPULSE_EVENT_CONTINUATION_LONG" if impulse_path
+                    else "MOMENTUM_BREAKAWAY_LONG" if breakaway_path
                     else "RANGE_EXPANSION_CONTINUATION_LONG" if range_expansion_path
                     else "EVENT_CATALYST_LONG"
                 ),
@@ -763,6 +849,8 @@ def score_btc_futures_setup(
                     "impulse_move_pct": round(impulse_move_pct, 6),
                     "impulse_move_atr": round(impulse_move_atr, 4),
                     "impulse_body_atr": round(impulse_body, 4),
+                    "impulse_window_volume_ratio": round(impulse_window_volume_ratio, 4),
+                    "breakaway": 1.0 if breakaway_path else 0.0,
                     "range_expansion": 1.0 if range_expansion_path else 0.0,
                     "event_catalyst": 1.0 if event_path else 0.0,
                     "market_gate_penalty": directional_market_penalty("LONG") if impulse_path or event_path else 0.0,
@@ -773,9 +861,10 @@ def score_btc_futures_setup(
             )
 
         impulse_path = impulse_short_ok and not (short_ok or continuation_short_ok)
-        range_expansion_path = range_expansion_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok)
-        event_path = event_catalyst_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or range_expansion_short_ok)
-        if impulse_path or range_expansion_path or event_path:
+        breakaway_path = breakaway_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok)
+        range_expansion_path = range_expansion_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or breakaway_short_ok)
+        event_path = event_catalyst_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or breakaway_short_ok or range_expansion_short_ok)
+        if impulse_path or breakaway_path or range_expansion_path or event_path:
             default_cap = min(float(config.leverage_max), 8.0)
             leverage_var = "FUTURES_EVENT_CATALYST_LEVERAGE_MAX" if event_path else "FUTURES_IMPULSE_LEVERAGE_MAX"
             leverage_max = max(1, int(_env_float(leverage_var, _env_float("FUTURES_IMPULSE_LEVERAGE_MAX", default_cap))))
@@ -806,6 +895,7 @@ def score_btc_futures_setup(
                 else "PRESSURE_BREAK_SHORT" if short_ok and pressure_short
                 else "TREND_CONTINUATION_SHORT" if continuation_short_ok
                 else "IMPULSE_EVENT_CONTINUATION_SHORT" if impulse_path
+                else "MOMENTUM_BREAKAWAY_SHORT" if breakaway_path
                 else "RANGE_EXPANSION_CONTINUATION_SHORT" if range_expansion_path
                 else "EVENT_CATALYST_SHORT"
             ),
@@ -821,6 +911,8 @@ def score_btc_futures_setup(
                 "impulse_move_pct": round(impulse_move_pct, 6),
                 "impulse_move_atr": round(impulse_move_atr, 4),
                 "impulse_body_atr": round(impulse_body, 4),
+                "impulse_window_volume_ratio": round(impulse_window_volume_ratio, 4),
+                "breakaway": 1.0 if breakaway_path else 0.0,
                 "range_expansion": 1.0 if range_expansion_path else 0.0,
                 "event_catalyst": 1.0 if event_path else 0.0,
                 "market_gate_penalty": directional_market_penalty("SHORT") if impulse_path or event_path else 0.0,
@@ -882,6 +974,13 @@ def diagnose_impulse_rejection(frame_15m: pd.DataFrame, config: StrategyConfig) 
         close_near_low = current_price <= recent_close_low + current_atr_15 * close_buffer
         volume_baseline = max(1e-9, float(volume_15.iloc[-(config.consolidation_window_bars + 1):-1].mean()))
         volume_ratio = float(volume_15.iloc[-1]) / volume_baseline
+        prior_volume_end = max(0, len(volume_15) - lookback)
+        prior_volume_start = max(0, prior_volume_end - config.consolidation_window_bars)
+        prior_volume = volume_15.iloc[prior_volume_start:prior_volume_end]
+        if prior_volume.empty:
+            prior_volume = volume_15.iloc[-(config.consolidation_window_bars + 1):-1]
+        window_volume_baseline = max(1e-9, float(prior_volume.mean()))
+        window_volume_ratio = float(volume_15.iloc[-lookback:].sum()) / (window_volume_baseline * lookback)
         trend_6h = (float(close_1h.iloc[-1]) / float(close_1h.iloc[-7])) - 1.0 if len(close_1h) >= 7 else 0.0
         ema_slope = (current_ema20 / float(ema20.iloc[-6])) - 1.0 if len(ema20) >= 6 and float(ema20.iloc[-6]) > 0 else 0.0
         ema_extension = abs(current_price - current_ema20) / current_atr_1h if current_atr_1h > 0 else 999.0
@@ -892,6 +991,7 @@ def diagnose_impulse_rejection(frame_15m: pd.DataFrame, config: StrategyConfig) 
             f"side={side} move_pct={move_pct:+.4f} min={_env_float('FUTURES_IMPULSE_MIN_MOVE_PCT', 0.006):.4f} "
             f"move_atr={move_atr:.2f} min={_env_float('FUTURES_IMPULSE_MIN_MOVE_ATR', 1.10):.2f} "
             f"volume_ratio={volume_ratio:.2f} floor={_env_float('FUTURES_IMPULSE_VOLUME_FLOOR', 1.15):.2f} "
+            f"window_volume_ratio={window_volume_ratio:.2f} breakaway_floor={_env_float('FUTURES_BREAKAWAY_WINDOW_VOLUME_FLOOR', 0.70):.2f} "
             f"adx={current_adx:.2f} floor={_env_float('FUTURES_IMPULSE_ADX_MIN', 12.0):.2f} "
             f"rsi_1h={current_rsi_1h:.1f} rsi_15={current_rsi_15:.1f} "
             f"trend_6h={trend_6h:+.4f} ema_slope={ema_slope:+.4f} "
