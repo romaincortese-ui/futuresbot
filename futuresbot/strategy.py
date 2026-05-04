@@ -263,6 +263,31 @@ def _passes_cost_budget_gate(
         return True
 
 
+def _cost_budget_required_tp_distance_pct(
+    *,
+    entry_price: float,
+    sl_price: float,
+    leverage: int,
+    symbol: str | None = None,
+) -> float | None:
+    if not _cost_budget_enforced() or entry_price <= 0:
+        return None
+    dummy_tp = entry_price * 1.01 if sl_price < entry_price else entry_price * 0.99
+    projection = _cost_budget_projection(
+        entry_price=entry_price,
+        tp_price=dummy_tp,
+        sl_price=sl_price,
+        leverage=leverage,
+        symbol=symbol,
+    )
+    if projection is None:
+        return None
+    sl_distance_pct = abs(entry_price - sl_price) / entry_price
+    cost_pct = max(0.0, float(projection.get("total_cost_bps") or 0.0)) / 10_000.0
+    min_net_rr = max(0.0, float(projection.get("min_net_rr") or _env_float("MIN_NET_RR", 1.8)))
+    return (sl_distance_pct + cost_pct) * min_net_rr
+
+
 def _build_signal(
     *,
     side: str,
@@ -573,6 +598,8 @@ def score_btc_futures_setup(
     breakout_hold_support_buffer = 0.0
     breakout_hold_support_margin_atr = 0.0
     breakout_hold_reclaim_score = 0.0
+    breakout_hold_shelf_volume_ratio = 0.0
+    breakout_hold_confirmation_volume_ratio = max(volume_ratio, impulse_window_volume_ratio)
     breakout_hold_prior_ok = False
     breakout_hold_shelf_ok = False
     if len(frame_15m) > breakout_hold_lookback:
@@ -626,6 +653,19 @@ def score_btc_futures_setup(
     if len(frame_15m) > breakout_hold_shelf_bars:
         shelf_high = float(high_15.iloc[-breakout_hold_shelf_bars:].max())
         shelf_low = float(low_15.iloc[-breakout_hold_shelf_bars:].min())
+        shelf_volume = float(volume_15.iloc[-breakout_hold_shelf_bars:].sum())
+        shelf_volume_baseline_window = volume_15.iloc[-(breakout_hold_shelf_bars * 3):-breakout_hold_shelf_bars]
+        shelf_volume_baseline = max(
+            1e-9,
+            float(shelf_volume_baseline_window.mean()) * breakout_hold_shelf_bars
+            if not shelf_volume_baseline_window.empty
+            else volume_baseline * breakout_hold_shelf_bars,
+        )
+        breakout_hold_shelf_volume_ratio = shelf_volume / shelf_volume_baseline
+        breakout_hold_confirmation_volume_ratio = max(
+            breakout_hold_confirmation_volume_ratio,
+            breakout_hold_shelf_volume_ratio,
+        )
         shelf_pullback_pct = (shelf_high - shelf_low) / shelf_high if shelf_high > 0 else 0.0
         reclaim_distance = max(current_atr_15 * breakout_hold_reclaim_atr, current_price * breakout_hold_reclaim_pct)
         breakout_hold_shelf_ok = (
@@ -661,7 +701,7 @@ def score_btc_futures_setup(
         and current_adx >= breakout_hold_adx_min
         and trend_24h >= breakout_hold_trend_24h_min
         and trend_6h >= breakout_hold_trend_6h_min
-        and max(volume_ratio, impulse_window_volume_ratio) >= breakout_hold_volume_floor
+        and breakout_hold_confirmation_volume_ratio >= breakout_hold_volume_floor
         and current_rsi_1h >= breakout_hold_rsi_1h_min
         and current_rsi_15 >= breakout_hold_rsi_15_min
         and current_rsi_15 <= breakout_hold_rsi_15_max
@@ -865,7 +905,7 @@ def score_btc_futures_setup(
         long_score += min(10.0, max(0.0, ((current_price / breakout_hold_level) - 1.0) * 650.0))
         long_score += min(8.0, max(0.0, (current_adx - breakout_hold_adx_min) * 0.85))
         long_score += min(6.0, max(0.0, breakout_hold_support_margin_atr * 2.0))
-        long_score += min(4.0, max(0.0, (max(volume_ratio, impulse_window_volume_ratio) - breakout_hold_volume_floor) * 5.0))
+        long_score += min(4.0, max(0.0, (breakout_hold_confirmation_volume_ratio - breakout_hold_volume_floor) * 5.0))
         long_score += min(6.0, max(0.0, breakout_hold_reclaim_score * 6.0))
         long_score += 4.0 if long_stack else 2.0
     elif impulse_long_ok:
@@ -995,7 +1035,27 @@ def score_btc_futures_setup(
                 tp_move = max(config.tp_atr_mult * current_atr_1h, config.tp_range_mult * consolidation_range, config.tp_floor_pct * current_price)
                 sl_price = min(consolidation_low - config.sl_buffer_atr_mult * current_atr_1h, current_ema50 - config.sl_trend_atr_mult * current_atr_1h, current_price - current_atr_1h * 0.85)
             risk = current_price - sl_price
-            if risk <= 0 or tp_move / risk < config.min_reward_risk:
+            if risk <= 0:
+                return None
+            if breakout_hold_path and _env_bool("FUTURES_BREAKOUT_HOLD_EXTEND_TP_FOR_COST_BUDGET", True):
+                sl_distance_pct = risk / current_price if current_price > 0 else 0.0
+                projected_leverage = _leverage_for_signal_with_bounds(
+                    _confidence(long_score, config.min_confidence_score),
+                    sl_distance_pct,
+                    config,
+                    leverage_min if leverage_min is not None else config.leverage_min,
+                    leverage_max if leverage_max is not None else config.leverage_max,
+                )
+                if projected_leverage is not None:
+                    required_tp_distance_pct = _cost_budget_required_tp_distance_pct(
+                        entry_price=current_price,
+                        sl_price=sl_price,
+                        leverage=projected_leverage,
+                        symbol=getattr(config, "symbol", None),
+                    )
+                    if required_tp_distance_pct is not None:
+                        tp_move = max(tp_move, current_price * required_tp_distance_pct)
+            if tp_move / risk < config.min_reward_risk:
                 return None
             entry_signal = (
                 "COIL_BREAKOUT_LONG" if long_ok and breakout_long
@@ -1036,6 +1096,8 @@ def score_btc_futures_setup(
                     "breakout_hold_support_margin_atr": round(breakout_hold_support_margin_atr, 4),
                     "breakout_hold_reclaim_score": round(breakout_hold_reclaim_score, 4),
                     "breakout_hold_shelf": 1.0 if breakout_hold_shelf_ok else 0.0,
+                    "breakout_hold_shelf_volume_ratio": round(breakout_hold_shelf_volume_ratio, 4),
+                    "breakout_hold_volume_ratio": round(breakout_hold_confirmation_volume_ratio, 4),
                     "breakaway": 1.0 if breakaway_path else 0.0,
                     "range_expansion": 1.0 if range_expansion_path else 0.0,
                     "event_catalyst": 1.0 if event_path else 0.0,

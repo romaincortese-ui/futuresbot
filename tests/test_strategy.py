@@ -90,6 +90,52 @@ def test_strategy_produces_btc_breakout_hold_long(monkeypatch):
     assert signal.sl_price < signal.metadata["breakout_hold_level"]
 
 
+def test_btc_breakout_hold_counts_shelf_volume_after_quiet_reclaim(monkeypatch):
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_VOLUME_FLOOR", "0.65")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_RSI_15_MAX", "100")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_MAX_EMA_EXTENSION_ATR", "8.0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "1")
+    monkeypatch.setenv("MIN_NET_RR", "1.8")
+    base = [76000 + idx * 4 + math.sin(idx / 8.0) * 35 for idx in range(520)]
+    for offset in range(32):
+        base[-48 + offset] = 77500.0 + offset * 34.0 + math.sin(offset / 3.0) * 15.0
+    base[-16:] = [
+        78747.6,
+        78920.4,
+        79201.6,
+        79484.4,
+        80171.4,
+        80065.6,
+        79655.0,
+        79867.0,
+        79976.7,
+        79671.7,
+        80191.7,
+        80228.5,
+        79982.4,
+        80337.6,
+        80393.9,
+        80220.5,
+    ]
+    frame = _frame_from_prices(base)
+    frame["volume"] = 1000.0
+    frame.iloc[-16:-8, frame.columns.get_loc("volume")] = 2200.0
+    frame.iloc[-8:, frame.columns.get_loc("volume")] = 350.0
+
+    signal = score_btc_futures_setup(frame, replace(_config(), min_confidence_score=58.0, consolidation_max_range_pct=0.006))
+
+    assert signal is not None
+    assert signal.entry_signal == "BREAKOUT_HOLD_LONG"
+    assert signal.metadata["volume_ratio"] < 0.65
+    assert signal.metadata["impulse_window_volume_ratio"] < 0.65
+    assert signal.metadata["breakout_hold_shelf_volume_ratio"] >= 0.65
+    assert signal.metadata["breakout_hold_volume_ratio"] >= 0.65
+    assert signal.metadata["cost_budget_mode"] == "enforce"
+    assert signal.metadata["cost_budget_pass"] == 1.0
+
+
 def test_strategy_produces_short_signal_on_downtrend_breakdown():
     base = [100000 - idx * 14 + math.sin(idx / 5.0) * 36 + math.cos(idx / 10.0) * 18 + ((idx % 5) - 2) * 12 for idx in range(520)]
     base[-20:-1] = [base[-21] + ((idx % 4) - 1) * 12 for idx in range(19)]
