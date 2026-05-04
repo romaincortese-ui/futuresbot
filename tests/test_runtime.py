@@ -122,6 +122,74 @@ def test_build_status_message_includes_open_position_pnl_and_last_trade(tmp_path
     assert "Last: <b>BTC_USDT</b> TAKE_PROFIT | <b>$+24.50</b> (+8.10%)" in message
 
 
+def test_status_message_ignores_stale_reference_price_for_tiny_position(tmp_path):
+    class TinyPriceClient(StubClient):
+        def get_fair_price(self, symbol: str) -> float:
+            if symbol == "PEPE_USDT":
+                return 0.0000040117
+            return 80337.40
+
+    runtime = FuturesRuntime(_config(tmp_path), TinyPriceClient())
+    runtime.open_position = FuturesPosition(
+        symbol="PEPE_USDT",
+        side="LONG",
+        entry_price=0.0000040663,
+        contracts=1,
+        contract_size=10_000_000.0,
+        leverage=5,
+        margin_usdt=8.1529315,
+        tp_price=0.0000043,
+        sl_price=0.0000039,
+        position_id="pos-pepe",
+        order_id="entry-pepe",
+        opened_at=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        score=79.2,
+        certainty=0.38,
+        entry_signal="MOMENTUM_BREAKAWAY_LONG",
+    )
+
+    message = runtime._build_status_message(price=80337.40)
+
+    assert "Mark <b>$0.00000401</b>" in message
+    assert "PnL: <b>$-0.55</b>" in message
+    assert "80337.40" not in message
+
+
+def test_cycle_summary_uses_active_position_mark_for_tiny_position(tmp_path, caplog):
+    class TinyPriceClient(StubClient):
+        def get_fair_price(self, symbol: str) -> float:
+            if symbol == "PEPE_USDT":
+                return 0.0000040117
+            return 80337.40
+
+    runtime = FuturesRuntime(_config(tmp_path), TinyPriceClient())
+    runtime.open_position = FuturesPosition(
+        symbol="PEPE_USDT",
+        side="LONG",
+        entry_price=0.0000040663,
+        contracts=1,
+        contract_size=10_000_000.0,
+        leverage=5,
+        margin_usdt=8.1529315,
+        tp_price=0.0000043,
+        sl_price=0.0000039,
+        position_id="pos-pepe",
+        order_id="entry-pepe",
+        opened_at=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        score=79.2,
+        certainty=0.38,
+        entry_signal="MOMENTUM_BREAKAWAY_LONG",
+    )
+
+    with caplog.at_level(logging.INFO, logger="futuresbot.runtime"):
+        runtime._log_cycle_summary(price=80337.40, signal=None)
+
+    line = next(record.message for record in caplog.records if "Futures cycle: open_position" in record.message)
+    assert "price=0.00000401" in line
+    assert "pnl_usdt=-0.55" in line
+    assert "80337.40" not in line
+
+
 def test_force_close_position_closes_paper_trade_and_records_history(tmp_path):
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
     runtime.open_position = FuturesPosition(

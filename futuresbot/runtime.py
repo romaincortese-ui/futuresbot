@@ -162,28 +162,31 @@ class FuturesRuntime:
                 "yes" if signal is not None else "no",
             )
         if self.open_position is not None:
-            pnl_usdt = self._position_pnl_usdt(self.open_position, price)
+            mark_price = self._mark_price_for_position(self.open_position, price)
+            pnl_usdt = self._position_pnl_usdt(self.open_position, mark_price)
+            price_text = self._format_price(mark_price) if mark_price is not None else "n/a"
             log.info(
-                "Futures cycle: open_position side=%s entry_signal=%s leverage=x%s price=%.2f pnl_usdt=%+.2f paused=%s",
+                "Futures cycle: open_position side=%s entry_signal=%s leverage=x%s price=%s pnl_usdt=%+.2f paused=%s",
                 self.open_position.side,
                 self.open_position.entry_signal,
                 self.open_position.leverage,
-                price,
+                price_text,
                 pnl_usdt,
                 self._paused,
             )
             return
         if signal is None:
-            log.info("Futures cycle: no signal price=%.2f paused=%s", price, self._paused)
+            log.info("Futures cycle: no signal price=%s paused=%s", self._format_price(price), self._paused)
             return
+        signal_price = float(signal.get("entry_price") or price or 0.0)
         log.info(
-            "Futures cycle: signal side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%% price=%.2f paused=%s",
+            "Futures cycle: signal side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%% price=%s paused=%s",
             str(signal.get("side") or "?"),
             str(signal.get("entry_signal") or "SETUP"),
             int(signal.get("leverage") or 0),
             float(signal.get("score") or 0.0),
             float(signal.get("certainty") or 0.0) * 100.0,
-            price,
+            self._format_price(signal_price),
             self._paused,
         )
 
@@ -452,6 +455,29 @@ class FuturesRuntime:
             return formatted
         return "0.00"
 
+    def _is_plausible_position_mark(self, position: FuturesPosition | None, price: float | None) -> bool:
+        if position is None or price is None:
+            return False
+        try:
+            mark = float(price)
+            entry = float(position.entry_price)
+        except (TypeError, ValueError):
+            return False
+        if mark <= 0 or entry <= 0:
+            return False
+        ratio = mark / entry
+        return 0.1 <= ratio <= 10.0
+
+    def _mark_price_for_position(self, position: FuturesPosition | None, fallback: float | None = None) -> float | None:
+        if position is None:
+            return None
+        if self._is_plausible_position_mark(position, fallback):
+            return float(fallback)
+        mark = self._symbol_current_prices((position.symbol,)).get(position.symbol)
+        if self._is_plausible_position_mark(position, mark):
+            return mark
+        return None
+
     def _safe_float(self, payload: dict[str, Any], *keys: str, default: float = 0.0) -> float:
         for key in keys:
             raw = payload.get(key)
@@ -492,7 +518,7 @@ class FuturesRuntime:
             price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))
             # If caller supplied a current_price for the primary symbol, let it win.
             primary = self.open_position
-            if primary is not None and current_price and current_price > 0:
+            if primary is not None and self._is_plausible_position_mark(primary, current_price):
                 price_map[primary.symbol] = float(current_price)
         unrealized = self._portfolio_unrealized_pnl(price_map)
         margin_in_use = self._total_open_margin()
@@ -622,7 +648,7 @@ class FuturesRuntime:
             lines.append(self._signal_line(signal))
         else:
             price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))
-            if self.open_position is not None and current_price and current_price > 0:
+            if self.open_position is not None and self._is_plausible_position_mark(self.open_position, current_price):
                 price_map[self.open_position.symbol] = float(current_price)
             for position in self.open_positions.values():
                 mark = price_map.get(position.symbol)
@@ -3694,9 +3720,13 @@ class FuturesRuntime:
                 # each cycle; bucket / concurrency / session / funding gates enforced inside).
                 if not self._paused and self._available_slots() > 0:
                     signal = self._fetch_signal()
-                self._write_status(signal=signal, price=current_price)
                 if signal is not None:
-                    self._enter_trade(signal)
+                    entered = self._enter_trade(signal)
+                    if entered and self.open_position is not None:
+                        refreshed_price = self._mark_price_for_position(self.open_position)
+                        if refreshed_price is not None:
+                            current_price = refreshed_price
+                self._write_status(signal=signal, price=current_price)
                 # P1 §6 #5 (assessment) + cross-bot synergy with mexc-bot-v2:
                 # publish the funding-rate observations gathered this cycle to
                 # Redis. The spot bot consumes them via mexcbot/funding_carry.
