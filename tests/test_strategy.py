@@ -81,7 +81,7 @@ def test_strategy_produces_btc_breakout_hold_long(monkeypatch):
     base[-4:] = [79050.0, 79120.0, 79220.0, 79340.0]
     frame = _frame_from_prices(base)
 
-    signal = score_btc_futures_setup(frame, replace(_config(), min_confidence_score=58.0, consolidation_max_range_pct=0.006))
+    signal = score_btc_futures_setup(frame, replace(_config(), min_confidence_score=80.0, consolidation_max_range_pct=0.006))
 
     assert signal is not None
     assert signal.side == "LONG"
@@ -128,6 +128,7 @@ def test_btc_breakout_hold_counts_shelf_volume_after_quiet_reclaim(monkeypatch):
 
     assert signal is not None
     assert signal.entry_signal == "BREAKOUT_HOLD_LONG"
+    assert signal.score >= 80.0
     assert signal.metadata["volume_ratio"] < 0.65
     assert signal.metadata["impulse_window_volume_ratio"] < 0.65
     assert signal.metadata["breakout_hold_shelf_volume_ratio"] >= 0.65

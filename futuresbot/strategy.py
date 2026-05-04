@@ -285,7 +285,8 @@ def _cost_budget_required_tp_distance_pct(
     sl_distance_pct = abs(entry_price - sl_price) / entry_price
     cost_pct = max(0.0, float(projection.get("total_cost_bps") or 0.0)) / 10_000.0
     min_net_rr = max(0.0, float(projection.get("min_net_rr") or _env_float("MIN_NET_RR", 1.8)))
-    return (sl_distance_pct + cost_pct) * min_net_rr
+    buffer_pct = max(0.0, _env_float("FUTURES_COST_BUDGET_TP_EXTENSION_BUFFER_PCT", 0.0005))
+    return (sl_distance_pct + cost_pct) * min_net_rr + buffer_pct
 
 
 def _build_signal(
@@ -907,6 +908,7 @@ def score_btc_futures_setup(
         long_score += min(6.0, max(0.0, breakout_hold_support_margin_atr * 2.0))
         long_score += min(4.0, max(0.0, (breakout_hold_confirmation_volume_ratio - breakout_hold_volume_floor) * 5.0))
         long_score += min(6.0, max(0.0, breakout_hold_reclaim_score * 6.0))
+        long_score += 5.0 if breakout_hold_shelf_ok else 0.0
         long_score += 4.0 if long_stack else 2.0
     elif impulse_long_ok:
         long_score += min(14.0, max(0.0, impulse_move_pct * 900.0))
