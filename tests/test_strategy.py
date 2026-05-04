@@ -40,8 +40,7 @@ def _frame_from_prices(prices: list[float]) -> pd.DataFrame:
     )
 
 
-def test_strategy_produces_long_signal_on_uptrend_breakout(monkeypatch):
-    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
+def test_strategy_produces_long_signal_on_uptrend_breakout():
     base = [90000 + idx * 12 + math.sin(idx / 5.0) * 38 + math.cos(idx / 11.0) * 22 + ((idx % 5) - 2) * 14 for idx in range(520)]
     base[-20:-1] = [base[-21] + ((idx % 4) - 1) * 15 for idx in range(19)]
     base[-1] = max(base[-20:-1]) + 220
@@ -57,12 +56,38 @@ def test_strategy_produces_long_signal_on_uptrend_breakout(monkeypatch):
 def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     cfg = replace(_config(), symbol="BTC_USDT")
 
-    assert _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+    assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_SHORT")
     assert not _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
 
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "COIL_BREAKOUT_LONG")
+    assert _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+
+
+def test_strategy_produces_btc_breakout_hold_long(monkeypatch):
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_VOLUME_FLOOR", "0.40")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_RSI_15_MAX", "100")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_MAX_EMA_EXTENSION_ATR", "8.0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [76000 + idx * 4 + math.sin(idx / 8.0) * 35 for idx in range(520)]
+    anchor = 78600.0
+    for offset in range(44):
+        base[-48 + offset] = anchor - 520.0 + offset * 8.0 + math.sin(offset / 2.0) * 20.0
+    base[-4:] = [79050.0, 79120.0, 79220.0, 79340.0]
+    frame = _frame_from_prices(base)
+
+    signal = score_btc_futures_setup(frame, replace(_config(), min_confidence_score=58.0, consolidation_max_range_pct=0.006))
+
+    assert signal is not None
+    assert signal.side == "LONG"
+    assert signal.entry_signal == "BREAKOUT_HOLD_LONG"
+    assert signal.metadata["breakout_hold"] == 1.0
+    assert signal.sl_price < signal.metadata["breakout_hold_level"]
 
 
 def test_strategy_produces_short_signal_on_downtrend_breakdown():

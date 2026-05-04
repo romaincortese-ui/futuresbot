@@ -11,7 +11,7 @@ from futuresbot.models import FuturesSignal
 
 
 _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
-    "BTC_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT"),
+    "BTC_USDT": ("MOMENTUM_BREAKAWAY_SHORT",),
     "ETH_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT"),
     "TAO_USDT": (
         "COIL_BREAKOUT_LONG",
@@ -555,6 +555,120 @@ def score_btc_futures_setup(
         and consolidation_range_pct <= range_max_range_pct
     )
 
+    breakout_hold_enabled = _env_bool("FUTURES_BREAKOUT_HOLD_ENABLED", True)
+    breakout_hold_symbol_ok = _symbol_enabled(
+        "FUTURES_BREAKOUT_HOLD_SYMBOLS",
+        getattr(config, "symbol", ""),
+        "BTC_USDT",
+    )
+    breakout_hold_bars = max(2, int(_env_float("FUTURES_BREAKOUT_HOLD_BARS", 4.0)))
+    breakout_hold_lookback = max(
+        breakout_hold_bars + 4,
+        int(_env_float("FUTURES_BREAKOUT_HOLD_LOOKBACK_BARS", 48.0)),
+    )
+    breakout_hold_level = 0.0
+    breakout_hold_low = 0.0
+    breakout_hold_high = 0.0
+    breakout_hold_close_ratio = 0.0
+    breakout_hold_support_buffer = 0.0
+    breakout_hold_support_margin_atr = 0.0
+    breakout_hold_reclaim_score = 0.0
+    breakout_hold_prior_ok = False
+    breakout_hold_shelf_ok = False
+    if len(frame_15m) > breakout_hold_lookback:
+        breakout_hold_prior = high_15.iloc[-breakout_hold_lookback:-breakout_hold_bars]
+        breakout_hold_window_lows = low_15.iloc[-breakout_hold_bars:]
+        breakout_hold_window_highs = high_15.iloc[-breakout_hold_bars:]
+        breakout_hold_window_closes = close_15.iloc[-breakout_hold_bars:]
+        if not breakout_hold_prior.empty and not breakout_hold_window_closes.empty:
+            breakout_hold_level = float(breakout_hold_prior.max())
+            breakout_hold_low = float(breakout_hold_window_lows.min())
+            breakout_hold_high = float(breakout_hold_window_highs.max())
+            breakout_hold_support_buffer = max(
+                current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_SUPPORT_BUFFER_ATR", 0.35),
+                current_price * _env_float("FUTURES_BREAKOUT_HOLD_SUPPORT_BUFFER_PCT", 0.0015),
+            )
+            close_floor = breakout_hold_level - breakout_hold_support_buffer * 0.25
+            breakout_hold_close_ratio = float((breakout_hold_window_closes >= close_floor).mean())
+            breakout_hold_support_margin_atr = (
+                (breakout_hold_low - (breakout_hold_level - breakout_hold_support_buffer)) / current_atr_15
+                if current_atr_15 > 0
+                else 0.0
+            )
+
+    breakout_hold_trigger_buffer = current_atr_15 * _env_float(
+        "FUTURES_BREAKOUT_HOLD_TRIGGER_BUFFER_ATR",
+        config.breakout_buffer_atr,
+    )
+    breakout_hold_min_close_ratio = _env_float("FUTURES_BREAKOUT_HOLD_MIN_CLOSE_RATIO", 0.75)
+    breakout_hold_volume_floor = _env_float("FUTURES_BREAKOUT_HOLD_VOLUME_FLOOR", 0.65)
+    breakout_hold_adx_min = _env_float("FUTURES_BREAKOUT_HOLD_ADX_MIN", max(10.0, config.adx_floor - 4.0))
+    breakout_hold_trend_24h_min = _env_float("FUTURES_BREAKOUT_HOLD_TREND_24H_MIN", 0.002)
+    breakout_hold_trend_6h_min = _env_float("FUTURES_BREAKOUT_HOLD_TREND_6H_MIN", 0.001)
+    breakout_hold_rsi_1h_min = _env_float("FUTURES_BREAKOUT_HOLD_RSI_1H_MIN", 48.0)
+    breakout_hold_rsi_15_min = _env_float("FUTURES_BREAKOUT_HOLD_RSI_15_MIN", 46.0)
+    breakout_hold_rsi_15_max = _env_float("FUTURES_BREAKOUT_HOLD_RSI_15_MAX", 90.0)
+    breakout_hold_max_ema_extension_atr = _env_float("FUTURES_BREAKOUT_HOLD_MAX_EMA_EXTENSION_ATR", 4.0)
+    breakout_hold_shelf_bars = max(
+        breakout_hold_bars,
+        int(_env_float("FUTURES_BREAKOUT_HOLD_SHELF_BARS", 16.0)),
+    )
+    breakout_hold_max_shelf_pullback_pct = _env_float("FUTURES_BREAKOUT_HOLD_MAX_SHELF_PULLBACK_PCT", 0.030)
+    breakout_hold_reclaim_atr = _env_float("FUTURES_BREAKOUT_HOLD_RECLAIM_ATR", 1.20)
+    breakout_hold_reclaim_pct = _env_float("FUTURES_BREAKOUT_HOLD_RECLAIM_PCT", 0.006)
+    if breakout_hold_level > 0:
+        breakout_hold_prior_ok = (
+            breakout_hold_high >= breakout_hold_level + breakout_hold_trigger_buffer
+            and breakout_hold_low >= breakout_hold_level - breakout_hold_support_buffer
+            and breakout_hold_close_ratio >= breakout_hold_min_close_ratio
+            and current_price >= breakout_hold_level - breakout_hold_support_buffer * 0.25
+        )
+    if len(frame_15m) > breakout_hold_shelf_bars:
+        shelf_high = float(high_15.iloc[-breakout_hold_shelf_bars:].max())
+        shelf_low = float(low_15.iloc[-breakout_hold_shelf_bars:].min())
+        shelf_pullback_pct = (shelf_high - shelf_low) / shelf_high if shelf_high > 0 else 0.0
+        reclaim_distance = max(current_atr_15 * breakout_hold_reclaim_atr, current_price * breakout_hold_reclaim_pct)
+        breakout_hold_shelf_ok = (
+            shelf_high > 0
+            and shelf_low > 0
+            and shelf_pullback_pct <= breakout_hold_max_shelf_pullback_pct
+            and current_price >= shelf_high - reclaim_distance
+            and trend_24h >= breakout_hold_trend_24h_min * 2.0
+            and trend_6h >= breakout_hold_trend_6h_min * 2.0
+        )
+        if breakout_hold_shelf_ok and not breakout_hold_prior_ok:
+            breakout_hold_level = shelf_low
+            breakout_hold_low = shelf_low
+            breakout_hold_high = shelf_high
+            breakout_hold_support_buffer = max(
+                current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_SUPPORT_BUFFER_ATR", 0.35),
+                current_price * _env_float("FUTURES_BREAKOUT_HOLD_SUPPORT_BUFFER_PCT", 0.0015),
+            )
+            breakout_hold_close_ratio = float((close_15.iloc[-breakout_hold_shelf_bars:] >= shelf_low).mean())
+            breakout_hold_support_margin_atr = (
+                breakout_hold_support_buffer / current_atr_15 if current_atr_15 > 0 else 0.0
+            )
+        if shelf_high > 0 and current_atr_15 > 0:
+            breakout_hold_reclaim_score = max(
+                0.0,
+                min(1.0, (current_price - (shelf_high - current_atr_15 * breakout_hold_reclaim_atr)) / (current_atr_15 * breakout_hold_reclaim_atr)),
+            )
+    breakout_hold_long_ok = (
+        breakout_hold_enabled
+        and breakout_hold_symbol_ok
+        and breakout_hold_level > 0
+        and (breakout_hold_prior_ok or breakout_hold_shelf_ok)
+        and current_adx >= breakout_hold_adx_min
+        and trend_24h >= breakout_hold_trend_24h_min
+        and trend_6h >= breakout_hold_trend_6h_min
+        and max(volume_ratio, impulse_window_volume_ratio) >= breakout_hold_volume_floor
+        and current_rsi_1h >= breakout_hold_rsi_1h_min
+        and current_rsi_15 >= breakout_hold_rsi_15_min
+        and current_rsi_15 <= breakout_hold_rsi_15_max
+        and (long_stack or current_price > current_ema20 or ema_slope > 0)
+        and impulse_ema_extension <= breakout_hold_max_ema_extension_atr
+    )
+
     breakaway_symbol_ok = _symbol_enabled(
         "FUTURES_BREAKAWAY_SYMBOLS",
         getattr(config, "symbol", ""),
@@ -745,6 +859,15 @@ def score_btc_futures_setup(
         long_score += min(10.0, max(0.0, ema_gap * 850.0))
         long_score += min(6.0, max(0.0, (volume_ratio - volume_floor_cfg) * 10.0))
         long_score -= 6.0
+    elif breakout_hold_long_ok:
+        long_score += min(14.0, max(0.0, trend_24h * 220.0))
+        long_score += min(10.0, max(0.0, trend_6h * 420.0))
+        long_score += min(10.0, max(0.0, ((current_price / breakout_hold_level) - 1.0) * 650.0))
+        long_score += min(8.0, max(0.0, (current_adx - breakout_hold_adx_min) * 0.85))
+        long_score += min(6.0, max(0.0, breakout_hold_support_margin_atr * 2.0))
+        long_score += min(4.0, max(0.0, (max(volume_ratio, impulse_window_volume_ratio) - breakout_hold_volume_floor) * 5.0))
+        long_score += min(6.0, max(0.0, breakout_hold_reclaim_score * 6.0))
+        long_score += 4.0 if long_stack else 2.0
     elif impulse_long_ok:
         long_score += min(14.0, max(0.0, impulse_move_pct * 900.0))
         long_score += min(10.0, max(0.0, impulse_move_atr * 2.5))
@@ -839,10 +962,22 @@ def score_btc_futures_setup(
     def build_direction(side: str) -> FuturesSignal | None:
         if side == "LONG":
             impulse_path = impulse_long_ok and not (long_ok or continuation_long_ok)
-            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok)
-            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakaway_long_ok)
-            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakaway_long_ok or range_expansion_long_ok)
-            if impulse_path or breakaway_path or range_expansion_path or event_path:
+            breakout_hold_path = breakout_hold_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok)
+            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path)
+            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or breakaway_long_ok)
+            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or breakaway_long_ok or range_expansion_long_ok)
+            if breakout_hold_path:
+                default_cap = min(float(config.leverage_max), 12.0)
+                leverage_max = max(1, int(_env_float("FUTURES_BREAKOUT_HOLD_LEVERAGE_MAX", default_cap)))
+                leverage_min = min(config.leverage_min, leverage_max)
+                tp_move = max(
+                    _env_float("FUTURES_BREAKOUT_HOLD_TP_ATR_MULT", config.tp_atr_mult) * current_atr_15,
+                    _env_float("FUTURES_BREAKOUT_HOLD_TP_FLOOR_PCT", config.tp_floor_pct) * current_price,
+                )
+                sl_price = breakout_hold_level - current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_SL_BUFFER_ATR", 0.45)
+                if sl_price >= current_price:
+                    sl_price = current_price - current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_FALLBACK_SL_ATR", 2.5)
+            elif impulse_path or breakaway_path or range_expansion_path or event_path:
                 default_cap = min(float(config.leverage_max), 8.0)
                 leverage_var = "FUTURES_EVENT_CATALYST_LEVERAGE_MAX" if event_path else "FUTURES_IMPULSE_LEVERAGE_MAX"
                 leverage_max = max(1, int(_env_float(leverage_var, _env_float("FUTURES_IMPULSE_LEVERAGE_MAX", default_cap))))
@@ -866,6 +1001,7 @@ def score_btc_futures_setup(
                 "COIL_BREAKOUT_LONG" if long_ok and breakout_long
                 else "PRESSURE_BREAK_LONG" if long_ok and pressure_long
                 else "TREND_CONTINUATION_LONG" if continuation_long_ok
+                else "BREAKOUT_HOLD_LONG" if breakout_hold_path
                 else "IMPULSE_EVENT_CONTINUATION_LONG" if impulse_path
                 else "MOMENTUM_BREAKAWAY_LONG" if breakaway_path
                 else "RANGE_EXPANSION_CONTINUATION_LONG" if range_expansion_path
@@ -893,6 +1029,13 @@ def score_btc_futures_setup(
                     "impulse_move_atr": round(impulse_move_atr, 4),
                     "impulse_body_atr": round(impulse_body, 4),
                     "impulse_window_volume_ratio": round(impulse_window_volume_ratio, 4),
+                    "breakout_hold": 1.0 if breakout_hold_path else 0.0,
+                    "breakout_hold_level": round(breakout_hold_level, 10),
+                    "breakout_hold_bars": float(breakout_hold_bars),
+                    "breakout_hold_close_ratio": round(breakout_hold_close_ratio, 4),
+                    "breakout_hold_support_margin_atr": round(breakout_hold_support_margin_atr, 4),
+                    "breakout_hold_reclaim_score": round(breakout_hold_reclaim_score, 4),
+                    "breakout_hold_shelf": 1.0 if breakout_hold_shelf_ok else 0.0,
                     "breakaway": 1.0 if breakaway_path else 0.0,
                     "range_expansion": 1.0 if range_expansion_path else 0.0,
                     "event_catalyst": 1.0 if event_path else 0.0,
