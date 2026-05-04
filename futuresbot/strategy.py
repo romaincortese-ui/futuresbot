@@ -10,6 +10,19 @@ from futuresbot.indicators import calc_adx, calc_atr, calc_ema, calc_rsi, resamp
 from futuresbot.models import FuturesSignal
 
 
+_DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
+    "BTC_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT"),
+    "ETH_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT"),
+    "TAO_USDT": (
+        "COIL_BREAKOUT_LONG",
+        "IMPULSE_EVENT_CONTINUATION_LONG",
+        "IMPULSE_EVENT_CONTINUATION_SHORT",
+        "MOMENTUM_BREAKAWAY_SHORT",
+    ),
+    "SEI_USDT": ("COIL_BREAKOUT_LONG", "COIL_BREAKDOWN_SHORT", "MOMENTUM_BREAKAWAY_SHORT"),
+}
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -29,6 +42,33 @@ def _symbol_enabled(name: str, symbol: str, default: str = "") -> bool:
     tokens = {"".join(ch for ch in item.upper() if ch.isalnum()) for item in raw.split(",") if item.strip()}
     normalized = "".join(ch for ch in symbol.upper() if ch.isalnum())
     return "*" in tokens or normalized in tokens
+
+
+def _symbol_env_prefix(symbol: str) -> str:
+    return "".join(ch for ch in symbol.upper() if ch.isalnum())
+
+
+def _parse_entry_signal_list(raw: str | None) -> set[str]:
+    if raw is None:
+        return set()
+    normalized = raw.replace(";", ",").replace("\n", ",").replace(" ", ",")
+    return {item.strip().upper() for item in normalized.split(",") if item.strip()}
+
+
+def _entry_signal_disabled(config: "StrategyConfig", entry_signal: str) -> bool:
+    symbol = getattr(config, "symbol", "").upper()
+    disabled = set(_DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS.get(symbol, ()))
+    global_raw = os.environ.get("FUTURES_DISABLED_ENTRY_SIGNALS")
+    disabled.update(_parse_entry_signal_list(global_raw))
+    symbol_key = f"FUTURES_{_symbol_env_prefix(symbol)}_DISABLED_ENTRY_SIGNALS"
+    symbol_raw = os.environ.get(symbol_key)
+    if symbol_raw is not None:
+        symbol_tokens = _parse_entry_signal_list(symbol_raw)
+        if symbol_tokens & {"NONE", "OFF", "0", "FALSE"}:
+            disabled.clear()
+        else:
+            disabled.update(symbol_tokens)
+    return entry_signal.upper() in disabled
 
 
 def _side_threshold(config: "StrategyConfig", side: str, offset: float) -> float:
@@ -822,21 +862,24 @@ def score_btc_futures_setup(
             risk = current_price - sl_price
             if risk <= 0 or tp_move / risk < config.min_reward_risk:
                 return None
+            entry_signal = (
+                "COIL_BREAKOUT_LONG" if long_ok and breakout_long
+                else "PRESSURE_BREAK_LONG" if long_ok and pressure_long
+                else "TREND_CONTINUATION_LONG" if continuation_long_ok
+                else "IMPULSE_EVENT_CONTINUATION_LONG" if impulse_path
+                else "MOMENTUM_BREAKAWAY_LONG" if breakaway_path
+                else "RANGE_EXPANSION_CONTINUATION_LONG" if range_expansion_path
+                else "EVENT_CATALYST_LONG"
+            )
+            if _entry_signal_disabled(config, entry_signal):
+                return None
             return _build_signal(
                 side="LONG",
                 score=long_score,
                 entry_price=current_price,
                 tp_price=current_price + tp_move,
                 sl_price=sl_price,
-                entry_signal=(
-                    "COIL_BREAKOUT_LONG" if long_ok and breakout_long
-                    else "PRESSURE_BREAK_LONG" if long_ok and pressure_long
-                    else "TREND_CONTINUATION_LONG" if continuation_long_ok
-                    else "IMPULSE_EVENT_CONTINUATION_LONG" if impulse_path
-                    else "MOMENTUM_BREAKAWAY_LONG" if breakaway_path
-                    else "RANGE_EXPANSION_CONTINUATION_LONG" if range_expansion_path
-                    else "EVENT_CATALYST_LONG"
-                ),
+                entry_signal=entry_signal,
                 config=config,
                 leverage_min_override=leverage_min,
                 leverage_max_override=leverage_max,
@@ -884,21 +927,24 @@ def score_btc_futures_setup(
         risk = sl_price - current_price
         if risk <= 0 or tp_move / risk < config.min_reward_risk:
             return None
+        entry_signal = (
+            "COIL_BREAKDOWN_SHORT" if short_ok and breakout_short
+            else "PRESSURE_BREAK_SHORT" if short_ok and pressure_short
+            else "TREND_CONTINUATION_SHORT" if continuation_short_ok
+            else "IMPULSE_EVENT_CONTINUATION_SHORT" if impulse_path
+            else "MOMENTUM_BREAKAWAY_SHORT" if breakaway_path
+            else "RANGE_EXPANSION_CONTINUATION_SHORT" if range_expansion_path
+            else "EVENT_CATALYST_SHORT"
+        )
+        if _entry_signal_disabled(config, entry_signal):
+            return None
         return _build_signal(
             side="SHORT",
             score=short_score,
             entry_price=current_price,
             tp_price=current_price - tp_move,
             sl_price=sl_price,
-            entry_signal=(
-                "COIL_BREAKDOWN_SHORT" if short_ok and breakout_short
-                else "PRESSURE_BREAK_SHORT" if short_ok and pressure_short
-                else "TREND_CONTINUATION_SHORT" if continuation_short_ok
-                else "IMPULSE_EVENT_CONTINUATION_SHORT" if impulse_path
-                else "MOMENTUM_BREAKAWAY_SHORT" if breakaway_path
-                else "RANGE_EXPANSION_CONTINUATION_SHORT" if range_expansion_path
-                else "EVENT_CATALYST_SHORT"
-            ),
+            entry_signal=entry_signal,
             config=config,
             leverage_min_override=leverage_min,
             leverage_max_override=leverage_max,

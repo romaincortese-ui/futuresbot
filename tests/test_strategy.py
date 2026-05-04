@@ -7,13 +7,16 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from futuresbot.config import FuturesBacktestConfig
-from futuresbot.strategy import diagnose_impulse_rejection, score_btc_futures_setup
+from futuresbot.strategy import _entry_signal_disabled, diagnose_impulse_rejection, score_btc_futures_setup
 
 
 def _config() -> FuturesBacktestConfig:
     now = datetime(2026, 4, 18, tzinfo=timezone.utc)
     return replace(
         FuturesBacktestConfig.from_env(now=now),
+        min_confidence_score=56.0,
+        long_threshold_offset=0.0,
+        short_threshold_offset=0.0,
         min_reward_risk=1.0,
         hard_loss_cap_pct=0.8,
         trend_24h_floor=0.01,
@@ -37,7 +40,8 @@ def _frame_from_prices(prices: list[float]) -> pd.DataFrame:
     )
 
 
-def test_strategy_produces_long_signal_on_uptrend_breakout():
+def test_strategy_produces_long_signal_on_uptrend_breakout(monkeypatch):
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     base = [90000 + idx * 12 + math.sin(idx / 5.0) * 38 + math.cos(idx / 11.0) * 22 + ((idx % 5) - 2) * 14 for idx in range(520)]
     base[-20:-1] = [base[-21] + ((idx % 4) - 1) * 15 for idx in range(19)]
     base[-1] = max(base[-20:-1]) + 220
@@ -48,6 +52,17 @@ def test_strategy_produces_long_signal_on_uptrend_breakout():
     assert signal is not None
     assert signal.side == "LONG"
     assert 20 <= signal.leverage <= 50
+
+
+def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
+    cfg = replace(_config(), symbol="BTC_USDT")
+
+    assert _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+    assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_SHORT")
+    assert not _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
+
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
+    assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
 
 
 def test_strategy_produces_short_signal_on_downtrend_breakdown():
@@ -204,6 +219,7 @@ def test_event_catalyst_creates_long_candidate_with_market_penalty(monkeypatch):
 
 def test_signal_includes_shadow_net_rr_metadata_by_default(monkeypatch):
     monkeypatch.setenv("FUTURES_COST_BUDGET_MODE", "shadow")
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
     base = [90000 + idx * 12 + math.sin(idx / 5.0) * 38 + math.cos(idx / 11.0) * 22 + ((idx % 5) - 2) * 14 for idx in range(520)]
     base[-20:-1] = [base[-21] + ((idx % 4) - 1) * 15 for idx in range(19)]
