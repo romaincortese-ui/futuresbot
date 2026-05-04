@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FUTURES_SYMBOLS: tuple[str, ...] = (
     "BTC_USDT",
     "ETH_USDT",
-    "SOL_USDT",
+    # SOL_USDT removed: no profitable parameter combination found across 400-combo sweep (60-day window)
     "PEPE_USDT",
     "TAO_USDT",
     "BNB_USDT",
@@ -49,11 +49,13 @@ DEFAULT_SYMBOL_PARAMETER_PROFILES: dict[str, dict[str, float | int]] = {
         "min_confidence_score": 80.0,
     },
     "ETH_USDT": {
+        "min_confidence_score": 60.0,
         "trend_24h_floor": 0.008,
         "trend_6h_floor": 0.0025,
         "consolidation_max_range_pct": 0.020,
         "adx_floor": 17.0,
-        "leverage_max": 8,
+        "leverage_max": 18,
+        "short_threshold_offset": 8.0,
     },
     "SOL_USDT": {
         "trend_24h_floor": 0.010,
@@ -80,14 +82,15 @@ DEFAULT_SYMBOL_PARAMETER_PROFILES: dict[str, dict[str, float | int]] = {
         "funding_rate_abs_max": 0.00025,
     },
     "TAO_USDT": {
-        "min_confidence_score": 72.0,
+        "min_confidence_score": 70.0,
         "trend_24h_floor": 0.014,
         "trend_6h_floor": 0.002,
         "consolidation_max_range_pct": 0.040,
         "consolidation_atr_mult": 2.00,
         "volume_ratio_floor": 1.05,
-        "leverage_max": 25,
+        "leverage_max": 18,
         "min_reward_risk": 1.20,
+        "short_threshold_offset": 0.0,
         "funding_rate_abs_max": 0.00022,
     },
     "BCH_USDT": {
