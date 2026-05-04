@@ -71,6 +71,8 @@ def setup_regime_for_signal(entry_signal: str | None, side: str | None = None) -
         return "IMPULSE_EVENT_SHORT" if side_name == "SHORT" or signal.endswith("_SHORT") else "IMPULSE_EVENT_LONG"
     if "RANGE_EXPANSION" in signal:
         return "RANGE_EXPANSION_SHORT" if side_name == "SHORT" or signal.endswith("_SHORT") else "RANGE_EXPANSION_LONG"
+    if "LEVEL_BREAK" in signal:
+        return "LEVEL_BREAK_SHORT" if side_name == "SHORT" or signal.endswith("_SHORT") else "LEVEL_BREAK_LONG"
     if "BREAKOUT_HOLD" in signal:
         return "BREAKOUT_HOLD_LONG"
     if "TREND_CONTINUATION" in signal:

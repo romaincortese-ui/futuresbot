@@ -196,6 +196,7 @@ def test_strategy_produces_impulse_event_continuation_short(monkeypatch):
 
 def test_strategy_produces_tao_range_expansion_long(monkeypatch):
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_SYMBOLS", "TAO_USDT")
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_MIN_TREND_24H", "0.012")
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_VOLUME_FLOOR", "0.50")
@@ -218,6 +219,7 @@ def test_strategy_produces_tao_range_expansion_long(monkeypatch):
 
 def test_strategy_produces_tao_range_expansion_short(monkeypatch):
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_SYMBOLS", "TAO_USDT")
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_MIN_TREND_24H", "0.012")
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_VOLUME_FLOOR", "0.50")
@@ -236,6 +238,74 @@ def test_strategy_produces_tao_range_expansion_short(monkeypatch):
     assert signal.side == "SHORT"
     assert signal.entry_signal == "RANGE_EXPANSION_CONTINUATION_SHORT"
     assert signal.metadata["range_expansion"] == 1.0
+
+
+def test_strategy_produces_level_break_long_for_non_btc_pair(monkeypatch):
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_SYMBOLS", "ETH_USDT")
+    monkeypatch.setenv("FUTURES_ETHUSDT_LEVEL_BREAK_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_ETHUSDT_LEVEL_BREAK_VOLUME_FLOOR", "0.20")
+    monkeypatch.setenv("FUTURES_ETHUSDT_LEVEL_BREAK_MIN_BREAK_ATR", "0.20")
+    monkeypatch.setenv("FUTURES_ETHUSDT_LEVEL_BREAK_MIN_BREAK_PCT", "0.002")
+    monkeypatch.setenv("FUTURES_ETHUSDT_LEVEL_BREAK_RSI_15_LONG_MAX", "100")
+    monkeypatch.setenv("FUTURES_ETHUSDT_LEVEL_BREAK_MAX_EMA_EXTENSION_ATR", "8.0")
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [2500 + idx * 0.65 + math.sin(idx / 7.0) * 8 for idx in range(520)]
+    prior_level = 2925.0
+    for offset in range(100):
+        base[-104 + offset] = prior_level - 45.0 + math.sin(offset / 4.0) * 10.0
+    base[-4:] = [2934.0, 2941.0, 2948.0, 2955.0]
+    frame = _frame_from_prices(base)
+
+    signal = score_btc_futures_setup(
+        frame,
+        replace(_config(), symbol="ETH_USDT", min_confidence_score=58.0, consolidation_max_range_pct=0.001, min_reward_risk=0.8),
+    )
+
+    assert signal is not None
+    assert signal.side == "LONG"
+    assert signal.entry_signal == "LEVEL_BREAK_LONG"
+    assert signal.metadata["level_break"] == 1.0
+    assert signal.metadata["level_break_level"] > 0
+    assert signal.metadata["level_break_move_pct"] > 0
+
+
+def test_strategy_produces_level_break_short_for_non_btc_pair(monkeypatch):
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_SYMBOLS", "BNB_USDT")
+    monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_VOLUME_FLOOR", "0.20")
+    monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_MIN_BREAK_ATR", "0.20")
+    monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_MIN_BREAK_PCT", "0.002")
+    monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_RSI_15_SHORT_MIN", "0")
+    monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_MAX_EMA_EXTENSION_ATR", "8.0")
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [720 - idx * 0.12 + math.sin(idx / 8.0) * 2.5 for idx in range(520)]
+    prior_level = 650.0
+    for offset in range(100):
+        base[-104 + offset] = prior_level + 18.0 + math.sin(offset / 4.0) * 4.0
+    base[-4:] = [646.0, 642.0, 638.0, 634.0]
+    frame = _frame_from_prices(base)
+
+    signal = score_btc_futures_setup(
+        frame,
+        replace(_config(), symbol="BNB_USDT", min_confidence_score=58.0, consolidation_max_range_pct=0.001, min_reward_risk=0.8),
+    )
+
+    assert signal is not None
+    assert signal.side == "SHORT"
+    assert signal.entry_signal == "LEVEL_BREAK_SHORT"
+    assert signal.metadata["level_break"] == 1.0
+    assert signal.metadata["level_break_level"] > 0
+    assert signal.metadata["level_break_move_pct"] > 0
 
 
 def test_side_specific_threshold_relief_is_directional(monkeypatch):

@@ -23,6 +23,26 @@ _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
 }
 
 
+_LEVEL_BREAK_DEFAULT_SYMBOLS: str = (
+    "BTC_USDT,ETH_USDT,SOL_USDT,PEPE_USDT,TAO_USDT,"
+    "BNB_USDT,BCH_USDT,SEI_USDT,LINK_USDT,ZEC_USDT"
+)
+
+
+_LEVEL_BREAK_SYMBOL_DEFAULTS: dict[str, dict[str, float]] = {
+    "BTC_USDT": {"MIN_BREAK_PCT": 0.0030, "MIN_BREAK_ATR": 0.40, "SCORE_BONUS": 7.0, "LEVERAGE_MAX": 12.0},
+    "ETH_USDT": {"MIN_BREAK_PCT": 0.0200, "MIN_BREAK_ATR": 0.45, "SCORE_BONUS": 4.0, "LEVERAGE_MAX": 10.0},
+    "SOL_USDT": {"MIN_BREAK_PCT": 0.0200, "MIN_BREAK_ATR": 0.55, "SCORE_BONUS": 2.0, "LEVERAGE_MAX": 8.0},
+    "PEPE_USDT": {"LOOKBACK_BARS": 72.0, "MIN_BREAK_PCT": 0.0300, "MIN_BREAK_ATR": 0.55, "SCORE_BONUS": 3.0, "LEVERAGE_MAX": 7.0},
+    "TAO_USDT": {"LOOKBACK_BARS": 72.0, "MIN_BREAK_PCT": 0.0070, "MIN_BREAK_ATR": 0.50, "SCORE_BONUS": 3.0, "LEVERAGE_MAX": 8.0},
+    "BNB_USDT": {"MIN_BREAK_PCT": 0.0025, "MIN_BREAK_ATR": 0.35, "SCORE_BONUS": 4.0, "LEVERAGE_MAX": 8.0},
+    "BCH_USDT": {"MIN_BREAK_PCT": 0.0150, "MIN_BREAK_ATR": 0.40, "SCORE_BONUS": 4.0, "LEVERAGE_MAX": 10.0},
+    "SEI_USDT": {"LOOKBACK_BARS": 72.0, "MIN_BREAK_PCT": 0.0300, "MIN_BREAK_ATR": 0.55, "SCORE_BONUS": 3.0, "LEVERAGE_MAX": 6.0},
+    "LINK_USDT": {"MIN_BREAK_PCT": 0.0180, "MIN_BREAK_ATR": 0.45, "SCORE_BONUS": 4.0, "LEVERAGE_MAX": 8.0},
+    "ZEC_USDT": {"LOOKBACK_BARS": 72.0, "MIN_BREAK_PCT": 0.0080, "MIN_BREAK_ATR": 0.55, "SCORE_BONUS": 3.0, "LEVERAGE_MAX": 8.0},
+}
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -46,6 +66,17 @@ def _symbol_enabled(name: str, symbol: str, default: str = "") -> bool:
 
 def _symbol_env_prefix(symbol: str) -> str:
     return "".join(ch for ch in symbol.upper() if ch.isalnum())
+
+
+def _level_break_float(symbol: str, suffix: str, default: float) -> float:
+    symbol_defaults = _LEVEL_BREAK_SYMBOL_DEFAULTS.get(symbol.upper(), {})
+    value = float(symbol_defaults.get(suffix, default))
+    value = _env_float(f"FUTURES_LEVEL_BREAK_{suffix}", value)
+    return _env_float(f"FUTURES_{_symbol_env_prefix(symbol)}_LEVEL_BREAK_{suffix}", value)
+
+
+def _level_break_int(symbol: str, suffix: str, default: int) -> int:
+    return int(max(1.0, round(_level_break_float(symbol, suffix, float(default)))))
 
 
 def _parse_entry_signal_list(raw: str | None) -> set[str]:
@@ -710,6 +741,102 @@ def score_btc_futures_setup(
         and impulse_ema_extension <= breakout_hold_max_ema_extension_atr
     )
 
+    symbol_name = getattr(config, "symbol", "").upper()
+    level_break_enabled = _env_bool("FUTURES_LEVEL_BREAK_ENABLED", True)
+    level_break_symbol_ok = _symbol_enabled(
+        "FUTURES_LEVEL_BREAK_SYMBOLS",
+        symbol_name,
+        _LEVEL_BREAK_DEFAULT_SYMBOLS,
+    )
+    level_break_lookback = max(24, _level_break_int(symbol_name, "LOOKBACK_BARS", 96))
+    level_break_confirm_bars = max(1, _level_break_int(symbol_name, "CONFIRM_BARS", 2))
+    level_break_exclude_bars = max(
+        level_break_confirm_bars,
+        _level_break_int(symbol_name, "EXCLUDE_BARS", level_break_confirm_bars),
+    )
+    level_break_level_high = 0.0
+    level_break_level_low = 0.0
+    level_break_recent_high = 0.0
+    level_break_recent_low = 0.0
+    level_break_long_close_ratio = 0.0
+    level_break_short_close_ratio = 0.0
+    level_break_long_move_pct = 0.0
+    level_break_short_move_pct = 0.0
+    level_break_long_move_atr = 0.0
+    level_break_short_move_atr = 0.0
+    level_break_volume_ratio = max(volume_ratio, impulse_window_volume_ratio)
+    if len(frame_15m) > level_break_lookback + level_break_exclude_bars:
+        level_break_prior = frame_15m.iloc[-(level_break_lookback + level_break_exclude_bars):-level_break_exclude_bars]
+        level_break_confirmation = frame_15m.iloc[-level_break_confirm_bars:]
+        if not level_break_prior.empty and not level_break_confirmation.empty:
+            level_break_level_high = float(level_break_prior["high"].max())
+            level_break_level_low = float(level_break_prior["low"].min())
+            level_break_recent_high = float(level_break_confirmation["high"].max())
+            level_break_recent_low = float(level_break_confirmation["low"].min())
+            confirm_buffer = current_atr_15 * _level_break_float(symbol_name, "CONFIRM_BUFFER_ATR", 0.05)
+            level_break_long_close_ratio = float((level_break_confirmation["close"].astype(float) >= level_break_level_high + confirm_buffer).mean())
+            level_break_short_close_ratio = float((level_break_confirmation["close"].astype(float) <= level_break_level_low - confirm_buffer).mean())
+            if level_break_level_high > 0:
+                level_break_long_move_pct = (current_price / level_break_level_high) - 1.0
+                level_break_long_move_atr = (current_price - level_break_level_high) / current_atr_15 if current_atr_15 > 0 else 0.0
+            if level_break_level_low > 0:
+                level_break_short_move_pct = (level_break_level_low / current_price) - 1.0 if current_price > 0 else 0.0
+                level_break_short_move_atr = (level_break_level_low - current_price) / current_atr_15 if current_atr_15 > 0 else 0.0
+            prior_confirmation_volume = volume_15.iloc[-(level_break_confirm_bars + config.consolidation_window_bars):-level_break_confirm_bars]
+            confirmation_volume_baseline = max(
+                1e-9,
+                float(prior_confirmation_volume.mean()) if not prior_confirmation_volume.empty else volume_baseline,
+            )
+            confirmation_volume_ratio = float(level_break_confirmation["volume"].astype(float).sum()) / (
+                confirmation_volume_baseline * len(level_break_confirmation)
+            )
+            level_break_volume_ratio = max(level_break_volume_ratio, confirmation_volume_ratio)
+
+    level_break_min_close_ratio = _level_break_float(symbol_name, "MIN_CLOSE_RATIO", 0.50)
+    level_break_min_break_pct = _level_break_float(symbol_name, "MIN_BREAK_PCT", 0.004)
+    level_break_min_break_atr = _level_break_float(symbol_name, "MIN_BREAK_ATR", 0.45)
+    level_break_volume_floor = _level_break_float(symbol_name, "VOLUME_FLOOR", 0.60)
+    level_break_adx_min = _level_break_float(symbol_name, "ADX_MIN", max(10.0, config.adx_floor - 6.0))
+    level_break_counter_trend_24h_max = _level_break_float(symbol_name, "COUNTER_TREND_24H_MAX", 0.020)
+    level_break_counter_trend_6h_max = _level_break_float(symbol_name, "COUNTER_TREND_6H_MAX", 0.014)
+    level_break_rsi_15_long_min = _level_break_float(symbol_name, "RSI_15_LONG_MIN", 46.0)
+    level_break_rsi_15_long_max = _level_break_float(symbol_name, "RSI_15_LONG_MAX", 88.0)
+    level_break_rsi_15_short_min = _level_break_float(symbol_name, "RSI_15_SHORT_MIN", 12.0)
+    level_break_rsi_15_short_max = _level_break_float(symbol_name, "RSI_15_SHORT_MAX", 54.0)
+    level_break_max_ema_extension_atr = _level_break_float(symbol_name, "MAX_EMA_EXTENSION_ATR", 4.25)
+    level_break_long_ok = (
+        level_break_enabled
+        and level_break_symbol_ok
+        and level_break_level_high > 0
+        and level_break_long_move_pct >= level_break_min_break_pct
+        and level_break_long_move_atr >= level_break_min_break_atr
+        and level_break_long_close_ratio >= level_break_min_close_ratio
+        and level_break_volume_ratio >= level_break_volume_floor
+        and current_adx >= level_break_adx_min
+        and trend_24h >= -level_break_counter_trend_24h_max
+        and trend_6h >= -level_break_counter_trend_6h_max
+        and current_rsi_15 >= level_break_rsi_15_long_min
+        and current_rsi_15 <= level_break_rsi_15_long_max
+        and (current_price > current_ema20 or ema_slope > 0 or impulse_close_near_high)
+        and impulse_ema_extension <= level_break_max_ema_extension_atr
+    )
+    level_break_short_ok = (
+        level_break_enabled
+        and level_break_symbol_ok
+        and level_break_level_low > 0
+        and level_break_short_move_pct >= level_break_min_break_pct
+        and level_break_short_move_atr >= level_break_min_break_atr
+        and level_break_short_close_ratio >= level_break_min_close_ratio
+        and level_break_volume_ratio >= level_break_volume_floor
+        and current_adx >= level_break_adx_min
+        and trend_24h <= level_break_counter_trend_24h_max
+        and trend_6h <= level_break_counter_trend_6h_max
+        and current_rsi_15 <= level_break_rsi_15_short_max
+        and current_rsi_15 >= level_break_rsi_15_short_min
+        and (current_price < current_ema20 or ema_slope < 0 or impulse_close_near_low)
+        and impulse_ema_extension <= level_break_max_ema_extension_atr
+    )
+
     breakaway_symbol_ok = _symbol_enabled(
         "FUTURES_BREAKAWAY_SYMBOLS",
         getattr(config, "symbol", ""),
@@ -910,6 +1037,17 @@ def score_btc_futures_setup(
         long_score += min(6.0, max(0.0, breakout_hold_reclaim_score * 6.0))
         long_score += 5.0 if breakout_hold_shelf_ok else 0.0
         long_score += 4.0 if long_stack else 2.0
+    elif level_break_long_ok:
+        long_score += 8.0
+        long_score += min(18.0, max(0.0, level_break_long_move_atr * 4.0))
+        long_score += min(14.0, max(0.0, level_break_long_move_pct * 1000.0))
+        long_score += min(10.0, max(0.0, trend_24h * 250.0))
+        long_score += min(8.0, max(0.0, trend_6h * 420.0))
+        long_score += min(8.0, max(0.0, (level_break_volume_ratio - level_break_volume_floor) * 8.0))
+        long_score += min(6.0, max(0.0, (current_adx - level_break_adx_min) * 0.75))
+        long_score += min(5.0, max(0.0, level_break_long_close_ratio * 5.0))
+        long_score += 3.0 if current_price > current_ema20 or ema_slope > 0 else 0.0
+        long_score += _level_break_float(symbol_name, "SCORE_BONUS", 4.0)
     elif impulse_long_ok:
         long_score += min(14.0, max(0.0, impulse_move_pct * 900.0))
         long_score += min(10.0, max(0.0, impulse_move_atr * 2.5))
@@ -968,6 +1106,17 @@ def score_btc_futures_setup(
         short_score += 4.0 if trend_6h < 0 else 0.0
         short_score += 3.0 if current_ema20 < current_ema50 or ema_slope < 0 else 0.0
         short_score -= impulse_short_penalty
+    elif level_break_short_ok:
+        short_score += 8.0
+        short_score += min(18.0, max(0.0, level_break_short_move_atr * 4.0))
+        short_score += min(14.0, max(0.0, level_break_short_move_pct * 1000.0))
+        short_score += min(10.0, max(0.0, abs(trend_24h) * 250.0))
+        short_score += min(8.0, max(0.0, abs(trend_6h) * 420.0))
+        short_score += min(8.0, max(0.0, (level_break_volume_ratio - level_break_volume_floor) * 8.0))
+        short_score += min(6.0, max(0.0, (current_adx - level_break_adx_min) * 0.75))
+        short_score += min(5.0, max(0.0, level_break_short_close_ratio * 5.0))
+        short_score += 3.0 if current_price < current_ema20 or ema_slope < 0 else 0.0
+        short_score += _level_break_float(symbol_name, "SHORT_SCORE_BONUS", _level_break_float(symbol_name, "SCORE_BONUS", 4.0) - 2.0)
     elif breakaway_short_ok:
         short_score += min(16.0, max(0.0, abs(impulse_move_pct) * 950.0))
         short_score += min(12.0, max(0.0, impulse_move_atr * 2.8))
@@ -1005,9 +1154,10 @@ def score_btc_futures_setup(
         if side == "LONG":
             impulse_path = impulse_long_ok and not (long_ok or continuation_long_ok)
             breakout_hold_path = breakout_hold_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok)
-            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path)
-            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or breakaway_long_ok)
-            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or breakaway_long_ok or range_expansion_long_ok)
+            level_break_path = level_break_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path)
+            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path)
+            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or breakaway_long_ok)
+            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or breakaway_long_ok or range_expansion_long_ok)
             if breakout_hold_path:
                 default_cap = min(float(config.leverage_max), 12.0)
                 leverage_max = max(1, int(_env_float("FUTURES_BREAKOUT_HOLD_LEVERAGE_MAX", default_cap)))
@@ -1019,6 +1169,21 @@ def score_btc_futures_setup(
                 sl_price = breakout_hold_level - current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_SL_BUFFER_ATR", 0.45)
                 if sl_price >= current_price:
                     sl_price = current_price - current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_FALLBACK_SL_ATR", 2.5)
+            elif level_break_path:
+                default_cap = min(float(config.leverage_max), _level_break_float(symbol_name, "LEVERAGE_MAX", 8.0))
+                leverage_max = max(1, int(_level_break_float(symbol_name, "LEVERAGE_MAX", default_cap)))
+                leverage_min = min(config.leverage_min, leverage_max)
+                tp_move = max(
+                    _level_break_float(symbol_name, "TP_ATR_MULT", 5.0) * current_atr_15,
+                    _level_break_float(symbol_name, "TP_FLOOR_PCT", 0.014) * current_price,
+                )
+                sl_price = max(
+                    level_break_level_high - current_atr_15 * _level_break_float(symbol_name, "SL_BUFFER_ATR", 0.55),
+                    level_break_recent_low - current_atr_15 * _level_break_float(symbol_name, "SWING_SL_BUFFER_ATR", 0.20),
+                    current_price * (1.0 - _level_break_float(symbol_name, "MAX_STOP_PCT", 0.014)),
+                )
+                if sl_price >= current_price:
+                    sl_price = current_price - current_atr_15 * _level_break_float(symbol_name, "FALLBACK_SL_ATR", 2.5)
             elif impulse_path or breakaway_path or range_expansion_path or event_path:
                 default_cap = min(float(config.leverage_max), 8.0)
                 leverage_var = "FUTURES_EVENT_CATALYST_LEVERAGE_MAX" if event_path else "FUTURES_IMPULSE_LEVERAGE_MAX"
@@ -1039,7 +1204,10 @@ def score_btc_futures_setup(
             risk = current_price - sl_price
             if risk <= 0:
                 return None
-            if breakout_hold_path and _env_bool("FUTURES_BREAKOUT_HOLD_EXTEND_TP_FOR_COST_BUDGET", True):
+            if (
+                (breakout_hold_path and _env_bool("FUTURES_BREAKOUT_HOLD_EXTEND_TP_FOR_COST_BUDGET", True))
+                or (level_break_path and _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True))
+            ):
                 sl_distance_pct = risk / current_price if current_price > 0 else 0.0
                 projected_leverage = _leverage_for_signal_with_bounds(
                     _confidence(long_score, config.min_confidence_score),
@@ -1064,6 +1232,7 @@ def score_btc_futures_setup(
                 else "PRESSURE_BREAK_LONG" if long_ok and pressure_long
                 else "TREND_CONTINUATION_LONG" if continuation_long_ok
                 else "BREAKOUT_HOLD_LONG" if breakout_hold_path
+                else "LEVEL_BREAK_LONG" if level_break_path
                 else "IMPULSE_EVENT_CONTINUATION_LONG" if impulse_path
                 else "MOMENTUM_BREAKAWAY_LONG" if breakaway_path
                 else "RANGE_EXPANSION_CONTINUATION_LONG" if range_expansion_path
@@ -1100,6 +1269,13 @@ def score_btc_futures_setup(
                     "breakout_hold_shelf": 1.0 if breakout_hold_shelf_ok else 0.0,
                     "breakout_hold_shelf_volume_ratio": round(breakout_hold_shelf_volume_ratio, 4),
                     "breakout_hold_volume_ratio": round(breakout_hold_confirmation_volume_ratio, 4),
+                    "level_break": 1.0 if level_break_path else 0.0,
+                    "level_break_level": round(level_break_level_high, 10) if level_break_path else 0.0,
+                    "level_break_lookback_bars": float(level_break_lookback),
+                    "level_break_confirm_close_ratio": round(level_break_long_close_ratio, 4),
+                    "level_break_move_pct": round(level_break_long_move_pct, 6),
+                    "level_break_move_atr": round(level_break_long_move_atr, 4),
+                    "level_break_volume_ratio": round(level_break_volume_ratio, 4),
                     "breakaway": 1.0 if breakaway_path else 0.0,
                     "range_expansion": 1.0 if range_expansion_path else 0.0,
                     "event_catalyst": 1.0 if event_path else 0.0,
@@ -1111,10 +1287,26 @@ def score_btc_futures_setup(
             )
 
         impulse_path = impulse_short_ok and not (short_ok or continuation_short_ok)
-        breakaway_path = breakaway_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok)
-        range_expansion_path = range_expansion_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or breakaway_short_ok)
-        event_path = event_catalyst_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or breakaway_short_ok or range_expansion_short_ok)
-        if impulse_path or breakaway_path or range_expansion_path or event_path:
+        level_break_path = level_break_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok)
+        breakaway_path = breakaway_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or level_break_path)
+        range_expansion_path = range_expansion_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok)
+        event_path = event_catalyst_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok)
+        if level_break_path:
+            default_cap = min(float(config.leverage_max), _level_break_float(symbol_name, "LEVERAGE_MAX", 8.0))
+            leverage_max = max(1, int(_level_break_float(symbol_name, "LEVERAGE_MAX", default_cap)))
+            leverage_min = min(config.leverage_min, leverage_max)
+            tp_move = max(
+                _level_break_float(symbol_name, "TP_ATR_MULT", 5.0) * current_atr_15,
+                _level_break_float(symbol_name, "TP_FLOOR_PCT", 0.014) * current_price,
+            )
+            sl_price = min(
+                level_break_level_low + current_atr_15 * _level_break_float(symbol_name, "SL_BUFFER_ATR", 0.55),
+                level_break_recent_high + current_atr_15 * _level_break_float(symbol_name, "SWING_SL_BUFFER_ATR", 0.20),
+                current_price * (1.0 + _level_break_float(symbol_name, "MAX_STOP_PCT", 0.014)),
+            )
+            if sl_price <= current_price:
+                sl_price = current_price + current_atr_15 * _level_break_float(symbol_name, "FALLBACK_SL_ATR", 2.5)
+        elif impulse_path or breakaway_path or range_expansion_path or event_path:
             default_cap = min(float(config.leverage_max), 8.0)
             leverage_var = "FUTURES_EVENT_CATALYST_LEVERAGE_MAX" if event_path else "FUTURES_IMPULSE_LEVERAGE_MAX"
             leverage_max = max(1, int(_env_float(leverage_var, _env_float("FUTURES_IMPULSE_LEVERAGE_MAX", default_cap))))
@@ -1132,12 +1324,35 @@ def score_btc_futures_setup(
             tp_move = max(config.tp_atr_mult * current_atr_1h, config.tp_range_mult * consolidation_range, config.tp_floor_pct * current_price)
             sl_price = max(consolidation_high + config.sl_buffer_atr_mult * current_atr_1h, current_ema50 + config.sl_trend_atr_mult * current_atr_1h, current_price + current_atr_1h * 0.85)
         risk = sl_price - current_price
+        if (
+            risk > 0
+            and level_break_path
+            and _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True)
+        ):
+            sl_distance_pct = risk / current_price if current_price > 0 else 0.0
+            projected_leverage = _leverage_for_signal_with_bounds(
+                _confidence(short_score, config.min_confidence_score),
+                sl_distance_pct,
+                config,
+                leverage_min if leverage_min is not None else config.leverage_min,
+                leverage_max if leverage_max is not None else config.leverage_max,
+            )
+            if projected_leverage is not None:
+                required_tp_distance_pct = _cost_budget_required_tp_distance_pct(
+                    entry_price=current_price,
+                    sl_price=sl_price,
+                    leverage=projected_leverage,
+                    symbol=getattr(config, "symbol", None),
+                )
+                if required_tp_distance_pct is not None:
+                    tp_move = max(tp_move, current_price * required_tp_distance_pct)
         if risk <= 0 or tp_move / risk < config.min_reward_risk:
             return None
         entry_signal = (
             "COIL_BREAKDOWN_SHORT" if short_ok and breakout_short
             else "PRESSURE_BREAK_SHORT" if short_ok and pressure_short
             else "TREND_CONTINUATION_SHORT" if continuation_short_ok
+            else "LEVEL_BREAK_SHORT" if level_break_path
             else "IMPULSE_EVENT_CONTINUATION_SHORT" if impulse_path
             else "MOMENTUM_BREAKAWAY_SHORT" if breakaway_path
             else "RANGE_EXPANSION_CONTINUATION_SHORT" if range_expansion_path
@@ -1165,6 +1380,13 @@ def score_btc_futures_setup(
                 "impulse_move_atr": round(impulse_move_atr, 4),
                 "impulse_body_atr": round(impulse_body, 4),
                 "impulse_window_volume_ratio": round(impulse_window_volume_ratio, 4),
+                "level_break": 1.0 if level_break_path else 0.0,
+                "level_break_level": round(level_break_level_low, 10) if level_break_path else 0.0,
+                "level_break_lookback_bars": float(level_break_lookback),
+                "level_break_confirm_close_ratio": round(level_break_short_close_ratio, 4),
+                "level_break_move_pct": round(level_break_short_move_pct, 6),
+                "level_break_move_atr": round(level_break_short_move_atr, 4),
+                "level_break_volume_ratio": round(level_break_volume_ratio, 4),
                 "breakaway": 1.0 if breakaway_path else 0.0,
                 "range_expansion": 1.0 if range_expansion_path else 0.0,
                 "event_catalyst": 1.0 if event_path else 0.0,

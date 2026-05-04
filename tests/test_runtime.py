@@ -119,6 +119,65 @@ def test_breakout_hold_vol_shock_override_requires_cost_budget_pass(tmp_path, mo
     assert not runtime._regime_breakout_hold_override(classification, signal)
 
 
+def test_level_break_can_bypass_vol_shock_with_cost_score_and_volume(tmp_path, monkeypatch):
+    monkeypatch.setenv("REGIME_ALLOW_LEVEL_BREAK_VOL_SHOCK", "1")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    classification = SimpleNamespace(
+        label="VOL_SHOCK",
+        allow_coil_breakout=False,
+        allow_mean_reversion=False,
+        allow_long=False,
+        allow_short=False,
+        reason="realised_vol_pct=97.5>=shock(90.0)",
+        realised_vol_pct=97.5,
+    )
+    signal = FuturesSignal(
+        symbol="TAO_USDT",
+        side="SHORT",
+        score=101.4,
+        certainty=0.9,
+        entry_price=345.0,
+        tp_price=331.0,
+        sl_price=352.0,
+        leverage=8,
+        entry_signal="LEVEL_BREAK_SHORT",
+        metadata={
+            "level_break": 1.0,
+            "level_break_volume_ratio": 1.12,
+            "level_break_confirm_close_ratio": 1.0,
+            "cost_budget_pass": 1.0,
+        },
+    )
+
+    assert not runtime._regime_allows(classification, "SHORT", "coil_breakout")
+    assert runtime._regime_level_break_override(classification, signal)
+
+
+def test_level_break_vol_shock_override_requires_confirmed_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("REGIME_ALLOW_LEVEL_BREAK_VOL_SHOCK", "1")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    classification = SimpleNamespace(label="VOL_SHOCK", realised_vol_pct=97.5)
+    signal = FuturesSignal(
+        symbol="TAO_USDT",
+        side="SHORT",
+        score=101.4,
+        certainty=0.9,
+        entry_price=345.0,
+        tp_price=331.0,
+        sl_price=352.0,
+        leverage=8,
+        entry_signal="LEVEL_BREAK_SHORT",
+        metadata={
+            "level_break": 1.0,
+            "level_break_volume_ratio": 0.2,
+            "level_break_confirm_close_ratio": 1.0,
+            "cost_budget_pass": 1.0,
+        },
+    )
+
+    assert not runtime._regime_level_break_override(classification, signal)
+
+
 def test_build_status_message_includes_signal_context_and_btc_trends(tmp_path):
     runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), StubClient())
 

@@ -1828,11 +1828,17 @@ class FuturesRuntime:
                 else "coil_breakout"
             )
             if regime is not None and not self._regime_allows(regime, calibrated.side, strategy_kind):
+                override_name = ""
                 if self._regime_breakout_hold_override(regime, calibrated):
+                    override_name = "breakout-hold"
+                elif self._regime_level_break_override(regime, calibrated):
+                    override_name = "level-break"
+                if override_name:
                     log.info(
-                        "Signal scan: %s %s allowed by breakout-hold regime override %s (%s)",
+                        "Signal scan: %s %s allowed by %s regime override %s (%s)",
                         sym,
                         calibrated.side,
+                        override_name,
                         regime.label,
                         regime.reason,
                     )
@@ -2369,6 +2375,53 @@ class FuturesRuntime:
         if float(metadata.get("breakout_hold_shelf_volume_ratio") or 0.0) < min_shelf_volume:
             return False
         max_vol_pct = self._env_float("REGIME_BREAKOUT_HOLD_VOL_SHOCK_MAX_PCT", 99.5)
+        return float(getattr(classification, "realised_vol_pct", 100.0) or 100.0) <= max_vol_pct
+
+    def _regime_level_break_override(self, classification: Any, signal: Any) -> bool:
+        import os
+
+        enabled = str(os.environ.get("REGIME_ALLOW_LEVEL_BREAK_VOL_SHOCK", "1")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
+        if not enabled or getattr(classification, "label", None) != "VOL_SHOCK":
+            return False
+        entry_signal = str(getattr(signal, "entry_signal", "")).upper()
+        if entry_signal not in {"LEVEL_BREAK_LONG", "LEVEL_BREAK_SHORT"}:
+            return False
+        side = str(getattr(signal, "side", "")).upper()
+        if entry_signal.endswith("_LONG") and side != "LONG":
+            return False
+        if entry_signal.endswith("_SHORT") and side != "SHORT":
+            return False
+        allowed_symbols = {
+            token.strip().upper()
+            for token in os.environ.get(
+                "REGIME_LEVEL_BREAK_VOL_SHOCK_SYMBOLS",
+                "BTC_USDT,ETH_USDT,SOL_USDT,PEPE_USDT,TAO_USDT,BNB_USDT,BCH_USDT,SEI_USDT,LINK_USDT,ZEC_USDT",
+            ).split(",")
+            if token.strip()
+        }
+        if allowed_symbols and str(getattr(signal, "symbol", "")).upper() not in allowed_symbols:
+            return False
+        metadata = getattr(signal, "metadata", {}) or {}
+        if float(metadata.get("level_break") or 0.0) < 1.0:
+            return False
+        if float(metadata.get("cost_budget_pass") or 0.0) < 1.0:
+            return False
+        min_score = self._env_float("REGIME_LEVEL_BREAK_MIN_SCORE", 85.0)
+        if float(getattr(signal, "score", 0.0) or 0.0) < min_score:
+            return False
+        min_volume = self._env_float("REGIME_LEVEL_BREAK_MIN_VOLUME_RATIO", 0.60)
+        if float(metadata.get("level_break_volume_ratio") or 0.0) < min_volume:
+            return False
+        min_close_ratio = self._env_float("REGIME_LEVEL_BREAK_MIN_CLOSE_RATIO", 0.50)
+        if float(metadata.get("level_break_confirm_close_ratio") or 0.0) < min_close_ratio:
+            return False
+        max_vol_pct = self._env_float("REGIME_LEVEL_BREAK_VOL_SHOCK_MAX_PCT", 99.5)
         return float(getattr(classification, "realised_vol_pct", 100.0) or 100.0) <= max_vol_pct
 
     # ----- Sprint 3 §3.2 mean-reversion fallback ----------------------------

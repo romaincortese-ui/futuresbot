@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FUTURES_SYMBOLS: tuple[str, ...] = (
     "BTC_USDT",
     "ETH_USDT",
-    # SOL_USDT removed: no profitable parameter combination found across 400-combo sweep (60-day window)
+    "SOL_USDT",
     "PEPE_USDT",
     "TAO_USDT",
     "BNB_USDT",
