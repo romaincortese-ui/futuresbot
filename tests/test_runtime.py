@@ -442,7 +442,7 @@ def test_fetch_signal_passes_fresh_event_context_to_strategy(tmp_path, monkeypat
         return FuturesSignal(
             symbol="BTC_USDT",
             side="LONG",
-            score=72.0,
+            score=82.0,
             certainty=0.8,
             entry_price=91000.0,
             tp_price=93000.0,
@@ -531,6 +531,158 @@ def test_enter_trade_respects_portfolio_margin_cap(tmp_path):
     # With margin_budget_usdt default, projected margin ≈ margin_budget (e.g. 30). 40 + 30 > 50 → reject.
     assert runtime._enter_trade(signal) is False
     assert "ETH_USDT" not in runtime.open_positions
+
+
+def test_live_enter_trade_does_not_register_without_exchange_position(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+
+    class UnconfirmedEntryClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled: list[str] = []
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            return {"orderId": "entry-1"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            return {"orderId": order_id}
+
+        def get_open_positions(self, symbol: str | None = None):
+            return []
+
+        def cancel_order(self, order_id: str):
+            self.cancelled.append(order_id)
+            return {"success": True}
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=50.0), UnconfirmedEntryClient())
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    signal = {
+        "side": "LONG",
+        "entry_price": 100.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 104.0,
+        "sl_price": 98.0,
+        "score": 70.0,
+        "certainty": 0.75,
+        "entry_signal": "EVENT_CATALYST_LONG",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is False
+    assert runtime.open_positions == {}
+    assert runtime.client.cancelled == ["entry-1"]
+    assert any("Futures Entry Not Confirmed" in message for message in sent_messages)
+    assert not any("Futures Position Opened" in message for message in sent_messages)
+
+
+def test_live_enter_trade_registers_only_confirmed_exchange_position(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+
+    class ConfirmedEntryClient(StubClient):
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            return {"orderId": "entry-2"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            return {"orderId": order_id, "dealAvgPrice": "100.10", "dealVol": "2", "positionId": "pos-2"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "positionType": 1,
+                    "holdVol": "2",
+                    "holdAvgPrice": "100.25",
+                    "im": "40.20",
+                    "leverage": "5",
+                    "positionId": "pos-2",
+                }
+            ]
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=50.0), ConfirmedEntryClient())
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    signal = {
+        "side": "LONG",
+        "entry_price": 100.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 104.0,
+        "sl_price": 98.0,
+        "score": 70.0,
+        "certainty": 0.75,
+        "entry_signal": "EVENT_CATALYST_LONG",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    position = runtime.open_positions["BTC_USDT"]
+    assert position.position_id == "pos-2"
+    assert position.order_id == "entry-2"
+    assert position.contracts == 2
+    assert position.entry_price == 100.25
+    assert position.margin_usdt == 40.2
+    assert any("Futures Position Opened" in message for message in sent_messages)
+
+
+def test_reconcile_drops_stale_local_live_position_without_exchange_id(tmp_path):
+    class EmptyExchangeClient(StubClient):
+        def get_open_positions(self, symbol: str | None = None):
+            return []
+
+        def get_historical_positions(self, symbol: str, *, page_num: int = 1, page_size: int = 20):
+            raise AssertionError("history should not be queried for local positions without exchange ids")
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), EmptyExchangeClient())
+    runtime._register_position(
+        FuturesPosition(
+            symbol="ZEC_USDT",
+            side="LONG",
+            entry_price=417.18,
+            contracts=1,
+            contract_size=0.1,
+            leverage=5,
+            margin_usdt=11.74,
+            tp_price=432.03,
+            sl_price=412.08,
+            position_id="",
+            order_id="entry-zec",
+            opened_at=datetime(2026, 5, 4, tzinfo=timezone.utc),
+            score=60.4,
+            certainty=0.36,
+            entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        )
+    )
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._reconcile_closed_position()
+
+    assert runtime.open_positions == {}
+    assert any("Futures Local Position Cleared" in message for message in sent_messages)
 
 
 def test_capital_scaling_increases_margin_only_after_clean_fills(tmp_path, monkeypatch):

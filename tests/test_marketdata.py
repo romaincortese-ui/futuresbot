@@ -26,3 +26,12 @@ def test_get_historical_positions_accepts_paginated_result_list(monkeypatch):
     )
 
     assert client.get_historical_positions("ETH_USDT") == [row]
+
+
+def test_place_order_normalizes_primitive_order_id(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(client, "private_post", lambda path, body: {"success": True, "data": 123456})
+
+    order = client.place_order(symbol="BTC_USDT", side=1, vol=1, leverage=5)
+
+    assert order == {"orderId": "123456"}

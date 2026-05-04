@@ -1332,6 +1332,23 @@ class FuturesRuntime:
                 continue
             if rows:
                 continue
+            if not str(position.position_id or "").strip():
+                log.warning(
+                    "[POSITION_RECONCILE_DROP] symbol=%s order=%s reason=no_exchange_position_no_position_id",
+                    pos_symbol,
+                    position.order_id or "",
+                )
+                self._notify_once(
+                    f"futures_stale_local_position_{pos_symbol}_{position.order_id or 'no_order'}",
+                    f"⚠️ <b>Futures Local Position Cleared</b> [{self._mode_label()}]\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"MEXC reports no open position for <b>{html.escape(pos_symbol)}</b>, and the local record has no exchange position id. "
+                    f"Cleared from bot state without recording P&L.",
+                )
+                self._record_activity(f"Cleared stale local position: {pos_symbol}")
+                self._clear_position(pos_symbol)
+                self._save_state()
+                continue
             try:
                 history = self.client.get_historical_positions(pos_symbol, page_num=1, page_size=20)
             except Exception as exc:
@@ -2622,6 +2639,171 @@ class FuturesRuntime:
             log.debug("Portfolio VaR skipped: %s", exc)
             return True
 
+    @staticmethod
+    def _extract_order_id(order: Any) -> str:
+        if isinstance(order, dict):
+            for key in ("orderId", "order_id", "id"):
+                raw = order.get(key)
+                if raw not in (None, ""):
+                    return str(raw)
+            data = order.get("data")
+            if data not in (None, "") and not isinstance(data, (dict, list)):
+                return str(data)
+            return ""
+        if order not in (None, ""):
+            return str(order)
+        return ""
+
+    @staticmethod
+    def _positive_float_from(payload: dict[str, Any], *keys: str) -> float:
+        for key in keys:
+            raw = payload.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                value = abs(float(raw))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 0.0
+
+    def _open_position_volume(self, row: dict[str, Any]) -> float:
+        return self._positive_float_from(
+            row,
+            "holdVol",
+            "holdVolume",
+            "positionVol",
+            "positionVolume",
+            "availableVol",
+            "availableVolume",
+            "vol",
+            "volume",
+        )
+
+    def _order_deal_volume(self, detail: dict[str, Any]) -> float:
+        return self._positive_float_from(
+            detail,
+            "dealVol",
+            "dealVolume",
+            "filledVol",
+            "filledVolume",
+            "filledQty",
+            "filledQuantity",
+        )
+
+    @staticmethod
+    def _position_row_side(row: dict[str, Any]) -> str | None:
+        raw_type = row.get("positionType") if "positionType" in row else row.get("position_type")
+        try:
+            position_type = int(float(raw_type))
+        except (TypeError, ValueError):
+            position_type = 0
+        if position_type == 1:
+            return "LONG"
+        if position_type == 2:
+            return "SHORT"
+        raw_side = str(
+            row.get("positionSide")
+            or row.get("position_side")
+            or row.get("holdSide")
+            or row.get("side")
+            or ""
+        ).strip().upper()
+        if raw_side in {"LONG", "BUY", "BID"}:
+            return "LONG"
+        if raw_side in {"SHORT", "SELL", "ASK"}:
+            return "SHORT"
+        return None
+
+    def _matching_exchange_position_row(self, *, symbol: str, side_name: str) -> dict[str, Any] | None:
+        fetcher = getattr(self.client, "get_open_positions", None)
+        if not callable(fetcher):
+            return None
+        batches: list[list[Any]] = []
+        try:
+            rows = fetcher(symbol)
+            if isinstance(rows, list):
+                batches.append(rows)
+        except Exception as exc:
+            log.debug("Live entry confirmation open-position fetch failed for %s: %s", symbol, exc)
+        try:
+            rows = fetcher()
+            if isinstance(rows, list):
+                batches.append(rows)
+        except TypeError:
+            pass
+        except Exception as exc:
+            log.debug("Live entry confirmation all-position fetch failed for %s: %s", symbol, exc)
+        for rows in batches:
+            for raw_row in rows:
+                if not isinstance(raw_row, dict):
+                    continue
+                row_symbol = str(raw_row.get("symbol") or "").upper()
+                if row_symbol and row_symbol != symbol:
+                    continue
+                if self._open_position_volume(raw_row) <= 0:
+                    continue
+                row_side = self._position_row_side(raw_row)
+                if row_side is not None and row_side != side_name:
+                    continue
+                return raw_row
+        return None
+
+    def _confirm_live_entry(
+        self,
+        *,
+        symbol: str,
+        side_name: str,
+        order_id: str,
+        expected_contracts: int,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        attempts = max(1, int(self._env_float("FUTURES_ENTRY_CONFIRM_ATTEMPTS", 6.0)))
+        sleep_seconds = max(0.0, self._env_float("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", 0.5))
+        detail: dict[str, Any] = {}
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            if order_id:
+                try:
+                    maybe_detail = self.client.get_order(order_id)
+                    if isinstance(maybe_detail, dict):
+                        detail = maybe_detail
+                except Exception as exc:
+                    last_error = exc
+                    log.debug("Live entry order detail fetch failed for %s: %s", order_id, exc)
+            position_row = self._matching_exchange_position_row(symbol=symbol, side_name=side_name)
+            if position_row is not None:
+                return detail, position_row
+            if attempt < attempts - 1 and sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+        log.warning(
+            "[ENTRY_UNCONFIRMED] symbol=%s side=%s order=%s expected_contracts=%s deal_vol=%s reason=no_exchange_open_position last_error=%s",
+            symbol,
+            side_name,
+            order_id or "",
+            expected_contracts,
+            self._order_deal_volume(detail),
+            type(last_error).__name__ if last_error else "none",
+        )
+        return detail, None
+
+    def _handle_unconfirmed_live_entry(self, *, symbol: str, side_name: str, order_id: str) -> None:
+        if order_id:
+            try:
+                self.client.cancel_order(order_id)
+            except Exception as exc:
+                log.debug("Unconfirmed entry cancel skipped for %s: %s", order_id, exc)
+        order_text = f" (order <code>{html.escape(order_id)}</code>)" if order_id else ""
+        self._notify_once(
+            f"futures_entry_unconfirmed_{symbol}_{order_id or 'no_order'}",
+            f"⚠️ <b>Futures Entry Not Confirmed</b> [{self._mode_label()}]\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"<b>{html.escape(side_name)}</b> {html.escape(symbol)} was submitted{order_text}, but MEXC did not report an open position. "
+            f"No local position was registered.",
+        )
+        self._record_activity(f"Entry unconfirmed: {side_name} {symbol} order={order_id or 'n/a'}")
+        self._save_state()
+
     # ----- P2 §6 #11 — carry/basis monitor decommission -----------------
     # The legacy ``_monitor_quarter2_funding_carry`` and ``_monitor_quarter2_basis``
     # Telegram-alert paths were removed per the assessment's product decision
@@ -3064,11 +3246,27 @@ class FuturesRuntime:
                 take_profit_price=float(signal_payload["tp_price"]),
                 stop_loss_price=float(signal_payload["sl_price"]),
             )
-            order_id = str(order.get("orderId") or "")
-            detail = self.client.get_order(order_id) if order_id else {}
+            order_id = self._extract_order_id(order)
+            detail = {}
             maker_filled = False
-        position_id = str(detail.get("positionId") or "")
-        fill_price = float(detail.get("dealAvgPrice") or entry_price)
+        detail, position_row = self._confirm_live_entry(
+            symbol=symbol,
+            side_name=side_name,
+            order_id=order_id,
+            expected_contracts=contracts,
+        )
+        if position_row is None:
+            self._handle_unconfirmed_live_entry(symbol=symbol, side_name=side_name, order_id=order_id)
+            return False
+        position_id = str(position_row.get("positionId") or position_row.get("position_id") or detail.get("positionId") or "")
+        fill_price = self._positive_float_from(position_row, "holdAvgPrice", "openAvgPrice", "avgPrice") or self._positive_float_from(detail, "dealAvgPrice", "avgPrice") or entry_price
+        confirmed_contracts = int(self._open_position_volume(position_row) or self._order_deal_volume(detail) or contracts)
+        confirmed_leverage = int(self._positive_float_from(position_row, "leverage") or leverage)
+        confirmed_margin = self._positive_float_from(position_row, "im", "oim", "initialMargin", "margin", "usedMargin")
+        if confirmed_margin <= 0:
+            confirmed_margin = self._positive_float_from(detail, "usedMargin", "margin")
+        if confirmed_margin <= 0:
+            confirmed_margin = confirmed_contracts * contract_size * fill_price / confirmed_leverage
         # Sprint 3 §3.9 — record entry slippage for weekly attribution report.
         self._record_fill(
             symbol=symbol,
@@ -3076,16 +3274,16 @@ class FuturesRuntime:
             quoted_price=entry_price,
             fill_price=fill_price,
             maker=maker_filled,
-            leverage=leverage,
+            leverage=confirmed_leverage,
         )
         position = FuturesPosition(
             symbol=symbol,
             side=side_name,
             entry_price=fill_price,
-            contracts=int(float(detail.get("dealVol") or contracts)),
+            contracts=confirmed_contracts,
             contract_size=contract_size,
-            leverage=leverage,
-            margin_usdt=round(float(detail.get("usedMargin") or contracts * contract_size * fill_price / leverage), 8),
+            leverage=confirmed_leverage,
+            margin_usdt=round(float(confirmed_margin), 8),
             tp_price=float(signal_payload["tp_price"]),
             sl_price=float(signal_payload["sl_price"]),
             position_id=position_id,

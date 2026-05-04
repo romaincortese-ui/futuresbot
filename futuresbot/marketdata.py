@@ -246,7 +246,12 @@ class MexcFuturesClient:
             "lossTrend": 1 if stop_loss_price else None,
         }
         response = self.private_post("/api/v1/private/order/create", payload)
-        return response.get("data", {}) if isinstance(response, dict) else {}
+        data = response.get("data", {}) if isinstance(response, dict) else {}
+        if isinstance(data, dict):
+            return data
+        if data not in (None, ""):
+            return {"orderId": str(data)}
+        return {}
 
     def get_order(self, order_id: str) -> dict[str, Any]:
         payload = self.private_get(f"/api/v1/private/order/get/{order_id}")
