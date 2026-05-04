@@ -1828,14 +1828,23 @@ class FuturesRuntime:
                 else "coil_breakout"
             )
             if regime is not None and not self._regime_allows(regime, calibrated.side, strategy_kind):
-                log.info(
-                    "Signal scan: %s %s blocked by regime %s (%s)",
-                    sym,
-                    calibrated.side,
-                    regime.label,
-                    regime.reason,
-                )
-                continue
+                if self._regime_breakout_hold_override(regime, calibrated):
+                    log.info(
+                        "Signal scan: %s %s allowed by breakout-hold regime override %s (%s)",
+                        sym,
+                        calibrated.side,
+                        regime.label,
+                        regime.reason,
+                    )
+                else:
+                    log.info(
+                        "Signal scan: %s %s blocked by regime %s (%s)",
+                        sym,
+                        calibrated.side,
+                        regime.label,
+                        regime.reason,
+                    )
+                    continue
             log.info(
                 "Signal scan accepted for %s: side=%s entry_signal=%s leverage=x%s score=%.1f certainty=%.0f%%",
                 sym,
@@ -2327,6 +2336,40 @@ class FuturesRuntime:
             return signal_allowed(classification, side=side, strategy=strategy)
         except Exception:
             return True
+
+    def _regime_breakout_hold_override(self, classification: Any, signal: Any) -> bool:
+        import os
+
+        enabled = str(os.environ.get("REGIME_ALLOW_BREAKOUT_HOLD_VOL_SHOCK", "1")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
+        if not enabled or getattr(classification, "label", None) != "VOL_SHOCK":
+            return False
+        if str(getattr(signal, "side", "")).upper() != "LONG":
+            return False
+        if str(getattr(signal, "entry_signal", "")).upper() != "BREAKOUT_HOLD_LONG":
+            return False
+        allowed_symbols = {
+            token.strip().upper()
+            for token in os.environ.get("REGIME_BREAKOUT_HOLD_VOL_SHOCK_SYMBOLS", "BTC_USDT").split(",")
+            if token.strip()
+        }
+        if allowed_symbols and str(getattr(signal, "symbol", "")).upper() not in allowed_symbols:
+            return False
+        metadata = getattr(signal, "metadata", {}) or {}
+        if float(metadata.get("breakout_hold") or 0.0) < 1.0:
+            return False
+        if float(metadata.get("cost_budget_pass") or 0.0) < 1.0:
+            return False
+        min_shelf_volume = self._env_float("REGIME_BREAKOUT_HOLD_MIN_SHELF_VOLUME_RATIO", 1.0)
+        if float(metadata.get("breakout_hold_shelf_volume_ratio") or 0.0) < min_shelf_volume:
+            return False
+        max_vol_pct = self._env_float("REGIME_BREAKOUT_HOLD_VOL_SHOCK_MAX_PCT", 99.5)
+        return float(getattr(classification, "realised_vol_pct", 100.0) or 100.0) <= max_vol_pct
 
     # ----- Sprint 3 §3.2 mean-reversion fallback ----------------------------
     def _mean_reversion_candidate(

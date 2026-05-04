@@ -62,6 +62,63 @@ def _config(tmp_path) -> FuturesConfig:
     )
 
 
+def test_breakout_hold_long_can_bypass_vol_shock_with_cost_and_shelf_confirmation(tmp_path, monkeypatch):
+    monkeypatch.setenv("REGIME_ALLOW_BREAKOUT_HOLD_VOL_SHOCK", "1")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    classification = SimpleNamespace(
+        label="VOL_SHOCK",
+        allow_coil_breakout=False,
+        allow_mean_reversion=False,
+        allow_long=False,
+        allow_short=False,
+        reason="realised_vol_pct=98.1>=shock(90.0)",
+        realised_vol_pct=98.1,
+    )
+    signal = FuturesSignal(
+        symbol="BTC_USDT",
+        side="LONG",
+        score=83.45,
+        certainty=0.9,
+        entry_price=80356.5,
+        tp_price=83733.03,
+        sl_price=78691.81,
+        leverage=12,
+        entry_signal="BREAKOUT_HOLD_LONG",
+        metadata={
+            "breakout_hold": 1.0,
+            "breakout_hold_shelf_volume_ratio": 1.699,
+            "cost_budget_pass": 1.0,
+        },
+    )
+
+    assert not runtime._regime_allows(classification, "LONG", "coil_breakout")
+    assert runtime._regime_breakout_hold_override(classification, signal)
+
+
+def test_breakout_hold_vol_shock_override_requires_cost_budget_pass(tmp_path, monkeypatch):
+    monkeypatch.setenv("REGIME_ALLOW_BREAKOUT_HOLD_VOL_SHOCK", "1")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    classification = SimpleNamespace(label="VOL_SHOCK", realised_vol_pct=98.1)
+    signal = FuturesSignal(
+        symbol="BTC_USDT",
+        side="LONG",
+        score=83.45,
+        certainty=0.9,
+        entry_price=80356.5,
+        tp_price=83733.03,
+        sl_price=78691.81,
+        leverage=12,
+        entry_signal="BREAKOUT_HOLD_LONG",
+        metadata={
+            "breakout_hold": 1.0,
+            "breakout_hold_shelf_volume_ratio": 1.699,
+            "cost_budget_pass": 0.0,
+        },
+    )
+
+    assert not runtime._regime_breakout_hold_override(classification, signal)
+
+
 def test_build_status_message_includes_signal_context_and_btc_trends(tmp_path):
     runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), StubClient())
 
