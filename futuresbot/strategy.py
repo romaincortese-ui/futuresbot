@@ -43,6 +43,9 @@ _LEVEL_BREAK_SYMBOL_DEFAULTS: dict[str, dict[str, float]] = {
 }
 
 
+_BTC_ROUND_LEVEL_SYMBOLS = "BTC_USDT"
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -335,12 +338,14 @@ def _build_signal(
 ) -> FuturesSignal | None:
     sl_distance_pct = abs(entry_price - sl_price) / entry_price if entry_price > 0 else 0.0
     certainty = _confidence(score, config.min_confidence_score)
+    leverage_min_bound = leverage_min_override if leverage_min_override is not None else config.leverage_min
+    leverage_max_bound = leverage_max_override if leverage_max_override is not None else config.leverage_max
     leverage = _leverage_for_signal_with_bounds(
         certainty,
         sl_distance_pct,
         config,
-        leverage_min_override if leverage_min_override is not None else config.leverage_min,
-        leverage_max_override if leverage_max_override is not None else config.leverage_max,
+        leverage_min_bound,
+        leverage_max_bound,
     )
     if leverage is None:
         return None
@@ -373,6 +378,8 @@ def _build_signal(
             **metadata,
             "sl_distance_pct": round(sl_distance_pct, 6),
             "tp_distance_pct": round(abs(tp_price - entry_price) / entry_price if entry_price > 0 else 0.0, 6),
+            "leverage_min_bound": float(leverage_min_bound),
+            "leverage_max_bound": float(leverage_max_bound),
             "hourly_exit_progress": config.early_exit_tp_progress,
             **(cost_projection or {}),
         },
@@ -742,6 +749,94 @@ def score_btc_futures_setup(
     )
 
     symbol_name = getattr(config, "symbol", "").upper()
+    btc_short_uptrend_guard_active = (
+        symbol_name == "BTC_USDT"
+        and _env_bool("FUTURES_BTC_SHORT_UPTREND_GUARD", True)
+        and (current_price >= current_ema20 or (long_stack and current_price >= current_ema50))
+        and ema_slope > 0
+        and (trend_24h > 0 or trend_6h > 0)
+    )
+
+    btc_round_level_enabled = _env_bool("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", True)
+    btc_round_level_symbol_ok = _symbol_enabled(
+        "FUTURES_BTC_ROUND_LEVEL_SYMBOLS",
+        symbol_name,
+        _BTC_ROUND_LEVEL_SYMBOLS,
+    )
+    btc_round_level_grid = max(100.0, _env_float("FUTURES_BTC_ROUND_LEVEL_GRID", 1000.0))
+    btc_round_level = math.floor(current_price / btc_round_level_grid) * btc_round_level_grid if current_price > 0 else 0.0
+    btc_round_level_lookback = max(12, int(_env_float("FUTURES_BTC_ROUND_LEVEL_LOOKBACK_BARS", 48.0)))
+    btc_round_level_confirm_bars = max(1, int(_env_float("FUTURES_BTC_ROUND_LEVEL_CONFIRM_BARS", 3.0)))
+    btc_round_level_buffer = max(
+        current_atr_15 * _env_float("FUTURES_BTC_ROUND_LEVEL_BUFFER_ATR", 0.10),
+        current_price * _env_float("FUTURES_BTC_ROUND_LEVEL_BUFFER_PCT", 0.00045),
+    )
+    btc_round_level_close_ratio = 0.0
+    btc_round_level_recently_crossed = False
+    btc_round_level_move_pct = 0.0
+    btc_round_level_move_atr = 0.0
+    btc_round_level_recent_low = 0.0
+    btc_round_level_volume_ratio = max(volume_ratio, impulse_window_volume_ratio)
+    if btc_round_level > 0 and len(frame_15m) > btc_round_level_lookback + btc_round_level_confirm_bars:
+        btc_round_prior = frame_15m.iloc[-(btc_round_level_lookback + btc_round_level_confirm_bars):-btc_round_level_confirm_bars]
+        btc_round_confirmation = frame_15m.iloc[-btc_round_level_confirm_bars:]
+        if not btc_round_prior.empty and not btc_round_confirmation.empty:
+            btc_round_level_recent_low = float(btc_round_confirmation["low"].astype(float).min())
+            btc_round_level_close_ratio = float(
+                (btc_round_confirmation["close"].astype(float) >= btc_round_level + btc_round_level_buffer * 0.25).mean()
+            )
+            prior_low = float(btc_round_prior["low"].astype(float).min())
+            prior_close_min = float(btc_round_prior["close"].astype(float).min())
+            btc_round_level_recently_crossed = (
+                prior_low <= btc_round_level - btc_round_level_buffer
+                or prior_close_min < btc_round_level
+            )
+            prior_volume = frame_15m["volume"].astype(float).iloc[-(btc_round_level_lookback + btc_round_level_confirm_bars):-btc_round_level_confirm_bars]
+            prior_volume_mean = float(prior_volume.mean()) if not prior_volume.empty else volume_baseline
+            confirmation_volume = float(btc_round_confirmation["volume"].astype(float).sum())
+            confirmation_volume_ratio = confirmation_volume / max(1e-9, prior_volume_mean * len(btc_round_confirmation))
+            btc_round_level_volume_ratio = max(btc_round_level_volume_ratio, confirmation_volume_ratio)
+    if btc_round_level > 0:
+        btc_round_level_move_pct = (current_price / btc_round_level) - 1.0
+        btc_round_level_move_atr = (current_price - btc_round_level) / current_atr_15 if current_atr_15 > 0 else 0.0
+
+    btc_round_level_min_close_ratio = _env_float("FUTURES_BTC_ROUND_LEVEL_MIN_CLOSE_RATIO", 0.67)
+    btc_round_level_min_price = _env_float("FUTURES_BTC_ROUND_LEVEL_MIN_PRICE", 79000.0)
+    btc_round_level_volume_floor = _env_float("FUTURES_BTC_ROUND_LEVEL_VOLUME_FLOOR", 0.45)
+    btc_round_level_adx_min = _env_float("FUTURES_BTC_ROUND_LEVEL_ADX_MIN", 14.0)
+    btc_round_level_trend_24h_min = _env_float("FUTURES_BTC_ROUND_LEVEL_TREND_24H_MIN", 0.006)
+    btc_round_level_trend_6h_min = _env_float("FUTURES_BTC_ROUND_LEVEL_TREND_6H_MIN", 0.0025)
+    btc_round_level_rsi_1h_min = _env_float("FUTURES_BTC_ROUND_LEVEL_RSI_1H_MIN", 52.0)
+    btc_round_level_rsi_1h_max = _env_float("FUTURES_BTC_ROUND_LEVEL_RSI_1H_MAX", 78.0)
+    btc_round_level_rsi_15_min = _env_float("FUTURES_BTC_ROUND_LEVEL_RSI_15_MIN", 44.0)
+    btc_round_level_rsi_15_max = _env_float("FUTURES_BTC_ROUND_LEVEL_RSI_15_MAX", 80.0)
+    btc_round_level_max_extension_atr = _env_float("FUTURES_BTC_ROUND_LEVEL_MAX_EMA_EXTENSION_ATR", 4.0)
+    btc_round_level_max_move_atr = _env_float("FUTURES_BTC_ROUND_LEVEL_MAX_MOVE_ATR", 3.0)
+    btc_round_level_min_move_atr = _env_float("FUTURES_BTC_ROUND_LEVEL_MIN_MOVE_ATR", 0.35)
+    btc_round_level_min_move_pct = _env_float("FUTURES_BTC_ROUND_LEVEL_MIN_MOVE_PCT", 0.0012)
+    btc_round_level_long_ok = (
+        btc_round_level_enabled
+        and btc_round_level_symbol_ok
+        and btc_round_level > 0
+        and btc_round_level >= btc_round_level_min_price
+        and current_price >= btc_round_level + btc_round_level_buffer
+        and btc_round_level_recently_crossed
+        and btc_round_level_close_ratio >= btc_round_level_min_close_ratio
+        and btc_round_level_move_pct >= btc_round_level_min_move_pct
+        and btc_round_level_move_atr >= btc_round_level_min_move_atr
+        and btc_round_level_move_atr <= btc_round_level_max_move_atr
+        and btc_round_level_volume_ratio >= btc_round_level_volume_floor
+        and current_adx >= btc_round_level_adx_min
+        and trend_24h >= btc_round_level_trend_24h_min
+        and trend_6h >= btc_round_level_trend_6h_min
+        and current_rsi_1h >= btc_round_level_rsi_1h_min
+        and current_rsi_1h <= btc_round_level_rsi_1h_max
+        and current_rsi_15 >= btc_round_level_rsi_15_min
+        and current_rsi_15 <= btc_round_level_rsi_15_max
+        and (current_price > current_ema20 or ema_slope > 0)
+        and impulse_ema_extension <= btc_round_level_max_extension_atr
+    )
+
     level_break_enabled = _env_bool("FUTURES_LEVEL_BREAK_ENABLED", True)
     level_break_symbol_ok = _symbol_enabled(
         "FUTURES_LEVEL_BREAK_SYMBOLS",
@@ -823,6 +918,7 @@ def score_btc_futures_setup(
     level_break_short_ok = (
         level_break_enabled
         and level_break_symbol_ok
+        and not btc_short_uptrend_guard_active
         and level_break_level_low > 0
         and level_break_short_move_pct >= level_break_min_break_pct
         and level_break_short_move_atr >= level_break_min_break_atr
@@ -878,6 +974,7 @@ def score_btc_futures_setup(
     )
     breakaway_short_ok = (
         breakaway_enabled
+        and not btc_short_uptrend_guard_active
         and impulse_move_pct <= -breakaway_min_move_pct
         and impulse_move_atr >= breakaway_min_move_atr
         and breakaway_volume_ok
@@ -906,6 +1003,7 @@ def score_btc_futures_setup(
     )
     impulse_short_ok = (
         impulse_enabled
+        and not btc_short_uptrend_guard_active
         and impulse_move_pct <= -impulse_min_move_pct
         and impulse_move_atr >= impulse_min_move_atr
         and impulse_volume_ok
@@ -935,6 +1033,7 @@ def score_btc_futures_setup(
     range_expansion_short_ok = (
         range_expansion_enabled
         and range_expansion_symbol_ok
+        and not btc_short_uptrend_guard_active
         and range_is_wide_but_tradeable
         and current_adx >= range_adx_min
         and volume_ratio >= range_volume_floor
@@ -961,6 +1060,7 @@ def score_btc_futures_setup(
     )
     event_catalyst_short_ok = (
         event_active
+        and not btc_short_uptrend_guard_active
         and event_bias_score < 0
         and current_adx >= event_adx_min
         and volume_ratio >= event_volume_floor
@@ -986,6 +1086,7 @@ def score_btc_futures_setup(
     )
     short_ok = (
         consolidation_ok
+        and not btc_short_uptrend_guard_active
         and current_adx >= config.adx_floor
         and trend_24h <= -config.trend_24h_floor
         and trend_6h <= -config.trend_6h_floor
@@ -1006,13 +1107,24 @@ def score_btc_futures_setup(
     )
     continuation_short_ok = (
         continuation_short
+        and not btc_short_uptrend_guard_active
         and current_rsi_1h <= rsi_1h_short_cont
         and current_rsi_15 <= rsi_15_short_cont
         and volume_ratio >= volume_floor_cfg
     )
 
     long_score = 40.0
-    if long_ok:
+    if btc_round_level_long_ok:
+        long_score += _env_float("FUTURES_BTC_ROUND_LEVEL_SCORE_BONUS", 14.0)
+        long_score += min(14.0, max(0.0, btc_round_level_move_atr * 4.0))
+        long_score += min(10.0, max(0.0, btc_round_level_move_pct * 1800.0))
+        long_score += min(8.0, max(0.0, trend_24h * 300.0))
+        long_score += min(8.0, max(0.0, trend_6h * 700.0))
+        long_score += min(7.0, max(0.0, (current_adx - btc_round_level_adx_min) * 0.7))
+        long_score += min(6.0, max(0.0, (btc_round_level_volume_ratio - btc_round_level_volume_floor) * 7.0))
+        long_score += min(6.0, max(0.0, btc_round_level_close_ratio * 6.0))
+        long_score += 4.0 if ema_slope > 0 or current_price > current_ema20 else 0.0
+    elif long_ok:
         long_score += min(18.0, max(0.0, (current_adx - config.adx_floor) * 1.25))
         long_score += min(16.0, max(0.0, trend_24h * 240.0))
         long_score += min(12.0, max(0.0, trend_6h * 420.0))
@@ -1152,12 +1264,13 @@ def score_btc_futures_setup(
 
     def build_direction(side: str) -> FuturesSignal | None:
         if side == "LONG":
-            impulse_path = impulse_long_ok and not (long_ok or continuation_long_ok)
-            breakout_hold_path = breakout_hold_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok)
-            level_break_path = level_break_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path)
-            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path)
-            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or breakaway_long_ok)
-            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or breakaway_long_ok or range_expansion_long_ok)
+            btc_round_level_path = btc_round_level_long_ok
+            impulse_path = impulse_long_ok and not (btc_round_level_path or long_ok or continuation_long_ok)
+            breakout_hold_path = breakout_hold_long_ok and not (btc_round_level_path or long_ok or continuation_long_ok or impulse_long_ok)
+            level_break_path = level_break_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or btc_round_level_path)
+            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path)
+            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok)
+            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok or range_expansion_long_ok)
             if breakout_hold_path:
                 default_cap = min(float(config.leverage_max), 12.0)
                 leverage_max = max(1, int(_env_float("FUTURES_BREAKOUT_HOLD_LEVERAGE_MAX", default_cap)))
@@ -1169,6 +1282,22 @@ def score_btc_futures_setup(
                 sl_price = breakout_hold_level - current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_SL_BUFFER_ATR", 0.45)
                 if sl_price >= current_price:
                     sl_price = current_price - current_atr_15 * _env_float("FUTURES_BREAKOUT_HOLD_FALLBACK_SL_ATR", 2.5)
+            elif btc_round_level_path:
+                configured_cap = _env_float("FUTURES_BTC_ROUND_LEVEL_LEVERAGE_MAX", 8.0)
+                hard_cap = _env_float("FUTURES_BTC_ROUND_LEVEL_HARD_LEVERAGE_MAX", 8.0)
+                leverage_max = max(1, int(min(float(config.leverage_max), configured_cap, hard_cap)))
+                leverage_min = min(config.leverage_min, leverage_max)
+                tp_move = max(
+                    _env_float("FUTURES_BTC_ROUND_LEVEL_TP_ATR_MULT", 5.0) * current_atr_15,
+                    _env_float("FUTURES_BTC_ROUND_LEVEL_TP_FLOOR_PCT", 0.012) * current_price,
+                )
+                sl_price = max(
+                    btc_round_level - current_atr_15 * _env_float("FUTURES_BTC_ROUND_LEVEL_SL_BUFFER_ATR", 1.20),
+                    btc_round_level_recent_low - current_atr_15 * _env_float("FUTURES_BTC_ROUND_LEVEL_SWING_SL_BUFFER_ATR", 0.35),
+                    current_price * (1.0 - _env_float("FUTURES_BTC_ROUND_LEVEL_MAX_STOP_PCT", 0.012)),
+                )
+                if sl_price >= current_price:
+                    sl_price = current_price - current_atr_15 * _env_float("FUTURES_BTC_ROUND_LEVEL_FALLBACK_SL_ATR", 2.8)
             elif level_break_path:
                 default_cap = min(float(config.leverage_max), _level_break_float(symbol_name, "LEVERAGE_MAX", 8.0))
                 leverage_max = max(1, int(_level_break_float(symbol_name, "LEVERAGE_MAX", default_cap)))
@@ -1207,6 +1336,7 @@ def score_btc_futures_setup(
             if (
                 (breakout_hold_path and _env_bool("FUTURES_BREAKOUT_HOLD_EXTEND_TP_FOR_COST_BUDGET", True))
                 or (level_break_path and _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True))
+                or (btc_round_level_path and _env_bool("FUTURES_BTC_ROUND_LEVEL_EXTEND_TP_FOR_COST_BUDGET", True))
             ):
                 sl_distance_pct = risk / current_price if current_price > 0 else 0.0
                 projected_leverage = _leverage_for_signal_with_bounds(
@@ -1228,7 +1358,8 @@ def score_btc_futures_setup(
             if tp_move / risk < config.min_reward_risk:
                 return None
             entry_signal = (
-                "COIL_BREAKOUT_LONG" if long_ok and breakout_long
+                "BTC_ROUND_LEVEL_LONG" if btc_round_level_path
+                else "COIL_BREAKOUT_LONG" if long_ok and breakout_long
                 else "PRESSURE_BREAK_LONG" if long_ok and pressure_long
                 else "TREND_CONTINUATION_LONG" if continuation_long_ok
                 else "BREAKOUT_HOLD_LONG" if breakout_hold_path
@@ -1276,6 +1407,12 @@ def score_btc_futures_setup(
                     "level_break_move_pct": round(level_break_long_move_pct, 6),
                     "level_break_move_atr": round(level_break_long_move_atr, 4),
                     "level_break_volume_ratio": round(level_break_volume_ratio, 4),
+                    "btc_round_level": 1.0 if btc_round_level_path else 0.0,
+                    "btc_round_level_price": round(btc_round_level, 2) if btc_round_level_path else 0.0,
+                    "btc_round_level_confirm_close_ratio": round(btc_round_level_close_ratio, 4),
+                    "btc_round_level_move_pct": round(btc_round_level_move_pct, 6),
+                    "btc_round_level_move_atr": round(btc_round_level_move_atr, 4),
+                    "btc_round_level_volume_ratio": round(btc_round_level_volume_ratio, 4),
                     "breakaway": 1.0 if breakaway_path else 0.0,
                     "range_expansion": 1.0 if range_expansion_path else 0.0,
                     "event_catalyst": 1.0 if event_path else 0.0,

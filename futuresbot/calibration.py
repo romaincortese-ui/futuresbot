@@ -414,6 +414,20 @@ def apply_signal_calibration(
         signal.metadata["calibrated_threshold"] = threshold
         return None
     risk_mult = float(adjustment.get("risk_mult", 1.0) or 1.0)
+    def _metadata_int(name: str, default: int) -> int:
+        try:
+            return int(float((signal.metadata or {}).get(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    signal_min_bound = _metadata_int("leverage_min_bound", leverage_min)
+    signal_max_bound = _metadata_int("leverage_max_bound", leverage_max)
+    effective_min = max(1, min(int(leverage_min), signal_min_bound, signal_max_bound))
+    effective_max = max(effective_min, min(int(leverage_max), signal_max_bound))
+    calibrated_leverage = max(
+        effective_min,
+        min(effective_max, int(round(signal.leverage * risk_mult))),
+    )
     calibrated = FuturesSignal(
         symbol=signal.symbol,
         side=signal.side,
@@ -422,7 +436,7 @@ def apply_signal_calibration(
         entry_price=signal.entry_price,
         tp_price=signal.tp_price,
         sl_price=signal.sl_price,
-        leverage=max(leverage_min, min(leverage_max, int(round(signal.leverage * risk_mult)))),
+        leverage=calibrated_leverage,
         entry_signal=signal.entry_signal,
         metadata={
             **signal.metadata,

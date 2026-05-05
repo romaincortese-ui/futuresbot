@@ -245,7 +245,7 @@ def test_default_symbol_profiles_apply_and_env_overrides_win(tmp_path, monkeypat
     pepe = cfg.for_symbol("PEPE_USDT")
     tao = cfg.for_symbol("TAO_USDT")
 
-    assert pepe.leverage_max == 25
+    assert pepe.leverage_max == 10
     assert pepe.consolidation_max_range_pct > cfg.consolidation_max_range_pct
     assert tao.consolidation_max_range_pct > cfg.consolidation_max_range_pct
 

@@ -137,6 +137,79 @@ def test_btc_breakout_hold_counts_shelf_volume_after_quiet_reclaim(monkeypatch):
     assert signal.metadata["cost_budget_pass"] == 1.0
 
 
+def test_strategy_rejoins_btc_round_level_break(monkeypatch):
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_VOLUME_FLOOR", "0.20")
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_RSI_1H_MAX", "100")
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_RSI_15_MAX", "100")
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_MAX_EMA_EXTENSION_ATR", "10.0")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [76000 + idx * 6 + math.sin(idx / 8.0) * 30 for idx in range(520)]
+    anchor = 79620.0
+    for offset in range(45):
+        base[-48 + offset] = anchor + offset * 7.0 + math.sin(offset / 3.0) * 22.0
+    base[-3:] = [80110.0, 80210.0, 80320.0]
+    frame = _frame_from_prices(base)
+
+    signal = score_btc_futures_setup(
+        frame,
+        replace(
+            _config(),
+            symbol="BTC_USDT",
+            min_confidence_score=78.0,
+            min_reward_risk=0.8,
+            trend_24h_floor=0.50,
+            trend_6h_floor=0.50,
+        ),
+    )
+
+    assert signal is not None
+    assert signal.side == "LONG"
+    assert signal.entry_signal == "BTC_ROUND_LEVEL_LONG"
+    assert signal.metadata["btc_round_level"] == 1.0
+    assert signal.metadata["btc_round_level_price"] == 80000.0
+    assert signal.sl_price < 80000.0
+
+
+def test_btc_short_guard_blocks_impulse_short_in_bullish_context(monkeypatch):
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_IMPULSE_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_ATR", "0.30")
+    monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_PCT", "0.002")
+    monkeypatch.setenv("FUTURES_IMPULSE_VOLUME_FLOOR", "0.20")
+    monkeypatch.setenv("FUTURES_IMPULSE_RSI_15_SHORT_MIN", "0")
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [76000 + idx * 9 + math.sin(idx / 7.0) * 24 for idx in range(520)]
+    anchor = base[-10]
+    for offset in range(9):
+        base[-9 + offset] = anchor * (1.0 - 0.00085 * (offset + 1))
+    frame = _frame_from_prices(base)
+    cfg = replace(_config(), symbol="BTC_USDT", min_confidence_score=54.0, trend_24h_floor=0.08, trend_6h_floor=0.04)
+
+    monkeypatch.setenv("FUTURES_BTC_SHORT_UPTREND_GUARD", "1")
+    assert score_btc_futures_setup(frame, cfg) is None
+
+    monkeypatch.setenv("FUTURES_BTC_SHORT_UPTREND_GUARD", "0")
+    signal = score_btc_futures_setup(frame, cfg)
+
+    assert signal is not None
+    assert signal.side == "SHORT"
+    assert signal.entry_signal == "IMPULSE_EVENT_CONTINUATION_SHORT"
+
+
 def test_strategy_produces_short_signal_on_downtrend_breakdown():
     base = [100000 - idx * 14 + math.sin(idx / 5.0) * 36 + math.cos(idx / 10.0) * 18 + ((idx % 5) - 2) * 12 for idx in range(520)]
     base[-20:-1] = [base[-21] + ((idx % 4) - 1) * 12 for idx in range(19)]

@@ -234,6 +234,37 @@ def test_apply_signal_calibration_uses_risk_off_short_regime_block():
     assert signal.metadata["calibration_block_reason"] == "calibration block: weak risk-off shorts"
 
 
+def test_apply_signal_calibration_preserves_strategy_leverage_cap():
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy": {
+                "BTC_FUTURES": {
+                    "threshold_offset": 0.0,
+                    "risk_mult": 1.25,
+                    "block_reason": None,
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="BTC_USDT",
+        side="LONG",
+        score=90.0,
+        certainty=0.8,
+        entry_price=80000.0,
+        tp_price=81200.0,
+        sl_price=79700.0,
+        leverage=8,
+        entry_signal="BTC_ROUND_LEVEL_LONG",
+        metadata={"leverage_min_bound": 8.0, "leverage_max_bound": 8.0},
+    )
+
+    calibrated = apply_signal_calibration(signal, calibration, base_threshold=50.0, leverage_min=20, leverage_max=50)
+
+    assert calibrated is not None
+    assert calibrated.leverage == 8
+
+
 # ---------------------------------------------------------------------------
 # A4 — funding-gate default
 # ---------------------------------------------------------------------------
