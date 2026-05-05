@@ -3642,13 +3642,15 @@ class FuturesRuntime:
             )
             if str(_os.environ.get(name, "0")).lower() in {"1", "true", "yes", "on"}
         ]
+        universe_label = self._universe_label(cfg.symbols)
 
         log.info(
-            "[BOOT] mode=%s paper=%s symbols=%s leverage=x%d-x%d hard_loss_cap=%.2f "
+            "[BOOT] mode=%s paper=%s universe=%s symbols=%s leverage=x%d-x%d hard_loss_cap=%.2f "
             "consolidation_max=%.4f adx_floor=%.1f trend_24h_floor=%.4f volume_floor=%.2f "
             "min_rr=%.2f funding_gate=%.5f calib_min_trades=%d overrides=%s sprint_flags=%s",
             "LIVE" if not cfg.paper_trade else "PAPER",
             cfg.paper_trade,
+            universe_label,
             ",".join(cfg.symbols),
             cfg.leverage_min,
             cfg.leverage_max,
