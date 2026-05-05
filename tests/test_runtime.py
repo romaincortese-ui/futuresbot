@@ -193,7 +193,7 @@ def test_build_status_message_includes_signal_context_and_btc_trends(tmp_path):
     )
 
     assert "BTC: 1h" in message
-    assert "Scanning <b>10</b> futures pairs (production 10-pair universe)" in message
+    assert "Scanning <b>5</b> futures pairs (production pruned universe)" in message
     assert "Signal: <b>LONG</b> COIL_BREAKOUT_LONG | x32 | score 63.5 | cert 78%" in message
     assert "Avail: <b>$123.45</b> | Equity: <b>$150.50</b> | Trades: <b>0</b>" in message
 
@@ -207,7 +207,7 @@ def test_status_message_flags_custom_symbol_override(tmp_path):
 
     message = runtime._build_status_message(price=91000.0)
 
-    assert "Scanning <b>2</b> futures pairs (custom override; production default is 10 pairs)" in message
+    assert "Scanning <b>2</b> futures pairs (custom override; production default is 5 pairs)" in message
 
 
 def test_build_status_message_includes_open_position_pnl_and_last_trade(tmp_path):
@@ -384,7 +384,7 @@ def test_send_startup_message_uses_live_account_snapshot(tmp_path):
     runtime._send_startup_message()
 
     assert len(sent_messages) == 1
-    assert "Scanning <b>10</b> futures pairs (production 10-pair universe):" in sent_messages[0]
+    assert "Scanning <b>5</b> futures pairs (production pruned universe):" in sent_messages[0]
     assert "Active symbols differ" not in sent_messages[0]
     assert "Avail: <b>$123.45</b> | Equity: <b>$150.50</b>" in sent_messages[0]
     assert "Budget:" not in sent_messages[0]
@@ -408,8 +408,8 @@ def test_send_startup_message_warns_on_custom_symbol_override(tmp_path):
     runtime._send_startup_message()
 
     assert len(sent_messages) == 1
-    assert "custom override; production default is 10 pairs" in sent_messages[0]
-    assert "Active symbols differ from the production 10-pair default" in sent_messages[0]
+    assert "custom override; production default is 5 pairs" in sent_messages[0]
+    assert "Active symbols differ from the production pruned default" in sent_messages[0]
     assert ", ".join(DEFAULT_FUTURES_SYMBOLS) in sent_messages[0]
 
 

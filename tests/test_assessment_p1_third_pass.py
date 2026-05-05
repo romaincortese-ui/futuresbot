@@ -257,12 +257,13 @@ def test_default_symbol_profiles_apply_and_env_overrides_win(tmp_path, monkeypat
     assert overridden.consolidation_max_range_pct == pytest.approx(0.033)
 
 
-def test_default_universe_expands_to_ten_pairs(monkeypatch):
+def test_default_universe_uses_pruned_profitable_pairs(monkeypatch):
     cfg = FuturesConfig.from_env()
 
     assert cfg.symbols == DEFAULT_FUTURES_SYMBOLS
-    assert len(cfg.symbols) == 10
-    assert cfg.correlation_buckets["BCH_USDT"] == "large_cap_beta"
+    assert cfg.symbols == ("BTC_USDT", "SOL_USDT", "BNB_USDT", "SEI_USDT", "ZEC_USDT")
+    assert len(cfg.symbols) == 5
+    assert cfg.correlation_buckets["BNB_USDT"] == "exchange_token"
     assert cfg.correlation_buckets["SEI_USDT"] == "l1_beta"
     assert cfg.correlation_buckets["ZEC_USDT"] == "privacy_beta"
 

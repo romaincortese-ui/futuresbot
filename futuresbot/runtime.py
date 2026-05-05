@@ -422,7 +422,7 @@ class FuturesRuntime:
     def _universe_label(self, symbols: list[str] | tuple[str, ...] | None = None) -> str:
         active = tuple(str(sym).upper() for sym in (symbols or self._active_symbols or self.config.symbols))
         if active == DEFAULT_FUTURES_SYMBOLS:
-            return "production 10-pair universe"
+            return "production pruned universe"
         return f"custom override; production default is {len(DEFAULT_FUTURES_SYMBOLS)} pairs"
 
     def _universe_warning_line(self, symbols: list[str] | tuple[str, ...]) -> str | None:
@@ -430,7 +430,7 @@ class FuturesRuntime:
         if active == DEFAULT_FUTURES_SYMBOLS:
             return None
         default_list = ", ".join(DEFAULT_FUTURES_SYMBOLS)
-        return f"⚠️ Active symbols differ from the production 10-pair default: {html.escape(default_list)}"
+        return f"⚠️ Active symbols differ from the production pruned default: {html.escape(default_list)}"
 
     def _format_price(self, value: float) -> str:
         # Sub-cent coins (PEPE ~$3.88e-6, SHIB, etc.) must not be rounded to
@@ -3573,7 +3573,7 @@ class FuturesRuntime:
 
     # ------------------------------------------------------------------
     # P2 §6 #12 — boot-time warning when SILVER_USDT / XAUT_USDT are in the
-    # active symbol list. These are outside the current calibrated 10-crypto-pair
+    # active symbol list. These are outside the current calibrated crypto
     # universe; the warning is non-blocking so operators can opt in deliberately.
     # ------------------------------------------------------------------
     def _warn_unsuitable_symbols(self) -> None:
@@ -3583,7 +3583,7 @@ class FuturesRuntime:
             return
         log.warning(
             "[SYMBOL_NOTICE] %s in active symbols. The assessment §3.5 flags "
-            "these as outside the calibrated 10-crypto-pair production universe "
+            "these as outside the calibrated crypto production universe "
             "(thin perp books, FX-correlated). Consider dropping until a "
             "dedicated session-aware sleeve exists.",
             ",".join(flagged),

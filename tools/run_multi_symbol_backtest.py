@@ -98,7 +98,7 @@ def main() -> None:
         "--symbols",
         nargs="+",
         default=SYMBOLS,
-        help="Symbols to backtest; defaults to the production 10-pair futures universe.",
+        help="Symbols to backtest; defaults to the production pruned futures universe.",
     )
     parser.add_argument(
         "--mode",

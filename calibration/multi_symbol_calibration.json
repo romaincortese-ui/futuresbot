@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-05-01T20:30:00+00:00",
-  "window_start": "2026-03-02T00:00:00+00:00",
-  "window_end": "2026-05-01T00:00:00+00:00",
-  "total_trades": 433,
-  "notes": "Hand-refreshed 10-symbol calibration from the 2026-03-02 to 2026-05-01 replay. Keeps the expanded universe active while blocking symbol/signal lanes that were persistently negative in the 60-day sample. This is deliberately conservative: it scans more symbols, but does not let BTC-style short/impulse lanes run on pairs where that lane failed.",
+  "generated_at": "2026-05-05T19:07:49.483720+00:00",
+  "window_start": "2026-04-05T18:00:00+00:00",
+  "window_end": "2026-05-05T18:00:00+00:00",
+  "total_trades": 76,
+  "notes": "Packaged calibration refreshed after the 2026-05-05 universe pruning/tuning pass. Active production set is BTC/SOL/BNB/SEI/ZEC; ETH/PEPE/TAO/BCH/LINK are symbol-blocked until recalibration restores edge. BNB and ZEC keep only their profitable recent lanes.",
   "by_strategy": {
     "BTC_FUTURES": {
       "trades": 433,
@@ -18,10 +18,42 @@
   "by_strategy_symbol_signal": {},
   "entry_adjustments": {
     "by_strategy": {
-      "BTC_FUTURES": {"threshold_offset": 0.0, "risk_mult": 1.0, "block_reason": null}
+      "BTC_FUTURES": {
+        "threshold_offset": 0.0,
+        "risk_mult": 1.0,
+        "block_reason": null
+      }
     },
     "by_strategy_signal": {},
-    "by_strategy_symbol": {},
+    "by_strategy_symbol": {
+      "BTC_FUTURES": {
+        "ETH_USDT": {
+          "threshold_offset": 0.0,
+          "risk_mult": 0.0,
+          "block_reason": "Universe pruning: ETH kept losing slightly over the 60d sanity replay after lane pruning (-2.35 USDT) and only added a thin +2.23 USDT over the latest 30d; pause until recalibration restores a durable edge."
+        },
+        "PEPE_USDT": {
+          "threshold_offset": 0.0,
+          "risk_mult": 0.0,
+          "block_reason": "Universe pruning: PEPE was negative in the latest realistic 30d replay (-12.43 USDT, 12.5% win rate) after prior calibration; pause until recalibration restores edge."
+        },
+        "TAO_USDT": {
+          "threshold_offset": 0.0,
+          "risk_mult": 0.0,
+          "block_reason": "Universe pruning: TAO was negative in the latest realistic 30d replay (-12.39 USDT, 22.2% win rate) after prior calibration; pause until recalibration restores edge."
+        },
+        "BCH_USDT": {
+          "threshold_offset": 0.0,
+          "risk_mult": 0.0,
+          "block_reason": "Universe pruning: BCH had no winning lane in the latest realistic 30d replay (-9.66 USDT, 0% win rate); pause until recalibration restores edge."
+        },
+        "LINK_USDT": {
+          "threshold_offset": 0.0,
+          "risk_mult": 0.0,
+          "block_reason": "Universe pruning: LINK was negative in the latest realistic 30d replay (-16.53 USDT, 12.5% win rate); pause until recalibration restores edge."
+        }
+      }
+    },
     "by_strategy_symbol_signal": {
       "BTC_FUTURES": {
         "BTC_USDT": {
@@ -144,6 +176,16 @@
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
             "block_reason": "BNB pressure short failed."
+          },
+          "LEVEL_BREAK_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "Latest 30d tuning: BNB level-break longs lost 10.68 USDT across 3 trades; keep only the profitable BNB level-break short lane active."
+          },
+          "IMPULSE_EVENT_CONTINUATION_SHORT": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "Latest 30d tuning: BNB impulse-event short lost 3.82 USDT; keep only the profitable BNB level-break short lane active."
           }
         },
         "BCH_USDT": {
@@ -192,6 +234,11 @@
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
             "block_reason": "ZEC impulse shorts were negative; current privacy-coin tape rewards upside continuation more than fading."
+          },
+          "LEVEL_BREAK_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "Latest 30d tuning: ZEC level-break long lost 3.22 USDT; keep ZEC impulse-event long and level-break short active."
           }
         }
       }

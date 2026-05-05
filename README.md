@@ -12,12 +12,13 @@ It is intentionally isolated from the live spot runtime:
 
 ## Strategy
 
-The default production universe scans 10 perpetual pairs:
+The production universe was pruned after the 2026-05-05 tuning pass and now scans 5 perpetual pairs:
 
 ```text
-BTC_USDT, ETH_USDT, SOL_USDT, PEPE_USDT, TAO_USDT,
-BNB_USDT, BCH_USDT, SEI_USDT, LINK_USDT, ZEC_USDT
+BTC_USDT, SOL_USDT, BNB_USDT, SEI_USDT, ZEC_USDT
 ```
+
+The wider candidate pool remains BTC, ETH, SOL, PEPE, TAO, BNB, BCH, SEI, LINK, and ZEC. ETH, PEPE, TAO, BCH, and LINK are currently symbol-blocked by the packaged calibration until a future replay shows a durable edge again.
 
 Each pair uses the shared futures scorer with a dedicated profile for volatility, funding, score threshold, reward/risk, and leverage cap. A packaged signal-lane calibration in `calibration/multi_symbol_calibration.json` blocks symbol/signal combinations that were persistently negative in the latest 60-day replay, so the bot can scan broadly without treating every pair like BTC.
 
@@ -36,7 +37,7 @@ Each pair uses the shared futures scorer with a dedicated profile for volatility
 Important variables:
 
 - `FUTURES_PAPER_TRADE=true`
-- `FUTURES_SYMBOLS=BTC_USDT,ETH_USDT,SOL_USDT,PEPE_USDT,TAO_USDT,BNB_USDT,BCH_USDT,SEI_USDT,LINK_USDT,ZEC_USDT`
+- `FUTURES_SYMBOLS=BTC_USDT,SOL_USDT,BNB_USDT,SEI_USDT,ZEC_USDT`
 - `FUTURES_SYMBOL=BTC_USDT` for a one-symbol run or single-symbol backtest
 - `FUTURES_MARGIN_BUDGET_USDT=75`
 - `FUTURES_TELEGRAM_TOKEN=...`
