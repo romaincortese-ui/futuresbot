@@ -215,6 +215,14 @@ class MexcFuturesClient:
         }
         return self.private_post("/api/v1/private/position/change_leverage", payload)
 
+    @staticmethod
+    def _trigger_trends_for_order_side(side: int) -> tuple[int | None, int | None]:
+        if int(side) == 1:  # open long: TP triggers on rise, SL on fall
+            return 1, 2
+        if int(side) == 3:  # open short: TP triggers on fall, SL on rise
+            return 2, 1
+        return None, None
+
     def place_order(
         self,
         *,
@@ -230,6 +238,7 @@ class MexcFuturesClient:
         take_profit_price: float | None = None,
         stop_loss_price: float | None = None,
     ) -> dict[str, Any]:
+        profit_trend, loss_trend = self._trigger_trends_for_order_side(int(side))
         payload = {
             "symbol": symbol,
             "price": price,
@@ -242,8 +251,8 @@ class MexcFuturesClient:
             "reduceOnly": reduce_only,
             "takeProfitPrice": take_profit_price,
             "stopLossPrice": stop_loss_price,
-            "profitTrend": 1 if take_profit_price else None,
-            "lossTrend": 1 if stop_loss_price else None,
+            "profitTrend": profit_trend if take_profit_price else None,
+            "lossTrend": loss_trend if stop_loss_price else None,
         }
         response = self.private_post("/api/v1/private/order/create", payload)
         data = response.get("data", {}) if isinstance(response, dict) else {}

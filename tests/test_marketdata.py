@@ -35,3 +35,49 @@ def test_place_order_normalizes_primitive_order_id(monkeypatch):
     order = client.place_order(symbol="BTC_USDT", side=1, vol=1, leverage=5)
 
     assert order == {"orderId": "123456"}
+
+
+def test_place_order_sets_long_trigger_directions(monkeypatch):
+    client = _client()
+    captured: dict[str, object] = {}
+
+    def fake_post(path, body):
+        captured.update(body)
+        return {"success": True, "data": 123456}
+
+    monkeypatch.setattr(client, "private_post", fake_post)
+
+    client.place_order(
+        symbol="BTC_USDT",
+        side=1,
+        vol=1,
+        leverage=20,
+        take_profit_price=105.0,
+        stop_loss_price=98.0,
+    )
+
+    assert captured["profitTrend"] == 1
+    assert captured["lossTrend"] == 2
+
+
+def test_place_order_sets_short_trigger_directions(monkeypatch):
+    client = _client()
+    captured: dict[str, object] = {}
+
+    def fake_post(path, body):
+        captured.update(body)
+        return {"success": True, "data": 123456}
+
+    monkeypatch.setattr(client, "private_post", fake_post)
+
+    client.place_order(
+        symbol="BTC_USDT",
+        side=3,
+        vol=1,
+        leverage=20,
+        take_profit_price=95.0,
+        stop_loss_price=102.0,
+    )
+
+    assert captured["profitTrend"] == 2
+    assert captured["lossTrend"] == 1

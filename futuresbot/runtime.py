@@ -56,6 +56,7 @@ class FuturesRuntime:
         # Per-symbol scoped configs (populated on first call; keyed by uppercased symbol).
         # A miss means the symbol has not been validated against exchange contract specs yet.
         self._symbol_configs: dict[str, FuturesConfig] = {}
+        self._exchange_leverage_caps: dict[str, int] = {}
         self._active_symbols: tuple[str, ...] = tuple(config.symbols)
         self._symbols_validated = False
         # Funding-rate cache: symbol -> (timestamp, rate). Refreshed lazily every hour.
@@ -980,6 +981,8 @@ class FuturesRuntime:
                 exchange_max_lev = int(float(exchange_max_lev_raw))
             except (TypeError, ValueError):
                 exchange_max_lev = 0
+            if exchange_max_lev > 0:
+                self._exchange_leverage_caps[sym] = exchange_max_lev
             scoped = self.config.for_symbol(sym)
             if exchange_max_lev > 0 and scoped.leverage_max > exchange_max_lev:
                 log.info(
@@ -1817,6 +1820,17 @@ class FuturesRuntime:
             if calibrated is None:
                 log.info("Signal scan: %s rejected by calibration/threshold", sym)
                 continue
+            runtime_leverage = self._enforce_live_leverage_bounds(int(calibrated.leverage), symbol=sym)
+            if runtime_leverage != int(calibrated.leverage):
+                calibrated = dataclasses.replace(
+                    calibrated,
+                    leverage=runtime_leverage,
+                    metadata={
+                        **(calibrated.metadata or {}),
+                        "runtime_leverage_original": float(calibrated.leverage),
+                        "runtime_leverage_enforced": float(runtime_leverage),
+                    },
+                )
             # Sprint 3 §3.3 — regime gate. When USE_REGIME_CLASSIFIER=1, reject
             # signals whose side is blocked by the current portfolio regime
             # (e.g. longs in TREND_DOWN, anything in VOL_SHOCK). Mean-reversion
@@ -1964,31 +1978,46 @@ class FuturesRuntime:
         except (TypeError, ValueError):
             return default
 
-    def _apply_session_leverage_cap(self, leverage: int) -> int:
+    def _live_leverage_bounds(self, symbol: str | None = None) -> tuple[int, int]:
+        min_bound = max(1, int(self.config.leverage_min))
+        max_bound = max(min_bound, int(self.config.leverage_max))
+        sym = (symbol or "").upper()
+        exchange_cap = int(self._exchange_leverage_caps.get(sym, 0) or 0)
+        if exchange_cap > 0:
+            max_bound = min(max_bound, exchange_cap)
+            min_bound = min(min_bound, max_bound)
+        return min_bound, max_bound
+
+    def _enforce_live_leverage_bounds(self, leverage: int, *, symbol: str | None = None) -> int:
+        min_bound, max_bound = self._live_leverage_bounds(symbol)
+        return max(min_bound, min(max_bound, int(leverage)))
+
+    def _apply_session_leverage_cap(self, leverage: int, *, symbol: str | None = None) -> int:
         """§2.8 — clamp leverage by current UTC session. No-op when flag off."""
 
         if not self._flag("USE_SESSION_LEVERAGE"):
-            return leverage
+            return self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         try:
             from futuresbot.session_leverage import session_policy
 
+            min_bound, max_bound = self._live_leverage_bounds(symbol)
             hour = datetime.now(timezone.utc).hour
-            full_cap = int(self._env_float("SESSION_FULL_LEVERAGE_CAP", self.config.leverage_max))
-            asia_cap = int(self._env_float("SESSION_ASIA_LEVERAGE_CAP", 5))
+            full_cap = max(min_bound, min(max_bound, int(self._env_float("SESSION_FULL_LEVERAGE_CAP", max_bound))))
+            asia_cap = max(min_bound, min(max_bound, int(self._env_float("SESSION_ASIA_LEVERAGE_CAP", min_bound))))
             policy = session_policy(
                 hour,
                 full_leverage_cap=full_cap,
                 asia_leverage_cap=asia_cap,
             )
-            capped = min(leverage, policy.leverage_cap)
+            capped = max(min_bound, min(max_bound, int(leverage), policy.leverage_cap))
             if capped != leverage:
                 log.info(
                     "Session %s capped leverage %d -> %d", policy.session, leverage, capped
                 )
-            return max(1, capped)
+            return capped
         except Exception as exc:
             log.debug("Session leverage cap skipped: %s", exc)
-            return leverage
+            return self._enforce_live_leverage_bounds(leverage, symbol=symbol)
 
     def _drawdown_size_multiplier(self) -> float:
         """§2.7 — return size multiplier in [0,1] from portfolio drawdown state."""
@@ -2075,6 +2104,7 @@ class FuturesRuntime:
         contract_size: float,
         available_margin: float,
         size_multiplier: float,
+        symbol: str | None = None,
     ) -> tuple[int, int] | None:
         """§2.1 — NAV-anchored sizing. Returns ``(contracts, leverage)`` or None.
 
@@ -2089,8 +2119,9 @@ class FuturesRuntime:
 
             nav = float(self.config.margin_budget_usdt)
             risk_pct = self._env_float("NAV_RISK_PCT", 0.01) * max(0.0, size_multiplier)
-            lev_min = int(self._env_float("NAV_LEVERAGE_MIN", 5))
-            lev_max = int(self._env_float("NAV_LEVERAGE_MAX", 10))
+            min_bound, max_bound = self._live_leverage_bounds(symbol)
+            lev_min = max(min_bound, min(max_bound, int(self._env_float("NAV_LEVERAGE_MIN", min_bound))))
+            lev_max = max(lev_min, min(max_bound, int(self._env_float("NAV_LEVERAGE_MAX", max_bound))))
             result = compute_nav_risk_sizing(
                 nav_usdt=nav,
                 entry_price=entry_price,
@@ -3205,6 +3236,7 @@ class FuturesRuntime:
         entry_price = float(signal_payload["entry_price"])
         leverage = int(signal_payload["leverage"])
         symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
+        leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         if symbol in self.open_positions:
             return False
         scoped = self._config_for_symbol(symbol)
@@ -3240,7 +3272,7 @@ class FuturesRuntime:
                 capital_scaling.get("win_rate"),
             )
         # Sprint 1 §2.8 — session-aligned leverage cap (no-op when flag off).
-        leverage = self._apply_session_leverage_cap(leverage)
+        leverage = self._apply_session_leverage_cap(leverage, symbol=symbol)
         # Sprint 1 §2.7 — portfolio drawdown kill (returns size_multiplier in [0,1]).
         size_multiplier = self._drawdown_size_multiplier()
         if size_multiplier <= 0:
@@ -3255,9 +3287,11 @@ class FuturesRuntime:
             contract_size=contract_size,
             available_margin=margin_budget,
             size_multiplier=size_multiplier,
+            symbol=symbol,
         )
         if nav_sized is not None:
             contracts, leverage = nav_sized
+            leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         else:
             contracts = int((margin_budget * leverage / entry_price) / contract_size)
             if size_multiplier < 1.0:

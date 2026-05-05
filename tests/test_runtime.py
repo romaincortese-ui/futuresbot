@@ -832,6 +832,76 @@ def test_live_enter_trade_registers_only_confirmed_exchange_position(tmp_path, m
     assert any("Futures Position Opened" in message for message in sent_messages)
 
 
+def test_live_enter_trade_enforces_production_leverage_bounds(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "1")
+    monkeypatch.setenv("USE_SESSION_LEVERAGE", "1")
+
+    class LeverageClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.leverage_changes: list[dict[str, object]] = []
+            self.orders: list[dict[str, object]] = []
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 0.01, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            self.leverage_changes.append(
+                {
+                    "symbol": symbol,
+                    "leverage": leverage,
+                    "position_type": position_type,
+                    "open_type": open_type,
+                }
+            )
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            return {"orderId": "entry-20"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            return {"orderId": order_id, "dealAvgPrice": "100.10", "dealVol": "25", "positionId": "pos-20"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "positionType": 1,
+                    "holdVol": "25",
+                    "holdAvgPrice": "100.25",
+                    "im": "1.25",
+                    "leverage": "20",
+                    "positionId": "pos-20",
+                }
+            ]
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=50.0), LeverageClient())
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "LONG",
+        "entry_price": 100.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 104.0,
+        "sl_price": 98.0,
+        "score": 70.0,
+        "certainty": 0.75,
+        "entry_signal": "EVENT_CATALYST_LONG",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    assert runtime.client.leverage_changes[-1]["leverage"] == 20
+    assert runtime.client.orders[-1]["leverage"] == 20
+    assert runtime.open_positions["BTC_USDT"].leverage == 20
+
+
 def test_reconcile_drops_stale_local_live_position_without_exchange_id(tmp_path):
     class EmptyExchangeClient(StubClient):
         def get_open_positions(self, symbol: str | None = None):
