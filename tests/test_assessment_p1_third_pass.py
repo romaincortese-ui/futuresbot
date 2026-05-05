@@ -268,6 +268,14 @@ def test_default_universe_uses_pruned_profitable_pairs(monkeypatch):
     assert cfg.correlation_buckets["ZEC_USDT"] == "privacy_beta"
 
 
+def test_symbol_universe_accepts_whitespace_separated_env(monkeypatch):
+    monkeypatch.setenv("FUTURES_SYMBOLS", "BTC_USDT SOL_USDT BNB_USDT SEI_USDT ZEC_USDT")
+
+    cfg = FuturesConfig.from_env()
+
+    assert cfg.symbols == DEFAULT_FUTURES_SYMBOLS
+
+
 def test_explicit_primary_symbol_keeps_single_symbol_mode(monkeypatch):
     monkeypatch.setenv("FUTURES_SYMBOL", "ETH_USDT")
 

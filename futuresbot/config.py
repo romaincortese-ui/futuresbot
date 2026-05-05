@@ -218,12 +218,12 @@ def env_int_for_symbol(symbol: str, suffix: str, default: int) -> int:
 
 
 def parse_symbol_list(raw: str, fallback: str) -> tuple[str, ...]:
-    """Parse a comma-separated symbol list, preserving order and deduplicating."""
+    """Parse a comma/whitespace-separated symbol list, preserving order."""
 
     if not raw.strip():
         return (fallback.upper(),)
     seen: list[str] = []
-    for part in raw.split(","):
+    for part in raw.replace(",", " ").split():
         symbol = part.strip().upper()
         if symbol and symbol not in seen:
             seen.append(symbol)
