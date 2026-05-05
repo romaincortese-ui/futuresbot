@@ -266,6 +266,9 @@ def test_default_universe_uses_pruned_profitable_pairs(monkeypatch):
     assert cfg.correlation_buckets["BNB_USDT"] == "exchange_token"
     assert cfg.correlation_buckets["SEI_USDT"] == "l1_beta"
     assert cfg.correlation_buckets["ZEC_USDT"] == "privacy_beta"
+    for symbol in cfg.symbols:
+        scoped = cfg.for_symbol(symbol)
+        assert scoped.leverage_max >= cfg.leverage_min
 
 
 def test_symbol_universe_accepts_whitespace_separated_env(monkeypatch):
