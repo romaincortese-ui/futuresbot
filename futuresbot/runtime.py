@@ -26,6 +26,12 @@ from futuresbot.review import load_daily_review
 from futuresbot.strategy import score_btc_futures_setup
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import evaluate_crypto_event_overlay
+from futuresbot.sharp_opportunity import (
+    build_sharp_event_signal,
+    evaluate_sharp_opportunity_overlay,
+    sharp_event_margin_multiplier,
+)
+from futuresbot.universe import select_major_usdt_symbols
 
 
 log = logging.getLogger(__name__)
@@ -69,6 +75,7 @@ class FuturesRuntime:
         # makes the "why isn't it trading?" signal unambiguous to the operator.
         self._last_cycle_gate_blocks: dict[str, str] = {}
         self._cycle_counter: int = 0
+        self._last_cycle_symbol_count: int = len(self._active_symbols)
         # Sprint 3 §3.9 — rolling slippage attribution store (lazy).
         self._slippage_store: Any | None = None
         # P1 (third assessment) §5 #1+#2 — resolved per-symbol taker fee rate
@@ -81,6 +88,8 @@ class FuturesRuntime:
         self._crypto_event_state: dict[str, Any] | None = None
         self._last_crypto_event_refresh_at = 0.0
         self._last_crypto_event_error_at = 0.0
+        self._sharp_event_symbols: tuple[str, ...] = ()
+        self._last_sharp_event_symbol_refresh_at = 0.0
         self.missed_opportunities: dict[str, dict[str, Any]] = {}
         self._missed_opportunities_dirty = False
         self._load_state()
@@ -158,7 +167,7 @@ class FuturesRuntime:
             log.info(
                 "[CYCLE_SUMMARY] cycle=%d symbols=%d gate_blocks=%d histogram={%s} signal=%s",
                 self._cycle_counter,
-                len(self._active_symbols),
+                self._last_cycle_symbol_count,
                 len(self._last_cycle_gate_blocks),
                 histogram,
                 "yes" if signal is not None else "no",
@@ -1052,6 +1061,48 @@ class FuturesRuntime:
             log.info("Futures multi-symbol scan active: %s", ",".join(active))
             self._record_activity(f"Scanning {len(active)} symbols: {','.join(active)}")
 
+    def _sharp_event_overlay_symbols_for_cycle(self) -> tuple[str, ...]:
+        if not getattr(self.config, "sharp_event_overlay_enabled", False):
+            return ()
+        explicit = tuple(str(sym).upper() for sym in getattr(self.config, "sharp_event_overlay_symbols", ()) if str(sym).strip())
+        if explicit:
+            return tuple(sym for sym in explicit if sym not in self._active_symbols)
+        now = time.monotonic()
+        if (
+            self._sharp_event_symbols
+            and now - self._last_sharp_event_symbol_refresh_at < self.config.sharp_event_overlay_refresh_seconds
+        ):
+            return tuple(sym for sym in self._sharp_event_symbols if sym not in self._active_symbols)
+        self._last_sharp_event_symbol_refresh_at = now
+        try:
+            tickers = self.client.get_all_tickers()
+            details = self.client.get_all_contract_details()
+            selected = select_major_usdt_symbols(
+                tickers,
+                details,
+                top_n=int(self.config.sharp_event_overlay_top_n),
+                include_symbols=self._active_symbols,
+            )
+            self._sharp_event_symbols = tuple(sym for sym in selected if sym not in self._active_symbols)
+            if self._sharp_event_symbols:
+                log.info(
+                    "Sharp-event overlay scan active: %d candidate symbols (%s)",
+                    len(self._sharp_event_symbols),
+                    ",".join(self._sharp_event_symbols[:12]) + (",..." if len(self._sharp_event_symbols) > 12 else ""),
+                )
+            return self._sharp_event_symbols
+        except Exception as exc:
+            log.warning("Sharp-event overlay symbol refresh failed; using core symbols only: %s", exc)
+            return ()
+
+    def _scan_symbols_for_cycle(self) -> tuple[str, ...]:
+        symbols: list[str] = list(self._active_symbols)
+        for sym in self._sharp_event_overlay_symbols_for_cycle():
+            if sym not in symbols:
+                symbols.append(sym)
+        self._last_cycle_symbol_count = len(symbols)
+        return tuple(symbols)
+
     def _load_state(self) -> None:
         if not self._state_path.exists():
             return
@@ -1458,15 +1509,19 @@ class FuturesRuntime:
 
     def _hourly_exit(self, position: FuturesPosition, current_price: float) -> bool:
         scoped = self._config_for_symbol(position.symbol)
-        if scoped.trailing_exit_drawdown_pct > 0:
+        metadata = position.metadata or {}
+        trailing_drawdown_pct = float(metadata.get("trailing_exit_drawdown_pct", scoped.trailing_exit_drawdown_pct) or scoped.trailing_exit_drawdown_pct)
+        trailing_activation_progress = float(metadata.get("trailing_exit_activation_progress", scoped.trailing_exit_activation_progress) or scoped.trailing_exit_activation_progress)
+        trailing_min_profit_pct = float(metadata.get("early_exit_min_profit_pct", scoped.early_exit_min_profit_pct) or scoped.early_exit_min_profit_pct)
+        if trailing_drawdown_pct > 0:
             should_close, changed = evaluate_trailing_tick(
                 position,
                 current_price,
-                activation_progress=scoped.trailing_exit_activation_progress,
-                min_profit_pct=scoped.early_exit_min_profit_pct,
-                drawdown_pct=scoped.trailing_exit_drawdown_pct,
+                activation_progress=trailing_activation_progress,
+                min_profit_pct=trailing_min_profit_pct,
+                drawdown_pct=trailing_drawdown_pct,
             )
-            trailing_stop_price(position, scoped.trailing_exit_drawdown_pct)
+            trailing_stop_price(position, trailing_drawdown_pct)
             if not should_close:
                 if changed:
                     if is_trailing_exit_armed(position):
@@ -1797,7 +1852,9 @@ class FuturesRuntime:
         best: tuple[float, Any] | None = None
         crypto_event_state = self._refresh_crypto_event_state()
         event_now = datetime.now(timezone.utc)
-        for sym in self._active_symbols:
+        scan_symbols = self._scan_symbols_for_cycle()
+        for sym in scan_symbols:
+            is_sharp_event_candidate = sym not in self._active_symbols
             if sym in self.open_positions:
                 continue
             bucket = self._symbol_bucket(sym)
@@ -1815,6 +1872,25 @@ class FuturesRuntime:
             except Exception as exc:
                 log.warning("Futures klines fetch failed for %s: %s", sym, exc)
                 continue
+            sharp_decision = None
+            if is_sharp_event_candidate:
+                sharp_decision = evaluate_sharp_opportunity_overlay(
+                    frame,
+                    symbol=sym,
+                    core_symbols=self._active_symbols,
+                    enabled=True,
+                    risk_multiplier=self.config.sharp_event_overlay_risk_multiplier,
+                )
+                if not sharp_decision.allowed:
+                    self._last_cycle_gate_blocks[sym] = f"sharp_event:{sharp_decision.reason}"
+                    log.info(
+                        "[SHARP_EVENT_BLOCK] symbol=%s reason=%s side=%s score=%.2f",
+                        sym,
+                        sharp_decision.reason,
+                        sharp_decision.side or "?",
+                        sharp_decision.score,
+                    )
+                    continue
             event_scan_decision = evaluate_crypto_event_overlay(
                 crypto_event_state,
                 symbol=sym,
@@ -1849,6 +1925,7 @@ class FuturesRuntime:
                 event_bias_score=event_scan_decision.bias_score if event_scan_decision.fresh else 0.0,
                 event_max_severity=event_scan_decision.max_severity if event_scan_decision.fresh else 0.0,
                 event_count=event_scan_decision.event_count if event_scan_decision.fresh else 0,
+                sharp_event_overlay_active=bool(sharp_decision is not None and sharp_decision.allowed),
             )
             # Sprint 3 §3.2 — mean-reversion fallback. When regime is CHOP (or the
             # primary coil-breakout scorer returned nothing) and
@@ -1858,6 +1935,13 @@ class FuturesRuntime:
                 mr_signal = self._mean_reversion_candidate(sym, scoring_config, frame, raw_signal)
                 if mr_signal is not None:
                     raw_signal = mr_signal
+            if sharp_decision is not None:
+                raw_signal = build_sharp_event_signal(
+                    frame,
+                    scoring_config,
+                    sharp_decision,
+                    bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
+                )
             if raw_signal is None:
                 # Gate A A5 (memo 1 §7): structured gate-block telemetry so the
                 # operator can distinguish "market was quiet" from "filters are
@@ -1877,7 +1961,7 @@ class FuturesRuntime:
                 self._last_cycle_gate_blocks[sym] = reason
                 log.info("[GATE_BLOCK] symbol=%s reason=%s", sym, reason)
                 log.info("[IMPULSE_GATE_BLOCK] symbol=%s reason=%s", sym, impulse_reason)
-                event_side = self._event_candidate_side(event_scan_decision)
+                event_side = sharp_decision.side if sharp_decision is not None else self._event_candidate_side(event_scan_decision)
                 if event_side is not None:
                     log.info(
                         "[EVENT_CANDIDATE_BLOCK] symbol=%s side=%s bias=%.2f severity=%.2f setup_reason=%s impulse_reason=%s",
@@ -1900,9 +1984,15 @@ class FuturesRuntime:
             raw_signal = self._apply_crypto_event_overlay(raw_signal, crypto_event_state, event_now)
             if raw_signal is None:
                 continue
+            calibration_payload = self.calibration
+            if (
+                self.config.sharp_event_bypass_symbol_calibration
+                and float((raw_signal.metadata or {}).get("sharp_event_bypass_symbol_calibration") or 0.0) >= 1.0
+            ):
+                calibration_payload = None
             calibrated = apply_signal_calibration(
                 raw_signal,
-                self.calibration,
+                calibration_payload,
                 base_threshold=scoped.min_confidence_score,
                 leverage_min=scoped.leverage_min,
                 leverage_max=scoped.leverage_max,
@@ -3349,7 +3439,16 @@ class FuturesRuntime:
         contract = self.client.get_contract_detail(symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         capital_multiplier, capital_scaling = self._capital_scaling_multiplier()
-        margin_budget = scoped.margin_budget_usdt * capital_multiplier
+        event_margin_multiplier = sharp_event_margin_multiplier(signal_metadata, 1.0)
+        margin_budget = scoped.margin_budget_usdt * capital_multiplier * event_margin_multiplier
+        if event_margin_multiplier < 1.0:
+            log.info(
+                "[SHARP_EVENT_RISK] symbol=%s multiplier=%.2f margin_budget=%.2f base_margin_budget=%.2f",
+                symbol,
+                event_margin_multiplier,
+                margin_budget,
+                scoped.margin_budget_usdt,
+            )
         if capital_multiplier > 1.0:
             log.info(
                 "[CAPITAL_SCALE] symbol=%s multiplier=%.2f margin_budget=%.2f base_margin_budget=%.2f clean_fills=%s pf=%s win_rate=%s",

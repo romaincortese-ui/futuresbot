@@ -230,6 +230,17 @@ def parse_symbol_list(raw: str, fallback: str) -> tuple[str, ...]:
     return tuple(seen) if seen else (fallback.upper(),)
 
 
+def parse_optional_symbol_list(raw: str) -> tuple[str, ...]:
+    """Parse a comma/whitespace-separated symbol list; empty input stays empty."""
+
+    seen: list[str] = []
+    for part in raw.replace(",", " ").split():
+        symbol = part.strip().upper()
+        if symbol and symbol not in seen:
+            seen.append(symbol)
+    return tuple(seen)
+
+
 def parse_correlation_buckets(raw: str) -> dict[str, str]:
     """Parse ``SYMBOL:bucket,SYMBOL:bucket`` into a dict.
 
@@ -364,6 +375,12 @@ class FuturesConfig:
     crypto_event_threshold_relief: float = 4.0
     crypto_event_score_boost: float = 5.0
     crypto_event_adverse_score_penalty: float = 4.0
+    sharp_event_overlay_enabled: bool = False
+    sharp_event_overlay_symbols: tuple[str, ...] = ()
+    sharp_event_overlay_top_n: int = 60
+    sharp_event_overlay_refresh_seconds: int = 900
+    sharp_event_overlay_risk_multiplier: float = 0.35
+    sharp_event_bypass_symbol_calibration: bool = True
 
     @classmethod
     def from_env(cls) -> "FuturesConfig":
@@ -423,6 +440,12 @@ class FuturesConfig:
             crypto_event_threshold_relief=env_float("FUTURES_CRYPTO_EVENT_THRESHOLD_RELIEF", 4.0),
             crypto_event_score_boost=env_float("FUTURES_CRYPTO_EVENT_SCORE_BOOST", 5.0),
             crypto_event_adverse_score_penalty=env_float("FUTURES_CRYPTO_EVENT_ADVERSE_SCORE_PENALTY", 4.0),
+            sharp_event_overlay_enabled=env_bool("FUTURES_SHARP_EVENT_OVERLAY_ENABLED", False),
+            sharp_event_overlay_symbols=parse_optional_symbol_list(env_str("FUTURES_SHARP_EVENT_OVERLAY_SYMBOLS", "")),
+            sharp_event_overlay_top_n=max(1, min(100, env_int("FUTURES_SHARP_EVENT_OVERLAY_TOP_N", 60))),
+            sharp_event_overlay_refresh_seconds=max(60, env_int("FUTURES_SHARP_EVENT_OVERLAY_REFRESH_SECONDS", 900)),
+            sharp_event_overlay_risk_multiplier=max(0.0, min(1.0, env_float("FUTURES_SHARP_EVENT_RISK_MULTIPLIER", 0.35))),
+            sharp_event_bypass_symbol_calibration=env_bool("FUTURES_SHARP_EVENT_BYPASS_SYMBOL_CALIBRATION", True),
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=env_str("ANTHROPIC_API_KEY", ""),
             runtime_state_file=resolve_repo_path(env_str("FUTURES_RUNTIME_STATE_FILE", "futures_runtime_state.json")),
@@ -678,6 +701,10 @@ class FuturesBacktestConfig:
     early_exit_buffer_pct: float
     trailing_exit_drawdown_pct: float
     trailing_exit_activation_progress: float
+    sharp_event_overlay_enabled: bool = False
+    sharp_event_core_symbols: tuple[str, ...] = DEFAULT_FUTURES_SYMBOLS
+    sharp_event_overlay_risk_multiplier: float = 0.35
+    sharp_event_bypass_symbol_calibration: bool = True
     redis_url: str = ""
     anthropic_api_key: str = ""
 
@@ -725,6 +752,12 @@ class FuturesBacktestConfig:
             early_exit_buffer_pct=scoped.early_exit_buffer_pct,
             trailing_exit_drawdown_pct=scoped.trailing_exit_drawdown_pct,
             trailing_exit_activation_progress=scoped.trailing_exit_activation_progress,
+            sharp_event_overlay_enabled=live.sharp_event_overlay_enabled,
+            sharp_event_core_symbols=parse_optional_symbol_list(
+                env_str("FUTURES_SHARP_EVENT_CORE_SYMBOLS", "")
+            ) or DEFAULT_FUTURES_SYMBOLS,
+            sharp_event_overlay_risk_multiplier=live.sharp_event_overlay_risk_multiplier,
+            sharp_event_bypass_symbol_calibration=live.sharp_event_bypass_symbol_calibration,
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=live.anthropic_api_key,
         )

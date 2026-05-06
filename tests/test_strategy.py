@@ -40,6 +40,17 @@ def _frame_from_prices(prices: list[float]) -> pd.DataFrame:
     )
 
 
+def _disable_competing_entry_paths(monkeypatch):
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+
+
 def test_strategy_produces_long_signal_on_uptrend_breakout():
     base = [90000 + idx * 12 + math.sin(idx / 5.0) * 38 + math.cos(idx / 11.0) * 22 + ((idx % 5) - 2) * 14 for idx in range(520)]
     base[-20:-1] = [base[-21] + ((idx % 4) - 1) * 15 for idx in range(19)]
@@ -67,7 +78,99 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
 
 
+def test_major_threshold_long_covers_btc_sol_eth(monkeypatch):
+    _disable_competing_entry_paths(monkeypatch)
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_VOLUME_FLOOR", "0.10")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_TREND_24H_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_TREND_6H_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_1H_LONG_MAX", "100")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_15_LONG_MAX", "100")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_MAX_EMA_EXTENSION_ATR", "12.0")
+
+    cases = [
+        ("BTC_USDT", 79000.0, 76000.0, 140.0, 120.0, 240.0),
+        ("ETH_USDT", 2500.0, 2320.0, 5.0, 7.0, 12.0),
+        ("SOL_USDT", 150.0, 139.0, 0.35, 0.55, 0.85),
+    ]
+    for symbol, level, start, prior_gap, first_break, second_break in cases:
+        step = (level - prior_gap - start) / 517.0
+        prices = [start + idx * step + math.sin(idx / 9.0) * prior_gap * 0.05 for idx in range(518)]
+        prices[-1] = level - prior_gap
+        prices.extend([level + first_break, level + second_break])
+        signal = score_btc_futures_setup(
+            _frame_from_prices(prices),
+            replace(_config(), symbol=symbol, min_confidence_score=58.0, min_reward_risk=0.8),
+        )
+
+        assert signal is not None, symbol
+        assert signal.side == "LONG"
+        assert signal.entry_signal == "MAJOR_THRESHOLD_LONG"
+        assert signal.metadata["major_threshold"] == 1.0
+        assert signal.metadata["major_threshold_level"] == level
+        assert signal.sl_price < level < signal.entry_price
+
+
+def test_major_threshold_short_covers_btc_sol_eth(monkeypatch):
+    _disable_competing_entry_paths(monkeypatch)
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_VOLUME_FLOOR", "0.10")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_TREND_24H_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_TREND_6H_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_1H_SHORT_MAX", "100")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_15_SHORT_MAX", "100")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_1H_SHORT_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_15_SHORT_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_MAX_EMA_EXTENSION_ATR", "12.0")
+
+    cases = [
+        ("BTC_USDT", 77000.0, 80500.0, 140.0, 120.0, 240.0),
+        ("ETH_USDT", 2400.0, 2580.0, 5.0, 7.0, 12.0),
+        ("SOL_USDT", 140.0, 151.0, 0.35, 0.55, 0.85),
+    ]
+    for symbol, level, start, prior_gap, first_break, second_break in cases:
+        step = (start - (level + prior_gap)) / 517.0
+        prices = [start - idx * step + math.sin(idx / 9.0) * prior_gap * 0.05 for idx in range(518)]
+        prices[-1] = level + prior_gap
+        prices.extend([level - first_break, level - second_break])
+        signal = score_btc_futures_setup(
+            _frame_from_prices(prices),
+            replace(_config(), symbol=symbol, min_confidence_score=58.0, min_reward_risk=0.8),
+        )
+
+        assert signal is not None, symbol
+        assert signal.side == "SHORT"
+        assert signal.entry_signal == "MAJOR_THRESHOLD_SHORT"
+        assert signal.metadata["major_threshold"] == 1.0
+        assert signal.metadata["major_threshold_level"] == level
+        assert signal.entry_price < level < signal.sl_price
+
+
+def test_major_threshold_defaults_do_not_cover_unlisted_symbol(monkeypatch):
+    _disable_competing_entry_paths(monkeypatch)
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_VOLUME_FLOOR", "0.10")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_TREND_24H_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_TREND_6H_MIN", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_1H_LONG_MAX", "100")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_RSI_15_LONG_MAX", "100")
+    prices = [620 + idx * 0.35 + math.sin(idx / 9.0) * 1.2 for idx in range(518)]
+    prices[-1] = 699.0
+    prices.extend([701.5, 703.0])
+
+    signal = score_btc_futures_setup(
+        _frame_from_prices(prices),
+        replace(_config(), symbol="BNB_USDT", min_confidence_score=58.0, min_reward_risk=0.8),
+    )
+
+    assert signal is None
+
+
 def test_strategy_produces_btc_breakout_hold_long(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "1")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_VOLUME_FLOOR", "0.40")
@@ -91,6 +194,7 @@ def test_strategy_produces_btc_breakout_hold_long(monkeypatch):
 
 
 def test_btc_breakout_hold_counts_shelf_volume_after_quiet_reclaim(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "1")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_VOLUME_FLOOR", "0.65")
@@ -138,6 +242,7 @@ def test_btc_breakout_hold_counts_shelf_volume_after_quiet_reclaim(monkeypatch):
 
 
 def test_strategy_rejoins_btc_round_level_break(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", "1")
     monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_VOLUME_FLOOR", "0.20")
@@ -179,6 +284,7 @@ def test_strategy_rejoins_btc_round_level_break(monkeypatch):
 
 
 def test_btc_short_guard_blocks_impulse_short_in_bullish_context(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "1")
     monkeypatch.setenv("FUTURES_IMPULSE_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_ATR", "0.30")
@@ -224,6 +330,7 @@ def test_strategy_produces_short_signal_on_downtrend_breakdown():
 
 
 def test_strategy_produces_impulse_event_continuation_long(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "1")
     monkeypatch.setenv("FUTURES_IMPULSE_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_ATR", "0.50")
@@ -246,6 +353,7 @@ def test_strategy_produces_impulse_event_continuation_long(monkeypatch):
 
 
 def test_strategy_produces_impulse_event_continuation_short(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "1")
     monkeypatch.setenv("FUTURES_IMPULSE_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_ATR", "0.50")
@@ -314,6 +422,7 @@ def test_strategy_produces_tao_range_expansion_short(monkeypatch):
 
 
 def test_strategy_produces_level_break_long_for_non_btc_pair(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "1")
     monkeypatch.setenv("FUTURES_LEVEL_BREAK_SYMBOLS", "ETH_USDT")
     monkeypatch.setenv("FUTURES_ETHUSDT_LEVEL_BREAK_ADX_MIN", "0")

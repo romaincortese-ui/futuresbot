@@ -14,6 +14,13 @@ from futuresbot.config import FuturesBacktestConfig
 from futuresbot.exits import evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
+from futuresbot.sharp_opportunity import (
+	annotate_sharp_event_signal,
+	build_sharp_event_signal,
+	evaluate_sharp_opportunity_overlay,
+	sharp_event_margin_multiplier,
+	sharp_event_signal_allowed,
+)
 from futuresbot.strategy import score_btc_futures_setup
 
 
@@ -150,8 +157,8 @@ class FuturesBacktestEngine:
 		self.contract_size = float(self.contract.get("contractSize", 0.0001) or 0.0001)
 		self.min_vol = int(float(self.contract.get("minVol", 1) or 1))
 
-	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None) -> tuple[int, float, int]:
-		margin = min(self.config.margin_budget_usdt, balance)
+	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0) -> tuple[int, float, int]:
+		margin = min(self.config.margin_budget_usdt * max(0.0, min(1.0, float(margin_multiplier or 0.0))), balance)
 		if entry_price <= 0 or leverage <= 0 or margin <= 0:
 			return 0, 0.0, leverage
 		# §2.1 — NAV-risk sizing. When USE_NAV_RISK_SIZING=1 the contract count
@@ -196,8 +203,9 @@ class FuturesBacktestEngine:
 		return position.base_qty * (price - position.entry_price) * direction
 
 	def _open_position(self, signal: FuturesSignal, entry_time: pd.Timestamp, entry_price: float, balance: float) -> FuturesPosition | None:
+		margin_multiplier = sharp_event_margin_multiplier(signal.metadata, 1.0)
 		contracts, used_margin, applied_leverage = self._contracts_for_entry(
-			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price),
+			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price), margin_multiplier=margin_multiplier,
 		)
 		if contracts <= 0:
 			return None
@@ -319,11 +327,38 @@ class FuturesBacktestEngine:
 			"funding_usdt": round(float(funding_usdt), 8),
 			"slippage_usdt": round(float(slippage_usdt), 8),
 			"liquidated": bool(liquidated),
+			"sharp_event_overlay": bool((position.metadata or {}).get("sharp_event_overlay")),
+			"sharp_event_reason": str((position.metadata or {}).get("sharp_event_reason") or ""),
 		}
+
+	def _sharp_event_candidate_decision(self, frame_15m: pd.DataFrame) -> Any | None:
+		if not self.config.sharp_event_overlay_enabled:
+			return None
+		if self.config.symbol.upper() in {sym.upper() for sym in self.config.sharp_event_core_symbols}:
+			return None
+		return evaluate_sharp_opportunity_overlay(
+			frame_15m,
+			symbol=self.config.symbol,
+			core_symbols=self.config.sharp_event_core_symbols,
+			enabled=True,
+			risk_multiplier=self.config.sharp_event_overlay_risk_multiplier,
+		)
+
+	def _calibration_for_signal(self, signal: FuturesSignal) -> Mapping[str, Any] | None:
+		if (
+			self.config.sharp_event_bypass_symbol_calibration
+			and float((signal.metadata or {}).get("sharp_event_bypass_symbol_calibration") or 0.0) >= 1.0
+		):
+			return None
+		return self.calibration
 
 	def _bar_exit(self, position: FuturesPosition, bar: pd.Series) -> tuple[float, str] | None:
 		high = float(bar["high"])
 		low = float(bar["low"])
+		metadata = position.metadata or {}
+		trailing_activation_progress = float(metadata.get("trailing_exit_activation_progress", self.config.trailing_exit_activation_progress) or self.config.trailing_exit_activation_progress)
+		trailing_min_profit_pct = float(metadata.get("early_exit_min_profit_pct", self.config.early_exit_min_profit_pct) or self.config.early_exit_min_profit_pct)
+		trailing_drawdown_pct = float(metadata.get("trailing_exit_drawdown_pct", self.config.trailing_exit_drawdown_pct) or self.config.trailing_exit_drawdown_pct)
 		# Sprint 2 §3.1 — liquidation check fires before TP/SL when flag on.
 		if os.environ.get("USE_REALISTIC_BACKTEST", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
 			try:
@@ -354,9 +389,9 @@ class FuturesBacktestEngine:
 				position,
 				high=high,
 				low=low,
-				activation_progress=self.config.trailing_exit_activation_progress,
-				min_profit_pct=self.config.early_exit_min_profit_pct,
-				drawdown_pct=self.config.trailing_exit_drawdown_pct,
+				activation_progress=trailing_activation_progress,
+				min_profit_pct=trailing_min_profit_pct,
+				drawdown_pct=trailing_drawdown_pct,
 			)
 			if trailing_exit is not None:
 				return trailing_exit
@@ -369,9 +404,9 @@ class FuturesBacktestEngine:
 			position,
 			high=high,
 			low=low,
-			activation_progress=self.config.trailing_exit_activation_progress,
-			min_profit_pct=self.config.early_exit_min_profit_pct,
-			drawdown_pct=self.config.trailing_exit_drawdown_pct,
+			activation_progress=trailing_activation_progress,
+			min_profit_pct=trailing_min_profit_pct,
+			drawdown_pct=trailing_drawdown_pct,
 		)
 		if trailing_exit is not None:
 			return trailing_exit
@@ -445,16 +480,42 @@ class FuturesBacktestEngine:
 					state.open_position = None
 
 			if state.open_position is None and close_time.minute == 0 and index + 1 < len(frame_15m):
-				raw_signal = score_btc_futures_setup(
-					frame_15m.iloc[: index + 1],
-					self.config,
-					long_threshold_offset=self.config.long_threshold_offset,
-					short_threshold_offset=self.config.short_threshold_offset,
-				)
+				frame_slice = frame_15m.iloc[: index + 1]
+				sharp_decision = self._sharp_event_candidate_decision(frame_slice)
+				sharp_active = bool(sharp_decision is not None and sharp_decision.allowed)
+				raw_signal = None
+				if sharp_decision is None or sharp_decision.allowed:
+					raw_signal = score_btc_futures_setup(
+						frame_slice,
+						self.config,
+						long_threshold_offset=self.config.long_threshold_offset,
+						short_threshold_offset=self.config.short_threshold_offset,
+						sharp_event_overlay_active=sharp_active,
+					)
+					if raw_signal is not None and sharp_decision is not None:
+						if not sharp_event_signal_allowed(raw_signal, sharp_decision):
+							raw_signal = None
+						else:
+							raw_signal = annotate_sharp_event_signal(
+								raw_signal,
+								sharp_decision,
+								bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
+							)
+					if sharp_decision is not None:
+						min_remaining_bars = max(0, int(_env_float("FUTURES_SHARP_EVENT_BACKTEST_MIN_REMAINING_BARS", 16.0)))
+						if len(frame_15m) - index - 1 >= min_remaining_bars:
+							raw_signal = build_sharp_event_signal(
+								frame_slice,
+								self.config,
+								sharp_decision,
+								bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
+							)
+						else:
+							raw_signal = None
 				calibrated = (
 					apply_signal_calibration(
 						raw_signal,
-						self.calibration,
+						self._calibration_for_signal(raw_signal),
 						base_threshold=self.config.min_confidence_score,
 						leverage_min=self.config.leverage_min,
 						leverage_max=self.config.leverage_max,

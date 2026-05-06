@@ -46,6 +46,43 @@ _LEVEL_BREAK_SYMBOL_DEFAULTS: dict[str, dict[str, float]] = {
 _BTC_ROUND_LEVEL_SYMBOLS = "BTC_USDT"
 
 
+_MAJOR_THRESHOLD_DEFAULT_SYMBOLS = "BTC_USDT,SOL_USDT,ETH_USDT"
+
+
+_MAJOR_THRESHOLD_SYMBOL_DEFAULTS: dict[str, dict[str, float]] = {
+    "BTC_USDT": {
+        "GRID": 1000.0,
+        "LOOKBACK_BARS": 288.0,
+        "STOP_PCT": 0.0070,
+        "MIN_STOP_PCT": 0.0045,
+        "MAX_STOP_PCT": 0.0120,
+        "TP_GRID_MULT": 6.0,
+        "TP_FLOOR_PCT": 0.055,
+        "LEVERAGE_MAX": 8.0,
+    },
+    "ETH_USDT": {
+        "GRID": 100.0,
+        "LOOKBACK_BARS": 288.0,
+        "STOP_PCT": 0.0090,
+        "MIN_STOP_PCT": 0.0055,
+        "MAX_STOP_PCT": 0.0140,
+        "TP_GRID_MULT": 4.0,
+        "TP_FLOOR_PCT": 0.045,
+        "LEVERAGE_MAX": 8.0,
+    },
+    "SOL_USDT": {
+        "GRID": 5.0,
+        "LOOKBACK_BARS": 288.0,
+        "STOP_PCT": 0.0100,
+        "MIN_STOP_PCT": 0.0060,
+        "MAX_STOP_PCT": 0.0160,
+        "TP_GRID_MULT": 4.0,
+        "TP_FLOOR_PCT": 0.045,
+        "LEVERAGE_MAX": 8.0,
+    },
+}
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -80,6 +117,17 @@ def _level_break_float(symbol: str, suffix: str, default: float) -> float:
 
 def _level_break_int(symbol: str, suffix: str, default: int) -> int:
     return int(max(1.0, round(_level_break_float(symbol, suffix, float(default)))))
+
+
+def _major_threshold_float(symbol: str, suffix: str, default: float) -> float:
+    symbol_defaults = _MAJOR_THRESHOLD_SYMBOL_DEFAULTS.get(symbol.upper(), {})
+    value = float(symbol_defaults.get(suffix, default))
+    value = _env_float(f"FUTURES_MAJOR_THRESHOLD_{suffix}", value)
+    return _env_float(f"FUTURES_{_symbol_env_prefix(symbol)}_MAJOR_THRESHOLD_{suffix}", value)
+
+
+def _major_threshold_int(symbol: str, suffix: str, default: int) -> int:
+    return int(max(1.0, round(_major_threshold_float(symbol, suffix, float(default)))))
 
 
 def _parse_entry_signal_list(raw: str | None) -> set[str]:
@@ -395,6 +443,7 @@ def score_btc_futures_setup(
     event_bias_score: float = 0.0,
     event_max_severity: float = 0.0,
     event_count: int = 0,
+    sharp_event_overlay_active: bool = False,
 ) -> FuturesSignal | None:
     if frame_15m is None or len(frame_15m) < 220:
         return None
@@ -604,7 +653,7 @@ def score_btc_futures_setup(
         "FUTURES_RANGE_EXPANSION_SYMBOLS",
         getattr(config, "symbol", ""),
         "TAO_USDT",
-    )
+    ) or bool(sharp_event_overlay_active)
     range_min_range_pct = _env_float("FUTURES_RANGE_EXPANSION_MIN_RANGE_PCT", 0.018)
     range_max_range_pct = _env_float("FUTURES_RANGE_EXPANSION_MAX_RANGE_PCT", 0.055)
     range_min_trend_24h = _env_float("FUTURES_RANGE_EXPANSION_MIN_TREND_24H", 0.018)
@@ -757,6 +806,134 @@ def score_btc_futures_setup(
         and (trend_24h > 0 or trend_6h > 0)
     )
 
+    major_threshold_enabled = _env_bool("FUTURES_MAJOR_THRESHOLD_ENABLED", True)
+    major_threshold_symbol_ok = _symbol_enabled(
+        "FUTURES_MAJOR_THRESHOLD_SYMBOLS",
+        symbol_name,
+        _MAJOR_THRESHOLD_DEFAULT_SYMBOLS,
+    )
+    major_threshold_grid = max(1e-9, _major_threshold_float(symbol_name, "GRID", 1000.0))
+    major_threshold_long_level = math.floor(current_price / major_threshold_grid) * major_threshold_grid if current_price > 0 else 0.0
+    major_threshold_short_level = math.ceil(current_price / major_threshold_grid) * major_threshold_grid if current_price > 0 else 0.0
+    major_threshold_lookback = max(24, _major_threshold_int(symbol_name, "LOOKBACK_BARS", 288))
+    major_threshold_confirm_bars = max(1, _major_threshold_int(symbol_name, "CONFIRM_BARS", 2))
+    major_threshold_buffer = max(
+        current_atr_15 * _major_threshold_float(symbol_name, "BUFFER_ATR", 0.08),
+        current_price * _major_threshold_float(symbol_name, "BUFFER_PCT", 0.00035),
+    )
+    major_threshold_recent_low = 0.0
+    major_threshold_recent_high = 0.0
+    major_threshold_long_close_ratio = 0.0
+    major_threshold_short_close_ratio = 0.0
+    major_threshold_long_recently_crossed = False
+    major_threshold_short_recently_crossed = False
+    major_threshold_long_move_pct = 0.0
+    major_threshold_short_move_pct = 0.0
+    major_threshold_long_move_atr = 0.0
+    major_threshold_short_move_atr = 0.0
+    major_threshold_volume_ratio = max(volume_ratio, impulse_window_volume_ratio)
+    if len(frame_15m) > major_threshold_lookback + major_threshold_confirm_bars:
+        threshold_prior = frame_15m.iloc[-(major_threshold_lookback + major_threshold_confirm_bars):-major_threshold_confirm_bars]
+        threshold_confirmation = frame_15m.iloc[-major_threshold_confirm_bars:]
+        if not threshold_prior.empty and not threshold_confirmation.empty:
+            confirmation_close = threshold_confirmation["close"].astype(float)
+            confirmation_high = threshold_confirmation["high"].astype(float)
+            confirmation_low = threshold_confirmation["low"].astype(float)
+            prior_close = threshold_prior["close"].astype(float)
+            major_threshold_recent_low = float(confirmation_low.min())
+            major_threshold_recent_high = float(confirmation_high.max())
+            major_threshold_long_close_ratio = float(
+                (confirmation_close >= major_threshold_long_level + major_threshold_buffer * 0.25).mean()
+            ) if major_threshold_long_level > 0 else 0.0
+            major_threshold_short_close_ratio = float(
+                (confirmation_close <= major_threshold_short_level - major_threshold_buffer * 0.25).mean()
+            ) if major_threshold_short_level > 0 else 0.0
+            prior_close_max = float(prior_close.max())
+            prior_close_min = float(prior_close.min())
+            major_threshold_long_recently_crossed = (
+                major_threshold_long_level > 0
+                and prior_close_max <= major_threshold_long_level - major_threshold_buffer * 0.10
+            )
+            major_threshold_short_recently_crossed = (
+                major_threshold_short_level > 0
+                and prior_close_min >= major_threshold_short_level + major_threshold_buffer * 0.10
+            )
+            prior_volume = threshold_prior["volume"].astype(float)
+            prior_volume_mean = float(prior_volume.mean()) if not prior_volume.empty else volume_baseline
+            confirmation_volume = float(threshold_confirmation["volume"].astype(float).sum())
+            threshold_volume_ratio = confirmation_volume / max(1e-9, prior_volume_mean * len(threshold_confirmation))
+            major_threshold_volume_ratio = max(major_threshold_volume_ratio, threshold_volume_ratio)
+    if major_threshold_long_level > 0:
+        major_threshold_long_move_pct = (current_price / major_threshold_long_level) - 1.0
+        major_threshold_long_move_atr = (current_price - major_threshold_long_level) / current_atr_15 if current_atr_15 > 0 else 0.0
+    if major_threshold_short_level > 0:
+        major_threshold_short_move_pct = (major_threshold_short_level / current_price) - 1.0 if current_price > 0 else 0.0
+        major_threshold_short_move_atr = (major_threshold_short_level - current_price) / current_atr_15 if current_atr_15 > 0 else 0.0
+
+    major_threshold_min_close_ratio = _major_threshold_float(symbol_name, "MIN_CLOSE_RATIO", 1.00)
+    major_threshold_min_price = _major_threshold_float(symbol_name, "MIN_PRICE", 0.0)
+    major_threshold_volume_floor = _major_threshold_float(symbol_name, "VOLUME_FLOOR", 0.35)
+    major_threshold_adx_min = _major_threshold_float(symbol_name, "ADX_MIN", 10.0)
+    major_threshold_trend_24h_min = _major_threshold_float(symbol_name, "TREND_24H_MIN", 0.002)
+    major_threshold_trend_6h_min = _major_threshold_float(symbol_name, "TREND_6H_MIN", 0.0005)
+    major_threshold_rsi_1h_long_min = _major_threshold_float(symbol_name, "RSI_1H_LONG_MIN", 48.0)
+    major_threshold_rsi_1h_long_max = _major_threshold_float(symbol_name, "RSI_1H_LONG_MAX", 88.0)
+    major_threshold_rsi_1h_short_min = _major_threshold_float(symbol_name, "RSI_1H_SHORT_MIN", 12.0)
+    major_threshold_rsi_1h_short_max = _major_threshold_float(symbol_name, "RSI_1H_SHORT_MAX", 52.0)
+    major_threshold_rsi_15_long_min = _major_threshold_float(symbol_name, "RSI_15_LONG_MIN", 43.0)
+    major_threshold_rsi_15_long_max = _major_threshold_float(symbol_name, "RSI_15_LONG_MAX", 92.0)
+    major_threshold_rsi_15_short_min = _major_threshold_float(symbol_name, "RSI_15_SHORT_MIN", 8.0)
+    major_threshold_rsi_15_short_max = _major_threshold_float(symbol_name, "RSI_15_SHORT_MAX", 57.0)
+    major_threshold_max_extension_atr = _major_threshold_float(symbol_name, "MAX_EMA_EXTENSION_ATR", 6.0)
+    major_threshold_max_move_atr = _major_threshold_float(symbol_name, "MAX_MOVE_ATR", 6.5)
+    major_threshold_min_move_atr = _major_threshold_float(symbol_name, "MIN_MOVE_ATR", 0.10)
+    major_threshold_min_move_pct = _major_threshold_float(symbol_name, "MIN_MOVE_PCT", 0.0008)
+    major_threshold_long_ok = (
+        major_threshold_enabled
+        and major_threshold_symbol_ok
+        and major_threshold_long_level > 0
+        and major_threshold_long_level >= major_threshold_min_price
+        and current_price >= major_threshold_long_level + major_threshold_buffer
+        and major_threshold_long_recently_crossed
+        and major_threshold_long_close_ratio >= major_threshold_min_close_ratio
+        and major_threshold_long_move_pct >= major_threshold_min_move_pct
+        and major_threshold_long_move_atr >= major_threshold_min_move_atr
+        and major_threshold_long_move_atr <= major_threshold_max_move_atr
+        and major_threshold_volume_ratio >= major_threshold_volume_floor
+        and current_adx >= major_threshold_adx_min
+        and trend_24h >= major_threshold_trend_24h_min
+        and trend_6h >= major_threshold_trend_6h_min
+        and current_rsi_1h >= major_threshold_rsi_1h_long_min
+        and current_rsi_1h <= major_threshold_rsi_1h_long_max
+        and current_rsi_15 >= major_threshold_rsi_15_long_min
+        and current_rsi_15 <= major_threshold_rsi_15_long_max
+        and (current_price > current_ema20 or ema_slope > 0)
+        and impulse_ema_extension <= major_threshold_max_extension_atr
+    )
+    major_threshold_short_ok = (
+        major_threshold_enabled
+        and major_threshold_symbol_ok
+        and major_threshold_short_level > 0
+        and major_threshold_short_level >= major_threshold_min_price
+        and current_price <= major_threshold_short_level - major_threshold_buffer
+        and major_threshold_short_recently_crossed
+        and major_threshold_short_close_ratio >= major_threshold_min_close_ratio
+        and major_threshold_short_move_pct >= major_threshold_min_move_pct
+        and major_threshold_short_move_atr >= major_threshold_min_move_atr
+        and major_threshold_short_move_atr <= major_threshold_max_move_atr
+        and major_threshold_volume_ratio >= major_threshold_volume_floor
+        and current_adx >= major_threshold_adx_min
+        and trend_24h <= -major_threshold_trend_24h_min
+        and trend_6h <= -major_threshold_trend_6h_min
+        and current_rsi_1h >= major_threshold_rsi_1h_short_min
+        and current_rsi_1h <= major_threshold_rsi_1h_short_max
+        and current_rsi_15 >= major_threshold_rsi_15_short_min
+        and current_rsi_15 <= major_threshold_rsi_15_short_max
+        and (current_price < current_ema20 or ema_slope < 0)
+        and impulse_ema_extension <= major_threshold_max_extension_atr
+        and not btc_short_uptrend_guard_active
+    )
+
     btc_round_level_enabled = _env_bool("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", True)
     btc_round_level_symbol_ok = _symbol_enabled(
         "FUTURES_BTC_ROUND_LEVEL_SYMBOLS",
@@ -842,7 +1019,7 @@ def score_btc_futures_setup(
         "FUTURES_LEVEL_BREAK_SYMBOLS",
         symbol_name,
         _LEVEL_BREAK_DEFAULT_SYMBOLS,
-    )
+    ) or bool(sharp_event_overlay_active)
     level_break_lookback = max(24, _level_break_int(symbol_name, "LOOKBACK_BARS", 96))
     level_break_confirm_bars = max(1, _level_break_int(symbol_name, "CONFIRM_BARS", 2))
     level_break_exclude_bars = max(
@@ -937,7 +1114,7 @@ def score_btc_futures_setup(
         "FUTURES_BREAKAWAY_SYMBOLS",
         getattr(config, "symbol", ""),
         "BTC_USDT,ETH_USDT,PEPE_USDT,TAO_USDT,BCH_USDT,SEI_USDT",
-    )
+    ) or bool(sharp_event_overlay_active)
     breakaway_enabled = _env_bool("FUTURES_BREAKAWAY_ENABLED", True) and breakaway_symbol_ok
     breakaway_min_move_pct = _env_float("FUTURES_BREAKAWAY_MIN_MOVE_PCT", 0.006)
     breakaway_min_move_atr = _env_float("FUTURES_BREAKAWAY_MIN_MOVE_ATR", 1.45)
@@ -1114,7 +1291,17 @@ def score_btc_futures_setup(
     )
 
     long_score = 40.0
-    if btc_round_level_long_ok:
+    if major_threshold_long_ok:
+        long_score += _major_threshold_float(symbol_name, "SCORE_BONUS", 18.0)
+        long_score += min(18.0, max(0.0, major_threshold_long_move_atr * 4.5))
+        long_score += min(14.0, max(0.0, major_threshold_long_move_pct * 1800.0))
+        long_score += min(10.0, max(0.0, trend_24h * 300.0))
+        long_score += min(8.0, max(0.0, trend_6h * 700.0))
+        long_score += min(7.0, max(0.0, (current_adx - major_threshold_adx_min) * 0.7))
+        long_score += min(6.0, max(0.0, (major_threshold_volume_ratio - major_threshold_volume_floor) * 7.0))
+        long_score += min(5.0, max(0.0, major_threshold_long_close_ratio * 5.0))
+        long_score += 3.0 if current_price > current_ema20 or ema_slope > 0 else 0.0
+    elif btc_round_level_long_ok:
         long_score += _env_float("FUTURES_BTC_ROUND_LEVEL_SCORE_BONUS", 14.0)
         long_score += min(14.0, max(0.0, btc_round_level_move_atr * 4.0))
         long_score += min(10.0, max(0.0, btc_round_level_move_pct * 1800.0))
@@ -1195,7 +1382,17 @@ def score_btc_futures_setup(
         long_score -= event_penalty
 
     short_score = 40.0
-    if short_ok:
+    if major_threshold_short_ok:
+        short_score += _major_threshold_float(symbol_name, "SHORT_SCORE_BONUS", _major_threshold_float(symbol_name, "SCORE_BONUS", 18.0))
+        short_score += min(18.0, max(0.0, major_threshold_short_move_atr * 4.5))
+        short_score += min(14.0, max(0.0, major_threshold_short_move_pct * 1800.0))
+        short_score += min(10.0, max(0.0, abs(trend_24h) * 300.0))
+        short_score += min(8.0, max(0.0, abs(trend_6h) * 700.0))
+        short_score += min(7.0, max(0.0, (current_adx - major_threshold_adx_min) * 0.7))
+        short_score += min(6.0, max(0.0, (major_threshold_volume_ratio - major_threshold_volume_floor) * 7.0))
+        short_score += min(5.0, max(0.0, major_threshold_short_close_ratio * 5.0))
+        short_score += 3.0 if current_price < current_ema20 or ema_slope < 0 else 0.0
+    elif short_ok:
         short_score += min(18.0, max(0.0, (current_adx - config.adx_floor) * 1.25))
         short_score += min(16.0, max(0.0, abs(trend_24h) * 240.0))
         short_score += min(12.0, max(0.0, abs(trend_6h) * 420.0))
@@ -1264,14 +1461,45 @@ def score_btc_futures_setup(
 
     def build_direction(side: str) -> FuturesSignal | None:
         if side == "LONG":
-            btc_round_level_path = btc_round_level_long_ok
-            impulse_path = impulse_long_ok and not (btc_round_level_path or long_ok or continuation_long_ok)
-            breakout_hold_path = breakout_hold_long_ok and not (btc_round_level_path or long_ok or continuation_long_ok or impulse_long_ok)
-            level_break_path = level_break_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or btc_round_level_path)
-            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path)
-            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok)
-            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok or range_expansion_long_ok)
-            if breakout_hold_path:
+            major_threshold_path = major_threshold_long_ok
+            btc_round_level_path = btc_round_level_long_ok and not major_threshold_path
+            impulse_path = impulse_long_ok and not (major_threshold_path or btc_round_level_path or long_ok or continuation_long_ok)
+            breakout_hold_path = breakout_hold_long_ok and not (major_threshold_path or btc_round_level_path or long_ok or continuation_long_ok or impulse_long_ok)
+            level_break_path = level_break_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or btc_round_level_path or major_threshold_path)
+            breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or major_threshold_path)
+            range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok or major_threshold_path)
+            event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok or range_expansion_long_ok or major_threshold_path)
+            if major_threshold_path:
+                configured_cap = _major_threshold_float(symbol_name, "LEVERAGE_MAX", 8.0)
+                hard_cap = _major_threshold_float(symbol_name, "HARD_LEVERAGE_MAX", configured_cap)
+                leverage_max = max(1, int(min(float(config.leverage_max), configured_cap, hard_cap)))
+                leverage_min = min(config.leverage_min, leverage_max)
+                target_from_grid = major_threshold_long_level + major_threshold_grid * _major_threshold_float(symbol_name, "TP_GRID_MULT", 4.0)
+                tp_move = max(
+                    _major_threshold_float(symbol_name, "TP_ATR_MULT", 8.0) * current_atr_15,
+                    _major_threshold_float(symbol_name, "TP_FLOOR_PCT", 0.045) * current_price,
+                    max(0.0, target_from_grid - current_price),
+                )
+                stop_pct = _major_threshold_float(symbol_name, "STOP_PCT", 0.008)
+                min_stop_pct = _major_threshold_float(symbol_name, "MIN_STOP_PCT", 0.0045)
+                max_stop_pct = _major_threshold_float(symbol_name, "MAX_STOP_PCT", 0.014)
+                sl_price = max(
+                    major_threshold_long_level - current_atr_15 * _major_threshold_float(symbol_name, "SL_BUFFER_ATR", 0.55),
+                    major_threshold_recent_low - current_atr_15 * _major_threshold_float(symbol_name, "SWING_SL_BUFFER_ATR", 0.25),
+                    major_threshold_long_level * (1.0 - stop_pct),
+                    current_price * (1.0 - max_stop_pct),
+                )
+                threshold_stop_ceiling = major_threshold_long_level - max(
+                    current_atr_15 * _major_threshold_float(symbol_name, "SL_BUFFER_ATR", 0.55),
+                    major_threshold_buffer,
+                )
+                if sl_price >= current_price:
+                    sl_price = current_price - current_atr_15 * _major_threshold_float(symbol_name, "FALLBACK_SL_ATR", 3.0)
+                if sl_price >= major_threshold_long_level:
+                    sl_price = min(current_price * (1.0 - min_stop_pct), threshold_stop_ceiling)
+                if current_price > 0 and (current_price - sl_price) / current_price < min_stop_pct:
+                    sl_price = min(current_price * (1.0 - min_stop_pct), threshold_stop_ceiling)
+            elif breakout_hold_path:
                 default_cap = min(float(config.leverage_max), 12.0)
                 leverage_max = max(1, int(_env_float("FUTURES_BREAKOUT_HOLD_LEVERAGE_MAX", default_cap)))
                 leverage_min = min(config.leverage_min, leverage_max)
@@ -1334,7 +1562,8 @@ def score_btc_futures_setup(
             if risk <= 0:
                 return None
             if (
-                (breakout_hold_path and _env_bool("FUTURES_BREAKOUT_HOLD_EXTEND_TP_FOR_COST_BUDGET", True))
+                (major_threshold_path and _env_bool("FUTURES_MAJOR_THRESHOLD_EXTEND_TP_FOR_COST_BUDGET", True))
+                or (breakout_hold_path and _env_bool("FUTURES_BREAKOUT_HOLD_EXTEND_TP_FOR_COST_BUDGET", True))
                 or (level_break_path and _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True))
                 or (btc_round_level_path and _env_bool("FUTURES_BTC_ROUND_LEVEL_EXTEND_TP_FOR_COST_BUDGET", True))
             ):
@@ -1358,7 +1587,8 @@ def score_btc_futures_setup(
             if tp_move / risk < config.min_reward_risk:
                 return None
             entry_signal = (
-                "BTC_ROUND_LEVEL_LONG" if btc_round_level_path
+                "MAJOR_THRESHOLD_LONG" if major_threshold_path
+                else "BTC_ROUND_LEVEL_LONG" if btc_round_level_path
                 else "COIL_BREAKOUT_LONG" if long_ok and breakout_long
                 else "PRESSURE_BREAK_LONG" if long_ok and pressure_long
                 else "TREND_CONTINUATION_LONG" if continuation_long_ok
@@ -1407,6 +1637,16 @@ def score_btc_futures_setup(
                     "level_break_move_pct": round(level_break_long_move_pct, 6),
                     "level_break_move_atr": round(level_break_long_move_atr, 4),
                     "level_break_volume_ratio": round(level_break_volume_ratio, 4),
+                    "major_threshold": 1.0 if major_threshold_path else 0.0,
+                    "major_threshold_level": round(major_threshold_long_level, 10) if major_threshold_path else 0.0,
+                    "major_threshold_grid": round(major_threshold_grid, 10) if major_threshold_path else 0.0,
+                    "major_threshold_lookback_bars": float(major_threshold_lookback),
+                    "major_threshold_confirm_close_ratio": round(major_threshold_long_close_ratio, 4),
+                    "major_threshold_move_pct": round(major_threshold_long_move_pct, 6),
+                    "major_threshold_move_atr": round(major_threshold_long_move_atr, 4),
+                    "major_threshold_volume_ratio": round(major_threshold_volume_ratio, 4),
+                    "trailing_exit_activation_progress": _major_threshold_float(symbol_name, "TRAILING_ACTIVATION_PROGRESS", 0.45) if major_threshold_path else config.trailing_exit_activation_progress,
+                    "trailing_exit_drawdown_pct": _major_threshold_float(symbol_name, "TRAILING_DRAWDOWN_PCT", 0.018) if major_threshold_path else config.trailing_exit_drawdown_pct,
                     "btc_round_level": 1.0 if btc_round_level_path else 0.0,
                     "btc_round_level_price": round(btc_round_level, 2) if btc_round_level_path else 0.0,
                     "btc_round_level_confirm_close_ratio": round(btc_round_level_close_ratio, 4),
@@ -1423,12 +1663,43 @@ def score_btc_futures_setup(
                 },
             )
 
-        impulse_path = impulse_short_ok and not (short_ok or continuation_short_ok)
-        level_break_path = level_break_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok)
-        breakaway_path = breakaway_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or level_break_path)
-        range_expansion_path = range_expansion_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok)
-        event_path = event_catalyst_short_ok and not (short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok)
-        if level_break_path:
+        major_threshold_path = major_threshold_short_ok
+        impulse_path = impulse_short_ok and not (major_threshold_path or short_ok or continuation_short_ok)
+        level_break_path = level_break_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok)
+        breakaway_path = breakaway_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path)
+        range_expansion_path = range_expansion_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok)
+        event_path = event_catalyst_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok)
+        if major_threshold_path:
+            configured_cap = _major_threshold_float(symbol_name, "LEVERAGE_MAX", 8.0)
+            hard_cap = _major_threshold_float(symbol_name, "HARD_LEVERAGE_MAX", configured_cap)
+            leverage_max = max(1, int(min(float(config.leverage_max), configured_cap, hard_cap)))
+            leverage_min = min(config.leverage_min, leverage_max)
+            target_from_grid = major_threshold_short_level - major_threshold_grid * _major_threshold_float(symbol_name, "TP_GRID_MULT", 4.0)
+            tp_move = max(
+                _major_threshold_float(symbol_name, "TP_ATR_MULT", 8.0) * current_atr_15,
+                _major_threshold_float(symbol_name, "TP_FLOOR_PCT", 0.045) * current_price,
+                max(0.0, current_price - target_from_grid),
+            )
+            stop_pct = _major_threshold_float(symbol_name, "STOP_PCT", 0.008)
+            min_stop_pct = _major_threshold_float(symbol_name, "MIN_STOP_PCT", 0.0045)
+            max_stop_pct = _major_threshold_float(symbol_name, "MAX_STOP_PCT", 0.014)
+            sl_price = min(
+                major_threshold_short_level + current_atr_15 * _major_threshold_float(symbol_name, "SL_BUFFER_ATR", 0.55),
+                major_threshold_recent_high + current_atr_15 * _major_threshold_float(symbol_name, "SWING_SL_BUFFER_ATR", 0.25),
+                major_threshold_short_level * (1.0 + stop_pct),
+                current_price * (1.0 + max_stop_pct),
+            )
+            threshold_stop_floor = major_threshold_short_level + max(
+                current_atr_15 * _major_threshold_float(symbol_name, "SL_BUFFER_ATR", 0.55),
+                major_threshold_buffer,
+            )
+            if sl_price <= current_price:
+                sl_price = current_price + current_atr_15 * _major_threshold_float(symbol_name, "FALLBACK_SL_ATR", 3.0)
+            if sl_price <= major_threshold_short_level:
+                sl_price = max(current_price * (1.0 + min_stop_pct), threshold_stop_floor)
+            if current_price > 0 and (sl_price - current_price) / current_price < min_stop_pct:
+                sl_price = max(current_price * (1.0 + min_stop_pct), threshold_stop_floor)
+        elif level_break_path:
             default_cap = min(float(config.leverage_max), _level_break_float(symbol_name, "LEVERAGE_MAX", 8.0))
             leverage_max = max(1, int(_level_break_float(symbol_name, "LEVERAGE_MAX", default_cap)))
             leverage_min = min(config.leverage_min, leverage_max)
@@ -1463,8 +1734,10 @@ def score_btc_futures_setup(
         risk = sl_price - current_price
         if (
             risk > 0
-            and level_break_path
-            and _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True)
+            and (
+                (major_threshold_path and _env_bool("FUTURES_MAJOR_THRESHOLD_EXTEND_TP_FOR_COST_BUDGET", True))
+                or (level_break_path and _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True))
+            )
         ):
             sl_distance_pct = risk / current_price if current_price > 0 else 0.0
             projected_leverage = _leverage_for_signal_with_bounds(
@@ -1486,7 +1759,8 @@ def score_btc_futures_setup(
         if risk <= 0 or tp_move / risk < config.min_reward_risk:
             return None
         entry_signal = (
-            "COIL_BREAKDOWN_SHORT" if short_ok and breakout_short
+            "MAJOR_THRESHOLD_SHORT" if major_threshold_path
+            else "COIL_BREAKDOWN_SHORT" if short_ok and breakout_short
             else "PRESSURE_BREAK_SHORT" if short_ok and pressure_short
             else "TREND_CONTINUATION_SHORT" if continuation_short_ok
             else "LEVEL_BREAK_SHORT" if level_break_path
@@ -1524,6 +1798,16 @@ def score_btc_futures_setup(
                 "level_break_move_pct": round(level_break_short_move_pct, 6),
                 "level_break_move_atr": round(level_break_short_move_atr, 4),
                 "level_break_volume_ratio": round(level_break_volume_ratio, 4),
+                "major_threshold": 1.0 if major_threshold_path else 0.0,
+                "major_threshold_level": round(major_threshold_short_level, 10) if major_threshold_path else 0.0,
+                "major_threshold_grid": round(major_threshold_grid, 10) if major_threshold_path else 0.0,
+                "major_threshold_lookback_bars": float(major_threshold_lookback),
+                "major_threshold_confirm_close_ratio": round(major_threshold_short_close_ratio, 4),
+                "major_threshold_move_pct": round(major_threshold_short_move_pct, 6),
+                "major_threshold_move_atr": round(major_threshold_short_move_atr, 4),
+                "major_threshold_volume_ratio": round(major_threshold_volume_ratio, 4),
+                "trailing_exit_activation_progress": _major_threshold_float(symbol_name, "TRAILING_ACTIVATION_PROGRESS", 0.45) if major_threshold_path else config.trailing_exit_activation_progress,
+                "trailing_exit_drawdown_pct": _major_threshold_float(symbol_name, "TRAILING_DRAWDOWN_PCT", 0.018) if major_threshold_path else config.trailing_exit_drawdown_pct,
                 "breakaway": 1.0 if breakaway_path else 0.0,
                 "range_expansion": 1.0 if range_expansion_path else 0.0,
                 "event_catalyst": 1.0 if event_path else 0.0,

@@ -121,3 +121,19 @@ def test_close_position_omits_reduce_only_for_dual_side_mode(monkeypatch):
 
     assert captured["positionMode"] == 1
     assert captured["reduceOnly"] is None
+
+
+def test_get_all_tickers_normalizes_list_payload(monkeypatch):
+    client = _client()
+    rows = [{"symbol": "BTC_USDT"}, {"symbol": "ETH_USDT"}]
+    monkeypatch.setattr(client, "public_get", lambda path, params=None: {"success": True, "data": rows})
+
+    assert client.get_all_tickers() == rows
+
+
+def test_get_all_contract_details_normalizes_single_dict_payload(monkeypatch):
+    client = _client()
+    row = {"symbol": "BTC_USDT"}
+    monkeypatch.setattr(client, "public_get", lambda path, params=None: {"success": True, "data": row})
+
+    assert client.get_all_contract_details() == [row]

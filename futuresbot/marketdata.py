@@ -163,6 +163,20 @@ class MexcFuturesClient:
         payload = self.public_get("/api/v1/contract/ticker", {"symbol": symbol})
         return payload.get("data", {}) if isinstance(payload, dict) else {}
 
+    def get_all_tickers(self) -> list[dict[str, Any]]:
+        payload = self.public_get("/api/v1/contract/ticker")
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+        return [data] if isinstance(data, dict) else []
+
+    def get_all_contract_details(self) -> list[dict[str, Any]]:
+        payload = self.public_get("/api/v1/contract/detail")
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+        return [data] if isinstance(data, dict) else []
+
     def get_fair_price(self, symbol: str) -> float:
         payload = self.public_get(f"/api/v1/contract/fair_price/{symbol}")
         return float((payload.get("data", {}) or {}).get("fairPrice", 0.0) or 0.0)
