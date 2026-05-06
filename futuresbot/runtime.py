@@ -201,6 +201,29 @@ class FuturesRuntime:
             self._paused,
         )
 
+    @staticmethod
+    def _drop_incomplete_klines(
+        frame: pd.DataFrame,
+        *,
+        interval_seconds: int,
+        now_ts: int | float | None = None,
+    ) -> pd.DataFrame:
+        if frame is None or frame.empty or interval_seconds <= 0:
+            return frame
+        if not isinstance(frame.index, pd.DatetimeIndex):
+            return frame
+        last_open = pd.Timestamp(frame.index[-1])
+        if pd.isna(last_open):
+            return frame
+        if last_open.tzinfo is None:
+            last_open = last_open.tz_localize(timezone.utc)
+        else:
+            last_open = last_open.tz_convert(timezone.utc)
+        now = pd.Timestamp.now(tz=timezone.utc) if now_ts is None else pd.Timestamp.fromtimestamp(float(now_ts), tz=timezone.utc)
+        if last_open + pd.Timedelta(seconds=interval_seconds) > now:
+            return frame.iloc[:-1].copy()
+        return frame
+
     # ------------------------------------------------------------------
     # P1 §6 #5 — cross-bot funding-observations publisher.
     # Synergy with the spot bot (mexc-bot-v2): the futures bot already polls
@@ -1872,6 +1895,7 @@ class FuturesRuntime:
             except Exception as exc:
                 log.warning("Futures klines fetch failed for %s: %s", sym, exc)
                 continue
+            frame = self._drop_incomplete_klines(frame, interval_seconds=900, now_ts=end)
             sharp_decision = None
             if is_sharp_event_candidate:
                 sharp_decision = evaluate_sharp_opportunity_overlay(

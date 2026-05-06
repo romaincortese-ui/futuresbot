@@ -73,6 +73,40 @@ def _config(tmp_path) -> FuturesConfig:
     )
 
 
+def test_drop_incomplete_klines_removes_still_forming_15m_bar():
+    index = pd.DatetimeIndex(
+        [
+            datetime(2026, 5, 6, 13, 0, tzinfo=timezone.utc),
+            datetime(2026, 5, 6, 13, 15, tzinfo=timezone.utc),
+        ]
+    )
+    frame = pd.DataFrame(
+        {
+            "open": [82000.0, 82070.0],
+            "high": [82100.0, 82131.3],
+            "low": [81900.0, 81838.5],
+            "close": [82070.0, 82102.1],
+            "volume": [1000.0, 500.0],
+        },
+        index=index,
+    )
+
+    cleaned = FuturesRuntime._drop_incomplete_klines(
+        frame,
+        interval_seconds=900,
+        now_ts=datetime(2026, 5, 6, 13, 18, tzinfo=timezone.utc).timestamp(),
+    )
+    completed = FuturesRuntime._drop_incomplete_klines(
+        frame,
+        interval_seconds=900,
+        now_ts=datetime(2026, 5, 6, 13, 30, tzinfo=timezone.utc).timestamp(),
+    )
+
+    assert list(cleaned.index) == [index[0]]
+    assert float(cleaned["close"].iloc[-1]) == 82070.0
+    assert len(completed) == 2
+
+
 def test_breakout_hold_long_can_bypass_vol_shock_with_cost_and_shelf_confirmation(tmp_path, monkeypatch):
     monkeypatch.setenv("REGIME_ALLOW_BREAKOUT_HOLD_VOL_SHOCK", "1")
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
