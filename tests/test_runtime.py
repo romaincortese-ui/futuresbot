@@ -42,7 +42,17 @@ class StubClient:
     def get_updates(self, *, offset: int | None = None, limit: int = 5, timeout: int = 0):
         return []
 
-    def close_position(self, *, symbol: str, side: int, vol: int, leverage: int, open_type: int = 1, position_mode: int = 2):
+    def close_position(
+        self,
+        *,
+        symbol: str,
+        side: int,
+        vol: int,
+        leverage: int,
+        open_type: int = 1,
+        position_mode: int = 2,
+        position_id: str | int | None = None,
+    ):
         return {"orderId": "close-1"}
 
     def get_order(self, order_id: str) -> dict[str, str]:
@@ -333,6 +343,54 @@ def test_force_close_position_closes_paper_trade_and_records_history(tmp_path):
     assert runtime.open_position is None
     assert runtime.trade_history[-1]["exit_reason"] == "MANUAL_CLOSE"
     assert any("Manual close" in line for line in runtime._recent_activity)
+
+
+def test_hourly_live_exit_uses_exchange_mode_and_position_id(tmp_path):
+    class ModeAwareCloseClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_calls: list[dict[str, object]] = []
+
+        def get_position_mode(self):
+            return {"success": True, "data": {"positionMode": 1}}
+
+        def close_position(self, **kwargs):
+            self.close_calls.append(dict(kwargs))
+            return {"orderId": "close-live-1"}
+
+    cfg = replace(
+        _config(tmp_path),
+        paper_trade=False,
+        early_exit_tp_progress=0.5,
+        early_exit_min_profit_pct=0.005,
+    )
+    client = ModeAwareCloseClient()
+    runtime = FuturesRuntime(cfg, client)
+    position = FuturesPosition(
+        symbol="BNB_USDT",
+        side="LONG",
+        entry_price=90000.0,
+        contracts=3,
+        contract_size=0.01,
+        leverage=5,
+        margin_usdt=54.0,
+        tp_price=91050.0,
+        sl_price=88800.0,
+        position_id="987654321",
+        order_id="entry-live-1",
+        opened_at=datetime(2026, 4, 18, tzinfo=timezone.utc),
+        score=65.0,
+        certainty=0.8,
+        entry_signal="MOMENTUM_BREAKAWAY_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=91000.0) is True
+
+    assert client.close_calls[-1]["position_mode"] == 1
+    assert client.close_calls[-1]["position_id"] == "987654321"
+    assert client.close_calls[-1]["side"] == 4
+    assert runtime.open_position is None
 
 
 def test_build_pnl_message_includes_realized_and_open_pnl(tmp_path):

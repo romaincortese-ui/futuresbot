@@ -81,3 +81,43 @@ def test_place_order_sets_short_trigger_directions(monkeypatch):
 
     assert captured["profitTrend"] == 2
     assert captured["lossTrend"] == 1
+
+
+def test_close_position_includes_position_id_and_omits_open_leverage(monkeypatch):
+    client = _client()
+    captured: dict[str, object] = {}
+
+    def fake_post(path, body):
+        captured.update(body)
+        return {"success": True, "data": {"orderId": "close-1"}}
+
+    monkeypatch.setattr(client, "private_post", fake_post)
+
+    client.close_position(
+        symbol="BNB_USDT",
+        side=4,
+        vol=3,
+        leverage=5,
+        position_mode=2,
+        position_id="12345",
+    )
+
+    assert captured["positionId"] == 12345
+    assert captured["leverage"] is None
+    assert captured["reduceOnly"] is True
+
+
+def test_close_position_omits_reduce_only_for_dual_side_mode(monkeypatch):
+    client = _client()
+    captured: dict[str, object] = {}
+
+    def fake_post(path, body):
+        captured.update(body)
+        return {"success": True, "data": {"orderId": "close-1"}}
+
+    monkeypatch.setattr(client, "private_post", fake_post)
+
+    client.close_position(symbol="BNB_USDT", side=4, vol=3, leverage=5, position_mode=1, position_id="12345")
+
+    assert captured["positionMode"] == 1
+    assert captured["reduceOnly"] is None

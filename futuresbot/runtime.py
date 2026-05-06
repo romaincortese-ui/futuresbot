@@ -818,6 +818,43 @@ class FuturesRuntime:
     def _close_side(self, position: FuturesPosition) -> int:
         return 4 if position.side == "LONG" else 2
 
+    @staticmethod
+    def _extract_position_mode(payload: Any, fallback: int) -> int:
+        def parse_mode(raw: Any) -> int | None:
+            try:
+                mode = int(float(raw))
+            except (TypeError, ValueError):
+                return None
+            return mode if mode in {1, 2} else None
+
+        mode = parse_mode(payload)
+        if mode is not None:
+            return mode
+        if isinstance(payload, dict):
+            for key in ("positionMode", "position_mode"):
+                mode = parse_mode(payload.get(key))
+                if mode is not None:
+                    return mode
+            data = payload.get("data")
+            if isinstance(data, dict):
+                return FuturesRuntime._extract_position_mode(data, fallback)
+            if isinstance(data, list):
+                for row in data:
+                    mode = FuturesRuntime._extract_position_mode(row, 0)
+                    if mode in {1, 2}:
+                        return mode
+        return fallback
+
+    def _live_position_mode(self) -> int:
+        fetcher = getattr(self.client, "get_position_mode", None)
+        if not callable(fetcher):
+            return self.config.position_mode
+        try:
+            return self._extract_position_mode(fetcher(), self.config.position_mode)
+        except Exception as exc:
+            log.debug("Futures position-mode fetch failed; using configured mode %s: %s", self.config.position_mode, exc)
+            return self.config.position_mode
+
     def _force_close_position(self, *, reason: str = "MANUAL_CLOSE", symbol: str | None = None) -> tuple[bool, str]:
         if symbol:
             position = self.open_positions.get(symbol.upper())
@@ -850,7 +887,8 @@ class FuturesRuntime:
             vol=position.contracts,
             leverage=position.leverage,
             open_type=self.config.open_type,
-            position_mode=self.config.position_mode,
+            position_mode=self._live_position_mode(),
+            position_id=position.position_id or None,
         )
         order_id = str(order.get("orderId") or "")
         exit_price = current_price
@@ -1420,7 +1458,8 @@ class FuturesRuntime:
             vol=position.contracts,
             leverage=position.leverage,
             open_type=self.config.open_type,
-            position_mode=self.config.position_mode,
+            position_mode=self._live_position_mode(),
+            position_id=position.position_id or None,
         )
         order_id = str(order.get("orderId") or "")
         if order_id:

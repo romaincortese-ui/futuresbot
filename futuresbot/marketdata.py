@@ -205,6 +205,9 @@ class MexcFuturesClient:
     def change_position_mode(self, position_mode: int) -> Any:
         return self.private_post("/api/v1/private/position/change_position_mode", {"positionMode": position_mode})
 
+    def get_position_mode(self) -> Any:
+        return self.private_get("/api/v1/private/position/position_mode")
+
     def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None) -> Any:
         payload = {
             "positionId": int(position_id) if position_id else None,
@@ -229,10 +232,11 @@ class MexcFuturesClient:
         symbol: str,
         side: int,
         vol: int,
-        leverage: int,
+        leverage: int | None,
         order_type: int = 5,
         open_type: int = 1,
         position_mode: int = 2,
+        position_id: str | int | None = None,
         reduce_only: bool | None = None,
         price: float | None = None,
         take_profit_price: float | None = None,
@@ -243,10 +247,11 @@ class MexcFuturesClient:
             "symbol": symbol,
             "price": price,
             "vol": int(vol),
-            "leverage": int(leverage),
+            "leverage": int(leverage) if leverage is not None else None,
             "side": int(side),
             "type": int(order_type),
             "openType": int(open_type),
+            "positionId": int(position_id) if position_id else None,
             "positionMode": int(position_mode),
             "reduceOnly": reduce_only,
             "takeProfitPrice": take_profit_price,
@@ -286,16 +291,27 @@ class MexcFuturesClient:
         payload = {"positionId": int(position_id) if position_id else None, "symbol": symbol}
         return self.private_post("/api/v1/private/stoporder/cancel_all", payload)
 
-    def close_position(self, *, symbol: str, side: int, vol: int, leverage: int, open_type: int = 1, position_mode: int = 2) -> dict[str, Any]:
+    def close_position(
+        self,
+        *,
+        symbol: str,
+        side: int,
+        vol: int,
+        leverage: int | None = None,
+        open_type: int = 1,
+        position_mode: int = 2,
+        position_id: str | int | None = None,
+    ) -> dict[str, Any]:
         return self.place_order(
             symbol=symbol,
             side=side,
             vol=vol,
-            leverage=leverage,
+            leverage=None,
             order_type=5,
             open_type=open_type,
             position_mode=position_mode,
-            reduce_only=True,
+            position_id=position_id,
+            reduce_only=True if int(position_mode) == 2 else None,
         )
 
     def get_klines(self, symbol: str, *, interval: str = "Min15", start: int | None = None, end: int | None = None) -> pd.DataFrame:
