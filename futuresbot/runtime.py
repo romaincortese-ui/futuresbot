@@ -1397,9 +1397,13 @@ class FuturesRuntime:
             except Exception as exc:
                 log.debug("Reconcile fetch failed for %s: %s", pos_symbol, exc)
                 continue
-            if rows:
+            position_id = str(position.position_id or "").strip()
+            if position_id:
+                if any(str(row.get("positionId") or row.get("position_id") or "") == position_id for row in rows if isinstance(row, dict)):
+                    continue
+            elif rows:
                 continue
-            if not str(position.position_id or "").strip():
+            if not position_id:
                 log.warning(
                     "[POSITION_RECONCILE_DROP] symbol=%s order=%s reason=no_exchange_position_no_position_id",
                     pos_symbol,
@@ -1429,6 +1433,23 @@ class FuturesRuntime:
                 self._clear_position(pos_symbol)
                 self._save_state()
                 break
+            else:
+                log.warning(
+                    "[POSITION_RECONCILE_DROP] symbol=%s position_id=%s order=%s reason=no_exchange_position_no_history_match",
+                    pos_symbol,
+                    position_id,
+                    position.order_id or "",
+                )
+                self._notify_once(
+                    f"futures_stale_local_position_{pos_symbol}_{position_id}",
+                    f"⚠️ <b>Futures Local Position Cleared</b> [{self._mode_label()}]\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"MEXC reports no matching open position for <b>{html.escape(pos_symbol)}</b> position <code>{html.escape(position_id)}</code>. "
+                    f"Cleared from bot state without recording P&L.",
+                )
+                self._record_activity(f"Cleared stale local position: {pos_symbol}")
+                self._clear_position(pos_symbol)
+                self._save_state()
 
     def _hourly_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if position.side == "LONG":

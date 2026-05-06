@@ -393,6 +393,42 @@ def test_hourly_live_exit_uses_exchange_mode_and_position_id(tmp_path):
     assert runtime.open_position is None
 
 
+def test_reconcile_clears_stale_live_position_with_missing_history(tmp_path):
+    class NoExchangePositionClient(StubClient):
+        def get_open_positions(self, symbol: str | None = None):
+            return []
+
+        def get_historical_positions(self, symbol: str | None = None, page_num: int = 1, page_size: int = 20):
+            return []
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), NoExchangePositionClient())
+    runtime._register_position(
+        FuturesPosition(
+            symbol="BNB_USDT",
+            side="LONG",
+            entry_price=90000.0,
+            contracts=3,
+            contract_size=0.01,
+            leverage=5,
+            margin_usdt=54.0,
+            tp_price=91050.0,
+            sl_price=88800.0,
+            position_id="stale-123",
+            order_id="entry-stale-1",
+            opened_at=datetime(2026, 4, 18, tzinfo=timezone.utc),
+            score=65.0,
+            certainty=0.8,
+            entry_signal="MOMENTUM_BREAKAWAY_LONG",
+        )
+    )
+
+    runtime._reconcile_closed_position()
+
+    assert runtime.open_positions == {}
+    assert runtime.trade_history == []
+    assert any("Cleared stale local position" in line for line in runtime._recent_activity)
+
+
 def test_build_pnl_message_includes_realized_and_open_pnl(tmp_path):
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
     runtime.open_position = FuturesPosition(
