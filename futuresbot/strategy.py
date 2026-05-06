@@ -99,7 +99,8 @@ def _env_bool(name: str, default: bool) -> bool:
 
 def _symbol_enabled(name: str, symbol: str, default: str = "") -> bool:
     raw = os.environ.get(name, default)
-    tokens = {"".join(ch for ch in item.upper() if ch.isalnum()) for item in raw.split(",") if item.strip()}
+    normalized_raw = raw.replace(";", " ").replace(",", " ").replace("\n", " ")
+    tokens = {"".join(ch for ch in item.upper() if ch.isalnum()) for item in normalized_raw.split() if item.strip()}
     normalized = "".join(ch for ch in symbol.upper() if ch.isalnum())
     return "*" in tokens or normalized in tokens
 

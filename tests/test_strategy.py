@@ -81,6 +81,7 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
 def test_major_threshold_long_covers_btc_sol_eth(monkeypatch):
     _disable_competing_entry_paths(monkeypatch)
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_SYMBOLS", "BTC_USDT SOL_USDT ETH_USDT")
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_VOLUME_FLOOR", "0.10")
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_TREND_24H_MIN", "0")
