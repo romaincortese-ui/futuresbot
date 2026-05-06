@@ -19,6 +19,7 @@ from futuresbot.telegram import TelegramClient
 
 from futuresbot.calibration import load_trade_calibration, setup_regime_for_signal, validate_trade_calibration_payload
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
+from futuresbot.exits import evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -1456,6 +1457,30 @@ class FuturesRuntime:
                 self._save_state()
 
     def _hourly_exit(self, position: FuturesPosition, current_price: float) -> bool:
+        scoped = self._config_for_symbol(position.symbol)
+        if scoped.trailing_exit_drawdown_pct > 0:
+            should_close, changed = evaluate_trailing_tick(
+                position,
+                current_price,
+                activation_progress=scoped.trailing_exit_activation_progress,
+                min_profit_pct=scoped.early_exit_min_profit_pct,
+                drawdown_pct=scoped.trailing_exit_drawdown_pct,
+            )
+            trailing_stop_price(position, scoped.trailing_exit_drawdown_pct)
+            if not should_close:
+                if changed:
+                    if is_trailing_exit_armed(position):
+                        self._record_activity(f"Armed trailing exit: {position.symbol}")
+                    self._save_state()
+                    return False
+                if not is_trailing_exit_armed(position):
+                    return self._fixed_take_profit_exit(position, current_price=current_price, scoped=scoped)
+                return False
+            return self._close_position_for_exit(position, current_price=current_price, reason="TRAILING_TAKE_PROFIT")
+
+        return self._fixed_take_profit_exit(position, current_price=current_price, scoped=scoped)
+
+    def _fixed_take_profit_exit(self, position: FuturesPosition, *, current_price: float, scoped: FuturesConfig) -> bool:
         if position.side == "LONG":
             total_move = position.tp_price - position.entry_price
             current_move = current_price - position.entry_price
@@ -1466,11 +1491,13 @@ class FuturesRuntime:
             return False
         progress = current_move / total_move
         raw_profit_pct = current_move / position.entry_price
-        scoped = self._config_for_symbol(position.symbol)
         if progress < scoped.early_exit_tp_progress or raw_profit_pct < scoped.early_exit_min_profit_pct:
             return False
+        return self._close_position_for_exit(position, current_price=current_price, reason="HOURLY_TAKE_PROFIT")
+
+    def _close_position_for_exit(self, position: FuturesPosition, *, current_price: float, reason: str) -> bool:
         if self.config.paper_trade:
-            self._close_history_trade(position, exit_price=current_price, reason="HOURLY_TAKE_PROFIT")
+            self._close_history_trade(position, exit_price=current_price, reason=reason)
             self._clear_position(position.symbol)
             self._save_state()
             return True
@@ -1491,7 +1518,7 @@ class FuturesRuntime:
             exit_price = float(detail.get("dealAvgPrice") or current_price)
         else:
             exit_price = current_price
-        self._close_history_trade(position, exit_price=exit_price, reason="HOURLY_TAKE_PROFIT")
+        self._close_history_trade(position, exit_price=exit_price, reason=reason)
         self._clear_position(position.symbol)
         self._save_state()
         return True
@@ -2684,7 +2711,7 @@ class FuturesRuntime:
         contracts: int,
         leverage: int,
         entry_price: float,
-        tp_price: float,
+        tp_price: float | None,
         sl_price: float,
     ) -> tuple[str, dict[str, Any], bool] | None:
         """Place a post-only limit; poll for fill; cancel on timeout.
@@ -3448,7 +3475,7 @@ class FuturesRuntime:
             contracts=contracts,
             leverage=leverage,
             entry_price=entry_price,
-            tp_price=float(signal_payload["tp_price"]),
+            tp_price=None if scoped.trailing_exit_drawdown_pct > 0 else float(signal_payload["tp_price"]),
             sl_price=float(signal_payload["sl_price"]),
         )
         if maker_result is not None:
@@ -3462,7 +3489,7 @@ class FuturesRuntime:
                 order_type=5,
                 open_type=self.config.open_type,
                 position_mode=self.config.position_mode,
-                take_profit_price=float(signal_payload["tp_price"]),
+                take_profit_price=None if scoped.trailing_exit_drawdown_pct > 0 else float(signal_payload["tp_price"]),
                 stop_loss_price=float(signal_payload["sl_price"]),
             )
             order_id = self._extract_order_id(order)

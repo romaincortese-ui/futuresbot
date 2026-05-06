@@ -11,6 +11,7 @@ import pandas as pd
 
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.config import FuturesBacktestConfig
+from futuresbot.exits import evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.strategy import score_btc_futures_setup
@@ -349,16 +350,38 @@ class FuturesBacktestEngine:
 		if position.side == "LONG":
 			if low <= position.sl_price:
 				return position.sl_price, "STOP_LOSS"
+			trailing_exit, _changed = evaluate_trailing_bar(
+				position,
+				high=high,
+				low=low,
+				activation_progress=self.config.trailing_exit_activation_progress,
+				min_profit_pct=self.config.early_exit_min_profit_pct,
+				drawdown_pct=self.config.trailing_exit_drawdown_pct,
+			)
+			if trailing_exit is not None:
+				return trailing_exit
 			if high >= position.tp_price:
 				return position.tp_price, "TAKE_PROFIT"
 			return None
 		if high >= position.sl_price:
 			return position.sl_price, "STOP_LOSS"
+		trailing_exit, _changed = evaluate_trailing_bar(
+			position,
+			high=high,
+			low=low,
+			activation_progress=self.config.trailing_exit_activation_progress,
+			min_profit_pct=self.config.early_exit_min_profit_pct,
+			drawdown_pct=self.config.trailing_exit_drawdown_pct,
+		)
+		if trailing_exit is not None:
+			return trailing_exit
 		if low <= position.tp_price:
 			return position.tp_price, "TAKE_PROFIT"
 		return None
 
 	def _hourly_exit(self, position: FuturesPosition, close_price: float) -> tuple[float, str] | None:
+		if self.config.trailing_exit_drawdown_pct > 0:
+			return None
 		if position.side == "LONG":
 			total_move = position.tp_price - position.entry_price
 			current_move = close_price - position.entry_price

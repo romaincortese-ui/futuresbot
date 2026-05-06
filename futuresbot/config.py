@@ -337,6 +337,8 @@ class FuturesConfig:
     early_exit_tp_progress: float
     early_exit_min_profit_pct: float
     early_exit_buffer_pct: float
+    trailing_exit_drawdown_pct: float
+    trailing_exit_activation_progress: float
     max_concurrent_positions: int = 1
     max_total_margin_usdt: float = 0.0
     correlation_buckets: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -446,6 +448,8 @@ class FuturesConfig:
             early_exit_tp_progress=env_float("FUTURES_EARLY_EXIT_TP_PROGRESS", 0.90),
             early_exit_min_profit_pct=env_float("FUTURES_EARLY_EXIT_MIN_PROFIT_PCT", 0.012),
             early_exit_buffer_pct=env_float("FUTURES_EARLY_EXIT_BUFFER_PCT", 0.10),
+            trailing_exit_drawdown_pct=env_float("FUTURES_TRAILING_EXIT_DRAWDOWN_PCT", 0.02),
+            trailing_exit_activation_progress=env_float("FUTURES_TRAILING_EXIT_ACTIVATION_PROGRESS", 1.5),
             max_concurrent_positions=max(1, env_int("FUTURES_MAX_CONCURRENT_POSITIONS", 1)),
             max_total_margin_usdt=env_float("FUTURES_MAX_TOTAL_MARGIN_USDT", 0.0),
             correlation_buckets=parse_correlation_buckets(env_str("FUTURES_CORRELATION_BUCKETS", DEFAULT_CORRELATION_BUCKETS)),
@@ -535,6 +539,8 @@ class FuturesConfig:
             early_exit_tp_progress=env_float_for_symbol(sym, "EARLY_EXIT_TP_PROGRESS", prof_float("early_exit_tp_progress", self.early_exit_tp_progress)),
             early_exit_min_profit_pct=env_float_for_symbol(sym, "EARLY_EXIT_MIN_PROFIT_PCT", prof_float("early_exit_min_profit_pct", self.early_exit_min_profit_pct)),
             early_exit_buffer_pct=env_float_for_symbol(sym, "EARLY_EXIT_BUFFER_PCT", prof_float("early_exit_buffer_pct", self.early_exit_buffer_pct)),
+            trailing_exit_drawdown_pct=env_float_for_symbol(sym, "TRAILING_EXIT_DRAWDOWN_PCT", prof_float("trailing_exit_drawdown_pct", self.trailing_exit_drawdown_pct)),
+            trailing_exit_activation_progress=env_float_for_symbol(sym, "TRAILING_EXIT_ACTIVATION_PROGRESS", prof_float("trailing_exit_activation_progress", self.trailing_exit_activation_progress)),
             session_hours_utc=env_str_for_symbol(sym, "SESSION_HOURS_UTC", self.session_hours_utc),
             funding_rate_abs_max=env_float_for_symbol(sym, "FUNDING_RATE_ABS_MAX", prof_float("funding_rate_abs_max", self.funding_rate_abs_max)),
         )
@@ -564,6 +570,8 @@ _SYMBOL_OVERRIDE_SUFFIXES: tuple[str, ...] = (
     "EARLY_EXIT_TP_PROGRESS",
     "EARLY_EXIT_MIN_PROFIT_PCT",
     "EARLY_EXIT_BUFFER_PCT",
+    "TRAILING_EXIT_DRAWDOWN_PCT",
+    "TRAILING_EXIT_ACTIVATION_PROGRESS",
     "SESSION_HOURS_UTC",
     "FUNDING_RATE_ABS_MAX",
 )
@@ -668,6 +676,8 @@ class FuturesBacktestConfig:
     early_exit_tp_progress: float
     early_exit_min_profit_pct: float
     early_exit_buffer_pct: float
+    trailing_exit_drawdown_pct: float
+    trailing_exit_activation_progress: float
     redis_url: str = ""
     anthropic_api_key: str = ""
 
@@ -713,6 +723,8 @@ class FuturesBacktestConfig:
             early_exit_tp_progress=scoped.early_exit_tp_progress,
             early_exit_min_profit_pct=scoped.early_exit_min_profit_pct,
             early_exit_buffer_pct=scoped.early_exit_buffer_pct,
+            trailing_exit_drawdown_pct=scoped.trailing_exit_drawdown_pct,
+            trailing_exit_activation_progress=scoped.trailing_exit_activation_progress,
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=live.anthropic_api_key,
         )

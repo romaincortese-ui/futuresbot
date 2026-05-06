@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
+from futuresbot.exits import evaluate_trailing_bar, trailing_stop_price
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.runtime import FuturesRuntime
 
@@ -363,6 +364,7 @@ def test_hourly_live_exit_uses_exchange_mode_and_position_id(tmp_path):
         paper_trade=False,
         early_exit_tp_progress=0.5,
         early_exit_min_profit_pct=0.005,
+        trailing_exit_drawdown_pct=0.0,
     )
     client = ModeAwareCloseClient()
     runtime = FuturesRuntime(cfg, client)
@@ -391,6 +393,89 @@ def test_hourly_live_exit_uses_exchange_mode_and_position_id(tmp_path):
     assert client.close_calls[-1]["position_id"] == "987654321"
     assert client.close_calls[-1]["side"] == 4
     assert runtime.open_position is None
+
+
+def test_hourly_exit_arms_and_closes_trailing_take_profit(tmp_path):
+    cfg = replace(
+        _config(tmp_path),
+        trailing_exit_drawdown_pct=0.02,
+        trailing_exit_activation_progress=1.0,
+        early_exit_min_profit_pct=0.01,
+    )
+    runtime = FuturesRuntime(cfg, StubClient())
+    position = FuturesPosition(
+        symbol="BTC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=20,
+        margin_usdt=5.0,
+        tp_price=110.0,
+        sl_price=96.0,
+        position_id="paper-trail-1",
+        order_id="entry-trail-1",
+        opened_at=datetime(2026, 4, 18, tzinfo=timezone.utc),
+        score=70.0,
+        certainty=0.8,
+        entry_signal="MOMENTUM_BREAKAWAY_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=110.0) is False
+    assert runtime.open_position is position
+    assert position.metadata["trailing_exit_armed"] is True
+    assert trailing_stop_price(position, 0.02) == 107.8
+
+    assert runtime._hourly_exit(position, current_price=112.0) is False
+    assert round(trailing_stop_price(position, 0.02), 2) == 109.76
+
+    assert runtime._hourly_exit(position, current_price=109.5) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "TRAILING_TAKE_PROFIT"
+    assert runtime.trade_history[-1]["exit_price"] == 109.5
+
+
+def test_trailing_bar_waits_until_after_activation_bar_to_exit():
+    position = FuturesPosition(
+        symbol="BCH_USDT",
+        side="LONG",
+        entry_price=454.99,
+        contracts=16,
+        contract_size=0.01,
+        leverage=20,
+        margin_usdt=14.6,
+        tp_price=464.93,
+        sl_price=450.54,
+        position_id="backtest-trail-1",
+        order_id="entry-trail-1",
+        opened_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        score=70.0,
+        certainty=0.8,
+        entry_signal="MOMENTUM_BREAKAWAY_LONG",
+    )
+
+    first, changed = evaluate_trailing_bar(
+        position,
+        high=466.53,
+        low=462.42,
+        activation_progress=1.0,
+        min_profit_pct=0.012,
+        drawdown_pct=0.02,
+    )
+    assert first is None
+    assert changed is True
+    assert position.metadata["trailing_exit_armed"] is True
+
+    second, _changed = evaluate_trailing_bar(
+        position,
+        high=488.91,
+        low=469.70,
+        activation_progress=1.0,
+        min_profit_pct=0.012,
+        drawdown_pct=0.02,
+    )
+    assert second == (488.91 * 0.98, "TRAILING_TAKE_PROFIT")
 
 
 def test_one_way_close_side_uses_opposite_reduce_only_direction(tmp_path):
@@ -1020,6 +1105,8 @@ def test_live_enter_trade_enforces_production_leverage_bounds(tmp_path, monkeypa
     assert runtime._enter_trade(signal) is True
     assert runtime.client.leverage_changes[-1]["leverage"] == 20
     assert runtime.client.orders[-1]["leverage"] == 20
+    assert runtime.client.orders[-1]["take_profit_price"] is None
+    assert runtime.client.orders[-1]["stop_loss_price"] == 98.0
     assert runtime.open_positions["BTC_USDT"].leverage == 20
 
 
