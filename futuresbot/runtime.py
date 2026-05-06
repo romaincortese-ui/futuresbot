@@ -815,7 +815,10 @@ class FuturesRuntime:
             "/help — Show this command list"
         )
 
-    def _close_side(self, position: FuturesPosition) -> int:
+    def _close_side(self, position: FuturesPosition, *, position_mode: int | None = None) -> int:
+        mode = self.config.position_mode if position_mode is None else int(position_mode)
+        if mode == 2:
+            return 3 if position.side == "LONG" else 1
         return 4 if position.side == "LONG" else 2
 
     @staticmethod
@@ -881,13 +884,14 @@ class FuturesRuntime:
             self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
         except Exception as exc:
             log.debug("Futures cancel_all_tpsl failed before manual close: %s", exc)
+        position_mode = self._live_position_mode()
         order = self.client.close_position(
             symbol=position.symbol,
-            side=self._close_side(position),
+            side=self._close_side(position, position_mode=position_mode),
             vol=position.contracts,
             leverage=position.leverage,
             open_type=self.config.open_type,
-            position_mode=self._live_position_mode(),
+            position_mode=position_mode,
             position_id=position.position_id or None,
         )
         order_id = str(order.get("orderId") or "")
@@ -1455,11 +1459,9 @@ class FuturesRuntime:
         if position.side == "LONG":
             total_move = position.tp_price - position.entry_price
             current_move = current_price - position.entry_price
-            close_side = 4
         else:
             total_move = position.entry_price - position.tp_price
             current_move = position.entry_price - current_price
-            close_side = 2
         if total_move <= 0 or current_move <= 0:
             return False
         progress = current_move / total_move
@@ -1473,13 +1475,14 @@ class FuturesRuntime:
             self._save_state()
             return True
         self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
+        position_mode = self._live_position_mode()
         order = self.client.close_position(
             symbol=position.symbol,
-            side=close_side,
+            side=self._close_side(position, position_mode=position_mode),
             vol=position.contracts,
             leverage=position.leverage,
             open_type=self.config.open_type,
-            position_mode=self._live_position_mode(),
+            position_mode=position_mode,
             position_id=position.position_id or None,
         )
         order_id = str(order.get("orderId") or "")

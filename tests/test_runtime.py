@@ -393,6 +393,33 @@ def test_hourly_live_exit_uses_exchange_mode_and_position_id(tmp_path):
     assert runtime.open_position is None
 
 
+def test_one_way_close_side_uses_opposite_reduce_only_direction(tmp_path):
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    long_position = FuturesPosition(
+        symbol="BCH_USDT",
+        side="LONG",
+        entry_price=90000.0,
+        contracts=3,
+        contract_size=0.01,
+        leverage=5,
+        margin_usdt=54.0,
+        tp_price=91050.0,
+        sl_price=88800.0,
+        position_id="long-1",
+        order_id="entry-long-1",
+        opened_at=datetime(2026, 4, 18, tzinfo=timezone.utc),
+        score=65.0,
+        certainty=0.8,
+        entry_signal="MOMENTUM_BREAKAWAY_LONG",
+    )
+    short_position = replace(long_position, side="SHORT", position_id="short-1", order_id="entry-short-1")
+
+    assert runtime._close_side(long_position, position_mode=1) == 4
+    assert runtime._close_side(short_position, position_mode=1) == 2
+    assert runtime._close_side(long_position, position_mode=2) == 3
+    assert runtime._close_side(short_position, position_mode=2) == 1
+
+
 def test_reconcile_clears_stale_live_position_with_missing_history(tmp_path):
     class NoExchangePositionClient(StubClient):
         def get_open_positions(self, symbol: str | None = None):
