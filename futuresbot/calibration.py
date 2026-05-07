@@ -75,6 +75,8 @@ def setup_regime_for_signal(entry_signal: str | None, side: str | None = None) -
         return "MAJOR_THRESHOLD_SHORT" if side_name == "SHORT" or signal.endswith("_SHORT") else "MAJOR_THRESHOLD_LONG"
     if "LEVEL_BREAK" in signal:
         return "LEVEL_BREAK_SHORT" if side_name == "SHORT" or signal.endswith("_SHORT") else "LEVEL_BREAK_LONG"
+    if "BTC_REVERSAL" in signal:
+        return "BTC_REVERSAL_SHORT"
     if "BREAKOUT_HOLD" in signal:
         return "BREAKOUT_HOLD_LONG"
     if "TREND_CONTINUATION" in signal:

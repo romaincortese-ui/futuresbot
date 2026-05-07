@@ -45,6 +45,7 @@ def _disable_competing_entry_paths(monkeypatch):
     monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_CONTINUATION_ENABLED", "false")
     monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
     monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
     monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
@@ -76,6 +77,11 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
 
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+
+    assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "TREND_CONTINUATION_SHORT")
+    assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_LONG")
+    assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
+    assert _entry_signal_disabled(replace(_config(), symbol="ZEC_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
 
 
 def test_major_threshold_long_covers_btc_sol_eth(monkeypatch):
@@ -374,6 +380,88 @@ def test_strategy_produces_impulse_event_continuation_short(monkeypatch):
     assert signal.side == "SHORT"
     assert signal.entry_signal == "IMPULSE_EVENT_CONTINUATION_SHORT"
     assert signal.metadata["impulse_move_pct"] < 0
+
+
+def test_strategy_produces_btc_reversal_breakdown_short(monkeypatch):
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_VOLUME_FLOOR", "0.30")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_MIN_DROP_ATR", "0.70")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_MIN_DROP_PCT", "0.004")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_RSI_1H_MAX", "100")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_RSI_15_MAX", "100")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_MIN_PRIOR_TREND_24H", "-0.05")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_MIN_PRIOR_TREND_6H", "-0.05")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_MAX_COUNTER_TREND_24H", "0.05")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_MAX_COUNTER_TREND_6H", "0.02")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_MIN_IMPULSE_MOVE_PCT", "0.001")
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_CONTINUATION_ENABLED", "false")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [79000 + idx * 8 + math.sin(idx / 6.0) * 60 for idx in range(520)]
+    high_anchor = max(base[-40:-8]) + 900
+    for offset in range(8):
+        base[-8 + offset] = high_anchor - offset * 180
+    frame = _frame_from_prices(base)
+    last_reversal_index = frame.index[-2:]
+    frame.loc[last_reversal_index, "open"] = frame.loc[last_reversal_index, "close"] * 1.004
+    frame.loc[last_reversal_index, "high"] = frame.loc[last_reversal_index, "open"] * 1.001
+    frame.loc[last_reversal_index, "low"] = frame.loc[last_reversal_index, "close"] * 0.9997
+    cfg = replace(_config(), min_reward_risk=0.8, trend_24h_floor=0.0, trend_6h_floor=-0.05)
+
+    signal = score_btc_futures_setup(frame, cfg)
+
+    assert signal is not None
+    assert signal.side == "SHORT"
+    assert signal.entry_signal == "BTC_REVERSAL_BREAKDOWN_SHORT"
+    assert signal.metadata["btc_reversal_short"] == 1.0
+    assert signal.sl_price > signal.entry_price
+    assert signal.tp_price < signal.entry_price
+
+
+def test_sei_breakaway_long_rejects_overextended_24h_trend(monkeypatch):
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_SYMBOLS", "SEI_USDT")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_TRIGGER_VOLUME_FLOOR", "0.10")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_WINDOW_VOLUME_FLOOR", "0.10")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_MIN_MOVE_ATR", "0.50")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_MIN_MOVE_PCT", "0.004")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_RSI_1H_LONG_MIN", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_RSI_15_LONG_MIN", "0")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_RSI_15_LONG_MAX", "100")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_MAX_EMA_EXTENSION_ATR", "10")
+    monkeypatch.setenv("FUTURES_CONTINUATION_ENABLED", "false")
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [0.050 + idx * 0.000012 + math.sin(idx / 7.0) * 0.00018 for idx in range(520)]
+    for offset in range(12):
+        base[-12 + offset] = base[-13] * (1.0 + 0.008 * (offset + 1))
+    frame = _frame_from_prices(base)
+    frame["open"] = frame["close"] * 0.997
+    frame["high"] = frame["close"] * 1.002
+    frame["low"] = frame["open"] * 0.998
+    cfg = replace(_config(), symbol="SEI_USDT", min_confidence_score=70.0, trend_24h_floor=0.0, min_reward_risk=0.8)
+
+    assert score_btc_futures_setup(frame, cfg) is None
+
+    monkeypatch.setenv("FUTURES_SEIUSDT_BREAKAWAY_LONG_MAX_TREND_24H", "0.20")
+    signal = score_btc_futures_setup(frame, cfg)
+
+    assert signal is not None
+    assert signal.side == "LONG"
+    assert signal.entry_signal == "MOMENTUM_BREAKAWAY_LONG"
 
 
 def test_strategy_produces_tao_range_expansion_long(monkeypatch):

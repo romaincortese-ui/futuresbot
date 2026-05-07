@@ -13,6 +13,8 @@ from futuresbot.models import FuturesSignal
 _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
     "BTC_USDT": ("MOMENTUM_BREAKAWAY_SHORT",),
     "ETH_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT"),
+    "SOL_USDT": ("TREND_CONTINUATION_SHORT",),
+    "BNB_USDT": ("LEVEL_BREAK_LONG", "IMPULSE_EVENT_CONTINUATION_SHORT"),
     "TAO_USDT": (
         "COIL_BREAKOUT_LONG",
         "IMPULSE_EVENT_CONTINUATION_LONG",
@@ -20,6 +22,7 @@ _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
         "MOMENTUM_BREAKAWAY_SHORT",
     ),
     "SEI_USDT": ("COIL_BREAKOUT_LONG", "COIL_BREAKDOWN_SHORT", "MOMENTUM_BREAKAWAY_SHORT"),
+    "ZEC_USDT": ("IMPULSE_EVENT_CONTINUATION_SHORT",),
 }
 
 
@@ -1015,6 +1018,86 @@ def score_btc_futures_setup(
         and impulse_ema_extension <= btc_round_level_max_extension_atr
     )
 
+    btc_reversal_short_enabled = _env_bool("FUTURES_BTC_REVERSAL_SHORT_ENABLED", True)
+    btc_reversal_short_symbol_ok = symbol_name == "BTC_USDT" and _symbol_enabled(
+        "FUTURES_BTC_REVERSAL_SHORT_SYMBOLS",
+        symbol_name,
+        "BTC_USDT",
+    )
+    btc_reversal_lookback = max(12, int(_env_float("FUTURES_BTC_REVERSAL_SHORT_LOOKBACK_BARS", 32.0)))
+    btc_reversal_confirm_bars = max(1, int(_env_float("FUTURES_BTC_REVERSAL_SHORT_CONFIRM_BARS", 2.0)))
+    btc_reversal_recent_high = 0.0
+    btc_reversal_recent_low = 0.0
+    btc_reversal_prior_low = 0.0
+    btc_reversal_confirm_close_ratio = 0.0
+    btc_reversal_drop_pct = 0.0
+    btc_reversal_drop_atr = 0.0
+    btc_reversal_volume_ratio = max(volume_ratio, impulse_window_volume_ratio)
+    if len(frame_15m) > btc_reversal_lookback + btc_reversal_confirm_bars:
+        reversal_window = frame_15m.iloc[-btc_reversal_lookback:]
+        reversal_prior = frame_15m.iloc[-(btc_reversal_lookback + btc_reversal_confirm_bars):-btc_reversal_confirm_bars]
+        reversal_confirmation = frame_15m.iloc[-btc_reversal_confirm_bars:]
+        if not reversal_window.empty and not reversal_prior.empty and not reversal_confirmation.empty:
+            btc_reversal_recent_high = float(reversal_window["high"].astype(float).max())
+            btc_reversal_recent_low = float(reversal_confirmation["low"].astype(float).min())
+            btc_reversal_prior_low = float(reversal_prior["low"].astype(float).min())
+            reversal_buffer = max(
+                current_atr_15 * _env_float("FUTURES_BTC_REVERSAL_SHORT_BREAK_BUFFER_ATR", 0.20),
+                current_price * _env_float("FUTURES_BTC_REVERSAL_SHORT_BREAK_BUFFER_PCT", 0.0010),
+            )
+            reversal_closes = reversal_confirmation["close"].astype(float)
+            btc_reversal_confirm_close_ratio = float((reversal_closes <= btc_reversal_prior_low + reversal_buffer).mean())
+            prior_volume = reversal_prior["volume"].astype(float)
+            prior_volume_mean = max(1e-9, float(prior_volume.mean()) if not prior_volume.empty else volume_baseline)
+            confirmation_volume = float(reversal_confirmation["volume"].astype(float).sum())
+            btc_reversal_volume_ratio = max(
+                btc_reversal_volume_ratio,
+                confirmation_volume / max(1e-9, prior_volume_mean * len(reversal_confirmation)),
+            )
+    if btc_reversal_recent_high > 0:
+        btc_reversal_drop_pct = (btc_reversal_recent_high / current_price) - 1.0 if current_price > 0 else 0.0
+        btc_reversal_drop_atr = (btc_reversal_recent_high - current_price) / current_atr_15 if current_atr_15 > 0 else 0.0
+
+    btc_reversal_min_drop_pct = _env_float("FUTURES_BTC_REVERSAL_SHORT_MIN_DROP_PCT", 0.0070)
+    btc_reversal_min_drop_atr = _env_float("FUTURES_BTC_REVERSAL_SHORT_MIN_DROP_ATR", 1.45)
+    btc_reversal_strong_drop_atr = _env_float("FUTURES_BTC_REVERSAL_SHORT_STRONG_DROP_ATR", 2.45)
+    btc_reversal_min_close_ratio = _env_float("FUTURES_BTC_REVERSAL_SHORT_MIN_CLOSE_RATIO", 0.50)
+    btc_reversal_volume_floor = _env_float("FUTURES_BTC_REVERSAL_SHORT_VOLUME_FLOOR", 0.60)
+    btc_reversal_adx_min = _env_float("FUTURES_BTC_REVERSAL_SHORT_ADX_MIN", 14.0)
+    btc_reversal_rsi_1h_max = _env_float("FUTURES_BTC_REVERSAL_SHORT_RSI_1H_MAX", 66.0)
+    btc_reversal_rsi_15_max = _env_float("FUTURES_BTC_REVERSAL_SHORT_RSI_15_MAX", 48.0)
+    btc_reversal_rsi_15_min = _env_float("FUTURES_BTC_REVERSAL_SHORT_RSI_15_MIN", 12.0)
+    btc_reversal_min_prior_trend_24h = _env_float("FUTURES_BTC_REVERSAL_SHORT_MIN_PRIOR_TREND_24H", 0.002)
+    btc_reversal_min_prior_trend_6h = _env_float("FUTURES_BTC_REVERSAL_SHORT_MIN_PRIOR_TREND_6H", 0.001)
+    btc_reversal_max_counter_trend_24h = _env_float("FUTURES_BTC_REVERSAL_SHORT_MAX_COUNTER_TREND_24H", 0.022)
+    btc_reversal_max_counter_trend_6h = _env_float("FUTURES_BTC_REVERSAL_SHORT_MAX_COUNTER_TREND_6H", 0.006)
+    btc_reversal_min_impulse_move_pct = _env_float("FUTURES_BTC_REVERSAL_SHORT_MIN_IMPULSE_MOVE_PCT", 0.006)
+    btc_reversal_max_ema_extension_atr = _env_float("FUTURES_BTC_REVERSAL_SHORT_MAX_EMA_EXTENSION_ATR", 3.0)
+    btc_reversal_breakdown_confirmed = (
+        btc_reversal_confirm_close_ratio >= btc_reversal_min_close_ratio
+        or btc_reversal_drop_atr >= btc_reversal_strong_drop_atr
+    )
+    btc_reversal_short_ok = (
+        btc_reversal_short_enabled
+        and btc_reversal_short_symbol_ok
+        and btc_reversal_recent_high > current_price
+        and btc_reversal_drop_pct >= btc_reversal_min_drop_pct
+        and btc_reversal_drop_atr >= btc_reversal_min_drop_atr
+        and btc_reversal_breakdown_confirmed
+        and btc_reversal_volume_ratio >= btc_reversal_volume_floor
+        and current_adx >= btc_reversal_adx_min
+        and current_rsi_1h <= btc_reversal_rsi_1h_max
+        and current_rsi_15 <= btc_reversal_rsi_15_max
+        and current_rsi_15 >= btc_reversal_rsi_15_min
+        and trend_24h >= btc_reversal_min_prior_trend_24h
+        and trend_6h >= btc_reversal_min_prior_trend_6h
+        and trend_24h <= btc_reversal_max_counter_trend_24h
+        and trend_6h <= btc_reversal_max_counter_trend_6h
+        and impulse_move_pct <= -btc_reversal_min_impulse_move_pct
+        and impulse_close_near_low
+        and impulse_ema_extension <= btc_reversal_max_ema_extension_atr
+    )
+
     level_break_enabled = _env_bool("FUTURES_LEVEL_BREAK_ENABLED", True)
     level_break_symbol_ok = _symbol_enabled(
         "FUTURES_LEVEL_BREAK_SYMBOLS",
@@ -1124,6 +1207,11 @@ def score_btc_futures_setup(
     breakaway_adx_min = _env_float("FUTURES_BREAKAWAY_ADX_MIN", impulse_adx_min)
     breakaway_counter_trend_24h_max = _env_float("FUTURES_BREAKAWAY_COUNTER_TREND_24H_MAX", 0.018)
     breakaway_counter_trend_6h_max = _env_float("FUTURES_BREAKAWAY_COUNTER_TREND_6H_MAX", 0.012)
+    breakaway_long_max_trend_24h_default = 0.030 if symbol_name == "SEI_USDT" else 999.0
+    breakaway_long_max_trend_24h = _env_float(
+        f"FUTURES_{_symbol_env_prefix(symbol_name)}_BREAKAWAY_LONG_MAX_TREND_24H",
+        _env_float("FUTURES_BREAKAWAY_LONG_MAX_TREND_24H", breakaway_long_max_trend_24h_default),
+    )
     breakaway_rsi_1h_long_min = _env_float("FUTURES_BREAKAWAY_RSI_1H_LONG_MIN", 48.0)
     breakaway_rsi_15_long_min = _env_float("FUTURES_BREAKAWAY_RSI_15_LONG_MIN", 46.0)
     breakaway_rsi_15_long_max = _env_float("FUTURES_BREAKAWAY_RSI_15_LONG_MAX", 82.0)
@@ -1142,6 +1230,7 @@ def score_btc_futures_setup(
         and breakaway_volume_ok
         and current_adx >= breakaway_adx_min
         and trend_24h >= -breakaway_counter_trend_24h_max
+        and trend_24h <= breakaway_long_max_trend_24h
         and trend_6h >= -breakaway_counter_trend_6h_max
         and current_rsi_1h >= breakaway_rsi_1h_long_min
         and current_rsi_15 >= breakaway_rsi_15_long_min
@@ -1393,6 +1482,15 @@ def score_btc_futures_setup(
         short_score += min(6.0, max(0.0, (major_threshold_volume_ratio - major_threshold_volume_floor) * 7.0))
         short_score += min(5.0, max(0.0, major_threshold_short_close_ratio * 5.0))
         short_score += 3.0 if current_price < current_ema20 or ema_slope < 0 else 0.0
+    elif btc_reversal_short_ok:
+        short_score += _env_float("FUTURES_BTC_REVERSAL_SHORT_SCORE_BONUS", 16.0)
+        short_score += min(16.0, max(0.0, btc_reversal_drop_pct * 1100.0))
+        short_score += min(12.0, max(0.0, btc_reversal_drop_atr * 3.0))
+        short_score += min(8.0, max(0.0, (btc_reversal_volume_ratio - btc_reversal_volume_floor) * 8.0))
+        short_score += min(7.0, max(0.0, (current_adx - btc_reversal_adx_min) * 0.65))
+        short_score += min(5.0, max(0.0, btc_reversal_confirm_close_ratio * 5.0))
+        short_score += 4.0 if trend_6h < 0 else 0.0
+        short_score += 3.0 if ema_slope < 0 or current_price < current_ema20 else 0.0
     elif short_ok:
         short_score += min(18.0, max(0.0, (current_adx - config.adx_floor) * 1.25))
         short_score += min(16.0, max(0.0, abs(trend_24h) * 240.0))
@@ -1665,11 +1763,12 @@ def score_btc_futures_setup(
             )
 
         major_threshold_path = major_threshold_short_ok
-        impulse_path = impulse_short_ok and not (major_threshold_path or short_ok or continuation_short_ok)
-        level_break_path = level_break_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok)
-        breakaway_path = breakaway_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path)
-        range_expansion_path = range_expansion_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok)
-        event_path = event_catalyst_short_ok and not (major_threshold_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok)
+        btc_reversal_path = btc_reversal_short_ok and not major_threshold_path
+        impulse_path = impulse_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok)
+        level_break_path = level_break_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok)
+        breakaway_path = breakaway_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path)
+        range_expansion_path = range_expansion_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok)
+        event_path = event_catalyst_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok)
         if major_threshold_path:
             configured_cap = _major_threshold_float(symbol_name, "LEVERAGE_MAX", 8.0)
             hard_cap = _major_threshold_float(symbol_name, "HARD_LEVERAGE_MAX", configured_cap)
@@ -1700,6 +1799,25 @@ def score_btc_futures_setup(
                 sl_price = max(current_price * (1.0 + min_stop_pct), threshold_stop_floor)
             if current_price > 0 and (sl_price - current_price) / current_price < min_stop_pct:
                 sl_price = max(current_price * (1.0 + min_stop_pct), threshold_stop_floor)
+        elif btc_reversal_path:
+            configured_cap = _env_float("FUTURES_BTC_REVERSAL_SHORT_LEVERAGE_MAX", 8.0)
+            hard_cap = _env_float("FUTURES_BTC_REVERSAL_SHORT_HARD_LEVERAGE_MAX", 8.0)
+            leverage_max = max(1, int(min(float(config.leverage_max), configured_cap, hard_cap)))
+            leverage_min = min(config.leverage_min, leverage_max)
+            tp_move = max(
+                _env_float("FUTURES_BTC_REVERSAL_SHORT_TP_ATR_MULT", 5.0) * current_atr_15,
+                _env_float("FUTURES_BTC_REVERSAL_SHORT_TP_FLOOR_PCT", 0.022) * current_price,
+            )
+            min_stop_pct = _env_float("FUTURES_BTC_REVERSAL_SHORT_MIN_STOP_PCT", 0.0045)
+            max_stop_pct = _env_float("FUTURES_BTC_REVERSAL_SHORT_MAX_STOP_PCT", 0.014)
+            sl_price = min(
+                btc_reversal_recent_high + current_atr_15 * _env_float("FUTURES_BTC_REVERSAL_SHORT_SWING_SL_BUFFER_ATR", 0.25),
+                current_price * (1.0 + max_stop_pct),
+            )
+            if sl_price <= current_price:
+                sl_price = current_price + current_atr_15 * _env_float("FUTURES_BTC_REVERSAL_SHORT_FALLBACK_SL_ATR", 3.0)
+            if current_price > 0 and (sl_price - current_price) / current_price < min_stop_pct:
+                sl_price = current_price * (1.0 + min_stop_pct)
         elif level_break_path:
             default_cap = min(float(config.leverage_max), _level_break_float(symbol_name, "LEVERAGE_MAX", 8.0))
             leverage_max = max(1, int(_level_break_float(symbol_name, "LEVERAGE_MAX", default_cap)))
@@ -1737,6 +1855,7 @@ def score_btc_futures_setup(
             risk > 0
             and (
                 (major_threshold_path and _env_bool("FUTURES_MAJOR_THRESHOLD_EXTEND_TP_FOR_COST_BUDGET", True))
+                or (btc_reversal_path and _env_bool("FUTURES_BTC_REVERSAL_SHORT_EXTEND_TP_FOR_COST_BUDGET", True))
                 or (level_break_path and _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True))
             )
         ):
@@ -1761,6 +1880,7 @@ def score_btc_futures_setup(
             return None
         entry_signal = (
             "MAJOR_THRESHOLD_SHORT" if major_threshold_path
+            else "BTC_REVERSAL_BREAKDOWN_SHORT" if btc_reversal_path
             else "COIL_BREAKDOWN_SHORT" if short_ok and breakout_short
             else "PRESSURE_BREAK_SHORT" if short_ok and pressure_short
             else "TREND_CONTINUATION_SHORT" if continuation_short_ok
@@ -1809,6 +1929,14 @@ def score_btc_futures_setup(
                 "major_threshold_volume_ratio": round(major_threshold_volume_ratio, 4),
                 "trailing_exit_activation_progress": _major_threshold_float(symbol_name, "TRAILING_ACTIVATION_PROGRESS", 0.45) if major_threshold_path else config.trailing_exit_activation_progress,
                 "trailing_exit_drawdown_pct": _major_threshold_float(symbol_name, "TRAILING_DRAWDOWN_PCT", 0.018) if major_threshold_path else config.trailing_exit_drawdown_pct,
+                "btc_reversal_short": 1.0 if btc_reversal_path else 0.0,
+                "btc_reversal_recent_high": round(btc_reversal_recent_high, 10) if btc_reversal_path else 0.0,
+                "btc_reversal_recent_low": round(btc_reversal_recent_low, 10) if btc_reversal_path else 0.0,
+                "btc_reversal_prior_low": round(btc_reversal_prior_low, 10) if btc_reversal_path else 0.0,
+                "btc_reversal_drop_pct": round(btc_reversal_drop_pct, 6),
+                "btc_reversal_drop_atr": round(btc_reversal_drop_atr, 4),
+                "btc_reversal_confirm_close_ratio": round(btc_reversal_confirm_close_ratio, 4),
+                "btc_reversal_volume_ratio": round(btc_reversal_volume_ratio, 4),
                 "breakaway": 1.0 if breakaway_path else 0.0,
                 "range_expansion": 1.0 if range_expansion_path else 0.0,
                 "event_catalyst": 1.0 if event_path else 0.0,
