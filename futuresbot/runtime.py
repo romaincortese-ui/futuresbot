@@ -37,6 +37,11 @@ from futuresbot.universe import select_major_usdt_symbols
 log = logging.getLogger(__name__)
 TELEGRAM_ALERT_COOLDOWN_SECONDS = 600
 RECENT_ACTIVITY_LIMIT = 12
+PROFIT_LOCK_PEAK_PCT_KEY = "profit_lock_peak_pnl_pct"
+PROFIT_LOCK_PEAK_USDT_KEY = "profit_lock_peak_pnl_usdt"
+PROFIT_LOCK_PEAK_PRICE_KEY = "profit_lock_peak_price"
+PROFIT_LOCK_STOP_PCT_KEY = "profit_lock_stop_pnl_pct"
+BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 
 
 class FuturesRuntime:
@@ -175,14 +180,32 @@ class FuturesRuntime:
         if self.open_position is not None:
             mark_price = self._mark_price_for_position(self.open_position, price)
             pnl_usdt = self._position_pnl_usdt(self.open_position, mark_price)
+            pnl_pct = self._position_pnl_pct(self.open_position, mark_price)
+            tp_progress = self._tp_progress(self.open_position, mark_price)
+            metadata = self.open_position.metadata or {}
             price_text = self._format_price(mark_price) if mark_price is not None else "n/a"
+            peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_PCT_KEY)
+            stop_pct = self._metadata_float(metadata, PROFIT_LOCK_STOP_PCT_KEY)
+            trailing_stop = self._metadata_float(metadata, "trailing_exit_stop_price")
             log.info(
-                "Futures cycle: open_position side=%s entry_signal=%s leverage=x%s price=%s pnl_usdt=%+.2f paused=%s",
+                "Futures cycle: open_position symbol=%s side=%s entry_signal=%s leverage=x%s "
+                "entry=%s price=%s tp=%s sl=%s pnl_usdt=%+.2f pnl_pct=%s tp_progress=%s "
+                "peak_pnl_pct=%s profit_lock_stop_pct=%s trailing_armed=%s trailing_stop=%s paused=%s",
+                self.open_position.symbol,
                 self.open_position.side,
                 self.open_position.entry_signal,
                 self.open_position.leverage,
+                self._format_price(self.open_position.entry_price),
                 price_text,
+                self._format_price(self.open_position.tp_price) if self.open_position.tp_price > 0 else "n/a",
+                self._format_price(self.open_position.sl_price) if self.open_position.sl_price > 0 else "n/a",
                 pnl_usdt,
+                f"{pnl_pct:+.2f}%" if pnl_pct is not None else "n/a",
+                f"{tp_progress:.2f}" if tp_progress is not None else "n/a",
+                f"{peak_pct:+.2f}%" if peak_pct is not None else "n/a",
+                f"{stop_pct:+.2f}%" if stop_pct is not None else "n/a",
+                is_trailing_exit_armed(self.open_position),
+                self._format_price(trailing_stop) if trailing_stop is not None else "n/a",
                 self._paused,
             )
             return
@@ -625,6 +648,76 @@ class FuturesRuntime:
             return None
         pnl = self._position_pnl_usdt(position, current_price)
         return pnl / position.margin_usdt * 100.0
+
+    @staticmethod
+    def _metadata_float(metadata: dict[str, Any], key: str) -> float | None:
+        try:
+            value = float(metadata.get(key, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return None
+        return value if value != 0.0 else None
+
+    def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
+        if not self._flag("USE_FUTURES_PROFIT_LOCK"):
+            return False
+        pnl_pct = self._position_pnl_pct(position, current_price)
+        if pnl_pct is None:
+            return False
+        pnl_usdt = self._position_pnl_usdt(position, current_price)
+        metadata = position.metadata if isinstance(position.metadata, dict) else {}
+        if metadata is not position.metadata:
+            position.metadata = metadata
+
+        changed = False
+        peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_PCT_KEY) or 0.0
+        if pnl_pct > peak_pct:
+            peak_pct = pnl_pct
+            metadata[PROFIT_LOCK_PEAK_PCT_KEY] = float(pnl_pct)
+            metadata[PROFIT_LOCK_PEAK_USDT_KEY] = float(pnl_usdt)
+            metadata[PROFIT_LOCK_PEAK_PRICE_KEY] = float(current_price)
+            changed = True
+
+        trigger_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_TRIGGER_PCT", 20.0))
+        pullback_fraction = min(0.95, max(0.05, self._env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.35)))
+        floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 5.0))
+        if peak_pct >= trigger_pct:
+            stop_pct = max(floor_pct, peak_pct * (1.0 - pullback_fraction))
+            if metadata.get(PROFIT_LOCK_STOP_PCT_KEY) != stop_pct:
+                metadata[PROFIT_LOCK_STOP_PCT_KEY] = float(stop_pct)
+                changed = True
+            if pnl_pct <= stop_pct:
+                log.warning(
+                    "[PROFIT_LOCK_EXIT] symbol=%s side=%s pnl_pct=%.2f peak_pct=%.2f stop_pct=%.2f pnl_usdt=%+.2f price=%s",
+                    position.symbol,
+                    position.side,
+                    pnl_pct,
+                    peak_pct,
+                    stop_pct,
+                    pnl_usdt,
+                    self._format_price(current_price),
+                )
+                return self._close_position_for_exit(position, current_price=current_price, reason="PEAK_PROFIT_LOCK")
+
+        breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
+        breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
+        if pnl_pct >= breakeven_arm_pct and not metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY):
+            metadata[BREAKEVEN_PROFIT_LOCK_ARMED_KEY] = True
+            changed = True
+        if metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY) and pnl_pct <= breakeven_floor_pct:
+            log.warning(
+                "[BREAKEVEN_PROFIT_LOCK_EXIT] symbol=%s side=%s pnl_pct=%.2f floor_pct=%.2f pnl_usdt=%+.2f price=%s",
+                position.symbol,
+                position.side,
+                pnl_pct,
+                breakeven_floor_pct,
+                pnl_usdt,
+                self._format_price(current_price),
+            )
+            return self._close_position_for_exit(position, current_price=current_price, reason="BREAKEVEN_PROFIT_LOCK")
+
+        if changed:
+            self._save_state()
+        return False
 
     def _tp_progress(self, position: FuturesPosition | None, current_price: float | None) -> float | None:
         if position is None or current_price is None:
@@ -1533,6 +1626,8 @@ class FuturesRuntime:
     def _hourly_exit(self, position: FuturesPosition, current_price: float) -> bool:
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
+        if self._profit_lock_exit(position, current_price):
+            return True
         trailing_drawdown_pct = float(metadata.get("trailing_exit_drawdown_pct", scoped.trailing_exit_drawdown_pct) or scoped.trailing_exit_drawdown_pct)
         trailing_activation_progress = float(metadata.get("trailing_exit_activation_progress", scoped.trailing_exit_activation_progress) or scoped.trailing_exit_activation_progress)
         trailing_min_profit_pct = float(metadata.get("early_exit_min_profit_pct", scoped.early_exit_min_profit_pct) or scoped.early_exit_min_profit_pct)

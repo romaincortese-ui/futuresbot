@@ -346,6 +346,7 @@ def test_cycle_summary_uses_active_position_mark_for_tiny_position(tmp_path, cap
         runtime._log_cycle_summary(price=80337.40, signal=None)
 
     line = next(record.message for record in caplog.records if "Futures cycle: open_position" in record.message)
+    assert "symbol=PEPE_USDT" in line
     assert "price=0.00000401" in line
     assert "pnl_usdt=-0.55" in line
     assert "80337.40" not in line
@@ -468,6 +469,75 @@ def test_hourly_exit_arms_and_closes_trailing_take_profit(tmp_path):
     assert runtime.open_position is None
     assert runtime.trade_history[-1]["exit_reason"] == "TRAILING_TAKE_PROFIT"
     assert runtime.trade_history[-1]["exit_price"] == 109.5
+
+
+def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "20")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_FLOOR_PCT", "5")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=20,
+        margin_usdt=10.0,
+        tp_price=112.0,
+        sl_price=96.0,
+        position_id="paper-profit-lock",
+        order_id="entry-profit-lock",
+        opened_at=datetime(2026, 5, 8, tzinfo=timezone.utc),
+        score=72.0,
+        certainty=0.8,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=104.0) is False
+    assert position.metadata["profit_lock_peak_pnl_pct"] == 40.0
+    assert position.metadata["profit_lock_stop_pnl_pct"] == 26.0
+
+    assert runtime._hourly_exit(position, current_price=102.5) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "PEAK_PROFIT_LOCK"
+    assert runtime.trade_history[-1]["pnl_usdt"] > 0
+
+
+def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "50")
+    monkeypatch.setenv("FUTURES_BREAKEVEN_ARM_PCT", "10")
+    monkeypatch.setenv("FUTURES_BREAKEVEN_FLOOR_PCT", "3")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=20,
+        margin_usdt=10.0,
+        tp_price=112.0,
+        sl_price=96.0,
+        position_id="paper-breakeven-lock",
+        order_id="entry-breakeven-lock",
+        opened_at=datetime(2026, 5, 8, tzinfo=timezone.utc),
+        score=72.0,
+        certainty=0.8,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=101.2) is False
+    assert position.metadata["breakeven_profit_lock_armed"] is True
+
+    assert runtime._hourly_exit(position, current_price=100.2) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "BREAKEVEN_PROFIT_LOCK"
+    assert runtime.trade_history[-1]["pnl_usdt"] > 0
 
 
 def test_trailing_bar_waits_until_after_activation_bar_to_exit():
