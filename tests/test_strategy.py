@@ -70,6 +70,7 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
 
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_SHORT")
+    assert _entry_signal_disabled(cfg, "BTC_ROUND_LEVEL_LONG")
     assert not _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
 
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "COIL_BREAKOUT_LONG")
@@ -251,6 +252,7 @@ def test_btc_breakout_hold_counts_shelf_volume_after_quiet_reclaim(monkeypatch):
 def test_strategy_rejoins_btc_round_level_break(monkeypatch):
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_LONG_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_VOLUME_FLOOR", "0.20")
     monkeypatch.setenv("FUTURES_BTC_ROUND_LEVEL_RSI_1H_MAX", "100")
