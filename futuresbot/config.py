@@ -418,7 +418,7 @@ class FuturesConfig:
             long_threshold_offset=env_float("FUTURES_LONG_THRESHOLD_OFFSET", 0.0),
             short_threshold_offset=env_float("FUTURES_SHORT_THRESHOLD_OFFSET", 0.0),
             hourly_check_seconds=hourly_check_seconds,
-            heartbeat_seconds=env_int("FUTURES_HEARTBEAT_SECONDS", env_int("HEARTBEAT_SECONDS", 3600)),
+            heartbeat_seconds=env_int("FUTURES_HEARTBEAT_SECONDS", env_int("HEARTBEAT_SECONDS", 21600)),
             calibration_file=resolve_repo_path(env_str("FUTURES_CALIBRATION_FILE", "calibration/multi_symbol_calibration.json")),
             calibration_redis_key=env_str("FUTURES_CALIBRATION_REDIS_KEY", "mexc_futures_calibration"),
             calibration_refresh_seconds=env_int("FUTURES_CALIBRATION_REFRESH_SECONDS", 900),
