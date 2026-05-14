@@ -157,7 +157,7 @@ class FuturesBacktestEngine:
 		self.contract_size = float(self.contract.get("contractSize", 0.0001) or 0.0001)
 		self.min_vol = int(float(self.contract.get("minVol", 1) or 1))
 
-	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0) -> tuple[int, float, int]:
+	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0, score: float | None = None) -> tuple[int, float, int]:
 		margin = min(self.config.margin_budget_usdt * max(0.0, min(1.0, float(margin_multiplier or 0.0))), balance)
 		if entry_price <= 0 or leverage <= 0 or margin <= 0:
 			return 0, 0.0, leverage
@@ -172,6 +172,15 @@ class FuturesBacktestEngine:
 				from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
 
 				risk_pct = _env_float("NAV_RISK_PCT", 0.01)
+				# Confidence-scaled risk sizing — mirror runtime._apply_nav_risk_sizing.
+				if os.environ.get("FUTURES_CONFIDENCE_RISK_SIZING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "y", "on"} and score is not None:
+					lo = max(0.0, _env_float("FUTURES_MIN_RISK_PCT", 0.10))
+					hi = max(lo, _env_float("FUTURES_MAX_RISK_PCT", 0.20))
+					span = max(1.0, _env_float("FUTURES_CONFIDENCE_SCORE_SPAN", 20.0))
+					threshold = float(self.config.min_confidence_score)
+					gap = max(0.0, float(score) - threshold)
+					norm = min(1.0, gap / span)
+					risk_pct = lo + (hi - lo) * norm
 				nav_lev_min = int(_env_float("NAV_LEVERAGE_MIN", 5))
 				nav_lev_max = int(_env_float("NAV_LEVERAGE_MAX", 10))
 				nav = compute_nav_risk_sizing(
@@ -205,7 +214,7 @@ class FuturesBacktestEngine:
 	def _open_position(self, signal: FuturesSignal, entry_time: pd.Timestamp, entry_price: float, balance: float) -> FuturesPosition | None:
 		margin_multiplier = sharp_event_margin_multiplier(signal.metadata, 1.0)
 		contracts, used_margin, applied_leverage = self._contracts_for_entry(
-			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price), margin_multiplier=margin_multiplier,
+			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price), margin_multiplier=margin_multiplier, score=float(signal.score),
 		)
 		if contracts <= 0:
 			return None

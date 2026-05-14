@@ -2404,6 +2404,8 @@ class FuturesRuntime:
         available_margin: float,
         size_multiplier: float,
         symbol: str | None = None,
+        score: float | None = None,
+        score_threshold: float | None = None,
     ) -> tuple[int, int] | None:
         """§2.1 — NAV-anchored sizing. Returns ``(contracts, leverage)`` or None.
 
@@ -2418,6 +2420,19 @@ class FuturesRuntime:
 
             nav = float(self.config.margin_budget_usdt)
             risk_pct = self._env_float("NAV_RISK_PCT", 0.01) * max(0.0, size_multiplier)
+            # Confidence-scaled risk sizing — interpolates risk_pct between
+            # FUTURES_MIN_RISK_PCT and FUTURES_MAX_RISK_PCT based on where the
+            # signal score sits between threshold and threshold+CONFIDENCE_SCORE_SPAN.
+            # Drawdown size_multiplier still applies as a final scalar.
+            if self._flag("FUTURES_CONFIDENCE_RISK_SIZING_ENABLED") and score is not None:
+                lo = max(0.0, self._env_float("FUTURES_MIN_RISK_PCT", 0.10))
+                hi = max(lo, self._env_float("FUTURES_MAX_RISK_PCT", 0.20))
+                span = max(1.0, self._env_float("FUTURES_CONFIDENCE_SCORE_SPAN", 20.0))
+                threshold = float(score_threshold) if score_threshold is not None else 0.0
+                gap = max(0.0, float(score) - threshold)
+                norm = min(1.0, gap / span)
+                confidence_pct = lo + (hi - lo) * norm
+                risk_pct = confidence_pct * max(0.0, size_multiplier)
             min_bound, max_bound = self._live_leverage_bounds(symbol)
             lev_min = max(min_bound, min(max_bound, int(self._env_float("NAV_LEVERAGE_MIN", min_bound))))
             lev_max = max(lev_min, min(max_bound, int(self._env_float("NAV_LEVERAGE_MAX", max_bound))))
@@ -3620,6 +3635,8 @@ class FuturesRuntime:
             available_margin=margin_budget,
             size_multiplier=size_multiplier,
             symbol=symbol,
+            score=float(signal_payload.get("score") or 0.0),
+            score_threshold=float(scoped.min_confidence_score),
         )
         if nav_sized is not None:
             contracts, leverage = nav_sized
