@@ -189,6 +189,19 @@ def evaluate_sharp_opportunity_overlay(
             "sharp_event_prior_low": round(prior_low, 10),
         }
         if not (long_ok or short_ok):
+            # R1 — env-gated relaxation: allow high-score sharp candidates to bypass the
+            # broke_high/broke_low requirement when FUTURES_SHARP_EVENT_RELAX_ENABLED=1.
+            if _env_bool("FUTURES_SHARP_EVENT_RELAX_ENABLED", False):
+                relax_min_score = _env_float("FUTURES_SHARP_EVENT_RELAX_MIN_SCORE", 85.0)
+                if score >= relax_min_score:
+                    return SharpOpportunityDecision(
+                        True,
+                        "sharp_event_relax_override",
+                        side=side,
+                        score=score,
+                        risk_multiplier=max(0.0, min(1.0, float(risk_multiplier or 0.0))),
+                        metadata=metadata,
+                    )
             return SharpOpportunityDecision(False, _blocked_reason(locals()), side=side, score=score, metadata=metadata)
         if score < min_score:
             return SharpOpportunityDecision(False, f"sharp_event_score={score:.2f}<{min_score:.2f}", side=side, score=score, metadata=metadata)

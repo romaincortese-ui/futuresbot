@@ -141,9 +141,44 @@ def _parse_entry_signal_list(raw: str | None) -> set[str]:
     return {item.strip().upper() for item in normalized.split(",") if item.strip()}
 
 
+# Canonical "simplified" strategy whitelist — based on 30d baseline backtest
+# evidence (Apr14–May14 2026). The signals kept here are EMA trend-pullback,
+# Donchian-style consolidation breakouts, and ATR-impulse continuation — the
+# three patterns that produced positive PnL in the baseline run. All other
+# signals are switched off when FUTURES_SIMPLIFIED_STRATEGY_ENABLED=true.
+_SIMPLIFIED_STRATEGY_KEEP = frozenset({
+    "TREND_CONTINUATION_LONG",
+    "TREND_CONTINUATION_SHORT",
+    "COIL_BREAKOUT_LONG",
+    "COIL_BREAKDOWN_SHORT",
+    "PRESSURE_BREAK_LONG",
+    "PRESSURE_BREAK_SHORT",
+    "IMPULSE_EVENT_CONTINUATION_LONG",
+    "IMPULSE_EVENT_CONTINUATION_SHORT",
+})
+_SIMPLIFIED_STRATEGY_DISABLE = frozenset({
+    "MAJOR_THRESHOLD_LONG",
+    "MAJOR_THRESHOLD_SHORT",
+    "BTC_ROUND_LEVEL_LONG",
+    "BTC_REVERSAL_BREAKDOWN_SHORT",
+    "BREAKOUT_HOLD_LONG",
+    "BREAKOUT_HOLD_SHORT",
+    "LEVEL_BREAK_LONG",
+    "LEVEL_BREAK_SHORT",
+    "MOMENTUM_BREAKAWAY_LONG",
+    "MOMENTUM_BREAKAWAY_SHORT",
+    "RANGE_EXPANSION_CONTINUATION_LONG",
+    "RANGE_EXPANSION_CONTINUATION_SHORT",
+    "EVENT_CATALYST_LONG",
+    "EVENT_CATALYST_SHORT",
+})
+
+
 def _entry_signal_disabled(config: "StrategyConfig", entry_signal: str) -> bool:
     symbol = getattr(config, "symbol", "").upper()
     disabled = set(_DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS.get(symbol, ()))
+    if _env_bool("FUTURES_SIMPLIFIED_STRATEGY_ENABLED", False):
+        disabled.update(_SIMPLIFIED_STRATEGY_DISABLE)
     global_raw = os.environ.get("FUTURES_DISABLED_ENTRY_SIGNALS")
     disabled.update(_parse_entry_signal_list(global_raw))
     symbol_key = f"FUTURES_{_symbol_env_prefix(symbol)}_DISABLED_ENTRY_SIGNALS"
@@ -596,6 +631,21 @@ def score_btc_futures_setup(
     impulse_body = abs(float(close_15.iloc[-1]) - float(open_15.iloc[-1])) / current_atr_15 if current_atr_15 > 0 else 0.0
     long_stack = current_ema20 > current_ema50 > current_ema100
     short_stack = current_ema20 < current_ema50 < current_ema100
+
+    # FUTURES_AGGRESSIVE_EMA_BYPASS_ENABLED — relax full EMA-stack requirement during
+    # high-conviction regime transitions: when ADX is strong AND RSI(1h) is at an
+    # extreme (oversold for shorts target / overbought for longs target), allow a
+    # weaker 2-EMA alignment to qualify. Captures impulse setups where EMA100 is
+    # straddling EMA20/EMA50 (the BTC 5/12 5/13 production miss case).
+    if _env_bool("FUTURES_AGGRESSIVE_EMA_BYPASS_ENABLED", False):
+        bypass_adx = _env_float("FUTURES_AGGRESSIVE_EMA_BYPASS_ADX_MIN", 40.0)
+        bypass_rsi_overbought = _env_float("FUTURES_AGGRESSIVE_EMA_BYPASS_RSI_OB", 75.0)
+        bypass_rsi_oversold = _env_float("FUTURES_AGGRESSIVE_EMA_BYPASS_RSI_OS", 25.0)
+        if current_adx >= bypass_adx:
+            if not long_stack and current_ema20 > current_ema50 and current_rsi_1h >= bypass_rsi_overbought:
+                long_stack = True
+            if not short_stack and current_ema20 < current_ema50 and current_rsi_1h <= bypass_rsi_oversold:
+                short_stack = True
 
     def directional_market_penalty(side: str) -> float:
         penalty = 0.0
@@ -1699,6 +1749,13 @@ def score_btc_futures_setup(
                 else "EVENT_CATALYST_LONG"
             )
             if _entry_signal_disabled(config, entry_signal):
+                return None
+            # R2 — env-gated: disable COIL_BREAKOUT_LONG on BTC_USDT (loss-leader in 30d baseline).
+            if (
+                entry_signal == "COIL_BREAKOUT_LONG"
+                and str(getattr(config, "symbol", "") or "").upper() == "BTC_USDT"
+                and _env_bool("FUTURES_BTC_COIL_BREAKOUT_DISABLE_ENABLED", False)
+            ):
                 return None
             return _build_signal(
                 side="LONG",

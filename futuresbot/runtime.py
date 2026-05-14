@@ -2421,6 +2421,14 @@ class FuturesRuntime:
             min_bound, max_bound = self._live_leverage_bounds(symbol)
             lev_min = max(min_bound, min(max_bound, int(self._env_float("NAV_LEVERAGE_MIN", min_bound))))
             lev_max = max(lev_min, min(max_bound, int(self._env_float("NAV_LEVERAGE_MAX", max_bound))))
+            # FUTURES_FULL_BALANCE_SIZING_ENABLED — overrides NAV-anchored risk %
+            # with a target-100%-of-available-balance approach: forces leverage to
+            # NAV_LEVERAGE_MAX and bumps risk_pct so the sizer is allowed to spend
+            # all available margin (capped by available_margin downstream).
+            if self._flag("FUTURES_FULL_BALANCE_SIZING_ENABLED"):
+                full_balance_pct = self._env_float("FUTURES_FULL_BALANCE_RISK_PCT", 1.00)
+                risk_pct = max(risk_pct, full_balance_pct)
+                lev_min = lev_max
             result = compute_nav_risk_sizing(
                 nav_usdt=nav,
                 entry_price=entry_price,
@@ -3589,6 +3597,22 @@ class FuturesRuntime:
         # Sprint 1 §2.1 — NAV-anchored sizing. Replaces the legacy
         # (margin_budget × leverage / price) formula when USE_NAV_RISK_SIZING=1.
         sl_price_for_sizing = float(signal_payload.get("sl_price") or 0.0)
+        # R4 — env-gated: boost size_multiplier for TREND_CONTINUATION signals
+        # (consistent winner in 30d baseline).
+        if self._flag("FUTURES_TREND_CONTINUATION_SIZE_BOOST_ENABLED"):
+            _r4_signal = str(signal_payload.get("entry_signal") or "").upper()
+            if "TREND_CONTINUATION" in _r4_signal:
+                _r4_mult = max(0.0, self._env_float("FUTURES_TREND_CONTINUATION_SIZE_MULT", 1.5))
+                _r4_cap = max(0.0, self._env_float("FUTURES_TREND_CONTINUATION_SIZE_CAP", 2.0))
+                size_multiplier = min(_r4_cap, size_multiplier * _r4_mult)
+                log.info(
+                    "[R4_SIZE_BOOST] symbol=%s signal=%s size_multiplier=%.3f (mult=%.2f cap=%.2f)",
+                    symbol,
+                    _r4_signal,
+                    size_multiplier,
+                    _r4_mult,
+                    _r4_cap,
+                )
         nav_sized = self._apply_nav_risk_sizing(
             entry_price=entry_price,
             sl_price=sl_price_for_sizing,
