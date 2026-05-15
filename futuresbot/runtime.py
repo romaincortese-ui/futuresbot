@@ -1434,6 +1434,62 @@ class FuturesRuntime:
             "missed_opportunities": self.missed_opportunities,
         }
 
+    def _profit_factor(self) -> float:
+        pnls = [float(trade.get("pnl_usdt", 0.0) or 0.0) for trade in self.trade_history]
+        gross_profit = sum(value for value in pnls if value > 0)
+        gross_loss = -sum(value for value in pnls if value < 0)
+        if gross_loss > 0:
+            return gross_profit / gross_loss
+        return 999.0 if gross_profit > 0 else 0.0
+
+    def _runtime_status_payload(self, *, signal: dict[str, Any] | None = None, price: float | None = None) -> dict[str, Any]:
+        account = self._account_snapshot(price)
+        equity = float(account.get("equity_usdt", 0.0) or 0.0)
+        available = float(account.get("available_usdt", 0.0) or 0.0)
+        unrealized = float(account.get("unrealized_pnl_usdt", 0.0) or 0.0)
+        allocated = self._total_open_margin()
+        realized = sum(float(trade.get("pnl_usdt", 0.0) or 0.0) for trade in self.trade_history)
+        pnl_amount = realized + unrealized
+        pnl_pct = pnl_amount / equity * 100.0 if equity > 0 else 0.0
+        return {
+            "service": "mexc_futures",
+            "state": "paused" if self._paused else "running",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "paper_trade": self.config.paper_trade,
+            "account_balance": round(equity, 4),
+            "account_nav": round(equity, 4),
+            "balance": round(equity, 4),
+            "available_balance": round(available, 4),
+            "allocated_balance": round(allocated, 4),
+            "margin_used": round(allocated, 4),
+            "unrealized_pl": round(unrealized, 4),
+            "pnl_amount": round(pnl_amount, 4),
+            "pnl_pct": round(pnl_pct, 4),
+            "open_trades": len(self.open_positions),
+            "total_trades": len(self.trade_history) + len(self.open_positions),
+            "profit_factor": self._profit_factor(),
+            "open_positions": [position.to_dict() for position in self.open_positions.values()],
+            "last_signal": signal,
+            "missed_opportunities": self.missed_opportunities,
+        }
+
+    def _publish_runtime_status(self, *, signal: dict[str, Any] | None = None, price: float | None = None) -> bool:
+        if not self.config.redis_url or not self.config.runtime_status_redis_key or self.config.runtime_status_ttl_seconds <= 0:
+            return False
+        try:
+            import redis
+
+            client = redis.from_url(self.config.redis_url, socket_connect_timeout=5, socket_timeout=5)
+            client.set(
+                self.config.runtime_status_redis_key,
+                json.dumps(self._runtime_status_payload(signal=signal, price=price), default=str),
+                ex=self.config.runtime_status_ttl_seconds,
+            )
+            return True
+        except Exception as exc:
+            log.debug("Futures runtime status publish failed: %s", exc)
+            return False
+
     def _write_status(self, *, signal: dict[str, Any] | None = None, price: float | None = None) -> None:
         path = Path(self.config.status_file)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -4208,6 +4264,7 @@ class FuturesRuntime:
                         if refreshed_price is not None:
                             current_price = refreshed_price
                 self._write_status(signal=signal, price=current_price)
+                self._publish_runtime_status(signal=signal, price=current_price)
                 # P1 §6 #5 (assessment) + cross-bot synergy with mexc-bot-v2:
                 # publish the funding-rate observations gathered this cycle to
                 # Redis. The spot bot consumes them via mexcbot/funding_carry.

@@ -381,6 +381,8 @@ class FuturesConfig:
     sharp_event_overlay_refresh_seconds: int = 900
     sharp_event_overlay_risk_multiplier: float = 0.35
     sharp_event_bypass_symbol_calibration: bool = True
+    runtime_status_redis_key: str = "futures_runtime_status"
+    runtime_status_ttl_seconds: int = 1800
 
     @classmethod
     def from_env(cls) -> "FuturesConfig":
@@ -446,6 +448,8 @@ class FuturesConfig:
             sharp_event_overlay_refresh_seconds=max(60, env_int("FUTURES_SHARP_EVENT_OVERLAY_REFRESH_SECONDS", 900)),
             sharp_event_overlay_risk_multiplier=max(0.0, min(1.0, env_float("FUTURES_SHARP_EVENT_RISK_MULTIPLIER", 0.35))),
             sharp_event_bypass_symbol_calibration=env_bool("FUTURES_SHARP_EVENT_BYPASS_SYMBOL_CALIBRATION", True),
+            runtime_status_redis_key=env_str("FUTURES_RUNTIME_STATUS_REDIS_KEY", "futures_runtime_status"),
+            runtime_status_ttl_seconds=env_int("FUTURES_RUNTIME_STATUS_TTL_SECONDS", 1800),
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=env_str("ANTHROPIC_API_KEY", ""),
             runtime_state_file=resolve_repo_path(env_str("FUTURES_RUNTIME_STATE_FILE", "futures_runtime_state.json")),
