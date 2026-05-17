@@ -3,7 +3,7 @@
   "window_start": "2026-04-05T18:00:00+00:00",
   "window_end": "2026-05-05T18:00:00+00:00",
   "total_trades": 76,
-  "notes": "Packaged calibration refreshed after the 2026-05-05 universe pruning/tuning pass. Active production set is BTC/SOL/BNB/SEI/ZEC; ETH/PEPE/TAO/BCH/LINK are symbol-blocked until recalibration restores edge. BNB and ZEC keep only their profitable recent lanes.",
+  "notes": "Packaged calibration refreshed after the 2026-05-05 universe pruning/tuning pass. Active production set is BTC/SOL/BNB/SEI/ZEC; ETH/PEPE/TAO/BCH/LINK are symbol-blocked until recalibration restores edge. 2026-05-17 30d production-calibrated replay overlay blocks BTC coil/hold whipsaw lanes and BNB coil breakout while modestly boosting SOL pressure, BNB trend, and ZEC impulse/level lanes.",
   "by_strategy": {
     "BTC_FUTURES": {
       "trades": 433,
@@ -57,6 +57,21 @@
     "by_strategy_symbol_signal": {
       "BTC_FUTURES": {
         "BTC_USDT": {
+          "BREAKOUT_HOLD_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "2026-05-17 30d production-calibrated replay: BTC breakout-hold long stopped out; avoid late long continuation in whipsaw tape."
+          },
+          "COIL_BREAKDOWN_SHORT": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "2026-05-17 30d production-calibrated replay: BTC coil breakdown short stopped out sharply; preserve BTC short exposure through level/reversal lanes instead."
+          },
+          "COIL_BREAKOUT_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "2026-05-17 30d production-calibrated replay: BTC coil breakout longs net negative and caused two large stop-outs; preserve BTC only for cleaner short/level lanes."
+          },
           "IMPULSE_EVENT_CONTINUATION_LONG": {
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
@@ -111,6 +126,11 @@
             "risk_mult": 0.0,
             "block_reason": "SOL pressure short failed; not enough evidence to keep active."
           },
+          "PRESSURE_BREAK_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 1.1,
+            "block_reason": null
+          },
           "TREND_CONTINUATION_SHORT": {
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
@@ -162,6 +182,11 @@
           }
         },
         "BNB_USDT": {
+          "COIL_BREAKOUT_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 0.0,
+            "block_reason": "2026-05-17 30d production-calibrated replay: BNB coil breakout long was the only BNB losing lane; keep BNB trend-continuation long lane active."
+          },
           "COIL_BREAKDOWN_SHORT": {
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
@@ -186,6 +211,11 @@
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
             "block_reason": "Latest 30d tuning: BNB impulse-event short lost 3.82 USDT; keep only the profitable BNB level-break short lane active."
+          },
+          "TREND_CONTINUATION_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 1.15,
+            "block_reason": null
           }
         },
         "BCH_USDT": {
@@ -230,10 +260,20 @@
           }
         },
         "ZEC_USDT": {
+          "IMPULSE_EVENT_CONTINUATION_LONG": {
+            "threshold_offset": 0.0,
+            "risk_mult": 1.1,
+            "block_reason": null
+          },
           "IMPULSE_EVENT_CONTINUATION_SHORT": {
             "threshold_offset": 0.0,
             "risk_mult": 0.0,
             "block_reason": "ZEC impulse shorts were negative; current privacy-coin tape rewards upside continuation more than fading."
+          },
+          "LEVEL_BREAK_SHORT": {
+            "threshold_offset": 0.0,
+            "risk_mult": 1.1,
+            "block_reason": null
           },
           "LEVEL_BREAK_LONG": {
             "threshold_offset": 0.0,

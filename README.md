@@ -20,6 +20,8 @@ BTC_USDT, SOL_USDT, BNB_USDT, SEI_USDT, ZEC_USDT
 
 The wider candidate pool remains BTC, ETH, SOL, PEPE, TAO, BNB, BCH, SEI, LINK, and ZEC. ETH, PEPE, TAO, BCH, and LINK are currently symbol-blocked by the packaged calibration until a future replay shows a durable edge again.
 
+The 2026-05-17 30-day production-calibrated replay kept the five-symbol universe but pruned the losing BTC coil/hold lanes and BNB coil breakout lane. It also adds modest risk multipliers to the strongest current lanes: SOL pressure break long, BNB trend-continuation long, and ZEC impulse/level continuation.
+
 Each pair uses the shared futures scorer with a dedicated profile for volatility, funding, score threshold, reward/risk, and leverage cap. A packaged signal-lane calibration in `calibration/multi_symbol_calibration.json` blocks symbol/signal combinations that were persistently negative in the latest 60-day replay, so the bot can scan broadly without treating every pair like BTC.
 
 - Uses 15m candles for consolidation and breakout context
