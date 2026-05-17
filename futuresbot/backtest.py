@@ -296,7 +296,7 @@ class FuturesBacktestEngine:
 		# This closes the sub-cent-coin blowup hole where the legacy
 		# (margin * leverage / entry_price) path sized PEPE to catastrophic
 		# notionals because its stop-distance is tiny in absolute terms.
-		if sl_price is not None and sl_price > 0 and os.environ.get("USE_NAV_RISK_SIZING", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
+		if not _opportunity_bucket_sizing_enabled() and sl_price is not None and sl_price > 0 and os.environ.get("USE_NAV_RISK_SIZING", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
 			try:
 				from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
 

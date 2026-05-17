@@ -1060,6 +1060,7 @@ def test_enter_trade_respects_portfolio_margin_cap(tmp_path):
 
 def test_enter_trade_uses_opportunity_bucket_available_balance(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", "1")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "1")
     cfg = replace(
         _config(tmp_path),
         margin_budget_usdt=200.0,

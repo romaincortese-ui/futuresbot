@@ -3763,16 +3763,18 @@ class FuturesRuntime:
                     _r4_mult,
                     _r4_cap,
                 )
-        nav_sized = self._apply_nav_risk_sizing(
-            entry_price=entry_price,
-            sl_price=sl_price_for_sizing,
-            contract_size=contract_size,
-            available_margin=margin_budget,
-            size_multiplier=size_multiplier,
-            symbol=symbol,
-            score=float(signal_payload.get("score") or 0.0),
-            score_threshold=float(scoped.min_confidence_score),
-        )
+        nav_sized = None
+        if not self._opportunity_bucket_sizing_enabled():
+            nav_sized = self._apply_nav_risk_sizing(
+                entry_price=entry_price,
+                sl_price=sl_price_for_sizing,
+                contract_size=contract_size,
+                available_margin=margin_budget,
+                size_multiplier=size_multiplier,
+                symbol=symbol,
+                score=float(signal_payload.get("score") or 0.0),
+                score_threshold=float(scoped.min_confidence_score),
+            )
         if nav_sized is not None:
             contracts, leverage = nav_sized
             leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
