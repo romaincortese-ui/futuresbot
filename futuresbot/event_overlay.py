@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 
+DEFAULT_STABLE_DEPEG_THRESHOLD = 0.005
+
+
 @dataclass(frozen=True, slots=True)
 class CryptoEventOverlayDecision:
     allowed: bool
@@ -175,6 +178,14 @@ def _crypto_bias_for_symbol(state: Mapping[str, Any], symbol: str) -> tuple[floa
         risk_component = -min(1.0, market_risk_score)
         components.append((risk_component, 0.6))
         max_severity = max(max_severity, min(1.0, market_risk_score))
+
+    stable_depeg = _optional_float(state.get("stablecoin_depeg_score"))
+    if stable_depeg is not None and stable_depeg >= DEFAULT_STABLE_DEPEG_THRESHOLD:
+        severity = _clamp(max(0.65, stable_depeg * 50.0), 0.65, 1.2)
+        components.append((-severity, 0.8))
+        max_severity = max(max_severity, severity)
+        symbol = str(state.get("stablecoin_depeg_symbol") or "stablecoin").upper()
+        titles.append(f"{symbol} stablecoin depeg")
 
     total_weight = sum(weight for _score, weight in components if weight > 0)
     if total_weight <= 0:

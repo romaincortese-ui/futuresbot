@@ -63,6 +63,12 @@ Important variables:
 
 The project reuses `MEXC_API_KEY`, `MEXC_API_SECRET`, `REDIS_URL`, and `ANTHROPIC_API_KEY` when present.
 
+Crypto event state is consumed from Redis key `mexc:crypto_event_intelligence`, normally published by the `mexc-bot-v2` event-intelligence service. Keep `FUTURES_CRYPTO_EVENT_OVERLAY_ENABLED=true` and `REDIS_URL` set in the runtime service to use news, headline-risk, stablecoin-flow, and depeg overlays. Missing or stale state fails open, so the producer service should be treated as a shared dependency rather than a nice-to-have feed.
+
+Backtests can replay event state with `FUTURES_BACKTEST_CRYPTO_EVENT_STATE_FILE`. The file may contain one state object or a `timeline`/`states` list with `from`/`until` windows and nested `state` payloads, letting historical news/event datasets exercise the same threshold, score, sizing, leverage, and block logic used live.
+
+Opportunity bucket sizing is available with `FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED=true`. It maps the existing technical/event score to a 0-10 opportunity score, skips scores 0-5, uses 50% of available balance for scores 6-7, 75% for scores 8-9, and 100% for score 10. In that mode `FUTURES_OPPORTUNITY_MAX_LEVERAGE` defaults to `12` and `max_concurrent_positions` is forced to one.
+
 If you do not set `FUTURES_TELEGRAM_TOKEN` or `FUTURES_TELEGRAM_CHAT_ID`, the runtime falls back to `TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID`.
 
 ## Run Live Runtime

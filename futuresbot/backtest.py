@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -11,9 +11,12 @@ import pandas as pd
 
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.config import FuturesBacktestConfig
+from futuresbot.event_overlay import evaluate_crypto_event_overlay
+from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.exits import evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
+from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
 from futuresbot.sharp_opportunity import (
 	annotate_sharp_event_signal,
 	build_sharp_event_signal,
@@ -32,6 +35,41 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return default
+
+
+def _opportunity_bucket_sizing_enabled() -> bool:
+	return os.environ.get("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_replay_time(value: Any) -> datetime | None:
+	if value is None:
+		return None
+	if isinstance(value, pd.Timestamp):
+		value = value.to_pydatetime()
+	if isinstance(value, datetime):
+		return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+	if isinstance(value, (int, float)):
+		return datetime.fromtimestamp(float(value), tz=timezone.utc)
+	if isinstance(value, str):
+		raw = value.strip()
+		if not raw:
+			return None
+		try:
+			parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+		except ValueError:
+			return None
+		return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+	return None
+
+
+def _crypto_event_margin_multiplier(metadata: Mapping[str, Any] | None) -> float:
+	if not isinstance(metadata, Mapping):
+		return 1.0
+	try:
+		value = float(metadata.get("crypto_event_size_multiplier") or 1.0)
+	except (TypeError, ValueError):
+		return 1.0
+	return max(0.0, min(1.0, value))
 
 
 @dataclass(slots=True)
@@ -156,9 +194,100 @@ class FuturesBacktestEngine:
 		self.contract = self.client.get_contract_detail(self.config.symbol)
 		self.contract_size = float(self.contract.get("contractSize", 0.0001) or 0.0001)
 		self.min_vol = int(float(self.contract.get("minVol", 1) or 1))
+		self._crypto_event_replay_loaded = False
+		self._crypto_event_replay_payload: Any | None = None
+
+	def _load_crypto_event_replay(self) -> Any | None:
+		if self._crypto_event_replay_loaded:
+			return self._crypto_event_replay_payload
+		self._crypto_event_replay_loaded = True
+		path = str(getattr(self.config, "crypto_event_state_file", "") or "").strip()
+		if not path:
+			return None
+		try:
+			self._crypto_event_replay_payload = json.loads(Path(path).read_text(encoding="utf-8"))
+		except Exception:
+			self._crypto_event_replay_payload = None
+		return self._crypto_event_replay_payload
+
+	def _crypto_event_state_for(self, now: datetime) -> dict[str, Any] | None:
+		if not getattr(self.config, "crypto_event_overlay_enabled", True):
+			return None
+		payload = self._load_crypto_event_replay()
+		if not isinstance(payload, (dict, list)):
+			return None
+		if isinstance(payload, dict) and not any(key in payload for key in ("timeline", "states", "events_by_time")):
+			return payload
+		items = payload if isinstance(payload, list) else payload.get("timeline") or payload.get("states") or payload.get("events_by_time") or []
+		if not isinstance(items, list):
+			return None
+		current = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+		selected: dict[str, Any] | None = None
+		for item in items:
+			if not isinstance(item, dict):
+				continue
+			start = _parse_replay_time(item.get("from") or item.get("start") or item.get("generated_at") or item.get("timestamp"))
+			if start is None or start > current:
+				continue
+			end = _parse_replay_time(item.get("until") or item.get("end") or item.get("expires_at"))
+			if end is not None and current >= end:
+				continue
+			raw_state = item.get("state") if isinstance(item.get("state"), dict) else item
+			state = dict(raw_state)
+			state.setdefault("generated_at", start.isoformat())
+			selected = state
+		return selected
+
+	def _apply_crypto_event_overlay(self, signal: FuturesSignal, state: dict[str, Any] | None, now: datetime) -> FuturesSignal | None:
+		if not getattr(self.config, "crypto_event_overlay_enabled", True):
+			return signal
+		decision = evaluate_crypto_event_overlay(
+			state,
+			symbol=signal.symbol,
+			side=signal.side,
+			now=now,
+			stale_seconds=int(getattr(self.config, "crypto_event_stale_seconds", 1800)),
+			min_abs_bias=float(getattr(self.config, "crypto_event_min_abs_bias", 0.35)),
+			threshold_relief_points=float(getattr(self.config, "crypto_event_threshold_relief", 4.0)),
+			score_boost_points=float(getattr(self.config, "crypto_event_score_boost", 5.0)),
+			adverse_score_penalty_points=float(getattr(self.config, "crypto_event_adverse_score_penalty", 4.0)),
+		)
+		if decision.reason == "no_fresh_crypto_event_state":
+			return signal
+		if not decision.allowed:
+			return None
+		metadata = {**(signal.metadata or {}), **decision.metadata, "crypto_event_reason": decision.reason}
+		score = max(0.0, float(signal.score) + float(decision.score_offset))
+		leverage = int(signal.leverage)
+		policy = evaluate_event_policy(
+			symbol=signal.symbol,
+			side=signal.side,
+			state=state,
+			now=now,
+			stale_after_seconds=int(getattr(self.config, "crypto_event_stale_seconds", 1800)),
+		)
+		if policy.block_entry:
+			return None
+		if policy.reasons:
+			metadata.update(
+				{
+					"crypto_event_policy_reasons": list(policy.reasons),
+					"crypto_event_size_multiplier": round(policy.size_multiplier, 4),
+					"crypto_event_leverage_multiplier": round(policy.leverage_multiplier, 4),
+				}
+			)
+			if policy.state_age_seconds is not None:
+				metadata["crypto_event_policy_age_seconds"] = round(policy.state_age_seconds, 1)
+			if policy.leverage_multiplier < 1.0:
+				leverage = max(1, int(leverage * float(policy.leverage_multiplier)))
+		return replace(signal, score=round(score, 2), leverage=leverage, metadata=opportunity_metadata(metadata, score))
 
 	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0, score: float | None = None) -> tuple[int, float, int]:
-		margin = min(self.config.margin_budget_usdt * max(0.0, min(1.0, float(margin_multiplier or 0.0))), balance)
+		if _opportunity_bucket_sizing_enabled():
+			fraction = opportunity_balance_fraction(score)
+			margin = min(max(0.0, balance) * fraction * max(0.0, min(1.0, float(margin_multiplier or 0.0))), balance)
+		else:
+			margin = min(self.config.margin_budget_usdt * max(0.0, min(1.0, float(margin_multiplier or 0.0))), balance)
 		if entry_price <= 0 or leverage <= 0 or margin <= 0:
 			return 0, 0.0, leverage
 		# §2.1 — NAV-risk sizing. When USE_NAV_RISK_SIZING=1 the contract count
@@ -212,12 +341,13 @@ class FuturesBacktestEngine:
 		return position.base_qty * (price - position.entry_price) * direction
 
 	def _open_position(self, signal: FuturesSignal, entry_time: pd.Timestamp, entry_price: float, balance: float) -> FuturesPosition | None:
-		margin_multiplier = sharp_event_margin_multiplier(signal.metadata, 1.0)
+		margin_multiplier = sharp_event_margin_multiplier(signal.metadata, 1.0) * _crypto_event_margin_multiplier(signal.metadata)
 		contracts, used_margin, applied_leverage = self._contracts_for_entry(
 			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price), margin_multiplier=margin_multiplier, score=float(signal.score),
 		)
 		if contracts <= 0:
 			return None
+		metadata = opportunity_metadata(signal.metadata, signal.score)
 		return FuturesPosition(
 			symbol=signal.symbol,
 			side=signal.side,
@@ -234,7 +364,7 @@ class FuturesBacktestEngine:
 			score=float(signal.score),
 			certainty=float(signal.certainty),
 			entry_signal=signal.entry_signal,
-			metadata=dict(signal.metadata),
+			metadata=metadata,
 		)
 
 	def _close_position(
@@ -326,6 +456,8 @@ class FuturesBacktestEngine:
 			"margin_usdt": round(position.margin_usdt, 8),
 			"entry_signal": position.entry_signal,
 			"score": position.score,
+			"opportunity_score_10": int((position.metadata or {}).get("opportunity_score_10") or 0),
+			"opportunity_balance_fraction": float((position.metadata or {}).get("opportunity_balance_fraction") or 0.0),
 			"certainty": position.certainty,
 			"exit_reason": reason,
 			"tp_price": _round_price(position.tp_price),
@@ -360,6 +492,79 @@ class FuturesBacktestEngine:
 		):
 			return None
 		return self.calibration
+
+	def _candidate_signal_for_frame(self, frame_slice: pd.DataFrame, event_now: datetime, remaining_bars: int | None = None) -> FuturesSignal | None:
+		crypto_event_state = self._crypto_event_state_for(event_now)
+		event_scan_decision = evaluate_crypto_event_overlay(
+			crypto_event_state,
+			symbol=self.config.symbol,
+			now=event_now,
+			stale_seconds=int(getattr(self.config, "crypto_event_stale_seconds", 1800)),
+			min_abs_bias=float(getattr(self.config, "crypto_event_min_abs_bias", 0.35)),
+			threshold_relief_points=float(getattr(self.config, "crypto_event_threshold_relief", 4.0)),
+			score_boost_points=float(getattr(self.config, "crypto_event_score_boost", 5.0)),
+			adverse_score_penalty_points=float(getattr(self.config, "crypto_event_adverse_score_penalty", 4.0)),
+		)
+		long_threshold_offset = self.config.long_threshold_offset
+		short_threshold_offset = self.config.short_threshold_offset
+		if event_scan_decision.threshold_relief > 0:
+			if event_scan_decision.bias_score > 0:
+				long_threshold_offset = -event_scan_decision.threshold_relief
+			else:
+				short_threshold_offset = -event_scan_decision.threshold_relief
+		sharp_decision = self._sharp_event_candidate_decision(frame_slice)
+		sharp_active = bool(sharp_decision is not None and sharp_decision.allowed)
+		raw_signal = None
+		if sharp_decision is None or sharp_decision.allowed:
+			raw_signal = score_btc_futures_setup(
+				frame_slice,
+				self.config,
+				long_threshold_offset=long_threshold_offset,
+				short_threshold_offset=short_threshold_offset,
+				event_bias_score=event_scan_decision.bias_score if event_scan_decision.fresh else 0.0,
+				event_max_severity=event_scan_decision.max_severity if event_scan_decision.fresh else 0.0,
+				event_count=event_scan_decision.event_count if event_scan_decision.fresh else 0,
+				sharp_event_overlay_active=sharp_active,
+			)
+			if raw_signal is not None and sharp_decision is not None:
+				if not sharp_event_signal_allowed(raw_signal, sharp_decision):
+					raw_signal = None
+				else:
+					raw_signal = annotate_sharp_event_signal(
+						raw_signal,
+						sharp_decision,
+						bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
+					)
+			if sharp_decision is not None:
+				min_remaining_bars = max(0, int(_env_float("FUTURES_SHARP_EVENT_BACKTEST_MIN_REMAINING_BARS", 16.0)))
+				if remaining_bars is not None and remaining_bars < min_remaining_bars:
+					raw_signal = None
+				else:
+					raw_signal = build_sharp_event_signal(
+						frame_slice,
+						self.config,
+						sharp_decision,
+						bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
+					)
+			if raw_signal is not None:
+				raw_signal = self._apply_crypto_event_overlay(raw_signal, crypto_event_state, event_now)
+		calibrated = (
+			apply_signal_calibration(
+				raw_signal,
+				self._calibration_for_signal(raw_signal),
+				base_threshold=self.config.min_confidence_score,
+				leverage_min=self.config.leverage_min,
+				leverage_max=self.config.leverage_max,
+			)
+			if raw_signal is not None
+			else None
+		)
+		if calibrated is None:
+			return None
+		metadata = opportunity_metadata(calibrated.metadata, calibrated.score)
+		if _opportunity_bucket_sizing_enabled() and float(metadata.get("opportunity_balance_fraction") or 0.0) <= 0:
+			return None
+		return replace(calibrated, metadata=metadata)
 
 	def _bar_exit(self, position: FuturesPosition, bar: pd.Series) -> tuple[float, str] | None:
 		high = float(bar["high"])
@@ -489,49 +694,7 @@ class FuturesBacktestEngine:
 					state.open_position = None
 
 			if state.open_position is None and close_time.minute == 0 and index + 1 < len(frame_15m):
-				frame_slice = frame_15m.iloc[: index + 1]
-				sharp_decision = self._sharp_event_candidate_decision(frame_slice)
-				sharp_active = bool(sharp_decision is not None and sharp_decision.allowed)
-				raw_signal = None
-				if sharp_decision is None or sharp_decision.allowed:
-					raw_signal = score_btc_futures_setup(
-						frame_slice,
-						self.config,
-						long_threshold_offset=self.config.long_threshold_offset,
-						short_threshold_offset=self.config.short_threshold_offset,
-						sharp_event_overlay_active=sharp_active,
-					)
-					if raw_signal is not None and sharp_decision is not None:
-						if not sharp_event_signal_allowed(raw_signal, sharp_decision):
-							raw_signal = None
-						else:
-							raw_signal = annotate_sharp_event_signal(
-								raw_signal,
-								sharp_decision,
-								bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
-							)
-					if sharp_decision is not None:
-						min_remaining_bars = max(0, int(_env_float("FUTURES_SHARP_EVENT_BACKTEST_MIN_REMAINING_BARS", 16.0)))
-						if len(frame_15m) - index - 1 >= min_remaining_bars:
-							raw_signal = build_sharp_event_signal(
-								frame_slice,
-								self.config,
-								sharp_decision,
-								bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
-							)
-						else:
-							raw_signal = None
-				calibrated = (
-					apply_signal_calibration(
-						raw_signal,
-						self._calibration_for_signal(raw_signal),
-						base_threshold=self.config.min_confidence_score,
-						leverage_min=self.config.leverage_min,
-						leverage_max=self.config.leverage_max,
-					)
-					if raw_signal is not None
-					else None
-				)
+				calibrated = self._candidate_signal_for_frame(frame_15m.iloc[: index + 1], close_time.to_pydatetime(), len(frame_15m) - index - 1)
 				if calibrated is not None:
 					state.pending_signal = calibrated
 					state.pending_entry_time = frame_15m.index[index + 1]

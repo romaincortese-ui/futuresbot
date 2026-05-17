@@ -11,6 +11,7 @@ DEFAULT_LEVERAGE_MULTIPLIER = 0.70
 DEFAULT_SEVERE_SIZE_MULTIPLIER = 0.40
 DEFAULT_SEVERE_LEVERAGE_MULTIPLIER = 0.50
 DEFAULT_BLOCK_THRESHOLD = 0.92
+DEFAULT_STABLE_DEPEG_THRESHOLD = 0.005
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +127,12 @@ def _risk_score_for_symbol(state: dict[str, Any], symbol: str) -> tuple[float, l
     if inflow >= 5_000.0:
         score = max(score, 0.80)
         reasons.append("exchange_inflow_spike")
+
+    stable_depeg = _safe_float(state.get("stablecoin_depeg_score"), 0.0)
+    if stable_depeg >= DEFAULT_STABLE_DEPEG_THRESHOLD:
+        score = max(score, min(1.0, max(0.70, stable_depeg * 50.0)))
+        symbol = str(state.get("stablecoin_depeg_symbol") or "stablecoin").strip().upper()
+        reasons.append(f"stablecoin_depeg:{symbol}:{stable_depeg:.4f}")
 
     for raw in state.get("events") or state.get("headlines") or ():
         if not isinstance(raw, dict):

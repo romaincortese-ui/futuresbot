@@ -26,6 +26,8 @@ from futuresbot.review import load_daily_review
 from futuresbot.strategy import score_btc_futures_setup
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import evaluate_crypto_event_overlay
+from futuresbot.event_policy import evaluate_event_policy
+from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -2301,6 +2303,37 @@ class FuturesRuntime:
             )
             return None
         score = max(0.0, float(signal.score) + float(decision.score_offset))
+        leverage = int(signal.leverage)
+        policy = evaluate_event_policy(
+            symbol=signal.symbol,
+            side=signal.side,
+            state=state,
+            now=now,
+            stale_after_seconds=int(self.config.crypto_event_stale_seconds),
+        )
+        if policy.block_entry:
+            log.info(
+                "Signal scan: %s %s blocked by crypto event policy (%s)",
+                signal.symbol,
+                signal.side,
+                ",".join(policy.reasons) or "risk_window",
+            )
+            return None
+        if policy.reasons:
+            metadata.update(
+                {
+                    "crypto_event_policy_reasons": list(policy.reasons),
+                    "crypto_event_size_multiplier": round(policy.size_multiplier, 4),
+                    "crypto_event_leverage_multiplier": round(policy.leverage_multiplier, 4),
+                }
+            )
+            if policy.state_age_seconds is not None:
+                metadata["crypto_event_policy_age_seconds"] = round(policy.state_age_seconds, 1)
+            if policy.leverage_multiplier < 1.0:
+                leverage = self._enforce_live_leverage_bounds(
+                    max(1, int(leverage * float(policy.leverage_multiplier))),
+                    symbol=signal.symbol,
+                )
         if abs(decision.score_offset) > 1e-9:
             log.info(
                 "Crypto event overlay %s for %s %s: score %.1f -> %.1f",
@@ -2310,7 +2343,7 @@ class FuturesRuntime:
                 signal.score,
                 score,
             )
-        return dataclasses.replace(signal, score=round(score, 2), metadata=metadata)
+        return dataclasses.replace(signal, score=round(score, 2), leverage=leverage, metadata=opportunity_metadata(metadata, score))
 
     # ------------------------------------------------------------------
     # Sprint 1 helpers — all no-ops unless the matching env flag is set.
@@ -2320,6 +2353,12 @@ class FuturesRuntime:
         import os
 
         return os.environ.get(name, "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    @staticmethod
+    def _opportunity_bucket_sizing_enabled() -> bool:
+        import os
+
+        return os.environ.get("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
 
     @staticmethod
     def _env_float(name: str, default: float) -> float:
@@ -3625,6 +3664,8 @@ class FuturesRuntime:
         # payload so the order submitted to the exchange reflects the new SL.
         original_sl = float(signal_payload.get("sl_price") or 0.0)
         signal_metadata = dict(signal_payload.get("metadata", {}) or {})
+        signal_metadata = opportunity_metadata(signal_metadata, float(signal_payload.get("score") or 0.0))
+        signal_payload["metadata"] = signal_metadata
         signal_metadata.setdefault("setup_regime", setup_regime_for_signal(str(signal_payload.get("entry_signal") or ""), side_name))
         adjusted_sl = self._adjust_sl_for_funding(
             scoped=scoped,
@@ -3638,7 +3679,32 @@ class FuturesRuntime:
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         capital_multiplier, capital_scaling = self._capital_scaling_multiplier()
         event_margin_multiplier = sharp_event_margin_multiplier(signal_metadata, 1.0)
-        margin_budget = scoped.margin_budget_usdt * capital_multiplier * event_margin_multiplier
+        account_snapshot = self._account_snapshot(entry_price)
+        available_balance = float(account_snapshot.get("available_usdt", 0.0) or 0.0)
+        if available_balance <= 0:
+            available_balance = max(0.0, scoped.margin_budget_usdt - self._total_open_margin())
+        if self._opportunity_bucket_sizing_enabled():
+            opportunity_fraction = opportunity_balance_fraction(float(signal_payload.get("score") or 0.0))
+            if opportunity_fraction <= 0:
+                log.info(
+                    "Futures signal skipped for %s: opportunity score %s/10 below trade bucket",
+                    symbol,
+                    signal_metadata.get("opportunity_score_10"),
+                )
+                return False
+            margin_budget = available_balance * opportunity_fraction * event_margin_multiplier
+            signal_metadata["opportunity_available_balance_usdt"] = round(available_balance, 4)
+            signal_metadata["opportunity_margin_budget_usdt"] = round(margin_budget, 4)
+            log.info(
+                "[OPPORTUNITY_SIZE] symbol=%s score_10=%s fraction=%.2f available=%.2f margin_budget=%.2f",
+                symbol,
+                signal_metadata.get("opportunity_score_10"),
+                opportunity_fraction,
+                available_balance,
+                margin_budget,
+            )
+        else:
+            margin_budget = scoped.margin_budget_usdt * capital_multiplier * event_margin_multiplier
         if event_margin_multiplier < 1.0:
             log.info(
                 "[SHARP_EVENT_RISK] symbol=%s multiplier=%.2f margin_budget=%.2f base_margin_budget=%.2f",
@@ -3665,6 +3731,19 @@ class FuturesRuntime:
         if size_multiplier <= 0:
             log.info("Futures signal skipped for %s: drawdown HALT gate active", symbol)
             return False
+        event_size_multiplier = signal_metadata.get("crypto_event_size_multiplier")
+        try:
+            event_size_multiplier = float(event_size_multiplier)
+        except (TypeError, ValueError):
+            event_size_multiplier = 1.0
+        if event_size_multiplier < 1.0:
+            size_multiplier *= max(0.0, min(1.0, event_size_multiplier))
+            log.info(
+                "[CRYPTO_EVENT_RISK] symbol=%s size_multiplier=%.3f reasons=%s",
+                symbol,
+                size_multiplier,
+                signal_metadata.get("crypto_event_policy_reasons") or [],
+            )
         # Sprint 1 §2.1 — NAV-anchored sizing. Replaces the legacy
         # (margin_budget × leverage / price) formula when USE_NAV_RISK_SIZING=1.
         sl_price_for_sizing = float(signal_payload.get("sl_price") or 0.0)
@@ -3709,7 +3788,14 @@ class FuturesRuntime:
         # Portfolio margin cap. Default 0 means: cap = max_concurrent_positions * margin_budget.
         cap = self.config.max_total_margin_usdt
         if cap <= 0:
-            cap = self.config.margin_budget_usdt * self.config.max_concurrent_positions * max(1.0, capital_multiplier)
+            if self._opportunity_bucket_sizing_enabled():
+                cap = max(
+                    margin_budget,
+                    float(account_snapshot.get("equity_usdt", 0.0) or 0.0),
+                    available_balance,
+                )
+            else:
+                cap = self.config.margin_budget_usdt * self.config.max_concurrent_positions * max(1.0, capital_multiplier)
         if self._total_open_margin() + projected_margin > cap * 1.0001:
             log.info(
                 "Futures signal skipped for %s: portfolio margin cap (%.2f + %.2f > %.2f)",

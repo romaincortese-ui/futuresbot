@@ -73,6 +73,37 @@ def _config(tmp_path) -> FuturesConfig:
     )
 
 
+def test_crypto_event_policy_reduces_live_signal_size_and_leverage(tmp_path):
+    config = replace(_config(tmp_path), leverage_min=1, leverage_max=20)
+    runtime = FuturesRuntime(config, StubClient())
+    now = datetime(2026, 5, 17, 10, 0, tzinfo=timezone.utc)
+    signal = FuturesSignal(
+        symbol="BTC_USDT",
+        side="LONG",
+        score=90.0,
+        certainty=0.9,
+        entry_price=90000.0,
+        tp_price=93000.0,
+        sl_price=88500.0,
+        leverage=10,
+        entry_signal="BREAKOUT_HOLD_LONG",
+        metadata={},
+    )
+    state = {
+        "generated_at": now.isoformat(),
+        "ttl_seconds": 1800,
+        "market_risk_score": 0.70,
+    }
+
+    adjusted = runtime._apply_crypto_event_overlay(signal, state, now)
+
+    assert adjusted is not None
+    assert adjusted.leverage == 7
+    assert adjusted.metadata["crypto_event_size_multiplier"] == 0.65
+    assert adjusted.metadata["crypto_event_leverage_multiplier"] == 0.70
+    assert "market" in adjusted.metadata["crypto_event_policy_reasons"]
+
+
 def test_drop_incomplete_klines_removes_still_forming_15m_bar():
     index = pd.DatetimeIndex(
         [
@@ -1025,6 +1056,42 @@ def test_enter_trade_respects_portfolio_margin_cap(tmp_path):
     # With margin_budget_usdt default, projected margin ≈ margin_budget (e.g. 30). 40 + 30 > 50 → reject.
     assert runtime._enter_trade(signal) is False
     assert "ETH_USDT" not in runtime.open_positions
+
+
+def test_enter_trade_uses_opportunity_bucket_available_balance(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", "1")
+    cfg = replace(
+        _config(tmp_path),
+        margin_budget_usdt=200.0,
+        paper_trade=True,
+        leverage_min=1,
+        leverage_max=20,
+        max_total_margin_usdt=0.0,
+    )
+
+    class ContractClient(StubClient):
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+    runtime = FuturesRuntime(cfg, ContractClient())
+    signal = {
+        "side": "LONG",
+        "entry_price": 10.0,
+        "leverage": 2,
+        "symbol": "BTC_USDT",
+        "tp_price": 12.0,
+        "sl_price": 9.0,
+        "score": 85.0,
+        "certainty": 0.8,
+        "entry_signal": "COIL_BREAKOUT_LONG",
+    }
+
+    assert runtime._enter_trade(signal) is True
+    position = runtime.open_positions["BTC_USDT"]
+    assert position.margin_usdt == 150.0
+    assert position.contracts == 30
+    assert position.metadata["opportunity_score_10"] == 9
+    assert position.metadata["opportunity_balance_fraction"] == 0.75
 
 
 def test_live_enter_trade_does_not_register_without_exchange_position(tmp_path, monkeypatch):

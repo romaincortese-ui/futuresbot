@@ -8,6 +8,7 @@ import pandas as pd
 
 from futuresbot.indicators import calc_adx, calc_atr, calc_ema, calc_rsi, resample_ohlcv
 from futuresbot.models import FuturesSignal
+from futuresbot.opportunity_score import opportunity_metadata
 
 
 _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
@@ -451,6 +452,15 @@ def _build_signal(
         symbol=getattr(config, "symbol", None),
     ):
         return None
+    signal_metadata = {
+        **metadata,
+        "sl_distance_pct": round(sl_distance_pct, 6),
+        "tp_distance_pct": round(abs(tp_price - entry_price) / entry_price if entry_price > 0 else 0.0, 6),
+        "leverage_min_bound": float(leverage_min_bound),
+        "leverage_max_bound": float(leverage_max_bound),
+        "hourly_exit_progress": config.early_exit_tp_progress,
+        **(cost_projection or {}),
+    }
     return FuturesSignal(
         symbol=config.symbol,
         side=side,
@@ -461,15 +471,7 @@ def _build_signal(
         sl_price=_round_price_precision(sl_price),
         leverage=leverage,
         entry_signal=entry_signal,
-        metadata={
-            **metadata,
-            "sl_distance_pct": round(sl_distance_pct, 6),
-            "tp_distance_pct": round(abs(tp_price - entry_price) / entry_price if entry_price > 0 else 0.0, 6),
-            "leverage_min_bound": float(leverage_min_bound),
-            "leverage_max_bound": float(leverage_max_bound),
-            "hourly_exit_progress": config.early_exit_tp_progress,
-            **(cost_projection or {}),
-        },
+        metadata=opportunity_metadata(signal_metadata, score),
     )
 
 

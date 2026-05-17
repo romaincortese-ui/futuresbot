@@ -7,11 +7,21 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from futuresbot.calibration import build_trade_calibration, publish_trade_calibration, write_trade_calibration
 from futuresbot.backtest import FuturesBacktestEngine, build_report, build_signal_summary, export_artifacts
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesBacktestConfig, FuturesConfig, parse_utc_datetime
 from futuresbot.gate_b_readiness import SymbolResult, evaluate_gate_b_readiness
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
+from futuresbot.models import FuturesPosition, FuturesSignal
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _calibration_output_file() -> str:
@@ -52,6 +62,15 @@ def _run_single_symbol(
     provider: FuturesHistoricalDataProvider,
     symbol: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    cfg = _scoped_backtest_config(base_config, symbol)
+    engine = FuturesBacktestEngine(cfg, provider, client)
+    equity_curve, trades = engine.run()
+    report = build_report(equity_curve, trades, cfg.initial_balance)
+    export_artifacts(cfg.output_dir, equity_curve, trades, report)
+    return equity_curve, trades, report
+
+
+def _scoped_backtest_config(base_config: FuturesBacktestConfig, symbol: str) -> FuturesBacktestConfig:
     old_symbol = os.environ.get("FUTURES_SYMBOL")
     os.environ["FUTURES_SYMBOL"] = symbol
     try:
@@ -69,10 +88,148 @@ def _run_single_symbol(
         output_dir=str(Path(base_config.output_dir) / symbol.lower()),
         cache_dir=base_config.cache_dir,
     )
-    engine = FuturesBacktestEngine(cfg, provider, client)
-    equity_curve, trades = engine.run()
-    report = build_report(equity_curve, trades, cfg.initial_balance)
-    export_artifacts(cfg.output_dir, equity_curve, trades, report)
+    return cfg
+
+
+def _run_portfolio_backtest(
+    base_config: FuturesBacktestConfig,
+    client: MexcFuturesClient,
+    provider: FuturesHistoricalDataProvider,
+    symbols: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    start_ts = int(base_config.start.timestamp())
+    end_ts = int(base_config.end.timestamp())
+    frames: dict[str, Any] = {}
+    indexes: dict[str, dict[Any, int]] = {}
+    engines: dict[str, FuturesBacktestEngine] = {}
+    configs: dict[str, FuturesBacktestConfig] = {}
+    for symbol in symbols:
+        cfg = dataclasses.replace(_scoped_backtest_config(base_config, symbol), output_dir=str(Path(base_config.output_dir) / symbol.lower()))
+        frame = provider.fetch_klines(symbol, interval="Min15", start=start_ts, end=end_ts).sort_index()
+        if len(frame) <= 220:
+            continue
+        configs[symbol] = cfg
+        engines[symbol] = FuturesBacktestEngine(cfg, provider, client)
+        frames[symbol] = frame
+        indexes[symbol] = {timestamp: idx for idx, timestamp in enumerate(frame.index)}
+
+    all_times = sorted({timestamp for frame in frames.values() for timestamp in frame.index[220:]})
+    balance = float(base_config.initial_balance)
+    trades: list[dict[str, Any]] = []
+    equity_curve: list[dict[str, Any]] = []
+    step = pd.Timedelta(minutes=15)
+    open_engine: FuturesBacktestEngine | None = None
+    open_position: FuturesPosition | None = None
+    pending_signal: FuturesSignal | None = None
+    pending_symbol = ""
+    pending_entry_time = None
+
+    for timestamp in all_times:
+        if pending_signal is not None and pending_entry_time == timestamp and open_position is None:
+            frame = frames.get(pending_symbol)
+            engine = engines.get(pending_symbol)
+            idx = indexes.get(pending_symbol, {}).get(timestamp)
+            if frame is not None and engine is not None and idx is not None:
+                position = engine._open_position(pending_signal, timestamp, float(frame.iloc[idx]["open"]), balance)
+                if position is not None:
+                    open_engine = engine
+                    open_position = position
+            pending_signal = None
+            pending_symbol = ""
+            pending_entry_time = None
+
+        close_time = timestamp + step
+        if open_position is not None and open_engine is not None:
+            frame = frames.get(open_position.symbol)
+            idx = indexes.get(open_position.symbol, {}).get(timestamp)
+            if frame is not None and idx is not None:
+                bar = frame.iloc[idx]
+                bar_exit = open_engine._bar_exit(open_position, bar)
+                if bar_exit is not None:
+                    exit_price, reason = bar_exit
+                    liquidated = reason == "LIQUIDATED"
+                    trade = open_engine._close_position(
+                        open_position,
+                        close_time,
+                        exit_price,
+                        reason,
+                        liquidated=liquidated,
+                        liq_price=exit_price if liquidated else None,
+                    )
+                    balance += float(trade["pnl_usdt"])
+                    trades.append(trade)
+                    open_position = None
+                    open_engine = None
+
+        if open_position is not None and open_engine is not None and close_time.minute == 0:
+            frame = frames.get(open_position.symbol)
+            idx = indexes.get(open_position.symbol, {}).get(timestamp)
+            if frame is not None and idx is not None:
+                hourly_exit = open_engine._hourly_exit(open_position, float(frame.iloc[idx]["close"]))
+                if hourly_exit is not None:
+                    exit_price, reason = hourly_exit
+                    trade = open_engine._close_position(open_position, close_time, exit_price, reason)
+                    balance += float(trade["pnl_usdt"])
+                    trades.append(trade)
+                    open_position = None
+                    open_engine = None
+
+        if open_position is None and pending_signal is None and close_time.minute == 0:
+            candidates: list[tuple[int, float, float, str, FuturesSignal]] = []
+            for symbol, frame in frames.items():
+                idx = indexes[symbol].get(timestamp)
+                if idx is None or idx < 220 or idx + 1 >= len(frame):
+                    continue
+                signal = engines[symbol]._candidate_signal_for_frame(frame.iloc[: idx + 1], close_time.to_pydatetime(), len(frame) - idx - 1)
+                if signal is None:
+                    continue
+                metadata = signal.metadata or {}
+                candidates.append(
+                    (
+                        int(metadata.get("opportunity_score_10") or 0),
+                        float(signal.score),
+                        float(signal.certainty),
+                        symbol,
+                        signal,
+                    )
+                )
+            candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+            if candidates:
+                _score10, _score, _certainty, symbol, signal = candidates[0]
+                pending_signal = signal
+                pending_symbol = symbol
+                pending_entry_time = frames[symbol].index[indexes[symbol][timestamp] + 1]
+
+        mtm = 0.0
+        if open_position is not None and open_engine is not None:
+            frame = frames.get(open_position.symbol)
+            idx = indexes.get(open_position.symbol, {}).get(timestamp)
+            if frame is not None and idx is not None:
+                mtm = open_engine._mark_to_market(open_position, float(frame.iloc[idx]["close"]))
+        equity_curve.append(
+            {
+                "timestamp": close_time.isoformat(),
+                "equity": round(balance + mtm, 8),
+                "cash_balance": round(balance, 8),
+                "open_positions": 1 if open_position is not None else 0,
+            }
+        )
+
+    if open_position is not None and open_engine is not None:
+        frame = frames[open_position.symbol]
+        final_timestamp = frame.index[-1] + step
+        final_close = float(frame.iloc[-1]["close"])
+        trade = open_engine._close_position(open_position, final_timestamp, final_close, "END_OF_TEST")
+        balance += float(trade["pnl_usdt"])
+        trades.append(trade)
+        equity_curve.append({"timestamp": final_timestamp.isoformat(), "equity": round(balance, 8), "cash_balance": round(balance, 8), "open_positions": 0})
+
+    report = build_report(equity_curve, trades, base_config.initial_balance)
+    report["portfolio_mode"] = True
+    report["symbols"] = list(frames.keys())
+    report["usable_symbols"] = len(frames)
+    report["max_open_positions"] = 1
+    export_artifacts(base_config.output_dir, equity_curve, trades, report)
     return equity_curve, trades, report
 
 
@@ -129,6 +286,7 @@ def main() -> None:
         help="Comma-separated symbol list. Overrides FUTURES_BACKTEST_SYMBOLS and FUTURES_SYMBOLS.",
     )
     parser.add_argument("--single-symbol", help="Restrict the run to one symbol.")
+    parser.add_argument("--portfolio", action="store_true", help="Scan all symbols into one portfolio with one open trade at a time.")
     args = parser.parse_args()
 
     config = FuturesBacktestConfig.from_env()
@@ -150,6 +308,26 @@ def main() -> None:
             "output_dir": config.output_dir,
         }
     }, indent=2))
+
+    portfolio_mode = bool(args.portfolio or _env_bool("FUTURES_BACKTEST_PORTFOLIO_MODE", False)) and not args.single_symbol
+
+    if portfolio_mode:
+        _, combined_trades, portfolio_report = _run_portfolio_backtest(config, client, provider, symbols)
+        calibration = build_trade_calibration(
+            combined_trades,
+            window_start=config.start,
+            window_end=config.end,
+            min_strategy_trades=config.calibration_min_total_trades,
+            min_symbol_trades=config.calibration_min_total_trades,
+        )
+        calibration_file = _calibration_output_file()
+        write_trade_calibration(calibration_file, calibration)
+        published = publish_trade_calibration(config.redis_url, config.calibration_redis_key, calibration)
+        Path(config.output_dir).mkdir(parents=True, exist_ok=True)
+        (Path(config.output_dir) / "portfolio_summary.json").write_text(json.dumps(portfolio_report, indent=2), encoding="utf-8")
+        print(json.dumps({"calibration": {"file": calibration_file, "redis_key": config.calibration_redis_key, "published": published}}, indent=2))
+        print(json.dumps({"portfolio_summary": portfolio_report}, indent=2))
+        return
 
     per_symbol_report: dict[str, dict[str, Any]] = {}
     combined_trades: list[dict[str, Any]] = []

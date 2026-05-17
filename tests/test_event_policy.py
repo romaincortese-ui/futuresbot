@@ -59,3 +59,19 @@ def test_event_policy_fails_open_when_stale():
     assert decision.block_entry is False
     assert decision.size_multiplier == 1.0
     assert decision.reasons == ()
+
+
+def test_event_policy_blocks_severe_stablecoin_depeg():
+    state = {
+        "generated_at": BASE.isoformat(),
+        "ttl_seconds": 1800,
+        "stablecoin_depeg_score": 0.02,
+        "stablecoin_depeg_symbol": "USDT",
+    }
+
+    decision = evaluate_event_policy(symbol="BTC_USDT", side="LONG", state=state, now=BASE)
+
+    assert decision.block_entry is True
+    assert decision.size_multiplier == 0.40
+    assert decision.leverage_multiplier == 0.50
+    assert "stablecoin_depeg:USDT:0.0200" in decision.reasons

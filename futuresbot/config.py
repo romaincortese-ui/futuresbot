@@ -165,6 +165,18 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def opportunity_bucket_sizing_enabled() -> bool:
+    return env_bool("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", False)
+
+
+def opportunity_min_raw_score() -> float:
+    return env_float("FUTURES_OPPORTUNITY_MIN_RAW_SCORE", 55.0)
+
+
+def opportunity_max_leverage() -> int:
+    return max(1, env_int("FUTURES_OPPORTUNITY_MAX_LEVERAGE", 12))
+
+
 def env_int(name: str, default: int) -> int:
     value = os.getenv(name)
     if value is None or value.strip() == "":
@@ -416,7 +428,7 @@ class FuturesConfig:
             futures_base_url=env_str("MEXC_FUTURES_BASE_URL", "https://contract.mexc.com"),
             margin_budget_usdt=env_float("FUTURES_MARGIN_BUDGET_USDT", 75.0),
             max_margin_fraction=env_float("FUTURES_MAX_MARGIN_FRACTION", 0.85),
-            min_confidence_score=env_float("FUTURES_SCORE_THRESHOLD", 56.0),
+            min_confidence_score=env_float("FUTURES_SCORE_THRESHOLD", opportunity_min_raw_score() if opportunity_bucket_sizing_enabled() else 56.0),
             long_threshold_offset=env_float("FUTURES_LONG_THRESHOLD_OFFSET", 0.0),
             short_threshold_offset=env_float("FUTURES_SHORT_THRESHOLD_OFFSET", 0.0),
             hourly_check_seconds=hourly_check_seconds,
@@ -509,6 +521,14 @@ class FuturesConfig:
                 instance = dataclasses.replace(
                     instance, hard_loss_cap_pct=min(instance.hard_loss_cap_pct, tight_cap)
                 )
+        if opportunity_bucket_sizing_enabled():
+            cap = opportunity_max_leverage()
+            instance = dataclasses.replace(
+                instance,
+                max_concurrent_positions=1,
+                leverage_max=min(instance.leverage_max, cap),
+                leverage_min=min(instance.leverage_min, cap),
+            )
         return instance
 
     def for_symbol(self, symbol: str) -> "FuturesConfig":
@@ -540,12 +560,17 @@ class FuturesConfig:
 
         leverage_max = env_int_for_symbol(sym, "LEVERAGE_MAX", prof_int("leverage_max", self.leverage_max))
         leverage_min = min(env_int_for_symbol(sym, "LEVERAGE_MIN", prof_int("leverage_min", self.leverage_min)), leverage_max)
+        score_threshold = env_float_for_symbol(sym, "SCORE_THRESHOLD", prof_float("min_confidence_score", self.min_confidence_score))
+        if opportunity_bucket_sizing_enabled():
+            leverage_max = min(leverage_max, opportunity_max_leverage())
+            leverage_min = min(leverage_min, leverage_max)
+            score_threshold = min(score_threshold, opportunity_min_raw_score())
         return dataclasses.replace(
             self,
             symbol=sym,
             leverage_min=leverage_min,
             leverage_max=leverage_max,
-            min_confidence_score=env_float_for_symbol(sym, "SCORE_THRESHOLD", prof_float("min_confidence_score", self.min_confidence_score)),
+            min_confidence_score=score_threshold,
             long_threshold_offset=env_float_for_symbol(sym, "LONG_THRESHOLD_OFFSET", prof_float("long_threshold_offset", self.long_threshold_offset)),
             short_threshold_offset=env_float_for_symbol(sym, "SHORT_THRESHOLD_OFFSET", prof_float("short_threshold_offset", self.short_threshold_offset)),
             hard_loss_cap_pct=env_float_for_symbol(sym, "HARD_LOSS_CAP_PCT", prof_float("hard_loss_cap_pct", self.hard_loss_cap_pct)),
@@ -709,6 +734,13 @@ class FuturesBacktestConfig:
     sharp_event_core_symbols: tuple[str, ...] = DEFAULT_FUTURES_SYMBOLS
     sharp_event_overlay_risk_multiplier: float = 0.35
     sharp_event_bypass_symbol_calibration: bool = True
+    crypto_event_overlay_enabled: bool = True
+    crypto_event_state_file: str = ""
+    crypto_event_stale_seconds: int = 1800
+    crypto_event_min_abs_bias: float = 0.35
+    crypto_event_threshold_relief: float = 4.0
+    crypto_event_score_boost: float = 5.0
+    crypto_event_adverse_score_penalty: float = 4.0
     redis_url: str = ""
     anthropic_api_key: str = ""
 
@@ -717,6 +749,10 @@ class FuturesBacktestConfig:
         start, end = resolve_backtest_window(now=now)
         live = FuturesConfig.from_env()
         scoped = live.for_symbol(live.symbol)
+        crypto_event_state_file = env_str(
+            "FUTURES_BACKTEST_CRYPTO_EVENT_STATE_FILE",
+            env_str("FUTURES_CRYPTO_EVENT_STATE_FILE", ""),
+        )
         return cls(
             start=start,
             end=end,
@@ -762,6 +798,13 @@ class FuturesBacktestConfig:
             ) or DEFAULT_FUTURES_SYMBOLS,
             sharp_event_overlay_risk_multiplier=live.sharp_event_overlay_risk_multiplier,
             sharp_event_bypass_symbol_calibration=live.sharp_event_bypass_symbol_calibration,
+            crypto_event_overlay_enabled=live.crypto_event_overlay_enabled,
+            crypto_event_state_file=resolve_repo_path(crypto_event_state_file) if crypto_event_state_file else "",
+            crypto_event_stale_seconds=live.crypto_event_stale_seconds,
+            crypto_event_min_abs_bias=live.crypto_event_min_abs_bias,
+            crypto_event_threshold_relief=live.crypto_event_threshold_relief,
+            crypto_event_score_boost=live.crypto_event_score_boost,
+            crypto_event_adverse_score_penalty=live.crypto_event_adverse_score_penalty,
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=live.anthropic_api_key,
         )

@@ -79,3 +79,20 @@ def test_extreme_adverse_event_blocks_only_aligned_bad_side() -> None:
     assert long_decision.reason == "extreme_crypto_event_adverse"
     assert short_decision.allowed is True
     assert short_decision.reason == "crypto_event_favourable_boost"
+
+
+def test_stablecoin_depeg_is_market_wide_adverse_event() -> None:
+    now = datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc)
+    state = {
+        "generated_at": now.isoformat(),
+        "stablecoin_depeg_score": 0.014,
+        "stablecoin_depeg_symbol": "USDT",
+    }
+
+    long_decision = evaluate_crypto_event_overlay(state, symbol="BTC_USDT", side="LONG", now=now)
+    short_decision = evaluate_crypto_event_overlay(state, symbol="BTC_USDT", side="SHORT", now=now)
+
+    assert long_decision.reason == "crypto_event_adverse_reduce"
+    assert long_decision.score_offset < 0
+    assert short_decision.reason == "crypto_event_favourable_boost"
+    assert "USDT stablecoin depeg" in long_decision.metadata["crypto_event_titles"]
