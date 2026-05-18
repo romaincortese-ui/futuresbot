@@ -2424,7 +2424,8 @@ class FuturesRuntime:
         try:
             from futuresbot.drawdown_kill import compute_drawdown_state
 
-            curve = self._build_equity_curve()
+            account_snapshot = None if self.config.paper_trade else self._account_snapshot()
+            curve = self._build_equity_curve(account_snapshot=account_snapshot)
             if not curve:
                 return 1.0
             state = compute_drawdown_state(
@@ -2458,18 +2459,18 @@ class FuturesRuntime:
             log.debug("Drawdown kill helper skipped: %s", exc)
             return 1.0
 
-    def _build_equity_curve(self) -> list[tuple[float, float]]:
+    def _build_equity_curve(self, *, account_snapshot: dict[str, float] | None = None) -> list[tuple[float, float]]:
         """Reconstruct a cumulative-equity timeseries from closed trades.
 
-        Starting NAV = ``margin_budget_usdt``; each closed trade adds its
-        realised P&L. Returns ``[(unix_ts, nav_usdt), ...]`` sorted ascending.
+        In paper mode, starting NAV = ``margin_budget_usdt``. In live mode,
+        anchor the curve to the current exchange equity so external cash flows
+        such as deposits/withdrawals do not distort drawdown.
         """
 
-        baseline = float(self.config.margin_budget_usdt)
-        if baseline <= 0 or not self.trade_history:
+        if not self.trade_history:
             return []
-        points: list[tuple[float, float]] = []
-        running = baseline
+
+        parsed_trades: list[tuple[float, float]] = []
         for trade in self.trade_history:
             pnl = 0.0
             for key in ("pnl_usdt", "pnl", "realized_pnl"):
@@ -2492,9 +2493,41 @@ class FuturesRuntime:
                     ts_value = None
             if ts_value is None:
                 continue
+            parsed_trades.append((ts_value, pnl))
+
+        if not parsed_trades:
+            return []
+
+        parsed_trades.sort(key=lambda pair: pair[0])
+        total_realized = sum(pnl for _ts, pnl in parsed_trades)
+        live_equity: float | None = None
+        live_unrealized = 0.0
+        if account_snapshot is not None and not self.config.paper_trade:
+            try:
+                equity = float(account_snapshot.get("equity_usdt", 0.0) or 0.0)
+                if equity > 0:
+                    live_equity = equity
+                    live_unrealized = float(account_snapshot.get("unrealized_pnl_usdt", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                live_equity = None
+
+        if live_equity is not None:
+            baseline = live_equity - live_unrealized - total_realized
+        else:
+            baseline = float(self.config.margin_budget_usdt)
+        if baseline <= 0:
+            return []
+
+        points: list[tuple[float, float]] = []
+        running = baseline
+        for ts_value, pnl in parsed_trades:
             running += pnl
             points.append((ts_value, running))
-        points.sort(key=lambda pair: pair[0])
+        if live_equity is not None:
+            now_ts = time.time()
+            if points and now_ts <= points[-1][0]:
+                now_ts = points[-1][0] + 0.001
+            points.append((now_ts, live_equity))
         return points
 
     def _apply_nav_risk_sizing(

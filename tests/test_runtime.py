@@ -63,6 +63,11 @@ class StubClient:
         return {"success": True}
 
 
+class FundedStubClient(StubClient):
+    def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
+        return {"availableBalance": "201.4589", "equity": "201.4589"}
+
+
 def _config(tmp_path) -> FuturesConfig:
     return replace(
         FuturesConfig.from_env(),
@@ -1039,6 +1044,22 @@ def test_drawdown_halt_blocks_without_manual_pause(tmp_path, monkeypatch, caplog
     assert multiplier == 0.0
     assert runtime._paused is False
     assert any("Drawdown HALT active" in entry.message for entry in caplog.records)
+
+
+def test_live_drawdown_uses_current_equity_after_deposit(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "1")
+    config = replace(_config(tmp_path), margin_budget_usdt=75.0, paper_trade=False)
+    runtime = FuturesRuntime(config, FundedStubClient())
+    runtime.trade_history = [
+        {"pnl_usdt": 1.42, "closed_at": "2026-05-01T00:00:00+00:00"},
+        {"pnl_usdt": -13.3021, "closed_at": "2026-05-02T00:00:00+00:00"},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="futuresbot.runtime"):
+        multiplier = runtime._drawdown_size_multiplier()
+
+    assert multiplier == 1.0
+    assert not any("Drawdown HALT active" in entry.message for entry in caplog.records)
 
 
 def test_enter_trade_rejects_duplicate_symbol(tmp_path):
