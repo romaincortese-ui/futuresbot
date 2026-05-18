@@ -533,8 +533,8 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
     runtime._register_position(position)
 
     assert runtime._hourly_exit(position, current_price=104.0) is False
-    assert position.metadata["profit_lock_peak_pnl_pct"] == 40.0
-    assert position.metadata["profit_lock_stop_pnl_pct"] == 26.0
+    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 39.184
+    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 25.470
 
     assert runtime._hourly_exit(position, current_price=102.5) is True
     assert runtime.open_position is None
@@ -574,6 +574,36 @@ def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
     assert runtime.open_position is None
     assert runtime.trade_history[-1]["exit_reason"] == "BREAKEVEN_PROFIT_LOCK"
     assert runtime.trade_history[-1]["pnl_usdt"] > 0
+
+
+def test_breakeven_profit_lock_uses_net_pnl_before_closing(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_BREAKEVEN_FLOOR_PCT", "0.5")
+    monkeypatch.setenv("FUTURES_BREAKEVEN_EXIT_SLIPPAGE_BUFFER_BPS", "3")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="SHORT",
+        entry_price=524.63,
+        contracts=173,
+        contract_size=0.01,
+        leverage=12,
+        margin_usdt=76.22137891,
+        tp_price=498.52,
+        sl_price=529.18,
+        position_id="paper-net-breakeven-lock",
+        order_id="entry-net-breakeven-lock",
+        opened_at=datetime(2026, 5, 18, 13, 46, tzinfo=timezone.utc),
+        score=67.1,
+        certainty=0.55,
+        entry_signal="EVENT_CATALYST_SHORT",
+        metadata={"breakeven_profit_lock_armed": True},
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=524.59) is False
+    assert runtime.open_positions["ZEC_USDT"] is position
+    assert runtime.trade_history == []
 
 
 def test_trailing_bar_waits_until_after_activation_bar_to_exit():
@@ -1078,6 +1108,32 @@ def test_enter_trade_rejects_duplicate_symbol(tmp_path):
         "entry_signal": "COIL_BREAKOUT_LONG",
     }
     assert runtime._enter_trade(signal) is False
+
+
+def test_enter_trade_blocks_recent_same_signal_reentry(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_REENTRY_COOLDOWN_SECONDS", "900")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    runtime._last_exit_by_symbol["ZEC_USDT"] = {
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "side": "SHORT",
+        "entry_signal": "EVENT_CATALYST_SHORT",
+        "exit_reason": "BREAKEVEN_PROFIT_LOCK",
+    }
+
+    signal = {
+        "side": "SHORT",
+        "entry_price": 524.12,
+        "leverage": 12,
+        "symbol": "ZEC_USDT",
+        "tp_price": 497.71,
+        "sl_price": 529.12,
+        "score": 67.1,
+        "certainty": 0.55,
+        "entry_signal": "EVENT_CATALYST_SHORT",
+    }
+
+    assert runtime._enter_trade(signal) is False
+    assert "ZEC_USDT" not in runtime.open_positions
 
 
 def test_enter_trade_respects_portfolio_margin_cap(tmp_path):

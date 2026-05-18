@@ -57,6 +57,7 @@ class FuturesRuntime:
         # deterministic (first opened or first loaded from state).
         self.open_positions: dict[str, FuturesPosition] = {}
         self.trade_history: list[dict[str, Any]] = []
+        self._last_exit_by_symbol: dict[str, dict[str, Any]] = {}
         self.calibration: dict[str, Any] | None = None
         self.daily_review: dict[str, Any] | None = None
         self._last_calibration_refresh_at = 0.0
@@ -140,6 +141,49 @@ class FuturesRuntime:
 
     def _clear_position(self, symbol: str) -> None:
         self.open_positions.pop(symbol, None)
+
+    def _record_position_exit(self, position: FuturesPosition, trade: dict[str, Any]) -> None:
+        self._last_exit_by_symbol[position.symbol.upper()] = {
+            "closed_at": trade.get("exit_time"),
+            "side": position.side,
+            "entry_signal": position.entry_signal,
+            "exit_reason": trade.get("exit_reason"),
+            "exit_price": trade.get("exit_price"),
+            "pnl_usdt": trade.get("pnl_usdt"),
+        }
+
+    def _same_signal_reentry_blocked(self, signal_payload: dict[str, Any]) -> bool:
+        cooldown_seconds = max(0.0, self._env_float("FUTURES_REENTRY_COOLDOWN_SECONDS", 900.0))
+        if cooldown_seconds <= 0:
+            return False
+        symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
+        last_exit = self._last_exit_by_symbol.get(symbol)
+        if not isinstance(last_exit, dict):
+            return False
+        side = str(signal_payload.get("side") or "").upper()
+        entry_signal = str(signal_payload.get("entry_signal") or "").upper()
+        if str(last_exit.get("side") or "").upper() != side:
+            return False
+        if str(last_exit.get("entry_signal") or "").upper() != entry_signal:
+            return False
+        closed_at_raw = str(last_exit.get("closed_at") or "")
+        try:
+            closed_at = datetime.fromisoformat(closed_at_raw.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        elapsed = (datetime.now(timezone.utc) - closed_at.astimezone(timezone.utc)).total_seconds()
+        if elapsed >= cooldown_seconds:
+            return False
+        log.info(
+            "Futures signal skipped for %s: same-signal reentry cooldown active side=%s entry_signal=%s elapsed=%.0fs cooldown=%.0fs last_exit_reason=%s",
+            symbol,
+            side,
+            entry_signal,
+            elapsed,
+            cooldown_seconds,
+            last_exit.get("exit_reason") or "unknown",
+        )
+        return True
 
     def _total_open_margin(self) -> float:
         return float(sum(pos.margin_usdt for pos in self.open_positions.values()))
@@ -648,6 +692,27 @@ class FuturesRuntime:
         direction = 1.0 if position.side == "LONG" else -1.0
         return position.base_qty * (current_price - position.entry_price) * direction
 
+    def _estimated_position_fees_usdt(self, position: FuturesPosition | None, current_price: float | None) -> float:
+        if position is None or current_price is None or current_price <= 0:
+            return 0.0
+        taker_fee_rate = self.get_symbol_taker_fee_rate(position.symbol)
+        return (position.base_qty * position.entry_price + position.base_qty * current_price) * taker_fee_rate
+
+    def _position_net_pnl_usdt(self, position: FuturesPosition | None, current_price: float | None) -> float:
+        return self._position_pnl_usdt(position, current_price) - self._estimated_position_fees_usdt(position, current_price)
+
+    def _position_net_pnl_pct(self, position: FuturesPosition | None, current_price: float | None) -> float | None:
+        if position is None or current_price is None or position.margin_usdt <= 0:
+            return None
+        return self._position_net_pnl_usdt(position, current_price) / position.margin_usdt * 100.0
+
+    def _exit_slippage_buffer_pct(self, position: FuturesPosition, current_price: float) -> float:
+        if position.margin_usdt <= 0 or current_price <= 0:
+            return 0.0
+        buffer_bps = max(0.0, self._env_float("FUTURES_BREAKEVEN_EXIT_SLIPPAGE_BUFFER_BPS", 3.0))
+        buffer_usdt = position.base_qty * current_price * buffer_bps / 10_000.0
+        return buffer_usdt / position.margin_usdt * 100.0
+
     def _position_pnl_pct(self, position: FuturesPosition | None, current_price: float | None) -> float | None:
         if position is None or current_price is None or position.margin_usdt <= 0:
             return None
@@ -665,10 +730,10 @@ class FuturesRuntime:
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if not self._flag("USE_FUTURES_PROFIT_LOCK"):
             return False
-        pnl_pct = self._position_pnl_pct(position, current_price)
+        pnl_pct = self._position_net_pnl_pct(position, current_price)
         if pnl_pct is None:
             return False
-        pnl_usdt = self._position_pnl_usdt(position, current_price)
+        pnl_usdt = self._position_net_pnl_usdt(position, current_price)
         metadata = position.metadata if isinstance(position.metadata, dict) else {}
         if metadata is not position.metadata:
             position.metadata = metadata
@@ -709,6 +774,22 @@ class FuturesRuntime:
             metadata[BREAKEVEN_PROFIT_LOCK_ARMED_KEY] = True
             changed = True
         if metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY) and pnl_pct <= breakeven_floor_pct:
+            min_exit_net_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_EXIT_MIN_NET_PCT", 0.0))
+            required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
+            if pnl_pct <= required_net_pct:
+                log.info(
+                    "[BREAKEVEN_PROFIT_LOCK_HOLD] symbol=%s side=%s net_pnl_pct=%.2f floor_pct=%.2f required_net_pct=%.2f net_pnl_usdt=%+.2f price=%s",
+                    position.symbol,
+                    position.side,
+                    pnl_pct,
+                    breakeven_floor_pct,
+                    required_net_pct,
+                    pnl_usdt,
+                    self._format_price(current_price),
+                )
+                if changed:
+                    self._save_state()
+                return False
             log.warning(
                 "[BREAKEVEN_PROFIT_LOCK_EXIT] symbol=%s side=%s pnl_pct=%.2f floor_pct=%.2f pnl_usdt=%+.2f price=%s",
                 position.symbol,
@@ -1255,6 +1336,9 @@ class FuturesRuntime:
         self.missed_opportunities = raw_missed if isinstance(raw_missed, dict) else {}
         self._paused = bool(payload.get("paused", False))
         self._recent_activity = deque((str(item) for item in payload.get("recent_activity", [])), maxlen=RECENT_ACTIVITY_LIMIT)
+        raw_last_exit = payload.get("last_exit_by_symbol", {})
+        if isinstance(raw_last_exit, dict):
+            self._last_exit_by_symbol = {str(sym).upper(): row for sym, row in raw_last_exit.items() if isinstance(row, dict)}
         log.info("Loaded futures runtime state from %s", self._state_path)
 
     def _save_state(self) -> None:
@@ -1270,6 +1354,7 @@ class FuturesRuntime:
             "missed_opportunities": self.missed_opportunities,
             "paused": self._paused,
             "recent_activity": list(self._recent_activity),
+            "last_exit_by_symbol": self._last_exit_by_symbol,
         }
         self._state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -1575,6 +1660,7 @@ class FuturesRuntime:
             }
         )
         self.trade_history.append(trade)
+        self._record_position_exit(position, trade)
         self._attach_execution_quality_report(
             position=position,
             exit_price=exit_price,
@@ -3695,6 +3781,8 @@ class FuturesRuntime:
         symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
         leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         if symbol in self.open_positions:
+            return False
+        if self._same_signal_reentry_blocked(signal_payload):
             return False
         scoped = self._config_for_symbol(symbol)
         # Sprint 2 §2.3 — pre-funding-settlement gate.
