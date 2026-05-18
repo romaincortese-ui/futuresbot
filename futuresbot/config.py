@@ -759,7 +759,7 @@ class FuturesBacktestConfig:
             symbol=scoped.symbol,
             initial_balance=env_float("FUTURES_BACKTEST_INITIAL_BALANCE", 300.0),
             margin_budget_usdt=env_float("FUTURES_BACKTEST_MARGIN_BUDGET_USDT", scoped.margin_budget_usdt),
-            taker_fee_rate=env_float("FUTURES_BACKTEST_TAKER_FEE_RATE", 0.0004),
+            taker_fee_rate=env_float("FUTURES_BACKTEST_TAKER_FEE_RATE", 0.0006),
             calibration_file=live.calibration_file,
             calibration_redis_key=live.calibration_redis_key,
             calibration_min_total_trades=live.calibration_min_total_trades,

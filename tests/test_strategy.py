@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from futuresbot.config import FuturesBacktestConfig
-from futuresbot.strategy import _entry_signal_disabled, diagnose_impulse_rejection, score_btc_futures_setup
+from futuresbot.strategy import _build_signal, _entry_signal_disabled, diagnose_impulse_rejection, score_btc_futures_setup
 
 
 def _config() -> FuturesBacktestConfig:
@@ -648,6 +648,49 @@ def test_signal_includes_shadow_net_rr_metadata_by_default(monkeypatch):
     assert signal.metadata["gross_rr"] > 0
     assert signal.metadata["net_rr"] > 0
     assert "fee_bps" in signal.metadata
+
+
+def test_build_signal_extends_event_catalyst_tp_for_cost_budget(monkeypatch):
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "1")
+    monkeypatch.setenv("MIN_NET_RR", "1.8")
+    monkeypatch.setenv("COST_BUDGET_TAKER_FEE_RATE_ZEC_USDT", "0.0006")
+    monkeypatch.setenv("COST_BUDGET_HOLD_HOURS", "4")
+    monkeypatch.setenv("COST_BUDGET_FUNDING_RATE_8H", "0.0001")
+
+    signal = _build_signal(
+        side="SHORT",
+        score=80.0,
+        entry_price=100.0,
+        tp_price=98.5,
+        sl_price=101.0,
+        entry_signal="EVENT_CATALYST_SHORT",
+        config=replace(_config(), symbol="ZEC_USDT", leverage_min=5, leverage_max=5, min_reward_risk=1.0),
+        metadata={},
+    )
+
+    assert signal is not None
+    assert signal.tp_price < 98.5
+    assert signal.metadata["cost_budget_tp_extended"] == 1.0
+    assert signal.metadata["cost_budget_pass"] == 1.0
+    assert signal.metadata["fee_bps"] == 12.0
+
+
+def test_build_signal_rejects_short_when_cost_budget_extension_would_make_negative_tp(monkeypatch):
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "1")
+    monkeypatch.setenv("MIN_NET_RR", "100")
+
+    signal = _build_signal(
+        side="SHORT",
+        score=80.0,
+        entry_price=100.0,
+        tp_price=98.5,
+        sl_price=101.0,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_SHORT",
+        config=replace(_config(), symbol="ZEC_USDT", leverage_min=5, leverage_max=5, min_reward_risk=1.0),
+        metadata={},
+    )
+
+    assert signal is None
 
 
 def test_impulse_rejection_diagnostic_contains_actionable_fields():

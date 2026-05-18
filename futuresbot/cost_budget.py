@@ -24,7 +24,7 @@ def compute_cost_bps(
     leverage: int,
     hold_hours: float,
     funding_rate_8h: float,
-    taker_fee_rate: float = 0.0004,
+    taker_fee_rate: float = 0.0006,
     slippage_bps_per_lev: float = 0.5,
     exit_slippage_mult: float = 1.5,
 ) -> CostBudget:

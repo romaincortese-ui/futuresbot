@@ -357,16 +357,16 @@ class FuturesRuntime:
     # symbol taker-fee rate for the cost-budget RR gate. The MEXC public
     # ``/contract/detail`` endpoint returns ``takerFeeRate`` for some
     # contracts (BTC, ETH at 1 bp on this account's tier) and omits it for
-    # others (XAUT, PEPE, TAO, SILVER). When the API value is missing or
-    # implausibly low (< 2 bp — almost certainly a maker rate or
-    # promotional override that won't survive a stop-out), we fall back to
-    # the venue default ``MEXC_PERP_DEFAULT_TAKER_FEE_RATE`` (default
-    # 0.0004 = 4 bp, MEXC's standard taker tier). Source is logged
-    # explicitly (``src=api`` / ``src=default`` / ``src=default_low_api``)
-    # so operators can audit fee assumptions without reading the source.
+    # others (XAUT, PEPE, TAO, SILVER). When the API value is missing,
+    # implausibly low, or below the conservative live floor without explicit
+    # account-tier verification, we fall back to
+    # ``MEXC_PERP_DEFAULT_TAKER_FEE_RATE`` (default 0.0006 = 6 bp, matching
+    # observed live taker fills). Source is logged explicitly
+    # (``src=api`` / ``src=default`` / ``src=default_low_api``) so operators
+    # can audit fee assumptions without reading the source.
     # ------------------------------------------------------------------
-    _DEFAULT_TAKER_FEE_RATE = float(os.environ.get("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", "0.0004") or "0.0004")
-    _STANDARD_TAKER_FEE_RATE = 0.0004
+    _DEFAULT_TAKER_FEE_RATE = float(os.environ.get("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", "0.0006") or "0.0006")
+    _STANDARD_TAKER_FEE_RATE = 0.0006
     # Below this threshold we treat the API value as "implausibly low"
     # (almost certainly a maker rate mis-mapped or a tier promo that won't
     # survive a stop-out) and fall back to the venue default. MEXC's
@@ -408,9 +408,9 @@ class FuturesRuntime:
 
                 - ``api`` — venue returned a plausible verified taker rate; used as-is.
                 - ``default_unverified_api`` — venue returned a sub-standard taker
-                    tier but ``MEXC_PERP_FEE_TIER_VERIFIED`` is not set; use 4 bp.
-                - ``default_unverified_low_override`` — env default is below 4 bp
-                    but the venue tier has not been explicitly verified; use 4 bp.
+                    tier but ``MEXC_PERP_FEE_TIER_VERIFIED`` is not set; use the conservative default.
+                - ``default_unverified_low_override`` — env default is below the conservative floor
+                    but the venue tier has not been explicitly verified; use the conservative floor.
         - ``default_low_api`` — venue returned a value below
           ``_IMPLAUSIBLE_TAKER_FEE_FLOOR`` (likely a maker-rate or promo);
           we fall back to the venue default to keep cost-budget RR honest.

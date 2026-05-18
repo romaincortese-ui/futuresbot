@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 
 DEFAULT_MAINTENANCE_MARGIN_RATE = 0.005  # MEXC BTC perp isolated default.
-DEFAULT_TAKER_FEE_RATE = 0.0004
+DEFAULT_TAKER_FEE_RATE = 0.0006
 DEFAULT_LIQ_SLIPPAGE = 0.005  # Liquidation fills 0.5% worse than liq_price.
 DEFAULT_ENTRY_SLIP_BPS_PER_LEV = 0.5
 DEFAULT_EXIT_SLIP_MULT = 1.5

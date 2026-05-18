@@ -98,12 +98,12 @@ def _config(tmp_path) -> FuturesConfig:
 
 
 def test_resolve_taker_fee_uses_api_when_plausible(tmp_path):
-    client = _SpecClient({"BTC_USDT": {"takerFeeRate": 0.0004}})
+    client = _SpecClient({"BTC_USDT": {"takerFeeRate": 0.0006}})
     runtime = FuturesRuntime(_config(tmp_path), client)
-    rate, src, raw = runtime._resolve_taker_fee({"takerFeeRate": 0.0004})
+    rate, src, raw = runtime._resolve_taker_fee({"takerFeeRate": 0.0006})
     assert src == "api"
-    assert rate == pytest.approx(0.0004)
-    assert raw == pytest.approx(0.0004)
+    assert rate == pytest.approx(0.0006)
+    assert raw == pytest.approx(0.0006)
 
 
 def test_resolve_taker_fee_falls_back_when_api_implausibly_low(tmp_path):
@@ -115,7 +115,7 @@ def test_resolve_taker_fee_falls_back_when_api_implausibly_low(tmp_path):
     runtime = FuturesRuntime(_config(tmp_path), client)
     rate, src, raw = runtime._resolve_taker_fee({"takerFeeRate": 0.0001})
     assert src == "default_low_api"
-    assert rate == pytest.approx(0.0004)
+    assert rate == pytest.approx(0.0006)
     assert raw == pytest.approx(0.0001)
 
 
@@ -124,8 +124,27 @@ def test_resolve_taker_fee_falls_back_when_api_missing(tmp_path):
     runtime = FuturesRuntime(_config(tmp_path), client)
     rate, src, raw = runtime._resolve_taker_fee({})
     assert src == "default"
-    assert rate == pytest.approx(0.0004)
+    assert rate == pytest.approx(0.0006)
     assert raw is None
+
+
+def test_resolve_taker_fee_requires_verification_for_four_bp_api_tier(tmp_path):
+    client = _SpecClient({"BTC_USDT": {"takerFeeRate": 0.0004}})
+    runtime = FuturesRuntime(_config(tmp_path), client)
+    rate, src, raw = runtime._resolve_taker_fee({"takerFeeRate": 0.0004})
+    assert src == "default_unverified_api"
+    assert rate == pytest.approx(0.0006)
+    assert raw == pytest.approx(0.0004)
+
+
+def test_resolve_taker_fee_accepts_four_bp_api_tier_when_verified(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEXC_PERP_FEE_TIER_VERIFIED", "1")
+    client = _SpecClient({"BTC_USDT": {"takerFeeRate": 0.0004}})
+    runtime = FuturesRuntime(_config(tmp_path), client)
+    rate, src, raw = runtime._resolve_taker_fee({"takerFeeRate": 0.0004})
+    assert src == "api"
+    assert rate == pytest.approx(0.0004)
+    assert raw == pytest.approx(0.0004)
 
 
 def test_resolve_taker_fee_requires_verification_for_sub_standard_api_tier(tmp_path):
@@ -133,7 +152,7 @@ def test_resolve_taker_fee_requires_verification_for_sub_standard_api_tier(tmp_p
     runtime = FuturesRuntime(_config(tmp_path), client)
     rate, src, raw = runtime._resolve_taker_fee({"takerFeeRate": 0.0003})
     assert src == "default_unverified_api"
-    assert rate == pytest.approx(0.0004)
+    assert rate == pytest.approx(0.0006)
     assert raw == pytest.approx(0.0003)
 
 
@@ -154,7 +173,7 @@ def test_unverified_low_default_fee_override_is_clamped(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "_DEFAULT_TAKER_FEE_RATE", 0.0003, raising=False)
     rate, src, raw = runtime._resolve_taker_fee({})
     assert src == "default_unverified_low_override"
-    assert rate == pytest.approx(0.0004)
+    assert rate == pytest.approx(0.0006)
     assert raw is None
 
 
@@ -195,17 +214,17 @@ def test_emit_contract_specs_populates_per_symbol_env_and_cache(tmp_path):
     runtime._active_symbols = cfg.symbols
     runtime._emit_contract_specs()
 
-    # BTC: api gave 1 bp -> downgraded to default 4 bp.
+    # BTC: api gave 1 bp -> downgraded to conservative default 6 bp.
     btc_rate, btc_src = runtime._symbol_taker_fee["BTC_USDT"]
     assert btc_src == "default_low_api"
-    assert btc_rate == pytest.approx(0.0004)
-    assert os.environ["COST_BUDGET_TAKER_FEE_RATE_BTC_USDT"] == "0.000400"
+    assert btc_rate == pytest.approx(0.0006)
+    assert os.environ["COST_BUDGET_TAKER_FEE_RATE_BTC_USDT"] == "0.000600"
 
-    # PEPE: no api field -> default 4 bp.
+    # PEPE: no api field -> conservative default 6 bp.
     pepe_rate, pepe_src = runtime._symbol_taker_fee["PEPE_USDT"]
     assert pepe_src == "default"
-    assert pepe_rate == pytest.approx(0.0004)
-    assert os.environ["COST_BUDGET_TAKER_FEE_RATE_PEPE_USDT"] == "0.000400"
+    assert pepe_rate == pytest.approx(0.0006)
+    assert os.environ["COST_BUDGET_TAKER_FEE_RATE_PEPE_USDT"] == "0.000600"
 
 
 def test_emit_contract_specs_logs_fee_tier_verification_warning(tmp_path, caplog):
@@ -219,7 +238,7 @@ def test_emit_contract_specs_logs_fee_tier_verification_warning(tmp_path, caplog
 
     rate, src = runtime._symbol_taker_fee["BTC_USDT"]
     assert src == "default_unverified_api"
-    assert rate == pytest.approx(0.0004)
+    assert rate == pytest.approx(0.0006)
     assert any("[FEE_TIER_VERIFY]" in record.message for record in caplog.records)
 
 
@@ -231,12 +250,12 @@ def test_emit_contract_specs_handles_lookup_exception_safely(tmp_path):
     runtime._emit_contract_specs()
     rate, src = runtime._symbol_taker_fee["BTC_USDT"]
     assert src == "default"
-    assert rate == pytest.approx(0.0004)
+    assert rate == pytest.approx(0.0006)
 
 
 def test_get_symbol_taker_fee_rate_returns_default_when_unknown(tmp_path):
     runtime = FuturesRuntime(_config(tmp_path), _SpecClient({}))
-    assert runtime.get_symbol_taker_fee_rate("UNKNOWN_USDT") == pytest.approx(0.0004)
+    assert runtime.get_symbol_taker_fee_rate("UNKNOWN_USDT") == pytest.approx(0.0006)
 
 
 def test_default_symbol_profiles_apply_and_env_overrides_win(tmp_path, monkeypatch):
@@ -325,12 +344,12 @@ def test_main_defaults_match_production_universe():
 
 def test_cost_budget_gate_uses_per_symbol_override(monkeypatch):
     """A per-symbol override of 50 bp must make a setup that just clears
-    the default 4-bp gate flip to a reject."""
+    the default 6-bp gate flip to a reject."""
 
     monkeypatch.setenv("USE_COST_BUDGET_RR", "1")
     monkeypatch.setenv("MIN_NET_RR", "1.8")
-    # Wider TP / lower leverage so the default 4 bp gate passes:
-    # tp=2.5%, sl=1.0%, lev=5 -> total cost ~14 bp -> RR=2.50/(1.00+0.14)=2.19
+    # Wider TP / lower leverage so the default 6 bp gate passes:
+    # tp=2.5%, sl=1.0%, lev=5 -> total cost ~18.75 bp -> RR=2.50/(1.00+0.19)=2.11
     assert _passes_cost_budget_gate(
         entry_price=100.0, tp_price=102.5, sl_price=99.0, leverage=5, symbol="BTC_USDT"
     ) is True

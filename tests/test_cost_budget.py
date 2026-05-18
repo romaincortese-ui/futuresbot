@@ -6,10 +6,10 @@ from futuresbot.cost_budget import compute_cost_bps, passes_cost_adjusted_rr
 
 
 def test_compute_cost_bps_fee_only_short_hold():
-    # 0.04% taker * 2 = 8 bps fees. Leverage 10: entry slip 5bps, exit 7.5bps.
+    # 0.06% taker * 2 = 12 bps fees. Leverage 10: entry slip 5bps, exit 7.5bps.
     # Funding 0.01%/8h over 1h hold = 0.0001 * (1/8) * 10_000 = 0.125 bps.
     c = compute_cost_bps(leverage=10, hold_hours=1.0, funding_rate_8h=0.0001)
-    assert c.fees_bps == pytest.approx(8.0)
+    assert c.fees_bps == pytest.approx(12.0)
     assert c.slippage_bps == pytest.approx(5.0 + 7.5)
     assert c.funding_bps == pytest.approx(0.125)
     assert c.total_bps == pytest.approx(c.fees_bps + c.slippage_bps + c.funding_bps)

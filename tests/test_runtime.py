@@ -533,8 +533,8 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
     runtime._register_position(position)
 
     assert runtime._hourly_exit(position, current_price=104.0) is False
-    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 39.184
-    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 25.470
+    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 38.776
+    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 25.204
 
     assert runtime._hourly_exit(position, current_price=102.5) is True
     assert runtime.open_position is None

@@ -234,7 +234,7 @@ def _cost_budget_projection(
             return None
         hold_hours = _env_float("COST_BUDGET_HOLD_HOURS", 4.0)
         funding_rate = _env_float("COST_BUDGET_FUNDING_RATE_8H", 0.0001)
-        taker_fee = _env_float("COST_BUDGET_TAKER_FEE_RATE", 0.0004)
+        taker_fee = _env_float("COST_BUDGET_TAKER_FEE_RATE", 0.0006)
         if symbol:
             normalized = "".join(ch if ch.isalnum() else "_" for ch in symbol.upper())
             override = os.environ.get(f"COST_BUDGET_TAKER_FEE_RATE_{normalized}")
@@ -411,6 +411,68 @@ def _cost_budget_required_tp_distance_pct(
     return (sl_distance_pct + cost_pct) * min_net_rr + buffer_pct
 
 
+def _cost_budget_tp_extension_enabled(entry_signal: str) -> bool:
+    if not _cost_budget_enforced():
+        return False
+    if not _env_bool("FUTURES_EXTEND_TP_FOR_COST_BUDGET", True):
+        return False
+    signal = str(entry_signal or "").upper()
+    if signal.startswith("MAJOR_THRESHOLD"):
+        return _env_bool("FUTURES_MAJOR_THRESHOLD_EXTEND_TP_FOR_COST_BUDGET", True)
+    if signal.startswith("BREAKOUT_HOLD"):
+        return _env_bool("FUTURES_BREAKOUT_HOLD_EXTEND_TP_FOR_COST_BUDGET", True)
+    if signal.startswith("LEVEL_BREAK"):
+        return _env_bool("FUTURES_LEVEL_BREAK_EXTEND_TP_FOR_COST_BUDGET", True)
+    if signal.startswith("BTC_ROUND_LEVEL"):
+        return _env_bool("FUTURES_BTC_ROUND_LEVEL_EXTEND_TP_FOR_COST_BUDGET", True)
+    if signal.startswith("BTC_REVERSAL"):
+        return _env_bool("FUTURES_BTC_REVERSAL_SHORT_EXTEND_TP_FOR_COST_BUDGET", True)
+    if signal.startswith("IMPULSE") or signal.startswith("MOMENTUM_BREAKAWAY") or signal.startswith("RANGE_EXPANSION"):
+        return _env_bool("FUTURES_IMPULSE_EXTEND_TP_FOR_COST_BUDGET", True)
+    if signal.startswith("EVENT_CATALYST"):
+        return _env_bool("FUTURES_EVENT_CATALYST_EXTEND_TP_FOR_COST_BUDGET", True)
+    return True
+
+
+def _extend_tp_for_cost_budget(
+    *,
+    side: str,
+    entry_signal: str,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    leverage: int,
+    symbol: str | None = None,
+) -> tuple[float, dict[str, float]] | None:
+    if not _cost_budget_tp_extension_enabled(entry_signal):
+        return tp_price, {}
+    required_tp_distance_pct = _cost_budget_required_tp_distance_pct(
+        entry_price=entry_price,
+        sl_price=sl_price,
+        leverage=leverage,
+        symbol=symbol,
+    )
+    if required_tp_distance_pct is None or entry_price <= 0:
+        return tp_price, {}
+    current_tp_distance_pct = abs(tp_price - entry_price) / entry_price
+    if required_tp_distance_pct <= current_tp_distance_pct:
+        return tp_price, {
+            "cost_budget_required_tp_distance_pct": round(required_tp_distance_pct, 6),
+            "cost_budget_tp_extended": 0.0,
+        }
+    if side.upper() == "LONG":
+        adjusted_tp_price = entry_price * (1.0 + required_tp_distance_pct)
+    else:
+        adjusted_tp_price = entry_price * (1.0 - required_tp_distance_pct)
+    if adjusted_tp_price <= 0:
+        return None
+    return adjusted_tp_price, {
+        "cost_budget_required_tp_distance_pct": round(required_tp_distance_pct, 6),
+        "cost_budget_original_tp_distance_pct": round(current_tp_distance_pct, 6),
+        "cost_budget_tp_extended": 1.0,
+    }
+
+
 def _build_signal(
     *,
     side: str,
@@ -437,6 +499,18 @@ def _build_signal(
     )
     if leverage is None:
         return None
+    extension = _extend_tp_for_cost_budget(
+        side=side,
+        entry_signal=entry_signal,
+        entry_price=entry_price,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        leverage=leverage,
+        symbol=getattr(config, "symbol", None),
+    )
+    if extension is None:
+        return None
+    tp_price, cost_extension_metadata = extension
     cost_projection = _cost_budget_projection(
         entry_price=entry_price,
         tp_price=tp_price,
@@ -459,6 +533,7 @@ def _build_signal(
         "leverage_min_bound": float(leverage_min_bound),
         "leverage_max_bound": float(leverage_max_bound),
         "hourly_exit_progress": config.early_exit_tp_progress,
+        **cost_extension_metadata,
         **(cost_projection or {}),
     }
     return FuturesSignal(
