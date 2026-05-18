@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -400,6 +401,109 @@ from futuresbot.models import FuturesSignal
 
 
 EVENT_CALIBRATION_RELIEF_CAP = 4.0
+EVENT_BLOCK_OVERRIDE_SCORE_DEFAULT = 85.0
+EVENT_BLOCK_OVERRIDE_RISK_MULT_DEFAULT = 0.35
+EVENT_BLOCK_OVERRIDE_MAX_LEVERAGE_DEFAULT = 6
+
+EVENT_FAMILY_CALIBRATION_BUCKETS = {
+    "LONG": (
+        ("EVENT_CATALYST_LONG", "EVENT_CATALYST_LONG"),
+        ("IMPULSE_EVENT_CONTINUATION_LONG", "IMPULSE_EVENT_LONG"),
+        ("IMPULSE_EVENT_LONG", "IMPULSE_EVENT_LONG"),
+    ),
+    "SHORT": (
+        ("EVENT_CATALYST_SHORT", "RISK_OFF_SHORT"),
+        ("IMPULSE_EVENT_CONTINUATION_SHORT", "IMPULSE_EVENT_SHORT"),
+        ("IMPULSE_EVENT_SHORT", "IMPULSE_EVENT_SHORT"),
+    ),
+}
+
+
+def _float_adjustment_value(adjustment: Mapping[str, Any], key: str, default: float) -> float:
+    try:
+        return float(adjustment.get(key, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _event_family_calibration_adjustment(
+    signal: FuturesSignal,
+    calibration: Mapping[str, Any] | None,
+    primary_adjustment: Mapping[str, Any],
+) -> dict[str, Any]:
+    entry_signal_name = str(signal.entry_signal or "").upper()
+    side_name = str(signal.side or "").upper()
+    if not calibration or "EVENT" not in entry_signal_name or side_name not in EVENT_FAMILY_CALIBRATION_BUCKETS:
+        return dict(primary_adjustment)
+
+    strictest = dict(primary_adjustment)
+    threshold_offset = _float_adjustment_value(strictest, "threshold_offset", 0.0)
+    risk_mult = _float_adjustment_value(strictest, "risk_mult", 1.0)
+    block_reason = str(strictest.get("block_reason") or "")
+    sources: list[str] = []
+
+    for family_signal, family_regime in EVENT_FAMILY_CALIBRATION_BUCKETS[side_name]:
+        family_adjustment = get_entry_adjustment(
+            calibration,
+            "BTC_FUTURES",
+            signal.symbol,
+            family_signal,
+            family_regime,
+        )
+        family_source = str(family_adjustment.get("source") or "")
+        family_threshold_offset = _float_adjustment_value(family_adjustment, "threshold_offset", 0.0)
+        family_risk_mult = _float_adjustment_value(family_adjustment, "risk_mult", 1.0)
+        family_block_reason = str(family_adjustment.get("block_reason") or "")
+        if family_block_reason and not block_reason:
+            block_reason = family_block_reason
+            sources.append(f"{family_signal}:{family_source or 'block'}")
+        if family_threshold_offset > threshold_offset:
+            threshold_offset = family_threshold_offset
+            sources.append(f"{family_signal}:{family_source or 'threshold'}")
+        if family_risk_mult < risk_mult:
+            risk_mult = family_risk_mult
+            sources.append(f"{family_signal}:{family_source or 'risk'}")
+
+    applied = (
+        threshold_offset != _float_adjustment_value(primary_adjustment, "threshold_offset", 0.0)
+        or risk_mult != _float_adjustment_value(primary_adjustment, "risk_mult", 1.0)
+        or block_reason != str(primary_adjustment.get("block_reason") or "")
+    )
+    strictest["threshold_offset"] = threshold_offset
+    strictest["risk_mult"] = risk_mult
+    strictest["block_reason"] = block_reason or None
+    if applied:
+        strictest["event_family_calibration_applied"] = 1.0
+        strictest["event_family_calibration_sources"] = ",".join(dict.fromkeys(sources))
+        strictest["source"] = strictest.get("source") or "event_family"
+    return strictest
 
 
 def _event_calibration_relief(signal: FuturesSignal, threshold_offset: float) -> float:
@@ -422,6 +526,48 @@ def _event_calibration_relief(signal: FuturesSignal, threshold_offset: float) ->
     return min(float(threshold_offset), relief, EVENT_CALIBRATION_RELIEF_CAP)
 
 
+def _fresh_event_aligned(signal: FuturesSignal) -> bool:
+    entry_signal = str(signal.entry_signal or "").upper()
+    if "EVENT" not in entry_signal:
+        return False
+    metadata = signal.metadata or {}
+    try:
+        fresh = float(metadata.get("crypto_event_fresh") or 0.0) > 0.0
+        relief = float(metadata.get("crypto_event_threshold_relief") or 0.0)
+        bias = float(metadata.get("crypto_event_bias") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if not fresh or relief <= 0.0:
+        return False
+    side_sign = 1.0 if str(signal.side or "").upper() == "LONG" else -1.0 if str(signal.side or "").upper() == "SHORT" else 0.0
+    return side_sign != 0.0 and side_sign * bias > 0.0
+
+
+def _calibration_block_override_adjustment(
+    signal: FuturesSignal,
+    primary_adjustment: Mapping[str, Any],
+    adjustment: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if not _env_bool("FUTURES_CALIBRATION_BLOCK_OVERRIDE_ENABLED", True):
+        return None
+    block_reason = str(adjustment.get("block_reason") or "")
+    primary_block_reason = str(primary_adjustment.get("block_reason") or "")
+    if not block_reason or not primary_block_reason or block_reason != primary_block_reason:
+        return None
+    min_score = _env_float("FUTURES_CALIBRATION_BLOCK_OVERRIDE_SCORE", EVENT_BLOCK_OVERRIDE_SCORE_DEFAULT)
+    if float(signal.score) < min_score or not _fresh_event_aligned(signal):
+        return None
+    override = dict(adjustment)
+    override["block_reason"] = None
+    override["risk_mult"] = max(0.0, _env_float("FUTURES_CALIBRATION_BLOCK_OVERRIDE_RISK_MULT", EVENT_BLOCK_OVERRIDE_RISK_MULT_DEFAULT))
+    override["block_override_min_score"] = min_score
+    override["block_override_max_leverage"] = max(1, _env_int("FUTURES_CALIBRATION_BLOCK_OVERRIDE_MAX_LEVERAGE", EVENT_BLOCK_OVERRIDE_MAX_LEVERAGE_DEFAULT))
+    override["calibration_block_override_applied"] = 1.0
+    override["calibration_block_override_reason"] = block_reason
+    override["source"] = override.get("source") or primary_adjustment.get("source")
+    return override
+
+
 def apply_signal_calibration(
     signal: FuturesSignal,
     calibration: Mapping[str, Any] | None,
@@ -431,7 +577,11 @@ def apply_signal_calibration(
     leverage_max: int,
 ) -> FuturesSignal | None:
     setup_regime = str((signal.metadata or {}).get("setup_regime") or setup_regime_for_signal(signal.entry_signal, signal.side)).upper()
-    adjustment = get_entry_adjustment(calibration, "BTC_FUTURES", signal.symbol, signal.entry_signal, setup_regime)
+    primary_adjustment = get_entry_adjustment(calibration, "BTC_FUTURES", signal.symbol, signal.entry_signal, setup_regime)
+    adjustment = _event_family_calibration_adjustment(signal, calibration, primary_adjustment)
+    block_override = _calibration_block_override_adjustment(signal, primary_adjustment, adjustment)
+    if block_override is not None:
+        adjustment = block_override
     threshold_offset = float(adjustment.get("threshold_offset", 0.0) or 0.0)
     unrelieved_threshold = float(base_threshold) + threshold_offset
     signal.metadata.update(
@@ -439,6 +589,11 @@ def apply_signal_calibration(
             "calibration_source": adjustment.get("source"),
             "calibration_threshold_offset": threshold_offset,
             "calibration_event_relief_applied": 0.0,
+            "calibration_block_override_applied": float(adjustment.get("calibration_block_override_applied") or 0.0),
+            "calibration_block_override_reason": adjustment.get("calibration_block_override_reason"),
+            "calibration_block_override_min_score": adjustment.get("block_override_min_score"),
+            "event_family_calibration_applied": float(adjustment.get("event_family_calibration_applied") or 0.0),
+            "event_family_calibration_sources": adjustment.get("event_family_calibration_sources"),
             "calibrated_threshold": unrelieved_threshold,
             "calibrated_threshold_unrelieved": unrelieved_threshold,
             "setup_regime": setup_regime,
@@ -450,7 +605,8 @@ def apply_signal_calibration(
         signal.metadata["calibration_block_reason"] = block_reason
         return None
     event_relief = _event_calibration_relief(signal, threshold_offset)
-    threshold = max(float(base_threshold), unrelieved_threshold - event_relief)
+    block_override_min_score = float(adjustment.get("block_override_min_score") or 0.0)
+    threshold = max(float(base_threshold), unrelieved_threshold - event_relief, block_override_min_score)
     signal.metadata["calibration_event_relief_applied"] = round(event_relief, 3)
     signal.metadata["calibrated_threshold"] = threshold
     if signal.score < threshold:
@@ -466,6 +622,10 @@ def apply_signal_calibration(
     signal_max_bound = _metadata_int("leverage_max_bound", leverage_max)
     effective_min = max(1, min(int(leverage_min), signal_min_bound, signal_max_bound))
     effective_max = max(effective_min, min(int(leverage_max), signal_max_bound))
+    override_max_leverage = int(adjustment.get("block_override_max_leverage") or 0)
+    if override_max_leverage > 0:
+        effective_max = max(1, min(effective_max, override_max_leverage))
+        effective_min = min(effective_min, effective_max)
     calibrated_leverage = max(
         effective_min,
         min(effective_max, int(round(signal.leverage * risk_mult))),
@@ -486,8 +646,14 @@ def apply_signal_calibration(
             "calibrated_threshold_unrelieved": unrelieved_threshold,
             "calibration_threshold_offset": threshold_offset,
             "calibration_event_relief_applied": round(event_relief, 3),
+            "calibration_block_override_applied": float(adjustment.get("calibration_block_override_applied") or 0.0),
+            "calibration_block_override_reason": adjustment.get("calibration_block_override_reason"),
+            "calibration_block_override_min_score": adjustment.get("block_override_min_score"),
+            "calibration_block_override_max_leverage": override_max_leverage or None,
             "calibration_risk_mult": risk_mult,
             "calibration_source": adjustment.get("source"),
+            "event_family_calibration_applied": float(adjustment.get("event_family_calibration_applied") or 0.0),
+            "event_family_calibration_sources": adjustment.get("event_family_calibration_sources"),
             "setup_regime": setup_regime,
             "calibration_setup_regime": setup_regime,
         },

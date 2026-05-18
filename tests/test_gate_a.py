@@ -304,6 +304,174 @@ def test_apply_signal_calibration_does_not_event_relieve_explicit_block():
     assert signal.metadata["calibration_block_reason"] == "calibration block: weak risk-off shorts"
 
 
+def test_high_conviction_fresh_event_can_override_exact_signal_block(monkeypatch):
+    monkeypatch.setenv("FUTURES_CALIBRATION_BLOCK_OVERRIDE_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_CALIBRATION_BLOCK_OVERRIDE_SCORE", "85")
+    monkeypatch.setenv("FUTURES_CALIBRATION_BLOCK_OVERRIDE_RISK_MULT", "0.35")
+    monkeypatch.setenv("FUTURES_CALIBRATION_BLOCK_OVERRIDE_MAX_LEVERAGE", "6")
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy_symbol_signal": {
+                "BTC_FUTURES": {
+                    "ETH_USDT": {
+                        "IMPULSE_EVENT_CONTINUATION_SHORT": {
+                            "threshold_offset": 0.0,
+                            "risk_mult": 0.0,
+                            "block_reason": "ETH impulse shorts underperformed",
+                        }
+                    }
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="ETH_USDT",
+        side="SHORT",
+        score=86.31,
+        certainty=0.86,
+        entry_price=3000.0,
+        tp_price=2920.0,
+        sl_price=3040.0,
+        leverage=20,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_SHORT",
+        metadata={
+            "crypto_event_bias": -0.9,
+            "crypto_event_threshold_relief": 3.6,
+            "crypto_event_fresh": 1.0,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, calibration, base_threshold=75.0, leverage_min=1, leverage_max=20)
+
+    assert calibrated is not None
+    assert calibrated.metadata["calibration_block_override_applied"] == pytest.approx(1.0)
+    assert calibrated.metadata["calibration_block_override_reason"] == "ETH impulse shorts underperformed"
+    assert calibrated.metadata["calibrated_threshold"] == pytest.approx(85.0)
+    assert calibrated.metadata["calibration_risk_mult"] == pytest.approx(0.35)
+    assert calibrated.leverage == 6
+
+
+def test_event_family_inherited_block_does_not_get_high_score_override(monkeypatch):
+    monkeypatch.setenv("FUTURES_CALIBRATION_BLOCK_OVERRIDE_ENABLED", "1")
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy_symbol_signal": {
+                "BTC_FUTURES": {
+                    "BNB_USDT": {
+                        "IMPULSE_EVENT_CONTINUATION_SHORT": {
+                            "threshold_offset": 0.0,
+                            "risk_mult": 0.0,
+                            "block_reason": "BNB impulse shorts underperformed",
+                        }
+                    }
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="BNB_USDT",
+        side="SHORT",
+        score=96.0,
+        certainty=0.9,
+        entry_price=700.0,
+        tp_price=680.0,
+        sl_price=710.0,
+        leverage=12,
+        entry_signal="EVENT_CATALYST_SHORT",
+        metadata={
+            "crypto_event_bias": -0.9,
+            "crypto_event_threshold_relief": 3.6,
+            "crypto_event_fresh": 1.0,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, calibration, base_threshold=75.0, leverage_min=1, leverage_max=20)
+
+    assert calibrated is None
+    assert signal.metadata["event_family_calibration_applied"] == pytest.approx(1.0)
+    assert signal.metadata["calibration_block_override_applied"] == pytest.approx(0.0)
+    assert signal.metadata["calibration_block_reason"] == "BNB impulse shorts underperformed"
+
+
+def test_event_catalyst_short_inherits_impulse_event_family_tightening():
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy_signal": {
+                "BTC_FUTURES": {
+                    "IMPULSE_EVENT_CONTINUATION_SHORT": {
+                        "threshold_offset": 10.0,
+                        "risk_mult": 0.7,
+                        "block_reason": None,
+                    }
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="SOL_USDT",
+        side="SHORT",
+        score=80.0,
+        certainty=0.8,
+        entry_price=84.0,
+        tp_price=82.0,
+        sl_price=85.0,
+        leverage=8,
+        entry_signal="EVENT_CATALYST_SHORT",
+        metadata={
+            "crypto_event_bias": -0.9,
+            "crypto_event_threshold_relief": 4.0,
+            "crypto_event_fresh": 1.0,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, calibration, base_threshold=75.0, leverage_min=5, leverage_max=12)
+
+    assert calibrated is None
+    assert signal.metadata["event_family_calibration_applied"] == pytest.approx(1.0)
+    assert signal.metadata["calibrated_threshold_unrelieved"] == pytest.approx(85.0)
+    assert signal.metadata["calibrated_threshold"] == pytest.approx(81.0)
+    assert signal.metadata["calibration_event_relief_applied"] == pytest.approx(4.0)
+
+
+def test_event_family_tightening_still_allows_stronger_event_signal():
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy_signal": {
+                "BTC_FUTURES": {
+                    "IMPULSE_EVENT_CONTINUATION_SHORT": {
+                        "threshold_offset": 10.0,
+                        "risk_mult": 0.7,
+                        "block_reason": None,
+                    }
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="SOL_USDT",
+        side="SHORT",
+        score=86.0,
+        certainty=0.84,
+        entry_price=84.0,
+        tp_price=82.0,
+        sl_price=85.0,
+        leverage=10,
+        entry_signal="EVENT_CATALYST_SHORT",
+        metadata={
+            "crypto_event_bias": -0.9,
+            "crypto_event_threshold_relief": 4.0,
+            "crypto_event_fresh": 1.0,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, calibration, base_threshold=75.0, leverage_min=5, leverage_max=12)
+
+    assert calibrated is not None
+    assert calibrated.metadata["event_family_calibration_applied"] == pytest.approx(1.0)
+    assert calibrated.metadata["calibrated_threshold"] == pytest.approx(81.0)
+    assert calibrated.leverage == 7
+
+
 def test_apply_signal_calibration_preserves_strategy_leverage_cap():
     calibration = {
         "entry_adjustments": {
