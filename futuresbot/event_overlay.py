@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -19,6 +20,27 @@ class CryptoEventOverlayDecision:
     event_count: int = 0
     max_severity: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def annotate_event_threshold_relief(signal: Any, decision: CryptoEventOverlayDecision) -> Any:
+    if signal is None or not decision.fresh or decision.threshold_relief <= 0:
+        return signal
+    side = str(getattr(signal, "side", "") or "").upper()
+    entry_signal = str(getattr(signal, "entry_signal", "") or "").upper()
+    if "EVENT" not in entry_signal:
+        return signal
+    relief_side = "LONG" if decision.bias_score > 0 else "SHORT" if decision.bias_score < 0 else ""
+    if side != relief_side:
+        return signal
+    metadata = {
+        **(getattr(signal, "metadata", None) or {}),
+        **decision.metadata,
+        "crypto_event_fresh": 1.0,
+        "crypto_event_threshold_relief": round(float(decision.threshold_relief), 3),
+        "crypto_event_threshold_relief_side": relief_side,
+        "crypto_event_threshold_relief_reason": decision.reason,
+    }
+    return dataclasses.replace(signal, metadata=metadata)
 
 
 def is_crypto_event_state_fresh(

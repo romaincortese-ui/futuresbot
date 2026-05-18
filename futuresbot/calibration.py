@@ -399,6 +399,29 @@ def get_entry_adjustment(
 from futuresbot.models import FuturesSignal
 
 
+EVENT_CALIBRATION_RELIEF_CAP = 4.0
+
+
+def _event_calibration_relief(signal: FuturesSignal, threshold_offset: float) -> float:
+    if threshold_offset <= 0:
+        return 0.0
+    entry_signal = str(signal.entry_signal or "").upper()
+    if "EVENT" not in entry_signal:
+        return 0.0
+    metadata = signal.metadata or {}
+    try:
+        relief = float(metadata.get("crypto_event_threshold_relief") or 0.0)
+        bias = float(metadata.get("crypto_event_bias") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if relief <= 0:
+        return 0.0
+    side_sign = 1.0 if str(signal.side or "").upper() == "LONG" else -1.0 if str(signal.side or "").upper() == "SHORT" else 0.0
+    if side_sign == 0.0 or side_sign * bias <= 0:
+        return 0.0
+    return min(float(threshold_offset), relief, EVENT_CALIBRATION_RELIEF_CAP)
+
+
 def apply_signal_calibration(
     signal: FuturesSignal,
     calibration: Mapping[str, Any] | None,
@@ -409,13 +432,28 @@ def apply_signal_calibration(
 ) -> FuturesSignal | None:
     setup_regime = str((signal.metadata or {}).get("setup_regime") or setup_regime_for_signal(signal.entry_signal, signal.side)).upper()
     adjustment = get_entry_adjustment(calibration, "BTC_FUTURES", signal.symbol, signal.entry_signal, setup_regime)
+    threshold_offset = float(adjustment.get("threshold_offset", 0.0) or 0.0)
+    unrelieved_threshold = float(base_threshold) + threshold_offset
+    signal.metadata.update(
+        {
+            "calibration_source": adjustment.get("source"),
+            "calibration_threshold_offset": threshold_offset,
+            "calibration_event_relief_applied": 0.0,
+            "calibrated_threshold": unrelieved_threshold,
+            "calibrated_threshold_unrelieved": unrelieved_threshold,
+            "setup_regime": setup_regime,
+            "calibration_setup_regime": setup_regime,
+        }
+    )
     block_reason = str(adjustment.get("block_reason") or "")
     if block_reason:
         signal.metadata["calibration_block_reason"] = block_reason
         return None
-    threshold = float(base_threshold) + float(adjustment.get("threshold_offset", 0.0) or 0.0)
+    event_relief = _event_calibration_relief(signal, threshold_offset)
+    threshold = max(float(base_threshold), unrelieved_threshold - event_relief)
+    signal.metadata["calibration_event_relief_applied"] = round(event_relief, 3)
+    signal.metadata["calibrated_threshold"] = threshold
     if signal.score < threshold:
-        signal.metadata["calibrated_threshold"] = threshold
         return None
     risk_mult = float(adjustment.get("risk_mult", 1.0) or 1.0)
     def _metadata_int(name: str, default: int) -> int:
@@ -445,6 +483,9 @@ def apply_signal_calibration(
         metadata={
             **signal.metadata,
             "calibrated_threshold": threshold,
+            "calibrated_threshold_unrelieved": unrelieved_threshold,
+            "calibration_threshold_offset": threshold_offset,
+            "calibration_event_relief_applied": round(event_relief, 3),
             "calibration_risk_mult": risk_mult,
             "calibration_source": adjustment.get("source"),
             "setup_regime": setup_regime,

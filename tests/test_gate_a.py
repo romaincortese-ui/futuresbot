@@ -234,6 +234,76 @@ def test_apply_signal_calibration_uses_risk_off_short_regime_block():
     assert signal.metadata["calibration_block_reason"] == "calibration block: weak risk-off shorts"
 
 
+def test_apply_signal_calibration_carries_fresh_event_relief_through_tightening():
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy_regime": {
+                "BTC_FUTURES": {
+                    "RISK_OFF_SHORT": {
+                        "threshold_offset": 5.0,
+                        "risk_mult": 1.0,
+                        "block_reason": None,
+                    }
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="SOL_USDT",
+        side="SHORT",
+        score=61.0,
+        certainty=0.8,
+        entry_price=84.0,
+        tp_price=82.0,
+        sl_price=85.0,
+        leverage=8,
+        entry_signal="EVENT_CATALYST_SHORT",
+        metadata={
+            "crypto_event_bias": -0.9,
+            "crypto_event_threshold_relief": 4.0,
+            "crypto_event_fresh": 1.0,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, calibration, base_threshold=60.0, leverage_min=5, leverage_max=12)
+
+    assert calibrated is not None
+    assert calibrated.metadata["calibrated_threshold"] == pytest.approx(61.0)
+    assert calibrated.metadata["calibrated_threshold_unrelieved"] == pytest.approx(65.0)
+    assert calibrated.metadata["calibration_event_relief_applied"] == pytest.approx(4.0)
+
+
+def test_apply_signal_calibration_does_not_event_relieve_explicit_block():
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy_regime": {
+                "BTC_FUTURES": {
+                    "RISK_OFF_SHORT": {
+                        "threshold_offset": 5.0,
+                        "risk_mult": 1.0,
+                        "block_reason": "calibration block: weak risk-off shorts",
+                    }
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="SOL_USDT",
+        side="SHORT",
+        score=95.0,
+        certainty=0.8,
+        entry_price=84.0,
+        tp_price=82.0,
+        sl_price=85.0,
+        leverage=8,
+        entry_signal="EVENT_CATALYST_SHORT",
+        metadata={"crypto_event_bias": -0.9, "crypto_event_threshold_relief": 4.0},
+    )
+
+    assert apply_signal_calibration(signal, calibration, base_threshold=60.0, leverage_min=5, leverage_max=12) is None
+    assert signal.metadata["calibration_block_reason"] == "calibration block: weak risk-off shorts"
+
+
 def test_apply_signal_calibration_preserves_strategy_leverage_cap():
     calibration = {
         "entry_adjustments": {

@@ -11,7 +11,7 @@ import pandas as pd
 
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.config import FuturesBacktestConfig
-from futuresbot.event_overlay import evaluate_crypto_event_overlay
+from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.exits import evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
@@ -547,6 +547,7 @@ class FuturesBacktestEngine:
 						bypass_symbol_calibration=self.config.sharp_event_bypass_symbol_calibration,
 					)
 			if raw_signal is not None:
+				raw_signal = annotate_event_threshold_relief(raw_signal, event_scan_decision)
 				raw_signal = self._apply_crypto_event_overlay(raw_signal, crypto_event_state, event_now)
 		calibrated = (
 			apply_signal_calibration(

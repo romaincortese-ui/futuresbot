@@ -25,7 +25,7 @@ from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
 from futuresbot.strategy import score_btc_futures_setup
 from futuresbot.calibration import apply_signal_calibration
-from futuresbot.event_overlay import evaluate_crypto_event_overlay
+from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
 from futuresbot.sharp_opportunity import (
@@ -2246,6 +2246,7 @@ class FuturesRuntime:
                     event_side=event_side,
                 )
                 continue
+            raw_signal = annotate_event_threshold_relief(raw_signal, event_scan_decision)
             self._log_net_rr_shadow(raw_signal)
             raw_signal = self._apply_crypto_event_overlay(raw_signal, crypto_event_state, event_now)
             if raw_signal is None:
@@ -2264,7 +2265,22 @@ class FuturesRuntime:
                 leverage_max=scoped.leverage_max,
             )
             if calibrated is None:
-                log.info("Signal scan: %s rejected by calibration/threshold", sym)
+                metadata = raw_signal.metadata or {}
+                log.info(
+                    "Signal scan: %s rejected by calibration/threshold side=%s signal=%s score=%.2f threshold=%.2f "
+                    "unrelieved_threshold=%.2f offset=%.2f event_relief=%.2f source=%s regime=%s block=%s",
+                    sym,
+                    raw_signal.side,
+                    raw_signal.entry_signal,
+                    raw_signal.score,
+                    float(metadata.get("calibrated_threshold") or 0.0),
+                    float(metadata.get("calibrated_threshold_unrelieved") or metadata.get("calibrated_threshold") or 0.0),
+                    float(metadata.get("calibration_threshold_offset") or 0.0),
+                    float(metadata.get("calibration_event_relief_applied") or 0.0),
+                    metadata.get("calibration_source"),
+                    metadata.get("calibration_setup_regime") or metadata.get("setup_regime"),
+                    metadata.get("calibration_block_reason"),
+                )
                 continue
             runtime_leverage = self._enforce_live_leverage_bounds(int(calibrated.leverage), symbol=sym)
             if runtime_leverage != int(calibrated.leverage):

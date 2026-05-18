@@ -692,9 +692,50 @@ def score_btc_futures_setup(
     impulse_recent_low = float(low_15.iloc[-impulse_lookback_bars:].min())
     impulse_recent_close_high = float(close_15.iloc[-impulse_lookback_bars:].max())
     impulse_recent_close_low = float(close_15.iloc[-impulse_lookback_bars:].min())
+    impulse_prior_close_window = close_15.iloc[-impulse_lookback_bars:-1]
+    if impulse_prior_close_window.empty:
+        impulse_prior_close_window = close_15.iloc[-impulse_lookback_bars:]
+    impulse_prior_close_high = float(impulse_prior_close_window.max())
+    impulse_prior_close_low = float(impulse_prior_close_window.min())
     impulse_close_near_high = current_price >= impulse_recent_close_high - current_atr_15 * impulse_close_buffer_atr
     impulse_close_near_low = current_price <= impulse_recent_close_low + current_atr_15 * impulse_close_buffer_atr
     impulse_ema_extension = abs(current_price - current_ema20) / current_atr_1h if current_atr_1h > 0 else 999.0
+    event_anti_chase_enabled = _env_bool("FUTURES_EVENT_ANTI_CHASE_ENABLED", True)
+    event_anti_chase_near_extreme_pct = max(0.0, _env_float("FUTURES_EVENT_ANTI_CHASE_NEAR_EXTREME_PCT", 0.0025))
+    event_anti_chase_near_extreme_atr = max(0.0, _env_float("FUTURES_EVENT_ANTI_CHASE_NEAR_EXTREME_ATR", 0.30))
+    event_anti_chase_min_move_atr = max(0.0, _env_float("FUTURES_EVENT_ANTI_CHASE_MIN_MOVE_ATR", 0.90))
+    event_anti_chase_break_buffer_atr = max(0.0, _env_float("FUTURES_EVENT_ANTI_CHASE_BREAK_BUFFER_ATR", 0.10))
+    event_anti_chase_volume_floor = max(0.0, _env_float("FUTURES_EVENT_ANTI_CHASE_VOLUME_FLOOR", 0.75))
+    distance_to_recent_low = max(0.0, current_price - impulse_recent_low)
+    distance_to_recent_high = max(0.0, impulse_recent_high - current_price)
+    distance_to_recent_low_pct = distance_to_recent_low / current_price if current_price > 0 else 999.0
+    distance_to_recent_high_pct = distance_to_recent_high / current_price if current_price > 0 else 999.0
+    distance_to_recent_low_atr = distance_to_recent_low / current_atr_15 if current_atr_15 > 0 else 999.0
+    distance_to_recent_high_atr = distance_to_recent_high / current_atr_15 if current_atr_15 > 0 else 999.0
+    event_short_near_low = distance_to_recent_low_pct <= event_anti_chase_near_extreme_pct or distance_to_recent_low_atr <= event_anti_chase_near_extreme_atr
+    event_long_near_high = distance_to_recent_high_pct <= event_anti_chase_near_extreme_pct or distance_to_recent_high_atr <= event_anti_chase_near_extreme_atr
+    event_short_fresh_break = (
+        current_price <= impulse_prior_close_low - current_atr_15 * event_anti_chase_break_buffer_atr
+        and volume_ratio >= event_anti_chase_volume_floor
+    )
+    event_long_fresh_break = (
+        current_price >= impulse_prior_close_high + current_atr_15 * event_anti_chase_break_buffer_atr
+        and volume_ratio >= event_anti_chase_volume_floor
+    )
+    event_short_anti_chase_block = (
+        event_anti_chase_enabled
+        and event_bias_score < 0
+        and impulse_move_atr >= event_anti_chase_min_move_atr
+        and event_short_near_low
+        and not event_short_fresh_break
+    )
+    event_long_anti_chase_block = (
+        event_anti_chase_enabled
+        and event_bias_score > 0
+        and impulse_move_atr >= event_anti_chase_min_move_atr
+        and event_long_near_high
+        and not event_long_fresh_break
+    )
     impulse_volume_ok = volume_ratio >= impulse_volume_floor
     prior_volume_end = max(0, len(volume_15) - impulse_lookback_bars)
     prior_volume_start = max(0, prior_volume_end - config.consolidation_window_bars)
@@ -1384,6 +1425,7 @@ def score_btc_futures_setup(
     )
     impulse_long_ok = (
         impulse_enabled
+        and not event_long_anti_chase_block
         and impulse_move_pct >= impulse_min_move_pct
         and impulse_move_atr >= impulse_min_move_atr
         and impulse_volume_ok
@@ -1398,6 +1440,7 @@ def score_btc_futures_setup(
     impulse_short_ok = (
         impulse_enabled
         and not btc_short_uptrend_guard_active
+        and not event_short_anti_chase_block
         and impulse_move_pct <= -impulse_min_move_pct
         and impulse_move_atr >= impulse_min_move_atr
         and impulse_volume_ok
@@ -1443,6 +1486,7 @@ def score_btc_futures_setup(
     event_catalyst_long_ok = (
         event_active
         and event_bias_score > 0
+        and not event_long_anti_chase_block
         and current_adx >= event_adx_min
         and volume_ratio >= event_volume_floor
         and impulse_move_pct >= event_min_move_pct
@@ -1456,6 +1500,7 @@ def score_btc_futures_setup(
         event_active
         and not btc_short_uptrend_guard_active
         and event_bias_score < 0
+        and not event_short_anti_chase_block
         and current_adx >= event_adx_min
         and volume_ratio >= event_volume_floor
         and impulse_move_pct <= -event_min_move_pct
@@ -1889,6 +1934,10 @@ def score_btc_futures_setup(
                     "breakaway": 1.0 if breakaway_path else 0.0,
                     "range_expansion": 1.0 if range_expansion_path else 0.0,
                     "event_catalyst": 1.0 if event_path else 0.0,
+                    "event_anti_chase_block": 1.0 if event_long_anti_chase_block else 0.0,
+                    "event_distance_to_recent_high_pct": round(distance_to_recent_high_pct, 6),
+                    "event_distance_to_recent_high_atr": round(distance_to_recent_high_atr, 4),
+                    "event_fresh_break": 1.0 if event_long_fresh_break else 0.0,
                     "market_gate_penalty": directional_market_penalty("LONG") if impulse_path or event_path else 0.0,
                     "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                     "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
@@ -2074,6 +2123,10 @@ def score_btc_futures_setup(
                 "breakaway": 1.0 if breakaway_path else 0.0,
                 "range_expansion": 1.0 if range_expansion_path else 0.0,
                 "event_catalyst": 1.0 if event_path else 0.0,
+                "event_anti_chase_block": 1.0 if event_short_anti_chase_block else 0.0,
+                "event_distance_to_recent_low_pct": round(distance_to_recent_low_pct, 6),
+                "event_distance_to_recent_low_atr": round(distance_to_recent_low_atr, 4),
+                "event_fresh_break": 1.0 if event_short_fresh_break else 0.0,
                 "market_gate_penalty": directional_market_penalty("SHORT") if impulse_path or event_path else 0.0,
                 "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                 "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
