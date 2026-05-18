@@ -1010,6 +1010,37 @@ def test_missed_opportunity_report_records_and_persists_blocked_move(tmp_path, c
     assert reloaded._status_payload()["missed_opportunities"]["BTC_USDT"]["abs_move_pct"] == record["abs_move_pct"]
 
 
+def test_paused_cycle_does_not_replay_stale_gate_summary(tmp_path, caplog):
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    runtime._paused = True
+    runtime._last_cycle_gate_blocks = {"BTC_USDT": "adx=12.5<18.0"}
+    runtime._last_cycle_symbol_count = 1
+
+    with caplog.at_level(logging.INFO, logger="futuresbot.runtime"):
+        runtime._log_cycle_summary(price=91000.0, signal=None)
+
+    assert runtime._last_cycle_gate_blocks == {}
+    assert not any("[CYCLE_SUMMARY]" in entry.message for entry in caplog.records)
+    assert any("paused=True" in entry.message for entry in caplog.records)
+
+
+def test_drawdown_halt_blocks_without_manual_pause(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "1")
+    config = replace(_config(tmp_path), margin_budget_usdt=100.0)
+    runtime = FuturesRuntime(config, StubClient())
+    runtime.trade_history = [
+        {"pnl_usdt": 25.0, "closed_at": "2026-05-01T00:00:00+00:00"},
+        {"pnl_usdt": -45.0, "closed_at": "2026-05-02T00:00:00+00:00"},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="futuresbot.runtime"):
+        multiplier = runtime._drawdown_size_multiplier()
+
+    assert multiplier == 0.0
+    assert runtime._paused is False
+    assert any("Drawdown HALT active" in entry.message for entry in caplog.records)
+
+
 def test_enter_trade_rejects_duplicate_symbol(tmp_path):
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
     runtime._register_position(_make_position("BTC_USDT"))

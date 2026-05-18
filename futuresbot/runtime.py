@@ -158,6 +158,9 @@ class FuturesRuntime:
         # P1 §8 — emit gate-block aggregate first so the "why didn't we trade?"
         # answer sits next to the cycle outcome, not buried in a wall of
         # per-symbol [GATE_BLOCK] INFO lines.
+        if self._paused and signal is None:
+            self._last_cycle_gate_blocks = {}
+            self._last_cycle_symbol_count = 0
         if self._last_cycle_gate_blocks:
             reason_counts: dict[str, int] = {}
             for reason in self._last_cycle_gate_blocks.values():
@@ -2430,14 +2433,18 @@ class FuturesRuntime:
                 hard_pct=self._env_float("DRAWDOWN_HALT_PCT", 0.15),
             )
             if state.label == "HALT":
-                if not self._paused:
-                    self._paused = True
-                    self._notify_once(
-                        "futures_dd_halt",
-                        f"⛔ <b>Futures Drawdown HALT</b> [{self._mode_label()}]\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"90d DD {state.dd_90d:.1%} exceeded halt threshold. New entries paused.",
-                    )
+                log.info(
+                    "Drawdown HALT active: 90d_dd=%.1f%% 30d_dd=%.1f%% threshold=%.1f%%; entries blocked but scanning continues",
+                    state.dd_90d * 100.0,
+                    state.dd_30d * 100.0,
+                    self._env_float("DRAWDOWN_HALT_PCT", 0.15) * 100.0,
+                )
+                self._notify_once(
+                    "futures_dd_halt",
+                    f"⛔ <b>Futures Drawdown HALT</b> [{self._mode_label()}]\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"90d DD {state.dd_90d:.1%} exceeded halt threshold. New entries are risk-blocked; scanning continues.",
+                )
                 return 0.0
             if state.label == "THROTTLE":
                 self._notify_once(
