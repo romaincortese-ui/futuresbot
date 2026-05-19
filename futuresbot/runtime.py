@@ -2526,6 +2526,9 @@ class FuturesRuntime:
         try:
             from futuresbot.drawdown_kill import compute_drawdown_state
 
+            # IGNORE_HALT override: allow trading even if HALT is active
+            ignore_halt = os.getenv("IGNORE_HALT", "false").strip().lower() in {"1", "true", "yes", "on"}
+
             account_snapshot = None if self.config.paper_trade else self._account_snapshot()
             curve = self._build_equity_curve(account_snapshot=account_snapshot)
             if not curve:
@@ -2548,6 +2551,9 @@ class FuturesRuntime:
                     f"━━━━━━━━━━━━━━━\n"
                     f"90d DD {state.dd_90d:.1%} exceeded halt threshold. New entries are risk-blocked; scanning continues.",
                 )
+                if ignore_halt:
+                    log.warning("IGNORE_HALT override active: bypassing drawdown HALT and allowing entries!")
+                    return 1.0
                 return 0.0
             if state.label == "THROTTLE":
                 self._notify_once(
