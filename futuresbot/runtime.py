@@ -1,3 +1,23 @@
+def _format_profit_lock_message(position, peak_pct, pullback_pct, exit_price):
+    side = getattr(position, "side", "?").upper()
+    side_icon = "🟢" if side == "LONG" else "🔴"
+    symbol = getattr(position, "symbol", "?")
+    entry_price = getattr(position, "entry_price", None)
+    return "\n".join([
+        "✅ <b>PROFIT TAKEN: PEAK PULLBACK</b>",
+        f"{side_icon} {symbol} {side} | Entry: ${entry_price:.2f} | Exit: ${exit_price:.2f}",
+        f"Peak: {peak_pct:+.2f}% | Pullback: {pullback_pct:+.2f}% | closed at market",
+    ])
+
+def _dynamic_pullback_fraction(peak_pct, volatility):
+    # Example: wider pullback for higher volatility, tighter for lower peaks
+    # Clamp between 0.15 and 0.5
+    base = 0.25
+    if peak_pct > 0:
+        adj = 0.5 * (volatility / max(peak_pct, 1e-6))
+    else:
+        adj = 0.0
+    return min(0.5, max(0.15, base + adj))
 from __future__ import annotations
 
 from collections import deque
@@ -747,8 +767,18 @@ class FuturesRuntime:
             metadata[PROFIT_LOCK_PEAK_PRICE_KEY] = float(current_price)
             changed = True
 
+        # Calculate volatility as a simple rolling stddev of last N closes (or fallback to config/static)
+        closes = getattr(self, "_recent_closes", None)
+        volatility = 0.0
+        if closes and len(closes) >= 10:
+            import numpy as np
+            volatility = float(np.std(closes[-10:]))
+        else:
+            volatility = abs(current_price - position.entry_price) * 0.01  # fallback: 1% move
+
         trigger_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_TRIGGER_PCT", 20.0))
-        pullback_fraction = min(0.95, max(0.05, self._env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.35)))
+        # Use dynamic pullback fraction
+        pullback_fraction = _dynamic_pullback_fraction(peak_pct, volatility)
         floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 5.0))
         if peak_pct >= trigger_pct:
             stop_pct = max(floor_pct, peak_pct * (1.0 - pullback_fraction))
@@ -766,6 +796,9 @@ class FuturesRuntime:
                     pnl_usdt,
                     self._format_price(current_price),
                 )
+                # Unified notification
+                msg = _format_profit_lock_message(position, peak_pct, peak_pct - pnl_pct, current_price)
+                self._notify(msg)
                 return self._close_position_for_exit(position, current_price=current_price, reason="PEAK_PROFIT_LOCK")
 
         breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
