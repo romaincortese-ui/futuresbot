@@ -1,3 +1,4 @@
+from __future__ import annotations
 def _format_profit_lock_message(position, peak_pct, pullback_pct, exit_price):
     side = getattr(position, "side", "?").upper()
     side_icon = "🟢" if side == "LONG" else "🔴"
