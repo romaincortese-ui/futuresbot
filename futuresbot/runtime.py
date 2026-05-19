@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 def _format_profit_lock_message(position, peak_pct, pullback_pct, exit_price):
     side = getattr(position, "side", "?").upper()
     side_icon = "🟢" if side == "LONG" else "🔴"
@@ -143,7 +144,7 @@ class FuturesRuntime:
             return primary
         return next(iter(self.open_positions.values()))
 
-    @open_position.setter
+            return min(0.5, max(0.15, base + adj)) 
     def open_position(self, value: FuturesPosition | None) -> None:
         """Legacy setter retained for tests / external callers.
 
