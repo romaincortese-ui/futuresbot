@@ -143,7 +143,7 @@ class FuturesRuntime:
             return primary
         return next(iter(self.open_positions.values()))
 
-            # Removed stray duplicate line causing IndentationError
+    @open_position.setter
     def open_position(self, value: FuturesPosition | None) -> None:
         """Legacy setter retained for tests / external callers.
 
