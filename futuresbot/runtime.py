@@ -20,7 +20,6 @@ def _dynamic_pullback_fraction(peak_pct, volatility):
     else:
         adj = 0.0
     return min(0.5, max(0.15, base + adj))
-from __future__ import annotations
 
 from collections import deque
 import dataclasses
@@ -144,7 +143,7 @@ class FuturesRuntime:
             return primary
         return next(iter(self.open_positions.values()))
 
-            return min(0.5, max(0.15, base + adj)) 
+            # Removed stray duplicate line causing IndentationError
     def open_position(self, value: FuturesPosition | None) -> None:
         """Legacy setter retained for tests / external callers.
 
