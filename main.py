@@ -19,7 +19,11 @@ os.environ.setdefault("USE_STRICT_RECV_WINDOW", "1")       # §2.4 recv_window 3
 os.environ.setdefault("USE_LIQ_BUFFER_GUARD", "1")         # §2.5 liquidation buffer
 os.environ.setdefault("USE_HARD_LOSS_CAP_TIGHT", "1")      # §2.6 hard_loss_cap 0.75 -> 0.25
 os.environ.setdefault("HARD_LOSS_CAP_TIGHT_PCT", "0.25")
-os.environ.setdefault("FUTURES_OPPORTUNITY_MAX_LEVERAGE", "8")
+os.environ.setdefault("FUTURES_DYNAMIC_LEVERAGE_ENABLED", "1")
+os.environ.setdefault("FUTURES_DYNAMIC_LEVERAGE_MIN", "5")
+os.environ.setdefault("FUTURES_DYNAMIC_LEVERAGE_MAX", "20")
+os.environ.setdefault("FUTURES_DYNAMIC_LEVERAGE_MAX_MARGIN_LOSS_PCT", "0.25")
+os.environ.setdefault("FUTURES_OPPORTUNITY_MAX_LEVERAGE", "20")
 os.environ.setdefault("USE_DRAWDOWN_KILL", "1")            # §2.7 30d/90d drawdown kill
 os.environ.setdefault("USE_SESSION_LEVERAGE", "1")         # §2.8 session-aligned leverage
 os.environ.setdefault("USE_FUTURES_PROFIT_LOCK", "1")      # live peak-profit + breakeven protection
@@ -29,6 +33,8 @@ os.environ.setdefault("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.20")
 os.environ.setdefault("FUTURES_BREAKEVEN_ARM_PCT", "3.0")
 os.environ.setdefault("FUTURES_BREAKEVEN_FLOOR_PCT", "0.5")
 os.environ.setdefault("USE_OPEN_POSITION_GUARD", "1")      # tight polling while a leveraged position is open
+os.environ.setdefault("USE_FUTURES_FAIR_PRICE_WS", "1")    # stream fair price during open-position guard, REST fallback on stale data
+os.environ.setdefault("FUTURES_FAIR_PRICE_WS_STALE_SECONDS", "5.0")
 os.environ.setdefault("FUTURES_OPEN_POSITION_MONITOR_SECONDS", "1.0")
 
 # ---------------------------------------------------------------------------

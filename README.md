@@ -27,7 +27,7 @@ Each pair uses the shared futures scorer with a dedicated profile for volatility
 - Uses 15m candles for consolidation and breakout context
 - Uses 1h resampled structure for higher-timeframe trend strength
 - Can open both long and short
-- Dynamically sizes leverage between x20 and x50 from setup certainty
+- Dynamically sizes leverage from x5 to x20 using setup score, stop distance, symbol, signal family, and the hard margin-loss cap
 - Rejects setups where the stop distance would violate the configured hard loss cap on margin
 - Uses full-size exits only
 - Lets exchange TP/SL manage the hard exit path
@@ -46,8 +46,10 @@ Important variables:
 - `FUTURES_TELEGRAM_CHAT_ID=...`
 - `FUTURES_HEARTBEAT_SECONDS=21600`
 - `FUTURES_SCORE_THRESHOLD=56`
-- `FUTURES_LEVERAGE_MIN=20`
-- `FUTURES_LEVERAGE_MAX=50`
+- `FUTURES_DYNAMIC_LEVERAGE_ENABLED=1`
+- `FUTURES_DYNAMIC_LEVERAGE_MIN=5`
+- `FUTURES_DYNAMIC_LEVERAGE_MAX=20`
+- `FUTURES_DYNAMIC_LEVERAGE_MAX_MARGIN_LOSS_PCT=0.25`
 - `FUTURES_HARD_LOSS_CAP_PCT=0.75`
 - `FUTURES_ADX_FLOOR=18`
 - `FUTURES_TREND_24H_FLOOR=0.009`
@@ -61,7 +63,8 @@ Important variables:
 - `FUTURES_RUNTIME_STATE_FILE=futures_runtime_state.json`
 - `FUTURES_STATUS_FILE=futures_runtime_status.json`
 - `USE_FUTURES_PROFIT_LOCK=1` applies peak-profit tracking and pullback exits to every open futures position.
-- `USE_OPEN_POSITION_GUARD=1` polls MEXC fair price every `FUTURES_OPEN_POSITION_MONITOR_SECONDS` while a futures trade is open, so peak protection, breakeven protection, liquidation-buffer exits, and trailing exits do not wait for the next full scan cycle.
+- `USE_OPEN_POSITION_GUARD=1` monitors MEXC fair price every `FUTURES_OPEN_POSITION_MONITOR_SECONDS` while a futures trade is open, so peak protection, breakeven protection, liquidation-buffer exits, and trailing exits do not wait for the next full scan cycle.
+- `USE_FUTURES_FAIR_PRICE_WS=1` subscribes to MEXC futures `sub.fair.price` streams for open positions and falls back to REST when the stream is stale or unavailable.
 
 The project reuses `MEXC_API_KEY`, `MEXC_API_SECRET`, `REDIS_URL`, and `ANTHROPIC_API_KEY` when present.
 
@@ -69,7 +72,7 @@ Crypto event state is consumed from Redis key `mexc:crypto_event_intelligence`, 
 
 Backtests can replay event state with `FUTURES_BACKTEST_CRYPTO_EVENT_STATE_FILE`. The file may contain one state object or a `timeline`/`states` list with `from`/`until` windows and nested `state` payloads, letting historical news/event datasets exercise the same threshold, score, sizing, leverage, and block logic used live.
 
-Opportunity bucket sizing is available with `FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED=true`. It maps the existing technical/event score to a 0-10 opportunity score, skips scores 0-5, uses 50% of available balance for scores 6-7, 75% for scores 8-9, and 100% for score 10. In that mode `FUTURES_OPPORTUNITY_MAX_LEVERAGE` defaults to `8`, `max_concurrent_positions` is forced to one, and `USE_NAV_RISK_SIZING=1` caps contracts by `FUTURES_OPPORTUNITY_NAV_RISK_PCT` of equity before the bucket margin is spent. Sharp-event risk multipliers reduce this NAV risk budget as well as available margin.
+Opportunity bucket sizing is available with `FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED=true`. It maps the existing technical/event score to a 0-10 opportunity score, skips scores 0-5, uses 50% of available balance for scores 6-7, 75% for scores 8-9, and 100% for score 10. In that mode `FUTURES_OPPORTUNITY_MAX_LEVERAGE` defaults to `20`, `max_concurrent_positions` is forced to one, and `USE_NAV_RISK_SIZING=1` caps contracts by `FUTURES_OPPORTUNITY_NAV_RISK_PCT` of equity before the bucket margin is spent. Dynamic leverage is still risk-capped first: score-10 setups can only reach high leverage when the stop is tight enough, the symbol/signal caps allow it, and `stop_distance_pct × leverage` stays under `FUTURES_DYNAMIC_LEVERAGE_MAX_MARGIN_LOSS_PCT`. Sharp-event risk multipliers reduce this NAV risk budget as well as available margin.
 
 If you do not set `FUTURES_TELEGRAM_TOKEN` or `FUTURES_TELEGRAM_CHAT_ID`, the runtime falls back to `TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID`.
 

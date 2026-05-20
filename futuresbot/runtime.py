@@ -76,6 +76,7 @@ from futuresbot.telegram import TelegramClient
 
 from futuresbot.calibration import load_trade_calibration, setup_regime_for_signal, validate_trade_calibration_payload
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
+from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.exits import evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
@@ -91,6 +92,7 @@ from futuresbot.sharp_opportunity import (
     sharp_event_margin_multiplier,
 )
 from futuresbot.universe import select_major_usdt_symbols
+from futuresbot.websocket import FuturesFairPriceMonitor
 
 
 log = logging.getLogger(__name__)
@@ -160,6 +162,7 @@ class FuturesRuntime:
         self._last_sharp_event_symbol_refresh_at = 0.0
         self.missed_opportunities: dict[str, dict[str, Any]] = {}
         self._missed_opportunities_dirty = False
+        self._fair_price_monitor = FuturesFairPriceMonitor()
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -1938,16 +1941,32 @@ class FuturesRuntime:
     def _open_position_guard_enabled(self) -> bool:
         return os.environ.get("USE_OPEN_POSITION_GUARD", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
 
+    def _futures_fair_price_ws_enabled(self) -> bool:
+        return os.environ.get("USE_FUTURES_FAIR_PRICE_WS", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _sync_open_position_price_subscriptions(self) -> None:
+        if not self._futures_fair_price_ws_enabled():
+            return
+        self._fair_price_monitor.set_symbols({position.symbol for position in self.open_positions.values()})
+
+    def _open_position_guard_price(self, symbol: str) -> float:
+        if self._futures_fair_price_ws_enabled():
+            price = self._fair_price_monitor.get_price(symbol)
+            if price is not None and price > 0:
+                return float(price)
+        return float(self.client.get_fair_price(symbol) or 0.0)
+
     def _open_position_monitor_interval_seconds(self) -> float:
         return max(0.25, self._env_float("FUTURES_OPEN_POSITION_MONITOR_SECONDS", 1.0))
 
     def _monitor_open_positions_once(self) -> bool:
         if not self.open_positions:
             return False
+        self._sync_open_position_price_subscriptions()
         closed_any = False
         for position in list(self.open_positions.values()):
             try:
-                current_price = float(self.client.get_fair_price(position.symbol) or 0.0)
+                current_price = self._open_position_guard_price(position.symbol)
             except Exception as exc:
                 log.debug("Open-position guard price fetch failed for %s: %s", position.symbol, exc)
                 continue
@@ -1973,11 +1992,12 @@ class FuturesRuntime:
         deadline = time.monotonic() + seconds
         interval = self._open_position_monitor_interval_seconds()
         log.info(
-            "Open-position guard active: polling %d position(s) every %.2fs during %.2fs cycle sleep",
+            "Open-position guard active: monitoring %d position(s) every %.2fs during %.2fs cycle sleep",
             len(self.open_positions),
             interval,
             seconds,
         )
+        self._sync_open_position_price_subscriptions()
         while self.open_positions:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -2838,6 +2858,8 @@ class FuturesRuntime:
         score_threshold: float | None = None,
         nav_usdt: float | None = None,
         risk_pct: float | None = None,
+        leverage_min_override: int | None = None,
+        leverage_max_override: int | None = None,
     ) -> tuple[int, int] | None:
         """§2.1 — NAV-anchored sizing. Returns ``(contracts, leverage)`` or None.
 
@@ -2867,6 +2889,10 @@ class FuturesRuntime:
                 confidence_pct = lo + (hi - lo) * norm
                 risk_pct = confidence_pct * max(0.0, size_multiplier)
             min_bound, max_bound = self._live_leverage_bounds(symbol)
+            if leverage_max_override is not None:
+                max_bound = min(max_bound, max(1, int(leverage_max_override)))
+            if leverage_min_override is not None:
+                min_bound = max(1, min(max_bound, int(leverage_min_override)))
             lev_min = max(min_bound, min(max_bound, int(self._env_float("NAV_LEVERAGE_MIN", min_bound))))
             lev_max = max(lev_min, min(max_bound, int(self._env_float("NAV_LEVERAGE_MAX", max_bound))))
             # FUTURES_FULL_BALANCE_SIZING_ENABLED — overrides NAV-anchored risk %
@@ -4123,6 +4149,8 @@ class FuturesRuntime:
             score_threshold=float(scoped.min_confidence_score),
             nav_usdt=nav_usdt,
             risk_pct=risk_pct,
+            leverage_min_override=leverage if dynamic_leverage_enabled() else None,
+            leverage_max_override=leverage if dynamic_leverage_enabled() else None,
         )
         if nav_sized is not None:
             contracts, leverage = nav_sized
@@ -4672,6 +4700,9 @@ class FuturesRuntime:
         self._sync_telegram_update_offset_on_startup()
         self._send_startup_message()
         self._record_activity("Runtime started")
+        if not self.config.paper_trade and self._futures_fair_price_ws_enabled():
+            self._sync_open_position_price_subscriptions()
+            self._fair_price_monitor.start()
         while True:
             try:
                 log.info("Beginning futures cycle")

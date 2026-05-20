@@ -11,6 +11,7 @@ import pandas as pd
 
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.config import FuturesBacktestConfig
+from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.exits import evaluate_profit_lock_bar, evaluate_trailing_bar
@@ -317,6 +318,9 @@ class FuturesBacktestEngine:
 				risk_pct *= max(0.0, min(1.0, float(margin_multiplier or 0.0)))
 				min_bound = max(1, int(getattr(self.config, "leverage_min", 1) or 1))
 				max_bound = max(min_bound, int(getattr(self.config, "leverage_max", leverage) or leverage))
+				if dynamic_leverage_enabled():
+					min_bound = max(1, min(max_bound, int(leverage)))
+					max_bound = max(min_bound, min(max_bound, int(leverage)))
 				nav_lev_min = max(min_bound, min(max_bound, int(_env_float("NAV_LEVERAGE_MIN", min_bound))))
 				nav_lev_max = max(nav_lev_min, min(max_bound, int(_env_float("NAV_LEVERAGE_MAX", max_bound))))
 				nav = compute_nav_risk_sizing(

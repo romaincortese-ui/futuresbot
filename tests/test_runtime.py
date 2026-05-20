@@ -1411,9 +1411,9 @@ def test_enter_trade_caps_opportunity_bucket_with_nav_risk(tmp_path, monkeypatch
 
     assert runtime._enter_trade(signal) is True
     position = runtime.open_positions["BTC_USDT"]
-    assert position.margin_usdt == 80.0
+    assert position.margin_usdt == 40.0
     assert position.contracts == 8
-    assert position.leverage == 1
+    assert position.leverage == 2
     assert position.metadata["opportunity_score_10"] == 9
     assert position.metadata["opportunity_balance_fraction"] == 0.75
     assert position.metadata["opportunity_margin_budget_usdt"] == 150.0

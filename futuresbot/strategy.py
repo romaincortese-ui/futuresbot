@@ -6,6 +6,7 @@ from typing import Protocol
 
 import pandas as pd
 
+from futuresbot.dynamic_leverage import resolve_dynamic_leverage
 from futuresbot.indicators import calc_adx, calc_atr, calc_ema, calc_rsi, resample_ohlcv
 from futuresbot.models import FuturesSignal
 from futuresbot.opportunity_score import opportunity_metadata
@@ -351,16 +352,21 @@ def _leverage_for_signal_with_bounds(
     config: StrategyConfig,
     leverage_min: int,
     leverage_max: int,
+    *,
+    raw_score: float | None = None,
+    entry_signal: str = "",
 ) -> int | None:
-    if sl_distance_pct <= 0:
-        return None
-    leverage_min = max(1, min(int(leverage_min), int(leverage_max)))
-    leverage_max = max(leverage_min, int(leverage_max))
-    target = leverage_min + certainty * (leverage_max - leverage_min)
-    risk_cap = int(math.floor(config.hard_loss_cap_pct / sl_distance_pct))
-    if risk_cap < leverage_min:
-        return None
-    return max(leverage_min, min(leverage_max, int(round(target)), risk_cap))
+    decision = resolve_dynamic_leverage(
+        certainty=certainty,
+        sl_distance_pct=sl_distance_pct,
+        hard_loss_cap_pct=float(config.hard_loss_cap_pct),
+        leverage_min=leverage_min,
+        leverage_max=leverage_max,
+        raw_score=raw_score,
+        symbol=getattr(config, "symbol", ""),
+        entry_signal=entry_signal,
+    )
+    return decision.leverage
 
 
 def _passes_cost_budget_gate(
@@ -502,13 +508,17 @@ def _build_signal(
     certainty = _confidence(score, config.min_confidence_score)
     leverage_min_bound = leverage_min_override if leverage_min_override is not None else config.leverage_min
     leverage_max_bound = leverage_max_override if leverage_max_override is not None else config.leverage_max
-    leverage = _leverage_for_signal_with_bounds(
-        certainty,
-        sl_distance_pct,
-        config,
-        leverage_min_bound,
-        leverage_max_bound,
+    leverage_decision = resolve_dynamic_leverage(
+        certainty=certainty,
+        sl_distance_pct=sl_distance_pct,
+        hard_loss_cap_pct=float(config.hard_loss_cap_pct),
+        leverage_min=leverage_min_bound,
+        leverage_max=leverage_max_bound,
+        raw_score=score,
+        symbol=getattr(config, "symbol", ""),
+        entry_signal=entry_signal,
     )
+    leverage = leverage_decision.leverage
     if leverage is None:
         return None
     extension = _extend_tp_for_cost_budget(
@@ -542,8 +552,14 @@ def _build_signal(
         **metadata,
         "sl_distance_pct": round(sl_distance_pct, 6),
         "tp_distance_pct": round(abs(tp_price - entry_price) / entry_price if entry_price > 0 else 0.0, 6),
-        "leverage_min_bound": float(leverage_min_bound),
-        "leverage_max_bound": float(leverage_max_bound),
+        "leverage_min_bound": float(leverage_decision.min_leverage),
+        "leverage_max_bound": float(leverage_decision.final_cap if leverage_decision.enabled else leverage_max_bound),
+        "dynamic_leverage_enabled": 1.0 if leverage_decision.enabled else 0.0,
+        "dynamic_leverage_score_cap": float(leverage_decision.score_cap),
+        "dynamic_leverage_stop_cap": float(leverage_decision.stop_cap),
+        "dynamic_leverage_symbol_cap": float(leverage_decision.symbol_cap),
+        "dynamic_leverage_signal_cap": float(leverage_decision.signal_cap),
+        "dynamic_leverage_stop_margin_loss_pct": round(leverage_decision.stop_margin_loss_pct, 6),
         "hourly_exit_progress": config.early_exit_tp_progress,
         **cost_extension_metadata,
         **(cost_projection or {}),
@@ -1857,6 +1873,7 @@ def score_btc_futures_setup(
                     config,
                     leverage_min if leverage_min is not None else config.leverage_min,
                     leverage_max if leverage_max is not None else config.leverage_max,
+                    raw_score=long_score,
                 )
                 if projected_leverage is not None:
                     required_tp_distance_pct = _cost_budget_required_tp_distance_pct(
@@ -2061,6 +2078,7 @@ def score_btc_futures_setup(
                 config,
                 leverage_min if leverage_min is not None else config.leverage_min,
                 leverage_max if leverage_max is not None else config.leverage_max,
+                raw_score=short_score,
             )
             if projected_leverage is not None:
                 required_tp_distance_pct = _cost_budget_required_tp_distance_pct(

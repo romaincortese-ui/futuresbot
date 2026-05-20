@@ -62,7 +62,8 @@ def test_strategy_produces_long_signal_on_uptrend_breakout():
 
     assert signal is not None
     assert signal.side == "LONG"
-    assert 20 <= signal.leverage <= 50
+    assert 5 <= signal.leverage <= 20
+    assert signal.metadata["dynamic_leverage_stop_margin_loss_pct"] <= 0.25
 
 
 def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
@@ -340,7 +341,8 @@ def test_strategy_produces_short_signal_on_downtrend_breakdown():
 
     assert signal is not None
     assert signal.side == "SHORT"
-    assert 20 <= signal.leverage <= 50
+    assert 5 <= signal.leverage <= 20
+    assert signal.metadata["dynamic_leverage_stop_margin_loss_pct"] <= 0.25
 
 
 def test_strategy_produces_impulse_event_continuation_long(monkeypatch):

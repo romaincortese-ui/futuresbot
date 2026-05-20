@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from futuresbot.dynamic_leverage import dynamic_leverage_enabled, dynamic_leverage_max, dynamic_leverage_min
+
 
 load_dotenv()
 
@@ -174,7 +176,8 @@ def opportunity_min_raw_score() -> float:
 
 
 def opportunity_max_leverage() -> int:
-    return max(1, env_int("FUTURES_OPPORTUNITY_MAX_LEVERAGE", 8))
+    default = dynamic_leverage_max() if dynamic_leverage_enabled() else 8
+    return max(1, env_int("FUTURES_OPPORTUNITY_MAX_LEVERAGE", default))
 
 
 def env_int(name: str, default: int) -> int:
@@ -523,11 +526,12 @@ class FuturesConfig:
                 )
         if opportunity_bucket_sizing_enabled():
             cap = opportunity_max_leverage()
+            leverage_min = dynamic_leverage_min() if dynamic_leverage_enabled() else min(instance.leverage_min, cap)
             instance = dataclasses.replace(
                 instance,
                 max_concurrent_positions=1,
                 leverage_max=min(instance.leverage_max, cap),
-                leverage_min=min(instance.leverage_min, cap),
+                leverage_min=min(leverage_min, cap),
             )
         return instance
 
@@ -563,7 +567,7 @@ class FuturesConfig:
         score_threshold = env_float_for_symbol(sym, "SCORE_THRESHOLD", prof_float("min_confidence_score", self.min_confidence_score))
         if opportunity_bucket_sizing_enabled():
             leverage_max = min(leverage_max, opportunity_max_leverage())
-            leverage_min = min(leverage_min, leverage_max)
+            leverage_min = min(dynamic_leverage_min() if dynamic_leverage_enabled() else leverage_min, leverage_max)
             score_threshold = min(score_threshold, opportunity_min_raw_score())
         return dataclasses.replace(
             self,
