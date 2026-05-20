@@ -378,6 +378,19 @@ def test_runtime_exchange_spec_validator_refuses_start_in_strict_mode(monkeypatc
     assert any("[EXCHANGE_SPEC_FAIL]" in r.message for r in caplog.records)
 
 
+def test_runtime_exchange_spec_validator_warns_on_fetch_failure_in_strict_mode(monkeypatch, caplog):
+    monkeypatch.setenv("FUTURES_EXCHANGE_SPEC_CHECK", "true")
+    monkeypatch.setenv("FUTURES_EXCHANGE_SPEC_STRICT", "true")
+    runtime = _build_runtime()
+    runtime.client.get_contract_detail.side_effect = ConnectionError("network down")
+    caplog.set_level(logging.WARNING, logger="futuresbot.runtime")
+
+    runtime._validate_exchange_specs_on_boot()
+
+    assert any("[EXCHANGE_SPEC_FETCH_WARN]" in r.message for r in caplog.records)
+    assert any("[EXCHANGE_SPEC_WARN]" in r.message for r in caplog.records)
+
+
 def test_runtime_exchange_spec_validator_warns_in_non_strict_mode(monkeypatch, caplog):
     monkeypatch.setenv("FUTURES_EXCHANGE_SPEC_CHECK", "true")
     monkeypatch.setenv("FUTURES_EXCHANGE_SPEC_STRICT", "false")

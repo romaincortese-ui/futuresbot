@@ -60,6 +60,7 @@ from futuresbot.universe import select_major_usdt_symbols
 log = logging.getLogger(__name__)
 TELEGRAM_ALERT_COOLDOWN_SECONDS = 600
 RECENT_ACTIVITY_LIMIT = 12
+TELEGRAM_COMMAND_UPDATE_LIMIT = 25
 PROFIT_LOCK_PEAK_PCT_KEY = "profit_lock_peak_pnl_pct"
 PROFIT_LOCK_PEAK_USDT_KEY = "profit_lock_peak_pnl_usdt"
 PROFIT_LOCK_PEAK_PRICE_KEY = "profit_lock_peak_price"
@@ -533,7 +534,10 @@ class FuturesRuntime:
         return float(rate)
 
     def _notify(self, message: str, *, parse_mode: str = "HTML") -> None:
-        self.telegram.send_message(message, parse_mode=parse_mode)
+        if not self.telegram.configured:
+            return
+        if not self.telegram.send_message(message, parse_mode=parse_mode):
+            log.warning("Telegram send failed")
 
     def _notify_once(self, key: str, message: str, *, cooldown_seconds: int = TELEGRAM_ALERT_COOLDOWN_SECONDS, parse_mode: str = "HTML") -> None:
         now_ts = time.time()
@@ -778,8 +782,9 @@ class FuturesRuntime:
             volatility = abs(current_price - position.entry_price) * 0.01  # fallback: 1% move
 
         trigger_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_TRIGGER_PCT", 20.0))
-        # Use dynamic pullback fraction
-        pullback_fraction = _dynamic_pullback_fraction(peak_pct, volatility)
+        configured_pullback = self._env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.0)
+        pullback_fraction = configured_pullback if configured_pullback > 0 else _dynamic_pullback_fraction(peak_pct, volatility)
+        pullback_fraction = min(0.95, max(0.0, pullback_fraction))
         floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 5.0))
         if peak_pct >= trigger_pct:
             stop_pct = max(floor_pct, peak_pct * (1.0 - pullback_fraction))
@@ -1156,42 +1161,44 @@ class FuturesRuntime:
             return
         updates = self.telegram.get_updates(
             offset=self._last_telegram_update + 1 if self._last_telegram_update else None,
-            limit=5,
+            limit=TELEGRAM_COMMAND_UPDATE_LIMIT,
             timeout=0,
         )
         if not updates:
             return
+        saw_update = False
         for update in updates:
+            saw_update = True
             self._last_telegram_update = max(self._last_telegram_update, int(update.get("update_id", 0) or 0))
             message = update.get("message", {}) if isinstance(update, dict) else {}
             chat_id = str(message.get("chat", {}).get("id", ""))
             if self.config.telegram_chat_id and chat_id != self.config.telegram_chat_id:
                 continue
             raw_text = str(message.get("text", "") or "").strip()
-            text = raw_text.lower()
-            if text == "/status":
+            command_token, _separator, command_arg = raw_text.partition(" ")
+            command = command_token.split("@", 1)[0].lower()
+            arg = command_arg.strip()
+            if command == "/status":
                 self._notify(self._build_status_message(price=self._get_reference_price()))
                 self._record_activity("Telegram: /status")
-            elif text == "/pnl":
+            elif command == "/pnl":
                 self._notify(self._build_pnl_message())
                 self._record_activity("Telegram: /pnl")
-            elif text in {"/logs", "/log"}:
+            elif command in {"/logs", "/log"}:
                 self._notify(self._build_logs_message())
                 self._record_activity("Telegram: /logs")
-            elif text == "/pause":
+            elif command == "/pause":
                 self._paused = True
                 self._save_state()
                 self._record_activity("Telegram: entries paused")
                 self._notify("⏸️ <b>Futures entries paused.</b> Open position management stays active.")
-            elif text == "/resume":
+            elif command == "/resume":
                 self._paused = False
                 self._save_state()
                 self._record_activity("Telegram: entries resumed")
                 self._notify("▶️ <b>Futures entries resumed.</b>")
-            elif text == "/close" or text.startswith("/close ") or text.startswith("/close@"):
+            elif command == "/close":
                 # Parse optional argument: /close, /close SYMBOL, /close all
-                parts = raw_text.split(maxsplit=1)
-                arg = parts[1].strip() if len(parts) > 1 else ""
                 if arg.lower() == "all":
                     if not self.open_positions:
                         self._notify("⚠️ <b>Futures Close</b>\n━━━━━━━━━━━━━━━\nNo open positions to close.")
@@ -1209,9 +1216,25 @@ class FuturesRuntime:
                     prefix = "🚨" if ok else "⚠️"
                     self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
                     self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
-            elif text in {"/help", "/start"}:
+            elif command in {"/help", "/start"}:
                 self._notify(self._build_help_message())
                 self._record_activity("Telegram: /help")
+        if saw_update:
+            self._save_state()
+
+    def _sync_telegram_update_offset_on_startup(self) -> None:
+        if not self.telegram.configured or self._last_telegram_update > 0:
+            return
+        updates = self.telegram.get_updates(offset=-1, limit=1, timeout=0)
+        if not updates:
+            return
+        latest = max(int(update.get("update_id", 0) or 0) for update in updates)
+        if latest <= 0:
+            return
+        self._last_telegram_update = latest
+        self._record_activity("Telegram backlog synced on startup")
+        self._save_state()
+        log.info("Telegram update offset synced to %s on startup", latest)
 
     def _get_reference_price(self) -> float:
         ref_symbol = self.open_position.symbol if self.open_position is not None else (self._active_symbols[0] if self._active_symbols else self.config.symbol)
@@ -1373,6 +1396,10 @@ class FuturesRuntime:
         raw_last_exit = payload.get("last_exit_by_symbol", {})
         if isinstance(raw_last_exit, dict):
             self._last_exit_by_symbol = {str(sym).upper(): row for sym, row in raw_last_exit.items() if isinstance(row, dict)}
+        try:
+            self._last_telegram_update = int(payload.get("last_telegram_update", 0) or 0)
+        except (TypeError, ValueError):
+            self._last_telegram_update = 0
         log.info("Loaded futures runtime state from %s", self._state_path)
 
     def _save_state(self) -> None:
@@ -1389,6 +1416,7 @@ class FuturesRuntime:
             "paused": self._paused,
             "recent_activity": list(self._recent_activity),
             "last_exit_by_symbol": self._last_exit_by_symbol,
+            "last_telegram_update": self._last_telegram_update,
         }
         self._state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -1551,6 +1579,7 @@ class FuturesRuntime:
             "price": price,
             "status_message": self._build_status_message(price=price, signal=signal),
             "open_position": self.open_position.to_dict() if self.open_position is not None else None,
+            "open_positions": [position.to_dict() for position in self.open_positions.values()],
             "recent_trade_count": len(self.trade_history),
             "last_signal": signal,
             "calibration_loaded": bool(self.calibration),
@@ -4456,16 +4485,21 @@ class FuturesRuntime:
         if all_ok:
             log.info("[EXCHANGE_SPEC_OK] validated %d symbols: %s", len(symbols), ",".join(symbols))
             return
-        for reason in reasons:
+        fetch_reasons = [reason for reason in reasons if "fetch_error=" in reason or "fetch_failed" in reason]
+        mismatch_reasons = [reason for reason in reasons if reason not in fetch_reasons]
+        for reason in mismatch_reasons:
             log.error("[EXCHANGE_SPEC_FAIL] %s", reason)
-        if strict:
+        for reason in fetch_reasons:
+            log.warning("[EXCHANGE_SPEC_FETCH_WARN] %s", reason)
+        if strict and mismatch_reasons:
             raise SystemExit(
                 "Gate B B4: exchange-spec mismatch blocked startup. "
-                f"Reasons: {reasons}. Set FUTURES_EXCHANGE_SPEC_STRICT=false to downgrade to warn."
+                f"Reasons: {mismatch_reasons}. Set FUTURES_EXCHANGE_SPEC_STRICT=false to downgrade to warn."
             )
         log.warning(
-            "[EXCHANGE_SPEC_WARN] %d mismatches accepted (strict mode off)",
-            len(reasons),
+            "[EXCHANGE_SPEC_WARN] %d mismatches and %d fetch failures accepted",
+            len(mismatch_reasons),
+            len(fetch_reasons),
         )
 
     def run(self) -> None:
@@ -4499,6 +4533,7 @@ class FuturesRuntime:
         # list (so we don't warn about symbols the validator already dropped).
         self._warn_deprecated_monitor_flags()
         self._warn_unsuitable_symbols()
+        self._sync_telegram_update_offset_on_startup()
         self._send_startup_message()
         self._record_activity("Runtime started")
         while True:

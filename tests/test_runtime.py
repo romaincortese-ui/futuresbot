@@ -843,6 +843,40 @@ def test_handle_telegram_commands_supports_pnl_logs_and_pause_resume(tmp_path):
     assert runtime._last_telegram_update == 6
 
 
+def test_handle_telegram_commands_accepts_bot_suffix_and_persists_offset(tmp_path):
+    config = replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1")
+    runtime = FuturesRuntime(config, StubClient())
+    runtime.telegram.get_updates = lambda **kwargs: [
+        {"update_id": 42, "message": {"chat": {"id": "1"}, "text": "/status@FuturesHealthBot"}},
+    ]
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._handle_telegram_commands()
+
+    assert any("📋 <b>Status</b>" in message for message in sent_messages)
+    assert runtime._last_telegram_update == 42
+
+    reloaded = FuturesRuntime(config, StubClient())
+    assert reloaded._last_telegram_update == 42
+
+
+def test_startup_telegram_sync_discards_stale_commands_without_processing(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    runtime.open_position = _make_position("BTC_USDT")
+    runtime.telegram.get_updates = lambda **kwargs: [
+        {"update_id": 77, "message": {"chat": {"id": "1"}, "text": "/close"}},
+    ]
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._sync_telegram_update_offset_on_startup()
+
+    assert runtime._last_telegram_update == 77
+    assert runtime.open_position is not None
+    assert sent_messages == []
+
+
 # ---------------------------------------------------------------------------
 # Multi-position / portfolio / session / funding coverage (Stages 2+3)
 # ---------------------------------------------------------------------------
@@ -1061,6 +1095,7 @@ def test_paused_cycle_does_not_replay_stale_gate_summary(tmp_path, caplog):
 
 def test_drawdown_halt_blocks_without_manual_pause(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("USE_DRAWDOWN_KILL", "1")
+    monkeypatch.setenv("IGNORE_HALT", "false")
     config = replace(_config(tmp_path), margin_budget_usdt=100.0)
     runtime = FuturesRuntime(config, StubClient())
     runtime.trade_history = [
