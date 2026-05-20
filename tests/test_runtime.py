@@ -618,7 +618,7 @@ def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
     assert runtime.trade_history[-1]["pnl_usdt"] > 0
 
 
-def test_breakeven_profit_lock_uses_net_pnl_before_closing(tmp_path, monkeypatch):
+def test_breakeven_profit_lock_exits_when_gap_erases_floor(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
     monkeypatch.setenv("FUTURES_BREAKEVEN_FLOOR_PCT", "0.5")
     monkeypatch.setenv("FUTURES_BREAKEVEN_EXIT_SLIPPAGE_BUFFER_BPS", "3")
@@ -643,9 +643,9 @@ def test_breakeven_profit_lock_uses_net_pnl_before_closing(tmp_path, monkeypatch
     )
     runtime._register_position(position)
 
-    assert runtime._hourly_exit(position, current_price=524.59) is False
-    assert runtime.open_positions["ZEC_USDT"] is position
-    assert runtime.trade_history == []
+    assert runtime._hourly_exit(position, current_price=524.59) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "BREAKEVEN_PROFIT_LOCK"
 
 
 def test_trailing_bar_waits_until_after_activation_bar_to_exit():
@@ -762,6 +762,13 @@ def test_profit_lock_lane_allowlist_filters_symbol_signal_pairs():
     assert profit_lock_lane_allowed(position, "*:IMPULSE_EVENT_CONTINUATION_LONG") is True
     assert profit_lock_lane_allowed(position, "SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG") is False
     assert profit_lock_lane_allowed(position, "ZEC_USDT:LEVEL_BREAK_SHORT") is False
+
+    sharp_event_position = replace(
+        position,
+        symbol="DASH_USDT",
+        entry_signal="SHARP_EVENT_BREAKOUT_LONG",
+    )
+    assert profit_lock_lane_allowed(sharp_event_position, "*:SHARP_EVENT_BREAKOUT_LONG") is True
 
 
 def test_one_way_close_side_uses_opposite_reduce_only_direction(tmp_path):

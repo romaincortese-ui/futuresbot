@@ -815,26 +815,10 @@ class FuturesRuntime:
             if gross_pnl_pct <= stop_pct:
                 min_exit_net_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0))
                 required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
-                if net_pnl_pct <= required_net_pct:
-                    log.info(
-                        "[PROFIT_LOCK_HOLD] symbol=%s side=%s gross_pnl_pct=%.2f net_pnl_pct=%.2f "
-                        "gross_peak_pct=%.2f stop_pct=%.2f required_net_pct=%.2f pnl_usdt=%+.2f price=%s",
-                        position.symbol,
-                        position.side,
-                        gross_pnl_pct,
-                        net_pnl_pct,
-                        gross_peak_pct,
-                        stop_pct,
-                        required_net_pct,
-                        pnl_usdt,
-                        self._format_price(current_price),
-                    )
-                    if changed:
-                        self._save_state()
-                    return False
                 log.warning(
                     "[PROFIT_LOCK_EXIT] symbol=%s side=%s gross_pnl_pct=%.2f net_pnl_pct=%.2f "
-                    "gross_peak_pct=%.2f net_peak_pct=%.2f stop_pct=%.2f pnl_usdt=%+.2f price=%s",
+                    "gross_peak_pct=%.2f net_peak_pct=%.2f stop_pct=%.2f required_net_pct=%.2f "
+                    "gap_through_floor=%s pnl_usdt=%+.2f price=%s",
                     position.symbol,
                     position.side,
                     gross_pnl_pct,
@@ -842,6 +826,8 @@ class FuturesRuntime:
                     gross_peak_pct,
                     peak_pct,
                     stop_pct,
+                    required_net_pct,
+                    net_pnl_pct <= required_net_pct,
                     pnl_usdt,
                     self._format_price(current_price),
                 )
@@ -854,33 +840,25 @@ class FuturesRuntime:
         if net_pnl_pct >= breakeven_arm_pct and not metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY):
             metadata[BREAKEVEN_PROFIT_LOCK_ARMED_KEY] = True
             changed = True
-        if metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY) and net_pnl_pct <= breakeven_floor_pct:
+        if metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY):
             min_exit_net_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_EXIT_MIN_NET_PCT", 0.0))
             required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
-            if net_pnl_pct <= required_net_pct:
-                log.info(
-                    "[BREAKEVEN_PROFIT_LOCK_HOLD] symbol=%s side=%s net_pnl_pct=%.2f floor_pct=%.2f required_net_pct=%.2f net_pnl_usdt=%+.2f price=%s",
+            effective_floor_pct = max(breakeven_floor_pct, required_net_pct)
+            if net_pnl_pct <= effective_floor_pct:
+                log.warning(
+                    "[BREAKEVEN_PROFIT_LOCK_EXIT] symbol=%s side=%s net_pnl_pct=%.2f floor_pct=%.2f "
+                    "effective_floor_pct=%.2f required_net_pct=%.2f gap_through_floor=%s pnl_usdt=%+.2f price=%s",
                     position.symbol,
                     position.side,
                     net_pnl_pct,
                     breakeven_floor_pct,
+                    effective_floor_pct,
                     required_net_pct,
+                    net_pnl_pct <= required_net_pct,
                     pnl_usdt,
                     self._format_price(current_price),
                 )
-                if changed:
-                    self._save_state()
-                return False
-            log.warning(
-                "[BREAKEVEN_PROFIT_LOCK_EXIT] symbol=%s side=%s pnl_pct=%.2f floor_pct=%.2f pnl_usdt=%+.2f price=%s",
-                position.symbol,
-                position.side,
-                net_pnl_pct,
-                breakeven_floor_pct,
-                pnl_usdt,
-                self._format_price(current_price),
-            )
-            return self._close_position_for_exit(position, current_price=current_price, reason="BREAKEVEN_PROFIT_LOCK")
+                return self._close_position_for_exit(position, current_price=current_price, reason="BREAKEVEN_PROFIT_LOCK")
 
         if changed:
             self._save_state()
