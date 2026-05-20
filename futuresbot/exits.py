@@ -14,39 +14,6 @@ PROFIT_LOCK_STOP_PCT_KEY = "profit_lock_stop_pnl_pct"
 PROFIT_LOCK_STOP_GROSS_PCT_KEY = "profit_lock_stop_gross_pnl_pct"
 
 
-def _split_lane_tokens(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    normalized = raw.replace(";", ",").replace("\n", ",").replace("\t", ",")
-    tokens: list[str] = []
-    for chunk in normalized.split(","):
-        for token in chunk.split():
-            cleaned = token.strip().upper()
-            if cleaned:
-                tokens.append(cleaned)
-    return tokens
-
-
-def profit_lock_lane_allowed(position: FuturesPosition, allowlist: str | None) -> bool:
-    tokens = _split_lane_tokens(allowlist)
-    if not tokens:
-        return True
-    symbol = str(position.symbol or "").upper()
-    entry_signal = str(position.entry_signal or "").upper()
-    for token in tokens:
-        if ":" in token:
-            token_symbol, token_signal = token.split(":", 1)
-        elif token.endswith("_USDT"):
-            token_symbol, token_signal = token, "*"
-        else:
-            token_symbol, token_signal = "*", token
-        symbol_matches = token_symbol in {"*", symbol}
-        signal_matches = token_signal in {"*", entry_signal}
-        if symbol_matches and signal_matches:
-            return True
-    return False
-
-
 def _total_and_current_move(position: FuturesPosition, price: float) -> tuple[float, float]:
     if position.side == "LONG":
         return position.tp_price - position.entry_price, price - position.entry_price

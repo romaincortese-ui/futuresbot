@@ -13,7 +13,7 @@ from futuresbot.calibration import apply_signal_calibration
 from futuresbot.config import FuturesBacktestConfig
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
-from futuresbot.exits import evaluate_profit_lock_bar, evaluate_trailing_bar, profit_lock_lane_allowed
+from futuresbot.exits import evaluate_profit_lock_bar, evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
@@ -597,10 +597,7 @@ class FuturesBacktestEngine:
 					return liq.price, "LIQUIDATED"
 			except Exception:
 				pass
-		if os.environ.get("USE_FUTURES_PROFIT_LOCK", "0").strip().lower() in {"1", "true", "yes", "y", "on"} and profit_lock_lane_allowed(
-			position,
-			os.environ.get("FUTURES_PROFIT_LOCK_ALLOWED_LANES", ""),
-		):
+		if os.environ.get("USE_FUTURES_PROFIT_LOCK", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
 			profit_lock_exit, _changed = evaluate_profit_lock_bar(
 				position,
 				high=high,

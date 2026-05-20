@@ -76,7 +76,7 @@ from futuresbot.telegram import TelegramClient
 
 from futuresbot.calibration import load_trade_calibration, setup_regime_for_signal, validate_trade_calibration_payload
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
-from futuresbot.exits import evaluate_trailing_tick, is_trailing_exit_armed, profit_lock_lane_allowed, trailing_stop_price
+from futuresbot.exits import evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -798,7 +798,6 @@ class FuturesRuntime:
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if not self._flag("USE_FUTURES_PROFIT_LOCK"):
             return False
-        peak_lock_allowed = profit_lock_lane_allowed(position, os.environ.get("FUTURES_PROFIT_LOCK_ALLOWED_LANES", ""))
         gross_pnl_pct = self._position_pnl_pct(position, current_price)
         net_pnl_pct = self._position_net_pnl_pct(position, current_price)
         if gross_pnl_pct is None or net_pnl_pct is None:
@@ -839,7 +838,7 @@ class FuturesRuntime:
         pullback_fraction = configured_pullback if configured_pullback > 0 else _dynamic_pullback_fraction(gross_peak_pct, volatility)
         pullback_fraction = min(0.95, max(0.0, pullback_fraction))
         floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0))
-        if peak_lock_allowed and gross_peak_pct >= trigger_pct:
+        if gross_peak_pct >= trigger_pct:
             stop_pct = max(floor_pct, gross_peak_pct * (1.0 - pullback_fraction))
             net_stop_pct = max(0.0, peak_pct * (1.0 - pullback_fraction))
             if metadata.get(PROFIT_LOCK_STOP_GROSS_PCT_KEY) != stop_pct:
