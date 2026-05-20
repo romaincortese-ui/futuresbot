@@ -533,10 +533,49 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
     runtime._register_position(position)
 
     assert runtime._hourly_exit(position, current_price=104.0) is False
+    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 40.000
     assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 38.776
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 26.000
     assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 25.204
 
     assert runtime._hourly_exit(position, current_price=102.5) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "PEAK_PROFIT_LOCK"
+    assert runtime.trade_history[-1]["pnl_usdt"] > 0
+
+
+def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "5")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_FLOOR_PCT", "2")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="SHORT",
+        entry_price=100.0,
+        contracts=12,
+        contract_size=0.1,
+        leverage=12,
+        margin_usdt=10.0,
+        tp_price=94.5,
+        sl_price=102.5,
+        position_id="paper-profit-lock-gross",
+        order_id="entry-profit-lock-gross",
+        opened_at=datetime(2026, 5, 19, tzinfo=timezone.utc),
+        score=85.0,
+        certainty=0.8,
+        entry_signal="TREND_CONTINUATION_SHORT",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=99.5) is False
+    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 6.000
+    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 4.564
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 3.900
+    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 2.966
+
+    assert runtime._hourly_exit(position, current_price=99.68) is True
     assert runtime.open_position is None
     assert runtime.trade_history[-1]["exit_reason"] == "PEAK_PROFIT_LOCK"
     assert runtime.trade_history[-1]["pnl_usdt"] > 0

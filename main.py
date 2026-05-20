@@ -21,6 +21,11 @@ os.environ.setdefault("USE_HARD_LOSS_CAP_TIGHT", "1")      # §2.6 hard_loss_cap
 os.environ.setdefault("USE_DRAWDOWN_KILL", "1")            # §2.7 30d/90d drawdown kill
 os.environ.setdefault("USE_SESSION_LEVERAGE", "1")         # §2.8 session-aligned leverage
 os.environ.setdefault("USE_FUTURES_PROFIT_LOCK", "1")      # live peak-profit + breakeven protection
+os.environ.setdefault("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "5.0")
+os.environ.setdefault("FUTURES_PROFIT_LOCK_FLOOR_PCT", "2.0")
+os.environ.setdefault("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
+os.environ.setdefault("FUTURES_BREAKEVEN_ARM_PCT", "3.0")
+os.environ.setdefault("FUTURES_BREAKEVEN_FLOOR_PCT", "0.5")
 
 # ---------------------------------------------------------------------------
 # Sprint 2 (FUTURES_BOT_INVESTMENT_REVIEW.md §7) — default ON for prod.

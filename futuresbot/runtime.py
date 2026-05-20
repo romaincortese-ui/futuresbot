@@ -62,9 +62,11 @@ TELEGRAM_ALERT_COOLDOWN_SECONDS = 600
 RECENT_ACTIVITY_LIMIT = 12
 TELEGRAM_COMMAND_UPDATE_LIMIT = 25
 PROFIT_LOCK_PEAK_PCT_KEY = "profit_lock_peak_pnl_pct"
+PROFIT_LOCK_PEAK_GROSS_PCT_KEY = "profit_lock_peak_gross_pnl_pct"
 PROFIT_LOCK_PEAK_USDT_KEY = "profit_lock_peak_pnl_usdt"
 PROFIT_LOCK_PEAK_PRICE_KEY = "profit_lock_peak_price"
 PROFIT_LOCK_STOP_PCT_KEY = "profit_lock_stop_pnl_pct"
+PROFIT_LOCK_STOP_GROSS_PCT_KEY = "profit_lock_stop_gross_pnl_pct"
 BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 
 
@@ -255,13 +257,16 @@ class FuturesRuntime:
             tp_progress = self._tp_progress(self.open_position, mark_price)
             metadata = self.open_position.metadata or {}
             price_text = self._format_price(mark_price) if mark_price is not None else "n/a"
-            peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_PCT_KEY)
-            stop_pct = self._metadata_float(metadata, PROFIT_LOCK_STOP_PCT_KEY)
+            net_peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_PCT_KEY)
+            peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_GROSS_PCT_KEY) or net_peak_pct
+            net_stop_pct = self._metadata_float(metadata, PROFIT_LOCK_STOP_PCT_KEY)
+            stop_pct = self._metadata_float(metadata, PROFIT_LOCK_STOP_GROSS_PCT_KEY) or net_stop_pct
             trailing_stop = self._metadata_float(metadata, "trailing_exit_stop_price")
             log.info(
                 "Futures cycle: open_position symbol=%s side=%s entry_signal=%s leverage=x%s "
                 "entry=%s price=%s tp=%s sl=%s pnl_usdt=%+.2f pnl_pct=%s tp_progress=%s "
-                "peak_pnl_pct=%s profit_lock_stop_pct=%s trailing_armed=%s trailing_stop=%s paused=%s",
+                "peak_pnl_pct=%s net_peak_pnl_pct=%s profit_lock_stop_pct=%s net_profit_lock_stop_pct=%s "
+                "trailing_armed=%s trailing_stop=%s paused=%s",
                 self.open_position.symbol,
                 self.open_position.side,
                 self.open_position.entry_signal,
@@ -274,7 +279,9 @@ class FuturesRuntime:
                 f"{pnl_pct:+.2f}%" if pnl_pct is not None else "n/a",
                 f"{tp_progress:.2f}" if tp_progress is not None else "n/a",
                 f"{peak_pct:+.2f}%" if peak_pct is not None else "n/a",
+                f"{net_peak_pct:+.2f}%" if net_peak_pct is not None else "n/a",
                 f"{stop_pct:+.2f}%" if stop_pct is not None else "n/a",
+                f"{net_stop_pct:+.2f}%" if net_stop_pct is not None else "n/a",
                 is_trailing_exit_armed(self.open_position),
                 self._format_price(trailing_stop) if trailing_stop is not None else "n/a",
                 self._paused,
@@ -755,8 +762,9 @@ class FuturesRuntime:
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if not self._flag("USE_FUTURES_PROFIT_LOCK"):
             return False
-        pnl_pct = self._position_net_pnl_pct(position, current_price)
-        if pnl_pct is None:
+        gross_pnl_pct = self._position_pnl_pct(position, current_price)
+        net_pnl_pct = self._position_net_pnl_pct(position, current_price)
+        if gross_pnl_pct is None or net_pnl_pct is None:
             return False
         pnl_usdt = self._position_net_pnl_usdt(position, current_price)
         metadata = position.metadata if isinstance(position.metadata, dict) else {}
@@ -765,11 +773,19 @@ class FuturesRuntime:
 
         changed = False
         peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_PCT_KEY) or 0.0
-        if pnl_pct > peak_pct:
-            peak_pct = pnl_pct
-            metadata[PROFIT_LOCK_PEAK_PCT_KEY] = float(pnl_pct)
+        if net_pnl_pct > peak_pct:
+            peak_pct = net_pnl_pct
+            metadata[PROFIT_LOCK_PEAK_PCT_KEY] = float(net_pnl_pct)
             metadata[PROFIT_LOCK_PEAK_USDT_KEY] = float(pnl_usdt)
             metadata[PROFIT_LOCK_PEAK_PRICE_KEY] = float(current_price)
+            changed = True
+
+        gross_peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_GROSS_PCT_KEY)
+        if gross_peak_pct is None:
+            gross_peak_pct = max(0.0, peak_pct)
+        if gross_pnl_pct > gross_peak_pct:
+            gross_peak_pct = gross_pnl_pct
+            metadata[PROFIT_LOCK_PEAK_GROSS_PCT_KEY] = float(gross_pnl_pct)
             changed = True
 
         # Calculate volatility as a simple rolling stddev of last N closes (or fallback to config/static)
@@ -781,46 +797,71 @@ class FuturesRuntime:
         else:
             volatility = abs(current_price - position.entry_price) * 0.01  # fallback: 1% move
 
-        trigger_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_TRIGGER_PCT", 20.0))
+        trigger_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_TRIGGER_PCT", 5.0))
         configured_pullback = self._env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.0)
-        pullback_fraction = configured_pullback if configured_pullback > 0 else _dynamic_pullback_fraction(peak_pct, volatility)
+        pullback_fraction = configured_pullback if configured_pullback > 0 else _dynamic_pullback_fraction(gross_peak_pct, volatility)
         pullback_fraction = min(0.95, max(0.0, pullback_fraction))
-        floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 5.0))
-        if peak_pct >= trigger_pct:
-            stop_pct = max(floor_pct, peak_pct * (1.0 - pullback_fraction))
-            if metadata.get(PROFIT_LOCK_STOP_PCT_KEY) != stop_pct:
-                metadata[PROFIT_LOCK_STOP_PCT_KEY] = float(stop_pct)
+        floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0))
+        if gross_peak_pct >= trigger_pct:
+            stop_pct = max(floor_pct, gross_peak_pct * (1.0 - pullback_fraction))
+            net_stop_pct = max(0.0, peak_pct * (1.0 - pullback_fraction))
+            if metadata.get(PROFIT_LOCK_STOP_GROSS_PCT_KEY) != stop_pct:
+                metadata[PROFIT_LOCK_STOP_GROSS_PCT_KEY] = float(stop_pct)
                 changed = True
-            if pnl_pct <= stop_pct:
+            if metadata.get(PROFIT_LOCK_STOP_PCT_KEY) != net_stop_pct:
+                metadata[PROFIT_LOCK_STOP_PCT_KEY] = float(net_stop_pct)
+                changed = True
+            if gross_pnl_pct <= stop_pct:
+                min_exit_net_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0))
+                required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
+                if net_pnl_pct <= required_net_pct:
+                    log.info(
+                        "[PROFIT_LOCK_HOLD] symbol=%s side=%s gross_pnl_pct=%.2f net_pnl_pct=%.2f "
+                        "gross_peak_pct=%.2f stop_pct=%.2f required_net_pct=%.2f pnl_usdt=%+.2f price=%s",
+                        position.symbol,
+                        position.side,
+                        gross_pnl_pct,
+                        net_pnl_pct,
+                        gross_peak_pct,
+                        stop_pct,
+                        required_net_pct,
+                        pnl_usdt,
+                        self._format_price(current_price),
+                    )
+                    if changed:
+                        self._save_state()
+                    return False
                 log.warning(
-                    "[PROFIT_LOCK_EXIT] symbol=%s side=%s pnl_pct=%.2f peak_pct=%.2f stop_pct=%.2f pnl_usdt=%+.2f price=%s",
+                    "[PROFIT_LOCK_EXIT] symbol=%s side=%s gross_pnl_pct=%.2f net_pnl_pct=%.2f "
+                    "gross_peak_pct=%.2f net_peak_pct=%.2f stop_pct=%.2f pnl_usdt=%+.2f price=%s",
                     position.symbol,
                     position.side,
-                    pnl_pct,
+                    gross_pnl_pct,
+                    net_pnl_pct,
+                    gross_peak_pct,
                     peak_pct,
                     stop_pct,
                     pnl_usdt,
                     self._format_price(current_price),
                 )
-                # Unified notification
-                msg = _format_profit_lock_message(position, peak_pct, peak_pct - pnl_pct, current_price)
+                msg = _format_profit_lock_message(position, gross_peak_pct, gross_peak_pct - gross_pnl_pct, current_price)
                 self._notify(msg)
                 return self._close_position_for_exit(position, current_price=current_price, reason="PEAK_PROFIT_LOCK")
 
         breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
         breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
-        if pnl_pct >= breakeven_arm_pct and not metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY):
+        if net_pnl_pct >= breakeven_arm_pct and not metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY):
             metadata[BREAKEVEN_PROFIT_LOCK_ARMED_KEY] = True
             changed = True
-        if metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY) and pnl_pct <= breakeven_floor_pct:
+        if metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY) and net_pnl_pct <= breakeven_floor_pct:
             min_exit_net_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_EXIT_MIN_NET_PCT", 0.0))
             required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
-            if pnl_pct <= required_net_pct:
+            if net_pnl_pct <= required_net_pct:
                 log.info(
                     "[BREAKEVEN_PROFIT_LOCK_HOLD] symbol=%s side=%s net_pnl_pct=%.2f floor_pct=%.2f required_net_pct=%.2f net_pnl_usdt=%+.2f price=%s",
                     position.symbol,
                     position.side,
-                    pnl_pct,
+                    net_pnl_pct,
                     breakeven_floor_pct,
                     required_net_pct,
                     pnl_usdt,
@@ -833,7 +874,7 @@ class FuturesRuntime:
                 "[BREAKEVEN_PROFIT_LOCK_EXIT] symbol=%s side=%s pnl_pct=%.2f floor_pct=%.2f pnl_usdt=%+.2f price=%s",
                 position.symbol,
                 position.side,
-                pnl_pct,
+                net_pnl_pct,
                 breakeven_floor_pct,
                 pnl_usdt,
                 self._format_price(current_price),
