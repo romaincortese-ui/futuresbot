@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from futuresbot.config import FuturesConfig
 from futuresbot.dynamic_leverage import resolve_dynamic_leverage
 
 
@@ -22,6 +23,31 @@ def test_high_score_tight_btc_setup_can_reach_x20(monkeypatch):
 
     assert decision.leverage == 20
     assert decision.stop_margin_loss_pct == 0.20
+
+
+def test_dynamic_max_lifts_legacy_global_leverage_cap(monkeypatch):
+    monkeypatch.setenv("FUTURES_DYNAMIC_LEVERAGE_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_DYNAMIC_LEVERAGE_MIN", "5")
+    monkeypatch.setenv("FUTURES_DYNAMIC_LEVERAGE_MAX", "20")
+    monkeypatch.setenv("FUTURES_LEVERAGE_MIN", "5")
+    monkeypatch.setenv("FUTURES_LEVERAGE_MAX", "12")
+
+    config = FuturesConfig.from_env()
+    btc_config = config.for_symbol("BTC_USDT")
+    decision = resolve_dynamic_leverage(
+        certainty=0.99,
+        sl_distance_pct=0.010,
+        hard_loss_cap_pct=0.25,
+        leverage_min=btc_config.leverage_min,
+        leverage_max=btc_config.leverage_max,
+        raw_score=96.0,
+        symbol="BTC_USDT",
+        entry_signal="COIL_BREAKOUT_LONG",
+    )
+
+    assert config.leverage_max == 20
+    assert btc_config.leverage_max == 20
+    assert decision.leverage == 20
 
 
 def test_wide_stop_dash_sharp_event_cannot_use_high_leverage(monkeypatch):

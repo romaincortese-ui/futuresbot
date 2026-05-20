@@ -524,6 +524,10 @@ class FuturesConfig:
                 instance = dataclasses.replace(
                     instance, hard_loss_cap_pct=min(instance.hard_loss_cap_pct, tight_cap)
                 )
+        if dynamic_leverage_enabled():
+            dynamic_max = dynamic_leverage_max()
+            if dynamic_max > instance.leverage_max:
+                instance = dataclasses.replace(instance, leverage_max=dynamic_max)
         if opportunity_bucket_sizing_enabled():
             cap = opportunity_max_leverage()
             leverage_min = dynamic_leverage_min() if dynamic_leverage_enabled() else min(instance.leverage_min, cap)
