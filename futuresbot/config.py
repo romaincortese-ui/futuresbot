@@ -174,7 +174,7 @@ def opportunity_min_raw_score() -> float:
 
 
 def opportunity_max_leverage() -> int:
-    return max(1, env_int("FUTURES_OPPORTUNITY_MAX_LEVERAGE", 12))
+    return max(1, env_int("FUTURES_OPPORTUNITY_MAX_LEVERAGE", 8))
 
 
 def env_int(name: str, default: int) -> int:
@@ -513,10 +513,10 @@ class FuturesConfig:
                     instance, recv_window_seconds=min(instance.recv_window_seconds, strict_cap)
                 )
         # Sprint 1 — §2.6 tight hard-loss cap. Opt-in via USE_HARD_LOSS_CAP_TIGHT=1
-        # clamps hard_loss_cap_pct to HARD_LOSS_CAP_TIGHT_PCT (default 0.40) so a
+        # clamps hard_loss_cap_pct to HARD_LOSS_CAP_TIGHT_PCT (default 0.25) so a
         # single trade cannot lose more than that fraction of posted margin.
         if env_bool("USE_HARD_LOSS_CAP_TIGHT", False):
-            tight_cap = env_float("HARD_LOSS_CAP_TIGHT_PCT", 0.40)
+            tight_cap = env_float("HARD_LOSS_CAP_TIGHT_PCT", 0.25)
             if tight_cap > 0:
                 instance = dataclasses.replace(
                     instance, hard_loss_cap_pct=min(instance.hard_loss_cap_pct, tight_cap)

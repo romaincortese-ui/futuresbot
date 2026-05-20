@@ -816,12 +816,16 @@ class FuturesRuntime:
             metadata[PROFIT_LOCK_PEAK_PRICE_KEY] = float(current_price)
             changed = True
 
-        gross_peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_GROSS_PCT_KEY)
+        stored_gross_peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_GROSS_PCT_KEY)
+        gross_peak_pct = stored_gross_peak_pct
         if gross_peak_pct is None:
             gross_peak_pct = max(0.0, peak_pct)
         if gross_pnl_pct > gross_peak_pct:
             gross_peak_pct = gross_pnl_pct
             metadata[PROFIT_LOCK_PEAK_GROSS_PCT_KEY] = float(gross_pnl_pct)
+            changed = True
+        elif stored_gross_peak_pct is None and gross_peak_pct > 0.0:
+            metadata[PROFIT_LOCK_PEAK_GROSS_PCT_KEY] = float(gross_peak_pct)
             changed = True
 
         # Calculate volatility as a simple rolling stddev of last N closes (or fallback to config/static)
@@ -834,7 +838,7 @@ class FuturesRuntime:
             volatility = abs(current_price - position.entry_price) * 0.01  # fallback: 1% move
 
         trigger_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_TRIGGER_PCT", 4.0))
-        configured_pullback = self._env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.0)
+        configured_pullback = self._env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.20)
         pullback_fraction = configured_pullback if configured_pullback > 0 else _dynamic_pullback_fraction(gross_peak_pct, volatility)
         pullback_fraction = min(0.95, max(0.0, pullback_fraction))
         floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0))
@@ -1931,6 +1935,58 @@ class FuturesRuntime:
 
         return self._fixed_take_profit_exit(position, current_price=current_price, scoped=scoped)
 
+    def _open_position_guard_enabled(self) -> bool:
+        return os.environ.get("USE_OPEN_POSITION_GUARD", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _open_position_monitor_interval_seconds(self) -> float:
+        return max(0.25, self._env_float("FUTURES_OPEN_POSITION_MONITOR_SECONDS", 1.0))
+
+    def _monitor_open_positions_once(self) -> bool:
+        if not self.open_positions:
+            return False
+        closed_any = False
+        for position in list(self.open_positions.values()):
+            try:
+                current_price = float(self.client.get_fair_price(position.symbol) or 0.0)
+            except Exception as exc:
+                log.debug("Open-position guard price fetch failed for %s: %s", position.symbol, exc)
+                continue
+            if current_price <= 0:
+                continue
+            try:
+                if self._liq_buffer_force_close(position, current_price):
+                    closed_any = True
+                    continue
+                if self._hourly_exit(position, current_price):
+                    closed_any = True
+            except Exception as exc:
+                log.exception("Open-position guard failed for %s: %s", position.symbol, exc)
+        return closed_any
+
+    def _sleep_until_next_cycle(self, seconds: float) -> None:
+        seconds = max(0.0, float(seconds or 0.0))
+        if seconds <= 0:
+            return
+        if not self._open_position_guard_enabled() or not self.open_positions:
+            time.sleep(seconds)
+            return
+        deadline = time.monotonic() + seconds
+        interval = self._open_position_monitor_interval_seconds()
+        log.info(
+            "Open-position guard active: polling %d position(s) every %.2fs during %.2fs cycle sleep",
+            len(self.open_positions),
+            interval,
+            seconds,
+        )
+        while self.open_positions:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(interval, remaining))
+            if self._monitor_open_positions_once():
+                self._record_activity("Open-position guard triggered exit")
+                return
+
     def _fixed_take_profit_exit(self, position: FuturesPosition, *, current_price: float, scoped: FuturesConfig) -> bool:
         if position.side == "LONG":
             total_move = position.tp_price - position.entry_price
@@ -2780,6 +2836,8 @@ class FuturesRuntime:
         symbol: str | None = None,
         score: float | None = None,
         score_threshold: float | None = None,
+        nav_usdt: float | None = None,
+        risk_pct: float | None = None,
     ) -> tuple[int, int] | None:
         """§2.1 — NAV-anchored sizing. Returns ``(contracts, leverage)`` or None.
 
@@ -2792,8 +2850,9 @@ class FuturesRuntime:
         try:
             from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
 
-            nav = float(self.config.margin_budget_usdt)
-            risk_pct = self._env_float("NAV_RISK_PCT", 0.01) * max(0.0, size_multiplier)
+            nav = float(nav_usdt) if nav_usdt is not None else float(self.config.margin_budget_usdt)
+            base_risk_pct = float(risk_pct) if risk_pct is not None else self._env_float("NAV_RISK_PCT", 0.01)
+            risk_pct = base_risk_pct * max(0.0, size_multiplier)
             # Confidence-scaled risk sizing — interpolates risk_pct between
             # FUTURES_MIN_RISK_PCT and FUTURES_MAX_RISK_PCT based on where the
             # signal score sits between threshold and threshold+CONFIDENCE_SCORE_SPAN.
@@ -4044,18 +4103,27 @@ class FuturesRuntime:
                     _r4_mult,
                     _r4_cap,
                 )
-        nav_sized = None
-        if not self._opportunity_bucket_sizing_enabled():
-            nav_sized = self._apply_nav_risk_sizing(
-                entry_price=entry_price,
-                sl_price=sl_price_for_sizing,
-                contract_size=contract_size,
-                available_margin=margin_budget,
-                size_multiplier=size_multiplier,
-                symbol=symbol,
-                score=float(signal_payload.get("score") or 0.0),
-                score_threshold=float(scoped.min_confidence_score),
+        opportunity_sizing = self._opportunity_bucket_sizing_enabled()
+        nav_usdt = None
+        risk_pct = None
+        if opportunity_sizing:
+            nav_usdt = float(account_snapshot.get("equity_usdt", 0.0) or 0.0) or available_balance
+            risk_pct = self._env_float(
+                "FUTURES_OPPORTUNITY_NAV_RISK_PCT",
+                self._env_float("NAV_RISK_PCT", 0.04),
             )
+        nav_sized = self._apply_nav_risk_sizing(
+            entry_price=entry_price,
+            sl_price=sl_price_for_sizing,
+            contract_size=contract_size,
+            available_margin=margin_budget,
+            size_multiplier=size_multiplier * event_margin_multiplier,
+            symbol=symbol,
+            score=float(signal_payload.get("score") or 0.0),
+            score_threshold=float(scoped.min_confidence_score),
+            nav_usdt=nav_usdt,
+            risk_pct=risk_pct,
+        )
         if nav_sized is not None:
             contracts, leverage = nav_sized
             leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
@@ -4660,7 +4728,7 @@ class FuturesRuntime:
                     f"{html.escape(str(exc))}",
                 )
             log.info("Sleeping %ss before next futures cycle", self.config.hourly_check_seconds)
-            time.sleep(self.config.hourly_check_seconds)
+            self._sleep_until_next_cycle(self.config.hourly_check_seconds)
 
 
 def _configure_logging() -> None:

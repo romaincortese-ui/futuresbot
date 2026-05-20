@@ -34,8 +34,8 @@ def test_nav_risk_sizing_respects_budget_and_picks_min_affordable_leverage():
     assert result.applied_leverage == 9
 
 
-def test_nav_risk_sizing_returns_none_when_unaffordable_even_at_max_lev():
-    # Notional 5000, max leverage 10 -> required margin 500. Budget 100 -> None.
+def test_nav_risk_sizing_caps_qty_when_risk_budget_exceeds_available_margin():
+    # Target risk wants 50 contracts, but budget 100 at max leverage 10 only fits 10.
     result = compute_nav_risk_sizing(
         nav_usdt=10_000.0,
         entry_price=100.0,
@@ -43,7 +43,10 @@ def test_nav_risk_sizing_returns_none_when_unaffordable_even_at_max_lev():
         contract_size=1.0,
         available_margin_usdt=100.0,
     )
-    assert result is None
+    assert result is not None
+    assert result.qty_contracts == 10
+    assert result.applied_leverage == 10
+    assert result.risk_usdt == pytest.approx(20.0)
 
 
 def test_nav_risk_sizing_invalid_inputs_return_none():

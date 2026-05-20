@@ -688,6 +688,52 @@ def test_peak_protection_gap_exit_is_not_labeled_profit_lock(tmp_path, monkeypat
     assert "Peak protection gap exit" in sent_messages[-1]
 
 
+def test_open_position_guard_closes_near_peak_floor(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("USE_LIQ_BUFFER_GUARD", "0")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "4")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.20")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_FLOOR_PCT", "2")
+
+    class GuardClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prices = [100.605, 100.48]
+
+        def get_fair_price(self, symbol: str) -> float:
+            return self.prices.pop(0)
+
+    runtime = FuturesRuntime(_config(tmp_path), GuardClient())
+    runtime.get_symbol_taker_fee_rate = lambda symbol: 0.0
+    position = FuturesPosition(
+        symbol="DASH_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=1,
+        contract_size=1.0,
+        leverage=12,
+        margin_usdt=8.33333333,
+        tp_price=112.0,
+        sl_price=98.0,
+        position_id="paper-dash-guard",
+        order_id="entry-dash-guard",
+        opened_at=datetime(2026, 5, 20, 13, 2, tzinfo=timezone.utc),
+        score=104.1,
+        certainty=0.99,
+        entry_signal="SHARP_EVENT_BREAKOUT_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._monitor_open_positions_once() is False
+    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 2) == 7.26
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 2) == 5.81
+
+    assert runtime._monitor_open_positions_once() is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "PEAK_PROFIT_LOCK"
+    assert runtime.trade_history[-1]["pnl_pct"] > 5.0
+
+
 def test_trailing_bar_waits_until_after_activation_bar_to_exit():
     position = FuturesPosition(
         symbol="BCH_USDT",
@@ -1330,9 +1376,13 @@ def test_enter_trade_respects_portfolio_margin_cap(tmp_path):
     assert "ETH_USDT" not in runtime.open_positions
 
 
-def test_enter_trade_uses_opportunity_bucket_available_balance(tmp_path, monkeypatch):
+def test_enter_trade_caps_opportunity_bucket_with_nav_risk(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", "1")
     monkeypatch.setenv("USE_NAV_RISK_SIZING", "1")
+    monkeypatch.setenv("FUTURES_OPPORTUNITY_NAV_RISK_PCT", "0.04")
+    monkeypatch.setenv("FUTURES_CONFIDENCE_RISK_SIZING_ENABLED", "0")
+    monkeypatch.setenv("NAV_LEVERAGE_MIN", "1")
+    monkeypatch.setenv("NAV_LEVERAGE_MAX", "20")
     cfg = replace(
         _config(tmp_path),
         margin_budget_usdt=200.0,
@@ -1361,10 +1411,12 @@ def test_enter_trade_uses_opportunity_bucket_available_balance(tmp_path, monkeyp
 
     assert runtime._enter_trade(signal) is True
     position = runtime.open_positions["BTC_USDT"]
-    assert position.margin_usdt == 150.0
-    assert position.contracts == 30
+    assert position.margin_usdt == 80.0
+    assert position.contracts == 8
+    assert position.leverage == 1
     assert position.metadata["opportunity_score_10"] == 9
     assert position.metadata["opportunity_balance_fraction"] == 0.75
+    assert position.metadata["opportunity_margin_budget_usdt"] == 150.0
 
 
 def test_live_enter_trade_does_not_register_without_exchange_position(tmp_path, monkeypatch):

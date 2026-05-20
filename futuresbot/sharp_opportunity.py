@@ -255,8 +255,8 @@ def build_sharp_event_signal(
         stop_lookback = max(4, _env_int("FUTURES_SHARP_EVENT_STOP_LOOKBACK_BARS", 12))
         recent_high = float(high.iloc[-stop_lookback:].max())
         recent_low = float(low.iloc[-stop_lookback:].min())
-        min_stop_pct = max(0.001, _env_float("FUTURES_SHARP_EVENT_MIN_STOP_PCT", 0.022))
-        max_stop_pct = max(min_stop_pct, _env_float("FUTURES_SHARP_EVENT_MAX_STOP_PCT", 0.032))
+        min_stop_pct = max(0.001, _env_float("FUTURES_SHARP_EVENT_MIN_STOP_PCT", 0.012))
+        max_stop_pct = max(min_stop_pct, _env_float("FUTURES_SHARP_EVENT_MAX_STOP_PCT", 0.020))
         swing_buffer_atr = max(0.0, _env_float("FUTURES_SHARP_EVENT_SWING_SL_BUFFER_ATR", 0.25))
         tp_move = max(
             current_atr * max(1.0, _env_float("FUTURES_SHARP_EVENT_TP_ATR_MULT", 9.0)),
@@ -287,8 +287,8 @@ def build_sharp_event_signal(
             "sharp_event_bypass_symbol_calibration": 1.0 if bypass_symbol_calibration else 0.0,
             "sharp_event_synthetic_signal": 1.0,
             "sharp_event_stop_pct": round(risk / current_price, 6),
-            "trailing_exit_activation_progress": _env_float("FUTURES_SHARP_EVENT_TRAILING_ACTIVATION_PROGRESS", 0.28),
-            "trailing_exit_drawdown_pct": _env_float("FUTURES_SHARP_EVENT_TRAILING_DRAWDOWN_PCT", 0.02),
+            "trailing_exit_activation_progress": _env_float("FUTURES_SHARP_EVENT_TRAILING_ACTIVATION_PROGRESS", 0.20),
+            "trailing_exit_drawdown_pct": _env_float("FUTURES_SHARP_EVENT_TRAILING_DRAWDOWN_PCT", 0.012),
             "early_exit_min_profit_pct": _env_float("FUTURES_SHARP_EVENT_TRAILING_MIN_PROFIT_PCT", 0.018),
         }
         from futuresbot.strategy import _build_signal

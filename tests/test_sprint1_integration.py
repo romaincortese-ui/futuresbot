@@ -69,15 +69,15 @@ def test_tight_hard_loss_cap_clamps_when_flag_on(monkeypatch):
     monkeypatch.setenv("USE_HARD_LOSS_CAP_TIGHT", "1")
     cfg = _load_config()
     config = cfg.FuturesConfig.from_env()
-    assert config.hard_loss_cap_pct == pytest.approx(0.40)
+    assert config.hard_loss_cap_pct == pytest.approx(0.25)
 
 
 def test_tight_hard_loss_cap_respects_already_lower_value(monkeypatch):
-    monkeypatch.setenv("FUTURES_HARD_LOSS_CAP_PCT", "0.30")
+    monkeypatch.setenv("FUTURES_HARD_LOSS_CAP_PCT", "0.20")
     monkeypatch.setenv("USE_HARD_LOSS_CAP_TIGHT", "1")
     cfg = _load_config()
     config = cfg.FuturesConfig.from_env()
-    assert config.hard_loss_cap_pct == pytest.approx(0.30)
+    assert config.hard_loss_cap_pct == pytest.approx(0.20)
 
 
 def test_cost_budget_gate_blocks_sub_economic_trade(monkeypatch):

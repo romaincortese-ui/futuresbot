@@ -296,11 +296,15 @@ class FuturesBacktestEngine:
 		# This closes the sub-cent-coin blowup hole where the legacy
 		# (margin * leverage / entry_price) path sized PEPE to catastrophic
 		# notionals because its stop-distance is tiny in absolute terms.
-		if not _opportunity_bucket_sizing_enabled() and sl_price is not None and sl_price > 0 and os.environ.get("USE_NAV_RISK_SIZING", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
+		if sl_price is not None and sl_price > 0 and os.environ.get("USE_NAV_RISK_SIZING", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
 			try:
 				from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
 
-				risk_pct = _env_float("NAV_RISK_PCT", 0.01)
+				opportunity_sizing = _opportunity_bucket_sizing_enabled()
+				risk_pct = _env_float(
+					"FUTURES_OPPORTUNITY_NAV_RISK_PCT",
+					_env_float("NAV_RISK_PCT", 0.04),
+				) if opportunity_sizing else _env_float("NAV_RISK_PCT", 0.01)
 				# Confidence-scaled risk sizing — mirror runtime._apply_nav_risk_sizing.
 				if os.environ.get("FUTURES_CONFIDENCE_RISK_SIZING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "y", "on"} and score is not None:
 					lo = max(0.0, _env_float("FUTURES_MIN_RISK_PCT", 0.10))
@@ -310,8 +314,11 @@ class FuturesBacktestEngine:
 					gap = max(0.0, float(score) - threshold)
 					norm = min(1.0, gap / span)
 					risk_pct = lo + (hi - lo) * norm
-				nav_lev_min = int(_env_float("NAV_LEVERAGE_MIN", 5))
-				nav_lev_max = int(_env_float("NAV_LEVERAGE_MAX", 10))
+				risk_pct *= max(0.0, min(1.0, float(margin_multiplier or 0.0)))
+				min_bound = max(1, int(getattr(self.config, "leverage_min", 1) or 1))
+				max_bound = max(min_bound, int(getattr(self.config, "leverage_max", leverage) or leverage))
+				nav_lev_min = max(min_bound, min(max_bound, int(_env_float("NAV_LEVERAGE_MIN", min_bound))))
+				nav_lev_max = max(nav_lev_min, min(max_bound, int(_env_float("NAV_LEVERAGE_MAX", max_bound))))
 				nav = compute_nav_risk_sizing(
 					nav_usdt=balance,
 					entry_price=entry_price,
@@ -604,7 +611,7 @@ class FuturesBacktestEngine:
 				low=low,
 				taker_fee_rate=self.config.taker_fee_rate,
 				trigger_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_TRIGGER_PCT", 4.0)),
-				pullback_fraction=_env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.35),
+				pullback_fraction=_env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.20),
 				floor_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0)),
 				min_exit_net_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0)),
 			)

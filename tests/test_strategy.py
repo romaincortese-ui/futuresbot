@@ -71,16 +71,19 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_SHORT")
     assert _entry_signal_disabled(cfg, "BTC_ROUND_LEVEL_LONG")
-    assert not _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
+    assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
 
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
 
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+    assert not _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
 
     assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "TREND_CONTINUATION_SHORT")
+    assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "MAJOR_THRESHOLD_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_LONG")
+    assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="ZEC_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
 
@@ -103,6 +106,8 @@ def test_major_threshold_long_covers_btc_sol_eth(monkeypatch):
         ("SOL_USDT", 150.0, 139.0, 0.35, 0.55, 0.85),
     ]
     for symbol, level, start, prior_gap, first_break, second_break in cases:
+        if symbol == "SOL_USDT":
+            monkeypatch.setenv("FUTURES_SOLUSDT_DISABLED_ENTRY_SIGNALS", "none")
         step = (level - prior_gap - start) / 517.0
         prices = [start + idx * step + math.sin(idx / 9.0) * prior_gap * 0.05 for idx in range(518)]
         prices[-1] = level - prior_gap
@@ -459,6 +464,7 @@ def test_sei_breakaway_long_rejects_overextended_24h_trend(monkeypatch):
     assert score_btc_futures_setup(frame, cfg) is None
 
     monkeypatch.setenv("FUTURES_SEIUSDT_BREAKAWAY_LONG_MAX_TREND_24H", "0.20")
+    monkeypatch.setenv("FUTURES_SEIUSDT_DISABLED_ENTRY_SIGNALS", "none")
     signal = score_btc_futures_setup(frame, cfg)
 
     assert signal is not None
@@ -550,6 +556,7 @@ def test_strategy_produces_level_break_long_for_non_btc_pair(monkeypatch):
 def test_strategy_produces_level_break_short_for_non_btc_pair(monkeypatch):
     monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "1")
     monkeypatch.setenv("FUTURES_LEVEL_BREAK_SYMBOLS", "BNB_USDT")
+    monkeypatch.setenv("FUTURES_BNBUSDT_DISABLED_ENTRY_SIGNALS", "none")
     monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_VOLUME_FLOOR", "0.20")
     monkeypatch.setenv("FUTURES_BNBUSDT_LEVEL_BREAK_MIN_BREAK_ATR", "0.20")

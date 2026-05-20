@@ -61,6 +61,7 @@ Important variables:
 - `FUTURES_RUNTIME_STATE_FILE=futures_runtime_state.json`
 - `FUTURES_STATUS_FILE=futures_runtime_status.json`
 - `USE_FUTURES_PROFIT_LOCK=1` applies peak-profit tracking and pullback exits to every open futures position.
+- `USE_OPEN_POSITION_GUARD=1` polls MEXC fair price every `FUTURES_OPEN_POSITION_MONITOR_SECONDS` while a futures trade is open, so peak protection, breakeven protection, liquidation-buffer exits, and trailing exits do not wait for the next full scan cycle.
 
 The project reuses `MEXC_API_KEY`, `MEXC_API_SECRET`, `REDIS_URL`, and `ANTHROPIC_API_KEY` when present.
 
@@ -68,7 +69,7 @@ Crypto event state is consumed from Redis key `mexc:crypto_event_intelligence`, 
 
 Backtests can replay event state with `FUTURES_BACKTEST_CRYPTO_EVENT_STATE_FILE`. The file may contain one state object or a `timeline`/`states` list with `from`/`until` windows and nested `state` payloads, letting historical news/event datasets exercise the same threshold, score, sizing, leverage, and block logic used live.
 
-Opportunity bucket sizing is available with `FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED=true`. It maps the existing technical/event score to a 0-10 opportunity score, skips scores 0-5, uses 50% of available balance for scores 6-7, 75% for scores 8-9, and 100% for score 10. In that mode `FUTURES_OPPORTUNITY_MAX_LEVERAGE` defaults to `12` and `max_concurrent_positions` is forced to one.
+Opportunity bucket sizing is available with `FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED=true`. It maps the existing technical/event score to a 0-10 opportunity score, skips scores 0-5, uses 50% of available balance for scores 6-7, 75% for scores 8-9, and 100% for score 10. In that mode `FUTURES_OPPORTUNITY_MAX_LEVERAGE` defaults to `8`, `max_concurrent_positions` is forced to one, and `USE_NAV_RISK_SIZING=1` caps contracts by `FUTURES_OPPORTUNITY_NAV_RISK_PCT` of equity before the bucket margin is spent. Sharp-event risk multipliers reduce this NAV risk budget as well as available margin.
 
 If you do not set `FUTURES_TELEGRAM_TOKEN` or `FUTURES_TELEGRAM_CHAT_ID`, the runtime falls back to `TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID`.
 

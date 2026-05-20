@@ -60,8 +60,13 @@ def compute_nav_risk_sizing(
     # Start from the minimum leverage that keeps required margin within NAV.
     required_margin_at_lev_max = notional / lev_max
     if available_margin_usdt is not None and required_margin_at_lev_max > available_margin_usdt:
-        # Even at max leverage the order doesn't fit in the available margin.
-        return None
+        max_qty_by_margin = int(math.floor((available_margin_usdt * lev_max) / (entry_price * contract_size)))
+        qty = min(qty, max_qty_by_margin)
+        if qty <= 0:
+            return None
+        notional = qty * contract_size * entry_price
+        if notional <= 0:
+            return None
     # Pick the smallest leverage that is affordable; higher leverage = less margin posted.
     budget = available_margin_usdt if available_margin_usdt is not None else nav_usdt
     if budget <= 0:
