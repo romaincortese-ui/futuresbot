@@ -1,15 +1,51 @@
 from __future__ import annotations
 
-def _format_profit_lock_message(position, peak_pct, pullback_pct, exit_price):
+def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
+    raw = str(reason or "CLOSED").upper()
+    try:
+        pnl_value = float(pnl_pct if pnl_pct is not None else pnl_usdt)
+    except (TypeError, ValueError):
+        pnl_value = None
+    if raw in {"PEAK_PROFIT_LOCK", "PEAK_PROTECTION_GAP_EXIT"} and pnl_value is not None and pnl_value <= 0:
+        return "Peak protection gap exit"
+    labels = {
+        "PEAK_PROFIT_LOCK": "Profit taken: peak pullback",
+        "PEAK_PROTECTION_GAP_EXIT": "Peak protection gap exit",
+        "BREAKEVEN_PROFIT_LOCK": "Breakeven protection exit",
+        "BREAKEVEN_PROTECTION_GAP_EXIT": "Breakeven protection gap exit",
+        "TRAILING_TAKE_PROFIT": "Trailing take profit",
+        "HOURLY_TAKE_PROFIT": "Take profit",
+        "TAKE_PROFIT": "Take profit",
+        "STOP_LOSS": "Stop loss",
+        "EXCHANGE_CLOSE": "Exchange close",
+        "LIQ_BUFFER": "Liquidation buffer close",
+        "LIQUIDATED": "Liquidated",
+    }
+    return labels.get(raw, raw.replace("_", " ").title())
+
+
+def _format_profit_lock_message(position, peak_pct, pullback_pct, exit_price, current_pnl_pct=None, stop_pct=None, reason="PEAK_PROFIT_LOCK"):
     side = getattr(position, "side", "?").upper()
     side_icon = "🟢" if side == "LONG" else "🔴"
     symbol = getattr(position, "symbol", "?")
     entry_price = getattr(position, "entry_price", None)
-    return "\n".join([
-        "✅ <b>PROFIT TAKEN: PEAK PULLBACK</b>",
+    try:
+        pnl_value = float(current_pnl_pct) if current_pnl_pct is not None else None
+    except (TypeError, ValueError):
+        pnl_value = None
+    profitable = pnl_value is None or pnl_value > 0.0
+    header = "✅ <b>PROFIT TAKEN: PEAK PULLBACK</b>" if profitable else "⚠️ <b>PROTECTION EXIT: PEAK FLOOR BREACHED</b>"
+    lines = [
+        header,
         f"{side_icon} {symbol} {side} | Entry: ${entry_price:.2f} | Exit: ${exit_price:.2f}",
+        f"Reason: {_exit_reason_label(reason, pnl_pct=pnl_value)}",
         f"Peak: {peak_pct:+.2f}% | Pullback: {pullback_pct:+.2f}% | closed at market",
-    ])
+    ]
+    if pnl_value is not None:
+        lines.append(f"Current PnL: {pnl_value:+.2f}%")
+    if stop_pct is not None:
+        lines.append(f"Protection floor: {float(stop_pct):+.2f}%")
+    return "\n".join(lines)
 
 def _dynamic_pullback_fraction(peak_pct, volatility):
     # Example: wider pullback for higher volatility, tighter for lower peaks
@@ -831,9 +867,18 @@ class FuturesRuntime:
                     pnl_usdt,
                     self._format_price(current_price),
                 )
-                msg = _format_profit_lock_message(position, gross_peak_pct, gross_peak_pct - gross_pnl_pct, current_price)
+                exit_reason = "PEAK_PROFIT_LOCK" if net_pnl_pct > 0.0 else "PEAK_PROTECTION_GAP_EXIT"
+                msg = _format_profit_lock_message(
+                    position,
+                    gross_peak_pct,
+                    gross_peak_pct - gross_pnl_pct,
+                    current_price,
+                    current_pnl_pct=net_pnl_pct,
+                    stop_pct=stop_pct,
+                    reason=exit_reason,
+                )
                 self._notify(msg)
-                return self._close_position_for_exit(position, current_price=current_price, reason="PEAK_PROFIT_LOCK")
+                return self._close_position_for_exit(position, current_price=current_price, reason=exit_reason)
 
         breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
         breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
@@ -845,6 +890,7 @@ class FuturesRuntime:
             required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
             effective_floor_pct = max(breakeven_floor_pct, required_net_pct)
             if net_pnl_pct <= effective_floor_pct:
+                exit_reason = "BREAKEVEN_PROFIT_LOCK" if net_pnl_pct > 0.0 else "BREAKEVEN_PROTECTION_GAP_EXIT"
                 log.warning(
                     "[BREAKEVEN_PROFIT_LOCK_EXIT] symbol=%s side=%s net_pnl_pct=%.2f floor_pct=%.2f "
                     "effective_floor_pct=%.2f required_net_pct=%.2f gap_through_floor=%s pnl_usdt=%+.2f price=%s",
@@ -858,7 +904,7 @@ class FuturesRuntime:
                     pnl_usdt,
                     self._format_price(current_price),
                 )
-                return self._close_position_for_exit(position, current_price=current_price, reason="BREAKEVEN_PROFIT_LOCK")
+                return self._close_position_for_exit(position, current_price=current_price, reason=exit_reason)
 
         if changed:
             self._save_state()
@@ -885,7 +931,7 @@ class FuturesRuntime:
         pnl_pct = float(trade.get("pnl_pct", 0.0) or 0.0)
         return (
             f"Last: <b>{html.escape(str(trade.get('symbol', self.config.symbol)))}</b> "
-            f"{html.escape(str(trade.get('exit_reason', 'CLOSED')))} | "
+            f"{html.escape(_exit_reason_label(trade.get('exit_reason', 'CLOSED'), pnl_usdt=pnl_usdt, pnl_pct=pnl_pct))} | "
             f"<b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}%)"
         )
 
@@ -1005,13 +1051,16 @@ class FuturesRuntime:
         )
 
     def _close_message(self, trade: dict[str, Any]) -> str:
+        pnl_usdt = float(trade.get("pnl_usdt") or 0.0)
+        pnl_pct = float(trade.get("pnl_pct") or 0.0)
+        reason_label = _exit_reason_label(trade.get("exit_reason") or "CLOSED", pnl_usdt=pnl_usdt, pnl_pct=pnl_pct)
         return (
             f"🏁 <b>Futures Position Closed</b> [{self._mode_label()}]\n"
             f"━━━━━━━━━━━━━━━\n"
             f"<b>{html.escape(str(trade.get('side') or '?'))}</b> {html.escape(str(trade.get('symbol') or self.config.symbol))}\n"
-            f"Reason: <b>{html.escape(str(trade.get('exit_reason') or 'CLOSED'))}</b>\n"
+            f"Reason: <b>{html.escape(reason_label)}</b>\n"
             f"Entry <b>${self._format_price(float(trade.get('entry_price') or 0.0))}</b> | Exit <b>${self._format_price(float(trade.get('exit_price') or 0.0))}</b>\n"
-            f"PnL <b>${float(trade.get('pnl_usdt') or 0.0):+.2f}</b> ({float(trade.get('pnl_pct') or 0.0):+.2f}%)"
+            f"PnL <b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}%)"
         )
 
     def _send_startup_message(self) -> None:

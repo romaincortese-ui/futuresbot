@@ -316,7 +316,7 @@ def test_build_status_message_includes_open_position_pnl_and_last_trade(tmp_path
 
     assert "<b>LONG</b> BTC_USDT x25 | COIL_BREAKOUT_LONG | margin <b>$36.00</b>" in message
     assert "PnL: <b>$+15.00</b> (+41.67%) | TP 50%" in message
-    assert "Last: <b>BTC_USDT</b> TAKE_PROFIT | <b>$+24.50</b> (+8.10%)" in message
+    assert "Last: <b>BTC_USDT</b> Take profit | <b>$+24.50</b> (+8.10%)" in message
 
 
 def test_status_message_ignores_stale_reference_price_for_tiny_position(tmp_path):
@@ -645,7 +645,47 @@ def test_breakeven_profit_lock_exits_when_gap_erases_floor(tmp_path, monkeypatch
 
     assert runtime._hourly_exit(position, current_price=524.59) is True
     assert runtime.open_position is None
-    assert runtime.trade_history[-1]["exit_reason"] == "BREAKEVEN_PROFIT_LOCK"
+    assert runtime.trade_history[-1]["exit_reason"] == "BREAKEVEN_PROTECTION_GAP_EXIT"
+
+
+def test_peak_protection_gap_exit_is_not_labeled_profit_lock(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "*:SHARP_EVENT_BREAKOUT_LONG")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "4")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_FLOOR_PCT", "2")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+    position = FuturesPosition(
+        symbol="DASH_USDT",
+        side="LONG",
+        entry_price=48.24,
+        contracts=911,
+        contract_size=0.01,
+        leverage=12,
+        margin_usdt=36.88587838,
+        tp_price=54.86,
+        sl_price=46.80,
+        position_id="paper-dash-gap",
+        order_id="entry-dash-gap",
+        opened_at=datetime(2026, 5, 20, 13, 2, tzinfo=timezone.utc),
+        score=109.0,
+        certainty=0.99,
+        entry_signal="SHARP_EVENT_BREAKOUT_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=48.76) is False
+    assert position.metadata["profit_lock_peak_gross_pnl_pct"] > 4.0
+
+    assert runtime._hourly_exit(position, current_price=47.47) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "PEAK_PROTECTION_GAP_EXIT"
+    assert runtime.trade_history[-1]["pnl_usdt"] < 0
+    assert "PROTECTION EXIT" in sent_messages[0]
+    assert "PROFIT TAKEN" not in sent_messages[0]
+    assert "Peak protection gap exit" in sent_messages[-1]
 
 
 def test_trailing_bar_waits_until_after_activation_bar_to_exit():

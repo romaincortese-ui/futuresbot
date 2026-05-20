@@ -306,6 +306,5 @@ def evaluate_profit_lock_bar(
         return None, changed
     net_exit_pct = position_net_pnl_pct(position, exit_price, taker_fee_rate)
     required_net_pct = max(0.0, min_exit_net_pct) + max(0.0, exit_slippage_buffer_pct)
-    if net_exit_pct is None or net_exit_pct <= required_net_pct:
-        return None, changed
-    return (exit_price, "PEAK_PROFIT_LOCK"), changed
+    reason = "PEAK_PROFIT_LOCK" if net_exit_pct is None or net_exit_pct > 0.0 else "PEAK_PROTECTION_GAP_EXIT"
+    return (exit_price, reason), changed
