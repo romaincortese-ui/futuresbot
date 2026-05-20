@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
-from futuresbot.exits import evaluate_trailing_bar, trailing_stop_price
+from futuresbot.exits import evaluate_profit_lock_bar, evaluate_trailing_bar, profit_lock_lane_allowed, trailing_stop_price
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.runtime import FuturesRuntime
 
@@ -509,6 +509,7 @@ def test_hourly_exit_arms_and_closes_trailing_take_profit(tmp_path):
 
 def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "20")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_FLOOR_PCT", "5")
@@ -546,6 +547,7 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
 
 def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "5")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_FLOOR_PCT", "2")
@@ -583,6 +585,7 @@ def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monke
 
 def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "50")
     monkeypatch.setenv("FUTURES_BREAKEVEN_ARM_PCT", "10")
     monkeypatch.setenv("FUTURES_BREAKEVEN_FLOOR_PCT", "3")
@@ -685,6 +688,80 @@ def test_trailing_bar_waits_until_after_activation_bar_to_exit():
         drawdown_pct=0.02,
     )
     assert second == (488.91 * 0.98, "TRAILING_TAKE_PROFIT")
+
+
+def test_profit_lock_bar_waits_until_after_activation_bar_to_exit():
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=100,
+        contract_size=0.01,
+        leverage=1,
+        margin_usdt=100.0,
+        tp_price=112.0,
+        sl_price=96.0,
+        position_id="backtest-profit-lock-1",
+        order_id="entry-profit-lock-1",
+        opened_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        score=70.0,
+        certainty=0.8,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+
+    first, changed = evaluate_profit_lock_bar(
+        position,
+        high=104.5,
+        low=102.0,
+        taker_fee_rate=0.0,
+        trigger_pct=4.0,
+        pullback_fraction=0.35,
+        floor_pct=2.0,
+    )
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 4.5
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 2.925
+
+    second, _changed = evaluate_profit_lock_bar(
+        position,
+        high=104.4,
+        low=102.8,
+        taker_fee_rate=0.0,
+        trigger_pct=4.0,
+        pullback_fraction=0.35,
+        floor_pct=2.0,
+    )
+    assert second is not None
+    assert round(second[0], 3) == 102.925
+    assert second[1] == "PEAK_PROFIT_LOCK"
+
+
+def test_profit_lock_lane_allowlist_filters_symbol_signal_pairs():
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=100,
+        contract_size=0.01,
+        leverage=1,
+        margin_usdt=100.0,
+        tp_price=112.0,
+        sl_price=96.0,
+        position_id="profit-lock-lane-1",
+        order_id="entry-profit-lock-lane-1",
+        opened_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        score=70.0,
+        certainty=0.8,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+
+    assert profit_lock_lane_allowed(position, "") is True
+    assert profit_lock_lane_allowed(position, "ZEC_USDT:IMPULSE_EVENT_CONTINUATION_LONG") is True
+    assert profit_lock_lane_allowed(position, "ZEC_USDT:*") is True
+    assert profit_lock_lane_allowed(position, "*:IMPULSE_EVENT_CONTINUATION_LONG") is True
+    assert profit_lock_lane_allowed(position, "SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG") is False
+    assert profit_lock_lane_allowed(position, "ZEC_USDT:LEVEL_BREAK_SHORT") is False
 
 
 def test_one_way_close_side_uses_opposite_reduce_only_direction(tmp_path):

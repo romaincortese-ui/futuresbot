@@ -73,12 +73,13 @@ if ($ApplySimplified) {
 }
 
 # Aggressive V2 — audit-driven fixes + aggressive profit capture.
-# Combines: earlier profit-lock (5%), earlier breakeven arm (3%), EMA-stack
+# Combines: earlier profit-lock (4%), earlier breakeven arm (3%), EMA-stack
 # bypass when ADX>=40 and RSI extreme. Default OFF.
 if ($ApplyAggressiveV2) {
-    $env:FUTURES_PROFIT_LOCK_TRIGGER_PCT = "5.0"
+    $env:FUTURES_PROFIT_LOCK_TRIGGER_PCT = "4.0"
     $env:FUTURES_PROFIT_LOCK_FLOOR_PCT = "2.0"
     $env:FUTURES_PROFIT_LOCK_PULLBACK_FRACTION = "0.35"
+    $env:FUTURES_PROFIT_LOCK_ALLOWED_LANES = "BTC_USDT:COIL_BREAKOUT_LONG,SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG,SOL_USDT:IMPULSE_EVENT_CONTINUATION_SHORT"
     $env:FUTURES_BREAKEVEN_ARM_PCT = "3.0"
     $env:FUTURES_BREAKEVEN_FLOOR_PCT = "0.5"
     $env:FUTURES_AGGRESSIVE_EMA_BYPASS_ENABLED = "true"
@@ -89,6 +90,7 @@ if ($ApplyAggressiveV2) {
     Remove-Item Env:FUTURES_PROFIT_LOCK_TRIGGER_PCT -ErrorAction SilentlyContinue
     Remove-Item Env:FUTURES_PROFIT_LOCK_FLOOR_PCT -ErrorAction SilentlyContinue
     Remove-Item Env:FUTURES_PROFIT_LOCK_PULLBACK_FRACTION -ErrorAction SilentlyContinue
+    Remove-Item Env:FUTURES_PROFIT_LOCK_ALLOWED_LANES -ErrorAction SilentlyContinue
     Remove-Item Env:FUTURES_BREAKEVEN_ARM_PCT -ErrorAction SilentlyContinue
     Remove-Item Env:FUTURES_BREAKEVEN_FLOOR_PCT -ErrorAction SilentlyContinue
     Remove-Item Env:FUTURES_AGGRESSIVE_EMA_BYPASS_ENABLED -ErrorAction SilentlyContinue
