@@ -52,6 +52,12 @@ _LEVEL_BREAK_DEFAULT_SYMBOLS: str = (
 )
 
 
+_HIGH_BETA_LOCAL_HIGH_GUARD_SYMBOLS = (
+    "SEI_USDT,ZEC_USDT,PEPE_USDT,TAO_USDT,HYPE_USDT,SUI_USDT,"
+    "DOGE_USDT,XRP_USDT,ADA_USDT,AVAX_USDT,LINK_USDT,APT_USDT"
+)
+
+
 _LEVEL_BREAK_SYMBOL_DEFAULTS: dict[str, dict[str, float]] = {
     "BTC_USDT": {"MIN_BREAK_PCT": 0.0030, "MIN_BREAK_ATR": 0.40, "SCORE_BONUS": 7.0, "LEVERAGE_MAX": 12.0},
     "ETH_USDT": {"MIN_BREAK_PCT": 0.0200, "MIN_BREAK_ATR": 0.45, "SCORE_BONUS": 4.0, "LEVERAGE_MAX": 10.0},
@@ -631,6 +637,7 @@ def score_btc_futures_setup(
     current_atr_15 = _safe_float(atr_15.iloc[-1])
     if not all(math.isfinite(value) and value > 0 for value in [current_price, current_ema20, current_ema50, current_ema100, current_adx, current_atr_1h, current_atr_15]):
         return None
+    symbol_name = getattr(config, "symbol", "").upper()
 
     consolidation = frame_15m.iloc[-(config.consolidation_window_bars + 1):-1]
     if consolidation.empty:
@@ -802,6 +809,44 @@ def score_btc_futures_setup(
         and (not late_impulse_require_adverse_bias or late_long_adverse_bias)
         and impulse_move_atr >= late_long_min_move_atr
     )
+    local_high_guard_enabled = _env_bool("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ENABLED", True)
+    local_high_guard_symbol_ok = _symbol_enabled(
+        "FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_SYMBOLS",
+        symbol_name,
+        _HIGH_BETA_LOCAL_HIGH_GUARD_SYMBOLS,
+    )
+    local_high_lookback_bars = max(
+        impulse_lookback_bars + 2,
+        int(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_LOOKBACK_BARS", 288.0)),
+    )
+    local_high_window = high_15.iloc[-(local_high_lookback_bars + 1):-1]
+    if local_high_window.empty:
+        local_high_window = high_15.iloc[:-1]
+    local_high = float(local_high_window.max()) if not local_high_window.empty else 0.0
+    local_high_distance = max(0.0, local_high - current_price) if local_high > 0 else 999.0
+    local_high_distance_pct = local_high_distance / current_price if current_price > 0 else 999.0
+    local_high_distance_atr = local_high_distance / current_atr_15 if current_atr_15 > 0 else 999.0
+    local_high_near = (
+        local_high > 0
+        and (
+            local_high_distance_pct <= max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_NEAR_EXTREME_PCT", 0.015))
+            or local_high_distance_atr <= max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_NEAR_EXTREME_ATR", 1.25))
+        )
+    )
+    local_high_clean_break = (
+        local_high > 0
+        and current_price >= local_high + current_atr_15 * max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_BREAK_BUFFER_ATR", 0.15))
+    )
+    local_high_guard_action = os.environ.get("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ACTION", "micro_lock").strip().lower()
+    high_beta_local_high_long_watch = (
+        local_high_guard_enabled
+        and local_high_guard_symbol_ok
+        and impulse_move_pct > 0
+        and impulse_move_atr >= max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MIN_MOVE_ATR", 2.50))
+        and local_high_near
+        and not local_high_clean_break
+    )
+    high_beta_local_high_long_block = high_beta_local_high_long_watch and local_high_guard_action == "block"
     impulse_volume_ok = volume_ratio >= impulse_volume_floor
     prior_volume_end = max(0, len(volume_15) - impulse_lookback_bars)
     prior_volume_start = max(0, prior_volume_end - config.consolidation_window_bars)
@@ -1034,8 +1079,6 @@ def score_btc_futures_setup(
         and (long_stack or current_price > current_ema20 or ema_slope > 0)
         and impulse_ema_extension <= breakout_hold_max_ema_extension_atr
     )
-
-    symbol_name = getattr(config, "symbol", "").upper()
     btc_short_uptrend_guard_active = (
         symbol_name == "BTC_USDT"
         and _env_bool("FUTURES_BTC_SHORT_UPTREND_GUARD", True)
@@ -1459,6 +1502,7 @@ def score_btc_futures_setup(
     )
     breakaway_long_ok = (
         breakaway_enabled
+        and not high_beta_local_high_long_block
         and impulse_move_pct >= breakaway_min_move_pct
         and impulse_move_atr >= breakaway_min_move_atr
         and breakaway_volume_ok
@@ -1493,6 +1537,7 @@ def score_btc_futures_setup(
         impulse_enabled
         and not event_long_anti_chase_block
         and not late_impulse_long_chase_block
+        and not high_beta_local_high_long_block
         and impulse_move_pct >= impulse_min_move_pct
         and impulse_move_atr >= impulse_min_move_atr
         and impulse_volume_ok
@@ -1556,6 +1601,7 @@ def score_btc_futures_setup(
         and event_bias_score > 0
         and not event_long_anti_chase_block
         and not late_impulse_long_chase_block
+        and not high_beta_local_high_long_block
         and current_adx >= event_adx_min
         and volume_ratio >= event_volume_floor
         and impulse_move_pct >= event_min_move_pct
@@ -2014,6 +2060,14 @@ def score_btc_futures_setup(
                     "late_impulse_chase_watch": 1.0 if late_impulse_long_chase_watch else 0.0,
                     "late_impulse_chase_block": 1.0 if late_impulse_long_chase_block else 0.0,
                     "late_impulse_adverse_bias": 1.0 if late_long_adverse_bias else 0.0,
+                    "high_beta_local_high_chase_watch": 1.0 if high_beta_local_high_long_watch else 0.0,
+                    "high_beta_local_high_block": 1.0 if high_beta_local_high_long_block else 0.0,
+                    "local_high_distance_pct": round(local_high_distance_pct, 6) if local_high > 0 else 0.0,
+                    "local_high_distance_atr": round(local_high_distance_atr, 4) if local_high > 0 else 0.0,
+                    "micro_profit_lock_trigger_pct_override": round(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MICRO_LOCK_TRIGGER_PCT", 1.50), 4) if high_beta_local_high_long_watch and local_high_guard_action != "block" else 0.0,
+                    "micro_profit_lock_floor_pct_override": round(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MICRO_LOCK_FLOOR_PCT", 0.75), 4) if high_beta_local_high_long_watch and local_high_guard_action != "block" else 0.0,
+                    "micro_profit_lock_pullback_fraction_override": round(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MICRO_LOCK_PULLBACK_FRACTION", 0.35), 4) if high_beta_local_high_long_watch and local_high_guard_action != "block" else 0.0,
+                    "micro_profit_lock_max_peak_tp_progress_override": round(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MICRO_LOCK_MAX_PEAK_TP_PROGRESS", 0.45), 4) if high_beta_local_high_long_watch and local_high_guard_action != "block" else 0.0,
                     "market_gate_penalty": directional_market_penalty("LONG") if impulse_path or event_path else 0.0,
                     "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                     "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
@@ -2278,6 +2332,39 @@ def diagnose_impulse_rejection(frame_15m: pd.DataFrame, config: StrategyConfig) 
         late_near_atr = _env_float("FUTURES_LATE_IMPULSE_CHASE_NEAR_EXTREME_ATR", 0.30)
         late_near_low = distance_to_low_pct <= late_near_pct or distance_to_low_atr <= late_near_atr
         late_near_high = distance_to_high_pct <= late_near_pct or distance_to_high_atr <= late_near_atr
+        symbol_name = getattr(config, "symbol", "").upper()
+        local_high_lookback_bars = max(
+            lookback + 2,
+            int(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_LOOKBACK_BARS", 288.0)),
+        )
+        local_high_window = frame_15m["high"].astype(float).iloc[-(local_high_lookback_bars + 1):-1]
+        if local_high_window.empty:
+            local_high_window = frame_15m["high"].astype(float).iloc[:-1]
+        local_high = float(local_high_window.max()) if not local_high_window.empty else 0.0
+        local_high_distance = max(0.0, local_high - current_price) if local_high > 0 else 999.0
+        local_high_distance_pct = local_high_distance / current_price if current_price > 0 else 999.0
+        local_high_distance_atr = local_high_distance / current_atr_15 if current_atr_15 > 0 else 999.0
+        local_high_near = (
+            local_high > 0
+            and (
+                local_high_distance_pct <= max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_NEAR_EXTREME_PCT", 0.015))
+                or local_high_distance_atr <= max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_NEAR_EXTREME_ATR", 1.25))
+            )
+        )
+        local_high_clean_break = (
+            local_high > 0
+            and current_price >= local_high + current_atr_15 * max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_BREAK_BUFFER_ATR", 0.15))
+        )
+        local_high_guard_watch = (
+            _env_bool("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ENABLED", True)
+            and _symbol_enabled("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_SYMBOLS", symbol_name, _HIGH_BETA_LOCAL_HIGH_GUARD_SYMBOLS)
+            and move_pct > 0
+            and move_atr >= max(0.0, _env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MIN_MOVE_ATR", 2.50))
+            and local_high_near
+            and not local_high_clean_break
+        )
+        local_high_guard_action = os.environ.get("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ACTION", "micro_lock").strip().lower()
+        local_high_guard_block = local_high_guard_watch and local_high_guard_action == "block"
         volume_baseline = max(1e-9, float(volume_15.iloc[-(config.consolidation_window_bars + 1):-1].mean()))
         volume_ratio = float(volume_15.iloc[-1]) / volume_baseline
         prior_volume_end = max(0, len(volume_15) - lookback)
@@ -2305,7 +2392,9 @@ def diagnose_impulse_rejection(frame_15m: pd.DataFrame, config: StrategyConfig) 
             f"close_near_high={close_near_high} close_near_low={close_near_low} body_atr={body_atr:.2f} "
             f"late_near_high={late_near_high} late_near_low={late_near_low} "
             f"late_distance_high_atr={distance_to_high_atr:.2f} late_distance_low_atr={distance_to_low_atr:.2f} "
-            f"late_guard_min_atr={_env_float('FUTURES_LATE_IMPULSE_CHASE_MIN_MOVE_ATR', 2.25):.2f}"
+            f"late_guard_min_atr={_env_float('FUTURES_LATE_IMPULSE_CHASE_MIN_MOVE_ATR', 2.25):.2f} "
+            f"local_high_guard_block={local_high_guard_block} local_high={local_high:.4f} "
+            f"local_high_distance_pct={local_high_distance_pct:.4f} local_high_distance_atr={local_high_distance_atr:.2f}"
         )
     except Exception as exc:
         return f"impulse_diagnostic_error={type(exc).__name__}"

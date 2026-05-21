@@ -36,6 +36,7 @@ MICRO_LOCK_DEFAULT_ENTRY_SIGNALS = frozenset(
         "IMPULSE_EVENT_CONTINUATION_SHORT",
     }
 )
+MICRO_LOCK_DEFAULT_RECOVERED_ENTRY_SIGNALS = frozenset({"RECOVERED"})
 
 MICRO_LOCK_DEFAULT_SYMBOLS = frozenset(
     {
@@ -231,22 +232,31 @@ def micro_lock_eligible(
     symbols: object = None,
     excluded_symbols: object = None,
     entry_signals: object = None,
+    recovered_entry_signals: object = None,
     min_atr_pct: float = 0.006,
     max_entry_price: float = 25.0,
 ) -> bool:
+    symbol = str(position.symbol or "").upper()
+    included = _symbol_tokens(symbols) if symbols is not None else set(MICRO_LOCK_DEFAULT_SYMBOLS)
+    excluded = _symbol_tokens(excluded_symbols) if excluded_symbols is not None else set(MICRO_LOCK_DEFAULT_EXCLUDED_SYMBOLS)
+    included_by_symbol = "*" in included or symbol in included
+    if symbol in excluded:
+        return False
+
     allowed_entry_signals = _symbol_tokens(entry_signals) if entry_signals is not None else set(MICRO_LOCK_DEFAULT_ENTRY_SIGNALS)
     if allowed_entry_signals and "*" not in allowed_entry_signals:
         entry_signal = str(getattr(position, "entry_signal", "") or "").upper()
         if entry_signal not in allowed_entry_signals:
-            return False
+            recovered_signals = (
+                _symbol_tokens(recovered_entry_signals)
+                if recovered_entry_signals is not None
+                else set(MICRO_LOCK_DEFAULT_RECOVERED_ENTRY_SIGNALS)
+            )
+            if entry_signal not in recovered_signals or not included_by_symbol:
+                return False
 
-    symbol = str(position.symbol or "").upper()
-    included = _symbol_tokens(symbols) if symbols is not None else set(MICRO_LOCK_DEFAULT_SYMBOLS)
-    excluded = _symbol_tokens(excluded_symbols) if excluded_symbols is not None else set(MICRO_LOCK_DEFAULT_EXCLUDED_SYMBOLS)
-    if "*" in included or symbol in included:
+    if included_by_symbol:
         return True
-    if symbol in excluded:
-        return False
     metadata = position.metadata if isinstance(position.metadata, dict) else {}
     atr_pct = _metadata_float(metadata, "atr_15m_pct") or _metadata_float(metadata, "current_atr_15_pct") or 0.0
     try:
@@ -318,6 +328,7 @@ def evaluate_micro_lock_tick(
     symbols: object = None,
     excluded_symbols: object = None,
     entry_signals: object = None,
+    recovered_entry_signals: object = None,
     min_atr_pct: float = 0.006,
     max_entry_price: float = 25.0,
     exit_slippage_buffer_pct: float = 0.0,
@@ -329,6 +340,7 @@ def evaluate_micro_lock_tick(
         symbols=symbols,
         excluded_symbols=excluded_symbols,
         entry_signals=entry_signals,
+        recovered_entry_signals=recovered_entry_signals,
         min_atr_pct=min_atr_pct,
         max_entry_price=max_entry_price,
     ):
@@ -338,6 +350,12 @@ def evaluate_micro_lock_tick(
         position.metadata = metadata
     if metadata.get(MICRO_LOCK_RELEASED_KEY):
         return None, False
+
+    trigger_pct = _metadata_float(metadata, "micro_profit_lock_trigger_pct_override") or trigger_pct
+    pullback_fraction = _metadata_float(metadata, "micro_profit_lock_pullback_fraction_override") or pullback_fraction
+    floor_pct = _metadata_float(metadata, "micro_profit_lock_floor_pct_override") or floor_pct
+    min_exit_net_pct = _metadata_float(metadata, "micro_profit_lock_exit_min_net_pct_override") or min_exit_net_pct
+    max_peak_tp_progress = _metadata_float(metadata, "micro_profit_lock_max_peak_tp_progress_override") or max_peak_tp_progress
 
     changed, gross_peak_pct, net_peak_pct = _update_micro_lock_peak(position, price, taker_fee_rate=taker_fee_rate)
     progress = tp_progress(position, price)
@@ -383,6 +401,7 @@ def evaluate_micro_lock_bar(
     symbols: object = None,
     excluded_symbols: object = None,
     entry_signals: object = None,
+    recovered_entry_signals: object = None,
     min_atr_pct: float = 0.006,
     max_entry_price: float = 25.0,
     exit_slippage_buffer_pct: float = 0.0,
@@ -394,6 +413,7 @@ def evaluate_micro_lock_bar(
         symbols=symbols,
         excluded_symbols=excluded_symbols,
         entry_signals=entry_signals,
+        recovered_entry_signals=recovered_entry_signals,
         min_atr_pct=min_atr_pct,
         max_entry_price=max_entry_price,
     ):
@@ -403,6 +423,12 @@ def evaluate_micro_lock_bar(
         position.metadata = metadata
     if metadata.get(MICRO_LOCK_RELEASED_KEY):
         return None, False
+
+    trigger_pct = _metadata_float(metadata, "micro_profit_lock_trigger_pct_override") or trigger_pct
+    pullback_fraction = _metadata_float(metadata, "micro_profit_lock_pullback_fraction_override") or pullback_fraction
+    floor_pct = _metadata_float(metadata, "micro_profit_lock_floor_pct_override") or floor_pct
+    min_exit_net_pct = _metadata_float(metadata, "micro_profit_lock_exit_min_net_pct_override") or min_exit_net_pct
+    max_peak_tp_progress = _metadata_float(metadata, "micro_profit_lock_max_peak_tp_progress_override") or max_peak_tp_progress
 
     armed_before_bar = (_metadata_float(metadata, MICRO_LOCK_STOP_GROSS_PCT_KEY) or 0.0) > 0.0
     favorable_price = high if position.side == "LONG" else low

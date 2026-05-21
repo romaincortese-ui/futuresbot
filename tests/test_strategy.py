@@ -409,6 +409,53 @@ def test_strategy_produces_impulse_event_continuation_long(monkeypatch):
     assert signal.metadata["impulse_move_pct"] > 0
 
 
+def test_high_beta_local_high_guard_blocks_impulse_long_near_resistance(monkeypatch):
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_CONTINUATION_ENABLED", "false")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_ANTI_CHASE_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_LATE_IMPULSE_CHASE_GUARD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_IMPULSE_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_ATR", "0.50")
+    monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_PCT", "0.006")
+    monkeypatch.setenv("FUTURES_IMPULSE_VOLUME_FLOOR", "0.50")
+    monkeypatch.setenv("FUTURES_IMPULSE_RSI_1H_LONG_MIN", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_RSI_15_LONG_MAX", "100")
+    monkeypatch.setenv("FUTURES_IMPULSE_MAX_EMA_EXTENSION_ATR", "99")
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_LOOKBACK_BARS", "288")
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_NEAR_EXTREME_PCT", "0.02")
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_NEAR_EXTREME_ATR", "2.0")
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_MIN_MOVE_ATR", "1.0")
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    base = [100 + idx * 0.018 + math.sin(idx / 8.0) * 0.10 for idx in range(520)]
+    base[-120] = 112.0
+    anchor = 107.0
+    for offset in range(9):
+        base[-9 + offset] = anchor * (1.0 + 0.004 * (offset + 1))
+    frame = _frame_from_prices(base)
+    cfg = replace(_config(), symbol="ZEC_USDT", trend_24h_floor=0.0, trend_6h_floor=0.0)
+
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ENABLED", "0")
+    allowed = score_btc_futures_setup(frame, cfg)
+    assert allowed is not None
+    assert allowed.entry_signal == "IMPULSE_EVENT_CONTINUATION_LONG"
+
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ACTION", "micro_lock")
+    protected = score_btc_futures_setup(frame, cfg)
+    assert protected is not None
+    assert protected.metadata["high_beta_local_high_chase_watch"] == 1.0
+    assert protected.metadata["micro_profit_lock_trigger_pct_override"] == 1.5
+
+    monkeypatch.setenv("FUTURES_HIGH_BETA_LOCAL_HIGH_GUARD_ACTION", "block")
+    assert score_btc_futures_setup(frame, cfg) is None
+
+
 def test_strategy_produces_impulse_event_continuation_short(monkeypatch):
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_IMPULSE_CONTINUATION_ENABLED", "1")

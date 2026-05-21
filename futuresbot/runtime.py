@@ -954,6 +954,7 @@ class FuturesRuntime:
             symbols=os.environ.get("FUTURES_MICRO_LOCK_SYMBOLS"),
             excluded_symbols=os.environ.get("FUTURES_MICRO_LOCK_EXCLUDED_SYMBOLS"),
             entry_signals=os.environ.get("FUTURES_MICRO_LOCK_ENTRY_SIGNALS"),
+            recovered_entry_signals=os.environ.get("FUTURES_MICRO_LOCK_RECOVERED_ENTRY_SIGNALS"),
             min_atr_pct=max(0.0, self._env_float("FUTURES_MICRO_LOCK_MIN_ATR_PCT", 0.006)),
             max_entry_price=max(0.0, self._env_float("FUTURES_MICRO_LOCK_MAX_ENTRY_PRICE", 25.0)),
             exit_slippage_buffer_pct=self._exit_slippage_buffer_pct(position, current_price),

@@ -979,6 +979,144 @@ def test_micro_lock_bar_ignores_default_excluded_major():
     assert changed is False
 
 
+def test_micro_lock_bar_protects_recovered_high_beta_alt():
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=10,
+        margin_usdt=10.0,
+        tp_price=0.0,
+        sl_price=0.0,
+        position_id="micro-lock-recovered-zec",
+        order_id="",
+        opened_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        score=0.0,
+        certainty=0.0,
+        entry_signal="RECOVERED",
+    )
+
+    first, changed = evaluate_micro_lock_bar(
+        position,
+        high=100.5,
+        low=100.1,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["micro_profit_lock_peak_gross_pnl_pct"], 3) == 5.0
+
+    second, _changed = evaluate_micro_lock_bar(
+        position,
+        high=100.52,
+        low=100.2,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert second is not None
+    assert second[1] == "MICRO_PROFIT_LOCK"
+
+
+def test_micro_lock_bar_keeps_recovered_major_excluded():
+    position = FuturesPosition(
+        symbol="BTC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=10,
+        margin_usdt=10.0,
+        tp_price=0.0,
+        sl_price=0.0,
+        position_id="micro-lock-recovered-btc",
+        order_id="",
+        opened_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        score=0.0,
+        certainty=0.0,
+        entry_signal="RECOVERED",
+    )
+
+    exit_result, changed = evaluate_micro_lock_bar(
+        position,
+        high=101.0,
+        low=100.0,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert exit_result is None
+    assert changed is False
+
+
+def test_micro_lock_bar_honors_position_overrides():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=10,
+        margin_usdt=10.0,
+        tp_price=120.0,
+        sl_price=96.0,
+        position_id="micro-lock-overrides",
+        order_id="entry-micro-lock-overrides",
+        opened_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        score=72.0,
+        certainty=0.8,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        metadata={
+            "micro_profit_lock_trigger_pct_override": 1.0,
+            "micro_profit_lock_floor_pct_override": 0.9,
+            "micro_profit_lock_pullback_fraction_override": 0.25,
+        },
+    )
+
+    first, changed = evaluate_micro_lock_bar(
+        position,
+        high=100.12,
+        low=100.10,
+        taker_fee_rate=0.0,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.0,
+    )
+
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["micro_profit_lock_stop_gross_pnl_pct"], 3) == 0.9
+
+    second, _changed = evaluate_micro_lock_bar(
+        position,
+        high=100.13,
+        low=100.08,
+        taker_fee_rate=0.0,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.0,
+    )
+
+    assert second is not None
+    assert round(second[0], 4) == 100.0975
+    assert second[1] == "MICRO_PROFIT_LOCK"
+
+
 def test_micro_lock_bar_ignores_non_event_entry_signal_by_default():
     position = FuturesPosition(
         symbol="SEI_USDT",
