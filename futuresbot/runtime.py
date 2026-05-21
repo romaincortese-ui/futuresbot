@@ -11,6 +11,8 @@ def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
     labels = {
         "PEAK_PROFIT_LOCK": "Profit taken: peak pullback",
         "PEAK_PROTECTION_GAP_EXIT": "Peak protection gap exit",
+        "MICRO_PROFIT_LOCK": "Profit taken: high-beta micro lock",
+        "MICRO_PROTECTION_GAP_EXIT": "High-beta micro protection gap exit",
         "BREAKEVEN_PROFIT_LOCK": "Breakeven protection exit",
         "BREAKEVEN_PROTECTION_GAP_EXIT": "Breakeven protection gap exit",
         "TRAILING_TAKE_PROFIT": "Trailing take profit",
@@ -79,7 +81,7 @@ from futuresbot.calibration import load_trade_calibration, setup_regime_for_sign
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
-from futuresbot.exits import evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
+from futuresbot.exits import evaluate_micro_lock_tick, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -933,6 +935,41 @@ class FuturesRuntime:
                 )
                 return self._close_position_for_exit(position, current_price=current_price, reason=exit_reason)
 
+        if changed:
+            self._save_state()
+        return False
+
+    def _micro_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
+        if os.environ.get("FUTURES_MICRO_LOCK_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+            return False
+        micro_exit, changed = evaluate_micro_lock_tick(
+            position,
+            current_price,
+            taker_fee_rate=self.get_symbol_taker_fee_rate(position.symbol),
+            trigger_pct=max(0.0, self._env_float("FUTURES_MICRO_LOCK_TRIGGER_PCT", 2.0)),
+            pullback_fraction=self._env_float("FUTURES_MICRO_LOCK_PULLBACK_FRACTION", 0.45),
+            floor_pct=max(0.0, self._env_float("FUTURES_MICRO_LOCK_FLOOR_PCT", 0.65)),
+            min_exit_net_pct=max(0.0, self._env_float("FUTURES_MICRO_LOCK_EXIT_MIN_NET_PCT", 0.05)),
+            max_peak_tp_progress=max(0.0, self._env_float("FUTURES_MICRO_LOCK_MAX_PEAK_TP_PROGRESS", 0.50)),
+            symbols=os.environ.get("FUTURES_MICRO_LOCK_SYMBOLS"),
+            excluded_symbols=os.environ.get("FUTURES_MICRO_LOCK_EXCLUDED_SYMBOLS"),
+            entry_signals=os.environ.get("FUTURES_MICRO_LOCK_ENTRY_SIGNALS"),
+            min_atr_pct=max(0.0, self._env_float("FUTURES_MICRO_LOCK_MIN_ATR_PCT", 0.006)),
+            max_entry_price=max(0.0, self._env_float("FUTURES_MICRO_LOCK_MAX_ENTRY_PRICE", 25.0)),
+            exit_slippage_buffer_pct=self._exit_slippage_buffer_pct(position, current_price),
+        )
+        if micro_exit is not None:
+            exit_price, reason = micro_exit
+            net_pnl_pct = self._position_net_pnl_pct(position, exit_price)
+            log.warning(
+                "[MICRO_PROFIT_LOCK_EXIT] symbol=%s side=%s reason=%s net_pnl_pct=%s price=%s",
+                position.symbol,
+                position.side,
+                reason,
+                f"{net_pnl_pct:+.2f}" if net_pnl_pct is not None else "n/a",
+                self._format_price(exit_price),
+            )
+            return self._close_position_for_exit(position, current_price=exit_price, reason=reason)
         if changed:
             self._save_state()
         return False
@@ -1933,6 +1970,8 @@ class FuturesRuntime:
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
         if self._profit_lock_exit(position, current_price):
+            return True
+        if self._micro_lock_exit(position, current_price):
             return True
         stagnation_enabled = os.environ.get("FUTURES_STAGNATION_EXIT_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
         if stagnation_enabled:

@@ -14,6 +14,12 @@ PROFIT_LOCK_PEAK_USDT_KEY = "profit_lock_peak_pnl_usdt"
 PROFIT_LOCK_PEAK_PRICE_KEY = "profit_lock_peak_price"
 PROFIT_LOCK_STOP_PCT_KEY = "profit_lock_stop_pnl_pct"
 PROFIT_LOCK_STOP_GROSS_PCT_KEY = "profit_lock_stop_gross_pnl_pct"
+MICRO_LOCK_PEAK_PCT_KEY = "micro_profit_lock_peak_pnl_pct"
+MICRO_LOCK_PEAK_GROSS_PCT_KEY = "micro_profit_lock_peak_gross_pnl_pct"
+MICRO_LOCK_PEAK_PRICE_KEY = "micro_profit_lock_peak_price"
+MICRO_LOCK_STOP_PCT_KEY = "micro_profit_lock_stop_pnl_pct"
+MICRO_LOCK_STOP_GROSS_PCT_KEY = "micro_profit_lock_stop_gross_pnl_pct"
+MICRO_LOCK_RELEASED_KEY = "micro_profit_lock_released"
 STAGNATION_EXIT_PEAK_PROGRESS_KEY = "stagnation_exit_peak_tp_progress"
 STAGNATION_EXIT_PEAK_PRICE_KEY = "stagnation_exit_peak_price"
 STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS = frozenset(
@@ -24,6 +30,30 @@ STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS = frozenset(
         "EVENT_CATALYST_SHORT",
     }
 )
+MICRO_LOCK_DEFAULT_ENTRY_SIGNALS = frozenset(
+    {
+        "IMPULSE_EVENT_CONTINUATION_LONG",
+        "IMPULSE_EVENT_CONTINUATION_SHORT",
+    }
+)
+
+MICRO_LOCK_DEFAULT_SYMBOLS = frozenset(
+    {
+        "ADA_USDT",
+        "APT_USDT",
+        "AVAX_USDT",
+        "DOGE_USDT",
+        "HYPE_USDT",
+        "LINK_USDT",
+        "PEPE_USDT",
+        "SEI_USDT",
+        "SUI_USDT",
+        "TAO_USDT",
+        "XRP_USDT",
+        "ZEC_USDT",
+    }
+)
+MICRO_LOCK_DEFAULT_EXCLUDED_SYMBOLS = frozenset({"BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT"})
 
 
 def _total_and_current_move(position: FuturesPosition, price: float) -> tuple[float, float]:
@@ -169,6 +199,19 @@ def _metadata_float(metadata: dict, key: str) -> float | None:
     return value if value != 0.0 else None
 
 
+def _symbol_tokens(value: object) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        raw_items = value.replace(";", ",").replace(" ", ",").split(",")
+    else:
+        try:
+            raw_items = list(value)  # type: ignore[arg-type]
+        except TypeError:
+            raw_items = []
+    return {str(item).strip().upper() for item in raw_items if str(item).strip()}
+
+
 def _normalized_entry_signals(value: object) -> set[str]:
     if value is None:
         return set(STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS)
@@ -180,6 +223,220 @@ def _normalized_entry_signals(value: object) -> set[str]:
         except TypeError:
             raw_items = []
     return {str(item).strip().upper() for item in raw_items if str(item).strip()}
+
+
+def micro_lock_eligible(
+    position: FuturesPosition,
+    *,
+    symbols: object = None,
+    excluded_symbols: object = None,
+    entry_signals: object = None,
+    min_atr_pct: float = 0.006,
+    max_entry_price: float = 25.0,
+) -> bool:
+    allowed_entry_signals = _symbol_tokens(entry_signals) if entry_signals is not None else set(MICRO_LOCK_DEFAULT_ENTRY_SIGNALS)
+    if allowed_entry_signals and "*" not in allowed_entry_signals:
+        entry_signal = str(getattr(position, "entry_signal", "") or "").upper()
+        if entry_signal not in allowed_entry_signals:
+            return False
+
+    symbol = str(position.symbol or "").upper()
+    included = _symbol_tokens(symbols) if symbols is not None else set(MICRO_LOCK_DEFAULT_SYMBOLS)
+    excluded = _symbol_tokens(excluded_symbols) if excluded_symbols is not None else set(MICRO_LOCK_DEFAULT_EXCLUDED_SYMBOLS)
+    if "*" in included or symbol in included:
+        return True
+    if symbol in excluded:
+        return False
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    atr_pct = _metadata_float(metadata, "atr_15m_pct") or _metadata_float(metadata, "current_atr_15_pct") or 0.0
+    try:
+        entry_price = float(position.entry_price or 0.0)
+    except (TypeError, ValueError):
+        entry_price = 0.0
+    return atr_pct >= max(0.0, min_atr_pct) or (0.0 < entry_price <= max(0.0, max_entry_price))
+
+
+def _update_micro_lock_peak(
+    position: FuturesPosition,
+    price: float,
+    *,
+    taker_fee_rate: float,
+) -> tuple[bool, float, float]:
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    gross_pnl_pct = position_margin_pnl_pct(position, price)
+    net_pnl_pct = position_net_pnl_pct(position, price, taker_fee_rate)
+    if gross_pnl_pct is None or net_pnl_pct is None:
+        return False, 0.0, 0.0
+
+    changed = False
+    net_peak_pct = _metadata_float(metadata, MICRO_LOCK_PEAK_PCT_KEY) or 0.0
+    if net_pnl_pct > net_peak_pct:
+        net_peak_pct = net_pnl_pct
+        metadata[MICRO_LOCK_PEAK_PCT_KEY] = float(net_pnl_pct)
+        metadata[MICRO_LOCK_PEAK_PRICE_KEY] = float(price)
+        changed = True
+
+    gross_peak_pct = _metadata_float(metadata, MICRO_LOCK_PEAK_GROSS_PCT_KEY) or max(0.0, net_peak_pct)
+    if gross_pnl_pct > gross_peak_pct:
+        gross_peak_pct = gross_pnl_pct
+        metadata[MICRO_LOCK_PEAK_GROSS_PCT_KEY] = float(gross_pnl_pct)
+        changed = True
+    return changed, gross_peak_pct, net_peak_pct
+
+
+def _micro_lock_exit_from_stop(
+    position: FuturesPosition,
+    *,
+    stop_pct: float,
+    taker_fee_rate: float,
+    min_exit_net_pct: float,
+    exit_slippage_buffer_pct: float = 0.0,
+) -> tuple[float, str] | None:
+    exit_price = price_for_margin_pnl_pct(position, stop_pct)
+    if exit_price is None or exit_price <= 0:
+        return None
+    net_exit_pct = position_net_pnl_pct(position, exit_price, taker_fee_rate)
+    required_net_pct = max(0.0, min_exit_net_pct) + max(0.0, exit_slippage_buffer_pct)
+    if net_exit_pct is not None and net_exit_pct < required_net_pct:
+        return None
+    reason = "MICRO_PROFIT_LOCK" if net_exit_pct is None or net_exit_pct > 0.0 else "MICRO_PROTECTION_GAP_EXIT"
+    return exit_price, reason
+
+
+def evaluate_micro_lock_tick(
+    position: FuturesPosition,
+    price: float,
+    *,
+    taker_fee_rate: float,
+    trigger_pct: float,
+    pullback_fraction: float,
+    floor_pct: float,
+    min_exit_net_pct: float = 0.0,
+    max_peak_tp_progress: float = 0.50,
+    symbols: object = None,
+    excluded_symbols: object = None,
+    entry_signals: object = None,
+    min_atr_pct: float = 0.006,
+    max_entry_price: float = 25.0,
+    exit_slippage_buffer_pct: float = 0.0,
+) -> tuple[tuple[float, str] | None, bool]:
+    if trigger_pct <= 0 or price <= 0:
+        return None, False
+    if not micro_lock_eligible(
+        position,
+        symbols=symbols,
+        excluded_symbols=excluded_symbols,
+        entry_signals=entry_signals,
+        min_atr_pct=min_atr_pct,
+        max_entry_price=max_entry_price,
+    ):
+        return None, False
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    if metadata.get(MICRO_LOCK_RELEASED_KEY):
+        return None, False
+
+    changed, gross_peak_pct, net_peak_pct = _update_micro_lock_peak(position, price, taker_fee_rate=taker_fee_rate)
+    progress = tp_progress(position, price)
+    if max_peak_tp_progress > 0 and progress is not None and progress >= max(0.0, max_peak_tp_progress):
+        metadata[MICRO_LOCK_RELEASED_KEY] = True
+        return None, True
+    if gross_peak_pct < trigger_pct:
+        return None, changed
+
+    bounded_pullback = min(0.95, max(0.0, pullback_fraction))
+    stop_pct = max(0.0, floor_pct, gross_peak_pct * (1.0 - bounded_pullback))
+    net_stop_pct = max(0.0, net_peak_pct * (1.0 - bounded_pullback))
+    if metadata.get(MICRO_LOCK_STOP_GROSS_PCT_KEY) != stop_pct:
+        metadata[MICRO_LOCK_STOP_GROSS_PCT_KEY] = float(stop_pct)
+        changed = True
+    if metadata.get(MICRO_LOCK_STOP_PCT_KEY) != net_stop_pct:
+        metadata[MICRO_LOCK_STOP_PCT_KEY] = float(net_stop_pct)
+        changed = True
+
+    gross_pnl_pct = position_margin_pnl_pct(position, price)
+    if gross_pnl_pct is None or gross_pnl_pct > stop_pct:
+        return None, changed
+    return _micro_lock_exit_from_stop(
+        position,
+        stop_pct=stop_pct,
+        taker_fee_rate=taker_fee_rate,
+        min_exit_net_pct=min_exit_net_pct,
+        exit_slippage_buffer_pct=exit_slippage_buffer_pct,
+    ), changed
+
+
+def evaluate_micro_lock_bar(
+    position: FuturesPosition,
+    *,
+    high: float,
+    low: float,
+    taker_fee_rate: float,
+    trigger_pct: float,
+    pullback_fraction: float,
+    floor_pct: float,
+    min_exit_net_pct: float = 0.0,
+    max_peak_tp_progress: float = 0.50,
+    symbols: object = None,
+    excluded_symbols: object = None,
+    entry_signals: object = None,
+    min_atr_pct: float = 0.006,
+    max_entry_price: float = 25.0,
+    exit_slippage_buffer_pct: float = 0.0,
+) -> tuple[tuple[float, str] | None, bool]:
+    if trigger_pct <= 0 or high <= 0 or low <= 0:
+        return None, False
+    if not micro_lock_eligible(
+        position,
+        symbols=symbols,
+        excluded_symbols=excluded_symbols,
+        entry_signals=entry_signals,
+        min_atr_pct=min_atr_pct,
+        max_entry_price=max_entry_price,
+    ):
+        return None, False
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    if metadata.get(MICRO_LOCK_RELEASED_KEY):
+        return None, False
+
+    armed_before_bar = (_metadata_float(metadata, MICRO_LOCK_STOP_GROSS_PCT_KEY) or 0.0) > 0.0
+    favorable_price = high if position.side == "LONG" else low
+    adverse_price = low if position.side == "LONG" else high
+    changed, gross_peak_pct, net_peak_pct = _update_micro_lock_peak(position, favorable_price, taker_fee_rate=taker_fee_rate)
+    favorable_progress = tp_progress(position, favorable_price)
+    if max_peak_tp_progress > 0 and favorable_progress is not None and favorable_progress >= max(0.0, max_peak_tp_progress):
+        metadata[MICRO_LOCK_RELEASED_KEY] = True
+        return None, True
+    if gross_peak_pct < trigger_pct:
+        return None, changed
+
+    bounded_pullback = min(0.95, max(0.0, pullback_fraction))
+    stop_pct = max(0.0, floor_pct, gross_peak_pct * (1.0 - bounded_pullback))
+    net_stop_pct = max(0.0, net_peak_pct * (1.0 - bounded_pullback))
+    if metadata.get(MICRO_LOCK_STOP_GROSS_PCT_KEY) != stop_pct:
+        metadata[MICRO_LOCK_STOP_GROSS_PCT_KEY] = float(stop_pct)
+        changed = True
+    if metadata.get(MICRO_LOCK_STOP_PCT_KEY) != net_stop_pct:
+        metadata[MICRO_LOCK_STOP_PCT_KEY] = float(net_stop_pct)
+        changed = True
+    if not armed_before_bar:
+        return None, changed
+
+    adverse_gross_pct = position_margin_pnl_pct(position, adverse_price)
+    if adverse_gross_pct is None or adverse_gross_pct > stop_pct:
+        return None, changed
+    return _micro_lock_exit_from_stop(
+        position,
+        stop_pct=stop_pct,
+        taker_fee_rate=taker_fee_rate,
+        min_exit_net_pct=min_exit_net_pct,
+        exit_slippage_buffer_pct=exit_slippage_buffer_pct,
+    ), changed
 
 
 def position_margin_pnl_usdt(position: FuturesPosition, price: float) -> float:

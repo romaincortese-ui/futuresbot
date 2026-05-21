@@ -15,7 +15,7 @@ from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
-from futuresbot.exits import evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
+from futuresbot.exits import evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
@@ -636,6 +636,25 @@ class FuturesBacktestEngine:
 			)
 			if profit_lock_exit is not None:
 				return profit_lock_exit
+		if _env_bool("FUTURES_MICRO_LOCK_ENABLED", True):
+			micro_lock_exit, _changed = evaluate_micro_lock_bar(
+				position,
+				high=high,
+				low=low,
+				taker_fee_rate=self.config.taker_fee_rate,
+				trigger_pct=max(0.0, _env_float("FUTURES_MICRO_LOCK_TRIGGER_PCT", 2.0)),
+				pullback_fraction=_env_float("FUTURES_MICRO_LOCK_PULLBACK_FRACTION", 0.45),
+				floor_pct=max(0.0, _env_float("FUTURES_MICRO_LOCK_FLOOR_PCT", 0.65)),
+				min_exit_net_pct=max(0.0, _env_float("FUTURES_MICRO_LOCK_EXIT_MIN_NET_PCT", 0.05)),
+				max_peak_tp_progress=max(0.0, _env_float("FUTURES_MICRO_LOCK_MAX_PEAK_TP_PROGRESS", 0.50)),
+				symbols=os.environ.get("FUTURES_MICRO_LOCK_SYMBOLS"),
+				excluded_symbols=os.environ.get("FUTURES_MICRO_LOCK_EXCLUDED_SYMBOLS"),
+				entry_signals=os.environ.get("FUTURES_MICRO_LOCK_ENTRY_SIGNALS"),
+				min_atr_pct=max(0.0, _env_float("FUTURES_MICRO_LOCK_MIN_ATR_PCT", 0.006)),
+				max_entry_price=max(0.0, _env_float("FUTURES_MICRO_LOCK_MAX_ENTRY_PRICE", 25.0)),
+			)
+			if micro_lock_exit is not None:
+				return micro_lock_exit
 		if position.side == "LONG":
 			if low <= position.sl_price:
 				return position.sl_price, "STOP_LOSS"

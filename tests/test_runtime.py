@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
-from futuresbot.exits import evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
+from futuresbot.exits import evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.runtime import FuturesRuntime
 
@@ -585,6 +585,7 @@ def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monke
 
 def test_stagnation_exit_flattens_late_chase_retrace(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "0")
+    monkeypatch.setenv("FUTURES_MICRO_LOCK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_ENABLED", "1")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MINUTES", "180")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MAX_PEAK_TP_PROGRESS", "0.35")
@@ -622,6 +623,7 @@ def test_stagnation_exit_flattens_late_chase_retrace(tmp_path, monkeypatch):
 
 def test_stagnation_exit_ignores_breakout_hold_retrace(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "0")
+    monkeypatch.setenv("FUTURES_MICRO_LOCK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_ENABLED", "1")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MINUTES", "180")
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
@@ -889,6 +891,126 @@ def test_profit_lock_bar_waits_until_after_activation_bar_to_exit():
     assert second is not None
     assert round(second[0], 3) == 102.925
     assert second[1] == "PEAK_PROFIT_LOCK"
+
+
+def test_micro_lock_bar_protects_high_beta_alt_after_activation_bar():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=10,
+        margin_usdt=10.0,
+        tp_price=120.0,
+        sl_price=96.0,
+        position_id="micro-lock-bar",
+        order_id="entry-micro-lock-bar",
+        opened_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        score=72.0,
+        certainty=0.8,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+
+    first, changed = evaluate_micro_lock_bar(
+        position,
+        high=100.5,
+        low=100.1,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["micro_profit_lock_peak_gross_pnl_pct"], 3) == 5.0
+    assert round(position.metadata["micro_profit_lock_stop_gross_pnl_pct"], 3) == 2.75
+
+    second, _changed = evaluate_micro_lock_bar(
+        position,
+        high=100.52,
+        low=100.2,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert second is not None
+    assert round(second[0], 4) == 100.286
+    assert second[1] == "MICRO_PROFIT_LOCK"
+
+
+def test_micro_lock_bar_ignores_default_excluded_major():
+    position = FuturesPosition(
+        symbol="BTC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=10,
+        margin_usdt=10.0,
+        tp_price=120.0,
+        sl_price=96.0,
+        position_id="micro-lock-btc",
+        order_id="entry-micro-lock-btc",
+        opened_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        score=82.0,
+        certainty=0.8,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        metadata={"atr_15m_pct": 0.02},
+    )
+
+    exit_result, changed = evaluate_micro_lock_bar(
+        position,
+        high=101.0,
+        low=100.0,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert exit_result is None
+    assert changed is False
+
+
+def test_micro_lock_bar_ignores_non_event_entry_signal_by_default():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=10,
+        margin_usdt=10.0,
+        tp_price=120.0,
+        sl_price=96.0,
+        position_id="micro-lock-trend",
+        order_id="entry-micro-lock-trend",
+        opened_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        score=72.0,
+        certainty=0.8,
+        entry_signal="TREND_CONTINUATION_LONG",
+    )
+
+    exit_result, changed = evaluate_micro_lock_bar(
+        position,
+        high=101.0,
+        low=100.0,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert exit_result is None
+    assert changed is False
 
 
 def test_one_way_close_side_uses_opposite_reduce_only_direction(tmp_path):
