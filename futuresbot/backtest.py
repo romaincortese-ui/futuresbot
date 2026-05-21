@@ -12,9 +12,10 @@ import pandas as pd
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.config import FuturesBacktestConfig
 from futuresbot.dynamic_leverage import dynamic_leverage_enabled
+from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
-from futuresbot.exits import evaluate_profit_lock_bar, evaluate_trailing_bar
+from futuresbot.exits import evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
@@ -36,6 +37,13 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+	raw = os.environ.get(name)
+	if raw is None:
+		return default
+	return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _opportunity_bucket_sizing_enabled() -> bool:
@@ -281,7 +289,14 @@ class FuturesBacktestEngine:
 				metadata["crypto_event_policy_age_seconds"] = round(policy.state_age_seconds, 1)
 			if policy.leverage_multiplier < 1.0:
 				leverage = max(1, int(leverage * float(policy.leverage_multiplier)))
-		return replace(signal, score=round(score, 2), leverage=leverage, metadata=opportunity_metadata(metadata, score))
+		adjusted = replace(signal, score=round(score, 2), leverage=leverage, metadata=opportunity_metadata(metadata, score))
+		quality = evaluate_adverse_event_quality(
+			adjusted,
+			min_confidence_score=float(getattr(self.config, "min_confidence_score", 0.0) or 0.0),
+		)
+		if not quality.allowed:
+			return None
+		return adjusted
 
 	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0, score: float | None = None) -> tuple[int, float, int]:
 		if _opportunity_bucket_sizing_enabled():
@@ -653,7 +668,22 @@ class FuturesBacktestEngine:
 			return position.tp_price, "TAKE_PROFIT"
 		return None
 
-	def _hourly_exit(self, position: FuturesPosition, close_price: float) -> tuple[float, str] | None:
+	def _hourly_exit(self, position: FuturesPosition, close_price: float, now: datetime | None = None) -> tuple[float, str] | None:
+		if _env_bool("FUTURES_STAGNATION_EXIT_ENABLED", True):
+			should_close, _changed, _reason = evaluate_stagnation_exit(
+				position,
+				close_price,
+				now=now or datetime.now(timezone.utc),
+				activation_minutes=max(0.0, _env_float("FUTURES_STAGNATION_EXIT_MINUTES", 180.0)),
+				max_peak_progress=max(0.0, _env_float("FUTURES_STAGNATION_EXIT_MAX_PEAK_TP_PROGRESS", 0.35)),
+				min_peak_progress=max(0.0, _env_float("FUTURES_STAGNATION_EXIT_MIN_PEAK_TP_PROGRESS", 0.10)),
+				retrace_fraction=_env_float("FUTURES_STAGNATION_EXIT_RETRACE_FRACTION", 0.65),
+				min_net_pnl_pct=_env_float("FUTURES_STAGNATION_EXIT_MIN_NET_PNL_PCT", -2.50),
+				taker_fee_rate=self.config.taker_fee_rate,
+				require_chase_watch=_env_bool("FUTURES_STAGNATION_EXIT_REQUIRE_CHASE_WATCH", True),
+			)
+			if should_close:
+				return close_price, "STAGNATION_EXIT"
 		if self.config.trailing_exit_drawdown_pct > 0:
 			return None
 		if position.side == "LONG":
@@ -710,7 +740,7 @@ class FuturesBacktestEngine:
 
 			close_time = timestamp + step
 			if state.open_position is not None and close_time.minute == 0:
-				hourly_exit = self._hourly_exit(state.open_position, float(bar["close"]))
+				hourly_exit = self._hourly_exit(state.open_position, float(bar["close"]), close_time.to_pydatetime())
 				if hourly_exit is not None:
 					exit_price, reason = hourly_exit
 					trade = self._close_position(state.open_position, close_time, exit_price, reason)

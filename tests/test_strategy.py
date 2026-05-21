@@ -66,12 +66,51 @@ def test_strategy_produces_long_signal_on_uptrend_breakout():
     assert signal.metadata["dynamic_leverage_stop_margin_loss_pct"] <= 0.25
 
 
+def test_late_impulse_chase_guard_blocks_adverse_short_near_low(monkeypatch):
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BTC_REVERSAL_SHORT_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_LEVEL_BREAK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_CONTINUATION_ENABLED", "false")
+    monkeypatch.setenv("FUTURES_BREAKAWAY_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_RANGE_EXPANSION_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_CATALYST_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_EVENT_ANTI_CHASE_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_VOLUME_FLOOR", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_ADX_MIN", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_RSI_1H_SHORT_MAX", "100")
+    monkeypatch.setenv("FUTURES_IMPULSE_RSI_15_SHORT_MAX", "100")
+    monkeypatch.setenv("FUTURES_IMPULSE_RSI_15_SHORT_MIN", "0")
+    monkeypatch.setenv("FUTURES_IMPULSE_MAX_EMA_EXTENSION_ATR", "99")
+    monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_PCT", "0.001")
+    monkeypatch.setenv("FUTURES_IMPULSE_MIN_MOVE_ATR", "0.10")
+    monkeypatch.setenv("FUTURES_LATE_IMPULSE_CHASE_ADVERSE_MIN_MOVE_ATR", "0.10")
+
+    base = [0.065 - idx * 0.000002 + math.sin(idx / 7.0) * 0.00005 for idx in range(512)]
+    base.extend([0.0630, 0.0624, 0.0619, 0.0615, 0.06132, 0.06128, 0.06126, 0.06127])
+    frame = _frame_from_prices(base)
+    cfg = replace(_config(), symbol="SEI_USDT", min_confidence_score=50.0, min_reward_risk=0.6)
+
+    monkeypatch.setenv("FUTURES_LATE_IMPULSE_CHASE_GUARD_ENABLED", "0")
+    allowed = score_btc_futures_setup(frame, cfg, event_bias_score=0.5)
+
+    monkeypatch.setenv("FUTURES_LATE_IMPULSE_CHASE_GUARD_ENABLED", "1")
+    blocked = score_btc_futures_setup(frame, cfg, event_bias_score=0.5)
+
+    assert allowed is not None
+    assert allowed.side == "SHORT"
+    assert allowed.entry_signal == "IMPULSE_EVENT_CONTINUATION_SHORT"
+    assert blocked is None
+
+
 def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     cfg = replace(_config(), symbol="BTC_USDT")
 
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_SHORT")
     assert _entry_signal_disabled(cfg, "BTC_ROUND_LEVEL_LONG")
+    assert _entry_signal_disabled(cfg, "BREAKOUT_HOLD_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
 
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "COIL_BREAKOUT_LONG")
@@ -186,6 +225,7 @@ def test_major_threshold_defaults_do_not_cover_unlisted_symbol(monkeypatch):
 def test_strategy_produces_btc_breakout_hold_long(monkeypatch):
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_VOLUME_FLOOR", "0.40")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_RSI_15_MAX", "100")
@@ -210,6 +250,7 @@ def test_strategy_produces_btc_breakout_hold_long(monkeypatch):
 def test_btc_breakout_hold_counts_shelf_volume_after_quiet_reclaim(monkeypatch):
     monkeypatch.setenv("FUTURES_MAJOR_THRESHOLD_ENABLED", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_ADX_MIN", "0")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_VOLUME_FLOOR", "0.65")
     monkeypatch.setenv("FUTURES_BREAKOUT_HOLD_RSI_15_MAX", "100")

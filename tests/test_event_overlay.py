@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
+from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.event_overlay import evaluate_crypto_event_overlay, is_crypto_event_state_fresh
 
 
@@ -96,3 +98,36 @@ def test_stablecoin_depeg_is_market_wide_adverse_event() -> None:
     assert long_decision.score_offset < 0
     assert short_decision.reason == "crypto_event_favourable_boost"
     assert "USDT stablecoin depeg" in long_decision.metadata["crypto_event_titles"]
+
+
+def test_adverse_event_quality_blocks_marginal_net_rr() -> None:
+    signal = SimpleNamespace(
+        score=65.8,
+        metadata={
+            "crypto_event_reason": "crypto_event_adverse_reduce",
+            "crypto_event_alignment": -0.5,
+            "net_rr": 1.84,
+            "min_net_rr": 1.80,
+        },
+    )
+
+    decision = evaluate_adverse_event_quality(signal, min_confidence_score=56.0)
+
+    assert decision.allowed is False
+    assert decision.reason == "adverse_event_marginal_net_rr"
+
+
+def test_adverse_event_quality_allows_strong_rr() -> None:
+    signal = SimpleNamespace(
+        score=72.0,
+        metadata={
+            "crypto_event_reason": "crypto_event_adverse_reduce",
+            "crypto_event_alignment": -0.5,
+            "net_rr": 2.25,
+            "min_net_rr": 1.80,
+        },
+    )
+
+    decision = evaluate_adverse_event_quality(signal, min_confidence_score=56.0)
+
+    assert decision.allowed is True

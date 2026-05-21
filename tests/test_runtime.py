@@ -583,6 +583,74 @@ def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monke
     assert runtime.trade_history[-1]["pnl_usdt"] > 0
 
 
+def test_stagnation_exit_flattens_late_chase_retrace(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "0")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MINUTES", "180")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MAX_PEAK_TP_PROGRESS", "0.35")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MIN_PEAK_TP_PROGRESS", "0.10")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_RETRACE_FRACTION", "0.65")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MIN_NET_PNL_PCT", "-2.5")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    opened_at = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=8,
+        margin_usdt=10.0,
+        tp_price=120.0,
+        sl_price=96.0,
+        position_id="paper-stagnation",
+        order_id="entry-stagnation",
+        opened_at=opened_at,
+        score=66.0,
+        certainty=0.7,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        metadata={"late_impulse_chase_watch": 1.0},
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=104.0, now=datetime(2026, 5, 21, 14, 0, tzinfo=timezone.utc)) is False
+
+    assert runtime._hourly_exit(position, current_price=100.8, now=datetime(2026, 5, 21, 14, 15, tzinfo=timezone.utc)) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "STAGNATION_EXIT"
+
+
+def test_stagnation_exit_ignores_breakout_hold_retrace(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "0")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MINUTES", "180")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    opened_at = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)
+    position = FuturesPosition(
+        symbol="BTC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=8,
+        margin_usdt=10.0,
+        tp_price=120.0,
+        sl_price=96.0,
+        position_id="paper-breakout-stagnation",
+        order_id="entry-breakout-stagnation",
+        opened_at=opened_at,
+        score=82.0,
+        certainty=0.7,
+        entry_signal="BREAKOUT_HOLD_LONG",
+        metadata={"late_impulse_chase_watch": 1.0},
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=104.0, now=datetime(2026, 5, 21, 14, 0, tzinfo=timezone.utc)) is False
+    assert runtime._hourly_exit(position, current_price=100.8, now=datetime(2026, 5, 21, 14, 15, tzinfo=timezone.utc)) is False
+    assert runtime.open_position is position
+
+
 def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG")

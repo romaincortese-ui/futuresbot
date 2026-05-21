@@ -165,7 +165,7 @@ def _run_portfolio_backtest(
             frame = frames.get(open_position.symbol)
             idx = indexes.get(open_position.symbol, {}).get(timestamp)
             if frame is not None and idx is not None:
-                hourly_exit = open_engine._hourly_exit(open_position, float(frame.iloc[idx]["close"]))
+                hourly_exit = open_engine._hourly_exit(open_position, float(frame.iloc[idx]["close"]), close_time.to_pydatetime())
                 if hourly_exit is not None:
                     exit_price, reason = hourly_exit
                     trade = open_engine._close_position(open_position, close_time, exit_price, reason)

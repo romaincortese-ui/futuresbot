@@ -16,6 +16,7 @@ def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
         "TRAILING_TAKE_PROFIT": "Trailing take profit",
         "HOURLY_TAKE_PROFIT": "Take profit",
         "TAKE_PROFIT": "Take profit",
+        "STAGNATION_EXIT": "Stagnation exit",
         "STOP_LOSS": "Stop loss",
         "EXCHANGE_CLOSE": "Exchange close",
         "LIQ_BUFFER": "Liquidation buffer close",
@@ -77,7 +78,8 @@ from futuresbot.telegram import TelegramClient
 from futuresbot.calibration import load_trade_calibration, setup_regime_for_signal, validate_trade_calibration_payload
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.dynamic_leverage import dynamic_leverage_enabled
-from futuresbot.exits import evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
+from futuresbot.event_quality import evaluate_adverse_event_quality
+from futuresbot.exits import evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -845,6 +847,27 @@ class FuturesRuntime:
         pullback_fraction = configured_pullback if configured_pullback > 0 else _dynamic_pullback_fraction(gross_peak_pct, volatility)
         pullback_fraction = min(0.95, max(0.0, pullback_fraction))
         floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0))
+        breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
+        breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
+        if changed and gross_peak_pct > 0.0 and gross_peak_pct < trigger_pct:
+            scoped = self._config_for_symbol(position.symbol)
+            progress = self._tp_progress(position, current_price)
+            trailing_activation_progress = float(
+                metadata.get("trailing_exit_activation_progress", scoped.trailing_exit_activation_progress)
+                or scoped.trailing_exit_activation_progress
+            )
+            log.info(
+                "[PROFIT_LOCK_NOT_ARMED] symbol=%s side=%s gross_peak_pct=%.2f net_peak_pct=%.2f "
+                "trigger_pct=%.2f breakeven_arm_pct=%.2f tp_progress=%s trailing_activation_progress=%.2f",
+                position.symbol,
+                position.side,
+                gross_peak_pct,
+                peak_pct,
+                trigger_pct,
+                breakeven_arm_pct,
+                f"{progress:.2f}" if progress is not None else "n/a",
+                trailing_activation_progress,
+            )
         if gross_peak_pct >= trigger_pct:
             stop_pct = max(floor_pct, gross_peak_pct * (1.0 - pullback_fraction))
             net_stop_pct = max(0.0, peak_pct * (1.0 - pullback_fraction))
@@ -886,8 +909,6 @@ class FuturesRuntime:
                 self._notify(msg)
                 return self._close_position_for_exit(position, current_price=current_price, reason=exit_reason)
 
-        breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
-        breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
         if net_pnl_pct >= breakeven_arm_pct and not metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY):
             metadata[BREAKEVEN_PROFIT_LOCK_ARMED_KEY] = True
             changed = True
@@ -1908,11 +1929,40 @@ class FuturesRuntime:
                 self._clear_position(pos_symbol)
                 self._save_state()
 
-    def _hourly_exit(self, position: FuturesPosition, current_price: float) -> bool:
+    def _hourly_exit(self, position: FuturesPosition, current_price: float, now: datetime | None = None) -> bool:
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
         if self._profit_lock_exit(position, current_price):
             return True
+        stagnation_enabled = os.environ.get("FUTURES_STAGNATION_EXIT_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+        if stagnation_enabled:
+            should_close, changed, reason = evaluate_stagnation_exit(
+                position,
+                current_price,
+                now=now or datetime.now(timezone.utc),
+                activation_minutes=max(0.0, self._env_float("FUTURES_STAGNATION_EXIT_MINUTES", 180.0)),
+                max_peak_progress=max(0.0, self._env_float("FUTURES_STAGNATION_EXIT_MAX_PEAK_TP_PROGRESS", 0.35)),
+                min_peak_progress=max(0.0, self._env_float("FUTURES_STAGNATION_EXIT_MIN_PEAK_TP_PROGRESS", 0.10)),
+                retrace_fraction=self._env_float("FUTURES_STAGNATION_EXIT_RETRACE_FRACTION", 0.65),
+                min_net_pnl_pct=self._env_float("FUTURES_STAGNATION_EXIT_MIN_NET_PNL_PCT", -2.50),
+                taker_fee_rate=self.get_symbol_taker_fee_rate(position.symbol),
+                require_chase_watch=os.environ.get("FUTURES_STAGNATION_EXIT_REQUIRE_CHASE_WATCH", "1").strip().lower() in {"1", "true", "yes", "y", "on"},
+            )
+            if should_close:
+                net_pnl_pct = self._position_net_pnl_pct(position, current_price)
+                progress = self._tp_progress(position, current_price)
+                log.warning(
+                    "[STAGNATION_EXIT] symbol=%s side=%s reason=%s net_pnl_pct=%s tp_progress=%s price=%s",
+                    position.symbol,
+                    position.side,
+                    reason,
+                    f"{net_pnl_pct:+.2f}" if net_pnl_pct is not None else "n/a",
+                    f"{progress:.2f}" if progress is not None else "n/a",
+                    self._format_price(current_price),
+                )
+                return self._close_position_for_exit(position, current_price=current_price, reason="STAGNATION_EXIT")
+            if changed:
+                self._save_state()
         trailing_drawdown_pct = float(metadata.get("trailing_exit_drawdown_pct", scoped.trailing_exit_drawdown_pct) or scoped.trailing_exit_drawdown_pct)
         trailing_activation_progress = float(metadata.get("trailing_exit_activation_progress", scoped.trailing_exit_activation_progress) or scoped.trailing_exit_activation_progress)
         trailing_min_profit_pct = float(metadata.get("early_exit_min_profit_pct", scoped.early_exit_min_profit_pct) or scoped.early_exit_min_profit_pct)
@@ -2655,7 +2705,24 @@ class FuturesRuntime:
                 signal.score,
                 score,
             )
-        return dataclasses.replace(signal, score=round(score, 2), leverage=leverage, metadata=opportunity_metadata(metadata, score))
+        adjusted = dataclasses.replace(signal, score=round(score, 2), leverage=leverage, metadata=opportunity_metadata(metadata, score))
+        quality = evaluate_adverse_event_quality(
+            adjusted,
+            min_confidence_score=self._config_for_symbol(signal.symbol).min_confidence_score,
+        )
+        if not quality.allowed:
+            log.info(
+                "Signal scan: %s %s blocked by adverse crypto event quality gate (%s net_rr=%s min_net_rr=%s score=%s min_score=%s)",
+                adjusted.symbol,
+                adjusted.side,
+                quality.reason,
+                f"{quality.net_rr:.2f}" if quality.net_rr is not None else "n/a",
+                f"{quality.min_net_rr:.2f}" if quality.min_net_rr is not None else "n/a",
+                f"{quality.score:.1f}" if quality.score is not None else "n/a",
+                f"{quality.min_score:.1f}" if quality.min_score is not None else "n/a",
+            )
+            return None
+        return adjusted
 
     # ------------------------------------------------------------------
     # Sprint 1 helpers — all no-ops unless the matching env flag is set.

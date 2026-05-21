@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from futuresbot.models import FuturesPosition
 
 
@@ -12,6 +14,16 @@ PROFIT_LOCK_PEAK_USDT_KEY = "profit_lock_peak_pnl_usdt"
 PROFIT_LOCK_PEAK_PRICE_KEY = "profit_lock_peak_price"
 PROFIT_LOCK_STOP_PCT_KEY = "profit_lock_stop_pnl_pct"
 PROFIT_LOCK_STOP_GROSS_PCT_KEY = "profit_lock_stop_gross_pnl_pct"
+STAGNATION_EXIT_PEAK_PROGRESS_KEY = "stagnation_exit_peak_tp_progress"
+STAGNATION_EXIT_PEAK_PRICE_KEY = "stagnation_exit_peak_price"
+STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS = frozenset(
+    {
+        "IMPULSE_EVENT_CONTINUATION_LONG",
+        "IMPULSE_EVENT_CONTINUATION_SHORT",
+        "EVENT_CATALYST_LONG",
+        "EVENT_CATALYST_SHORT",
+    }
+)
 
 
 def _total_and_current_move(position: FuturesPosition, price: float) -> tuple[float, float]:
@@ -31,6 +43,13 @@ def trailing_activation_reached(
     if total_move <= 0 or current_move <= 0 or position.entry_price <= 0:
         return False
     return current_move / total_move >= activation_progress and current_move / position.entry_price >= min_profit_pct
+
+
+def tp_progress(position: FuturesPosition, price: float) -> float | None:
+    total_move, current_move = _total_and_current_move(position, price)
+    if total_move <= 0:
+        return None
+    return current_move / total_move
 
 
 def is_trailing_exit_armed(position: FuturesPosition) -> bool:
@@ -150,6 +169,19 @@ def _metadata_float(metadata: dict, key: str) -> float | None:
     return value if value != 0.0 else None
 
 
+def _normalized_entry_signals(value: object) -> set[str]:
+    if value is None:
+        return set(STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS)
+    if isinstance(value, str):
+        raw_items = value.replace(";", ",").replace(" ", ",").split(",")
+    else:
+        try:
+            raw_items = list(value)  # type: ignore[arg-type]
+        except TypeError:
+            raw_items = []
+    return {str(item).strip().upper() for item in raw_items if str(item).strip()}
+
+
 def position_margin_pnl_usdt(position: FuturesPosition, price: float) -> float:
     if price <= 0:
         return 0.0
@@ -174,6 +206,77 @@ def position_net_pnl_pct(position: FuturesPosition, price: float, taker_fee_rate
         return None
     net_pnl = position_margin_pnl_usdt(position, price) - estimated_round_trip_fees_usdt(position, price, taker_fee_rate)
     return net_pnl / position.margin_usdt * 100.0
+
+
+def _opened_at_utc(position: FuturesPosition) -> datetime | None:
+    opened_at = getattr(position, "opened_at", None)
+    if isinstance(opened_at, datetime):
+        return opened_at.astimezone(timezone.utc) if opened_at.tzinfo else opened_at.replace(tzinfo=timezone.utc)
+    if not opened_at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def evaluate_stagnation_exit(
+    position: FuturesPosition,
+    price: float,
+    *,
+    now: datetime,
+    activation_minutes: float,
+    max_peak_progress: float,
+    min_peak_progress: float,
+    retrace_fraction: float,
+    min_net_pnl_pct: float,
+    taker_fee_rate: float,
+    require_chase_watch: bool = True,
+) -> tuple[bool, bool, str]:
+    if activation_minutes <= 0 or price <= 0:
+        return False, False, "disabled"
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    allowed_signals = _normalized_entry_signals(metadata.get("stagnation_exit_entry_signals"))
+    if allowed_signals and str(position.entry_signal).upper() not in allowed_signals:
+        return False, False, "unsupported_entry_signal"
+    if require_chase_watch and not bool(metadata.get("late_impulse_chase_watch")):
+        return False, False, "no_chase_watch"
+
+    progress = tp_progress(position, price)
+    if progress is None:
+        return False, False, "no_tp_progress"
+    changed = False
+    stored_peak = _metadata_float(metadata, STAGNATION_EXIT_PEAK_PROGRESS_KEY) or 0.0
+    peak_progress = max(stored_peak, progress)
+    if peak_progress > stored_peak:
+        metadata[STAGNATION_EXIT_PEAK_PROGRESS_KEY] = float(peak_progress)
+        metadata[STAGNATION_EXIT_PEAK_PRICE_KEY] = float(price)
+        changed = True
+
+    opened_at = _opened_at_utc(position)
+    if opened_at is None:
+        return False, changed, "missing_opened_at"
+    current = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    elapsed_minutes = (current - opened_at).total_seconds() / 60.0
+    if elapsed_minutes < activation_minutes:
+        return False, changed, "too_young"
+    if peak_progress < max(0.0, min_peak_progress):
+        return False, changed, "peak_too_small"
+    if peak_progress > max(0.0, max_peak_progress):
+        return False, changed, "peak_not_stagnant"
+
+    bounded_retrace = min(1.0, max(0.0, retrace_fraction))
+    if progress > max(0.0, peak_progress * (1.0 - bounded_retrace)):
+        return False, changed, "not_retraced"
+    net_pnl_pct = position_net_pnl_pct(position, price, taker_fee_rate)
+    if net_pnl_pct is None:
+        return False, changed, "no_net_pnl"
+    if net_pnl_pct < min_net_pnl_pct:
+        return False, changed, "loss_too_deep"
+    return True, changed, "stagnation_retrace"
 
 
 def price_for_margin_pnl_pct(position: FuturesPosition, pnl_pct: float) -> float | None:

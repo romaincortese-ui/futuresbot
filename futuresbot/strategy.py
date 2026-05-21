@@ -13,7 +13,13 @@ from futuresbot.opportunity_score import opportunity_metadata
 
 
 _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
-    "BTC_USDT": ("MOMENTUM_BREAKAWAY_LONG", "MOMENTUM_BREAKAWAY_SHORT", "BTC_ROUND_LEVEL_LONG", "LEVEL_BREAK_SHORT"),
+    "BTC_USDT": (
+        "MOMENTUM_BREAKAWAY_LONG",
+        "MOMENTUM_BREAKAWAY_SHORT",
+        "BTC_ROUND_LEVEL_LONG",
+        "BREAKOUT_HOLD_LONG",
+        "LEVEL_BREAK_SHORT",
+    ),
     "ETH_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT"),
     "SOL_USDT": ("TREND_CONTINUATION_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT", "MAJOR_THRESHOLD_LONG"),
     "BNB_USDT": (
@@ -764,6 +770,38 @@ def score_btc_futures_setup(
         and event_long_near_high
         and not event_long_fresh_break
     )
+    late_impulse_guard_enabled = _env_bool("FUTURES_LATE_IMPULSE_CHASE_GUARD_ENABLED", True)
+    late_impulse_near_extreme_pct = max(
+        0.0,
+        _env_float("FUTURES_LATE_IMPULSE_CHASE_NEAR_EXTREME_PCT", event_anti_chase_near_extreme_pct),
+    )
+    late_impulse_near_extreme_atr = max(
+        0.0,
+        _env_float("FUTURES_LATE_IMPULSE_CHASE_NEAR_EXTREME_ATR", event_anti_chase_near_extreme_atr),
+    )
+    late_impulse_min_move_atr = max(0.0, _env_float("FUTURES_LATE_IMPULSE_CHASE_MIN_MOVE_ATR", 2.25))
+    late_impulse_adverse_min_move_atr = max(0.0, _env_float("FUTURES_LATE_IMPULSE_CHASE_ADVERSE_MIN_MOVE_ATR", 0.90))
+    late_impulse_watch_min_move_atr = max(0.0, _env_float("FUTURES_LATE_IMPULSE_CHASE_WATCH_MIN_MOVE_ATR", 0.90))
+    late_impulse_adverse_bias_min = max(0.0, _env_float("FUTURES_LATE_IMPULSE_CHASE_ADVERSE_BIAS_MIN", 0.35))
+    late_impulse_require_adverse_bias = _env_bool("FUTURES_LATE_IMPULSE_CHASE_REQUIRE_ADVERSE_BIAS", True)
+    late_short_near_low = distance_to_recent_low_pct <= late_impulse_near_extreme_pct or distance_to_recent_low_atr <= late_impulse_near_extreme_atr
+    late_long_near_high = distance_to_recent_high_pct <= late_impulse_near_extreme_pct or distance_to_recent_high_atr <= late_impulse_near_extreme_atr
+    late_short_adverse_bias = float(event_bias_score or 0.0) >= late_impulse_adverse_bias_min
+    late_long_adverse_bias = float(event_bias_score or 0.0) <= -late_impulse_adverse_bias_min
+    late_short_min_move_atr = late_impulse_adverse_min_move_atr if late_short_adverse_bias else late_impulse_min_move_atr
+    late_long_min_move_atr = late_impulse_adverse_min_move_atr if late_long_adverse_bias else late_impulse_min_move_atr
+    late_impulse_short_chase_watch = late_impulse_guard_enabled and late_short_near_low and not event_short_fresh_break and impulse_move_atr >= late_impulse_watch_min_move_atr
+    late_impulse_long_chase_watch = late_impulse_guard_enabled and late_long_near_high and not event_long_fresh_break and impulse_move_atr >= late_impulse_watch_min_move_atr
+    late_impulse_short_chase_block = (
+        late_impulse_short_chase_watch
+        and (not late_impulse_require_adverse_bias or late_short_adverse_bias)
+        and impulse_move_atr >= late_short_min_move_atr
+    )
+    late_impulse_long_chase_block = (
+        late_impulse_long_chase_watch
+        and (not late_impulse_require_adverse_bias or late_long_adverse_bias)
+        and impulse_move_atr >= late_long_min_move_atr
+    )
     impulse_volume_ok = volume_ratio >= impulse_volume_floor
     prior_volume_end = max(0, len(volume_15) - impulse_lookback_bars)
     prior_volume_start = max(0, prior_volume_end - config.consolidation_window_bars)
@@ -1454,6 +1492,7 @@ def score_btc_futures_setup(
     impulse_long_ok = (
         impulse_enabled
         and not event_long_anti_chase_block
+        and not late_impulse_long_chase_block
         and impulse_move_pct >= impulse_min_move_pct
         and impulse_move_atr >= impulse_min_move_atr
         and impulse_volume_ok
@@ -1469,6 +1508,7 @@ def score_btc_futures_setup(
         impulse_enabled
         and not btc_short_uptrend_guard_active
         and not event_short_anti_chase_block
+        and not late_impulse_short_chase_block
         and impulse_move_pct <= -impulse_min_move_pct
         and impulse_move_atr >= impulse_min_move_atr
         and impulse_volume_ok
@@ -1515,6 +1555,7 @@ def score_btc_futures_setup(
         event_active
         and event_bias_score > 0
         and not event_long_anti_chase_block
+        and not late_impulse_long_chase_block
         and current_adx >= event_adx_min
         and volume_ratio >= event_volume_floor
         and impulse_move_pct >= event_min_move_pct
@@ -1529,6 +1570,7 @@ def score_btc_futures_setup(
         and not btc_short_uptrend_guard_active
         and event_bias_score < 0
         and not event_short_anti_chase_block
+        and not late_impulse_short_chase_block
         and current_adx >= event_adx_min
         and volume_ratio >= event_volume_floor
         and impulse_move_pct <= -event_min_move_pct
@@ -1967,6 +2009,9 @@ def score_btc_futures_setup(
                     "event_distance_to_recent_high_pct": round(distance_to_recent_high_pct, 6),
                     "event_distance_to_recent_high_atr": round(distance_to_recent_high_atr, 4),
                     "event_fresh_break": 1.0 if event_long_fresh_break else 0.0,
+                    "late_impulse_chase_watch": 1.0 if late_impulse_long_chase_watch else 0.0,
+                    "late_impulse_chase_block": 1.0 if late_impulse_long_chase_block else 0.0,
+                    "late_impulse_adverse_bias": 1.0 if late_long_adverse_bias else 0.0,
                     "market_gate_penalty": directional_market_penalty("LONG") if impulse_path or event_path else 0.0,
                     "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                     "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
@@ -2157,6 +2202,9 @@ def score_btc_futures_setup(
                 "event_distance_to_recent_low_pct": round(distance_to_recent_low_pct, 6),
                 "event_distance_to_recent_low_atr": round(distance_to_recent_low_atr, 4),
                 "event_fresh_break": 1.0 if event_short_fresh_break else 0.0,
+                "late_impulse_chase_watch": 1.0 if late_impulse_short_chase_watch else 0.0,
+                "late_impulse_chase_block": 1.0 if late_impulse_short_chase_block else 0.0,
+                "late_impulse_adverse_bias": 1.0 if late_short_adverse_bias else 0.0,
                 "market_gate_penalty": directional_market_penalty("SHORT") if impulse_path or event_path else 0.0,
                 "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                 "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
@@ -2214,6 +2262,18 @@ def diagnose_impulse_rejection(frame_15m: pd.DataFrame, config: StrategyConfig) 
         close_buffer = _env_float("FUTURES_IMPULSE_CLOSE_BUFFER_ATR", 0.35)
         close_near_high = current_price >= recent_close_high - current_atr_15 * close_buffer
         close_near_low = current_price <= recent_close_low + current_atr_15 * close_buffer
+        recent_high = float(frame_15m["high"].astype(float).iloc[-lookback:].max())
+        recent_low = float(frame_15m["low"].astype(float).iloc[-lookback:].min())
+        distance_to_low = max(0.0, current_price - recent_low)
+        distance_to_high = max(0.0, recent_high - current_price)
+        distance_to_low_pct = distance_to_low / current_price if current_price > 0 else 999.0
+        distance_to_high_pct = distance_to_high / current_price if current_price > 0 else 999.0
+        distance_to_low_atr = distance_to_low / current_atr_15 if current_atr_15 > 0 else 999.0
+        distance_to_high_atr = distance_to_high / current_atr_15 if current_atr_15 > 0 else 999.0
+        late_near_pct = _env_float("FUTURES_LATE_IMPULSE_CHASE_NEAR_EXTREME_PCT", 0.0025)
+        late_near_atr = _env_float("FUTURES_LATE_IMPULSE_CHASE_NEAR_EXTREME_ATR", 0.30)
+        late_near_low = distance_to_low_pct <= late_near_pct or distance_to_low_atr <= late_near_atr
+        late_near_high = distance_to_high_pct <= late_near_pct or distance_to_high_atr <= late_near_atr
         volume_baseline = max(1e-9, float(volume_15.iloc[-(config.consolidation_window_bars + 1):-1].mean()))
         volume_ratio = float(volume_15.iloc[-1]) / volume_baseline
         prior_volume_end = max(0, len(volume_15) - lookback)
@@ -2238,7 +2298,10 @@ def diagnose_impulse_rejection(frame_15m: pd.DataFrame, config: StrategyConfig) 
             f"rsi_1h={current_rsi_1h:.1f} rsi_15={current_rsi_15:.1f} "
             f"trend_6h={trend_6h:+.4f} ema_slope={ema_slope:+.4f} "
             f"ema_extension_atr={ema_extension:.2f} max={_env_float('FUTURES_IMPULSE_MAX_EMA_EXTENSION_ATR', 2.75):.2f} "
-            f"close_near_high={close_near_high} close_near_low={close_near_low} body_atr={body_atr:.2f}"
+            f"close_near_high={close_near_high} close_near_low={close_near_low} body_atr={body_atr:.2f} "
+            f"late_near_high={late_near_high} late_near_low={late_near_low} "
+            f"late_distance_high_atr={distance_to_high_atr:.2f} late_distance_low_atr={distance_to_low_atr:.2f} "
+            f"late_guard_min_atr={_env_float('FUTURES_LATE_IMPULSE_CHASE_MIN_MOVE_ATR', 2.25):.2f}"
         )
     except Exception as exc:
         return f"impulse_diagnostic_error={type(exc).__name__}"
