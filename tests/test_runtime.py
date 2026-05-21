@@ -1724,6 +1724,78 @@ def test_live_enter_trade_registers_only_confirmed_exchange_position(tmp_path, m
     assert any("Futures Position Opened" in message for message in sent_messages)
 
 
+def test_live_enter_trade_caps_order_to_available_balance(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "0")
+    monkeypatch.setenv("FUTURES_MAX_MARGIN_FRACTION", "0.85")
+
+    class LowBalanceEntryClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.orders: list[dict[str, object]] = []
+
+        def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
+            return {"availableBalance": "42.74957342270529", "equity": "150.0"}
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            return {"orderId": "entry-low-balance"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            volume = str(self.orders[-1]["vol"])
+            return {"orderId": order_id, "dealAvgPrice": "100.0", "dealVol": volume, "positionId": "pos-low-balance"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            volume = str(self.orders[-1]["vol"])
+            margin = float(self.orders[-1]["vol"]) * 100.0 / float(self.orders[-1]["leverage"])
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "positionType": 1,
+                    "holdVol": volume,
+                    "holdAvgPrice": "100.0",
+                    "im": str(margin),
+                    "leverage": str(self.orders[-1]["leverage"]),
+                    "positionId": "pos-low-balance",
+                }
+            ]
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=150.0), LowBalanceEntryClient())
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "LONG",
+        "entry_price": 100.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 104.0,
+        "sl_price": 98.0,
+        "score": 70.0,
+        "certainty": 0.75,
+        "entry_signal": "EVENT_CATALYST_LONG",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    order = runtime.client.orders[-1]
+    order_margin = order["vol"] * 1.0 * signal["entry_price"] / order["leverage"]
+    uncapped_contracts = int((150.0 * order["leverage"] / signal["entry_price"]) / 1.0)
+    assert order["vol"] < uncapped_contracts
+    assert order_margin <= 42.74957342270529 * 0.85
+    position = runtime.open_positions["BTC_USDT"]
+    assert position.contracts == order["vol"]
+    assert position.metadata["live_margin_budget_capped"] is True
+
+
 def test_live_enter_trade_enforces_production_leverage_bounds(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
     monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")

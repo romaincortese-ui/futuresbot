@@ -4177,6 +4177,25 @@ class FuturesRuntime:
             )
         else:
             margin_budget = scoped.margin_budget_usdt * capital_multiplier * event_margin_multiplier
+        if not self.config.paper_trade:
+            live_margin_fraction = max(0.0, min(1.0, float(getattr(scoped, "max_margin_fraction", self.config.max_margin_fraction) or 0.0)))
+            live_margin_cap = available_balance * live_margin_fraction if available_balance > 0 else 0.0
+            if live_margin_cap <= 0:
+                log.info("Futures signal skipped for %s: no live available margin", symbol)
+                return False
+            if margin_budget > live_margin_cap:
+                log.info(
+                    "[LIVE_MARGIN_CAP] symbol=%s margin_budget=%.2f capped=%.2f available=%.2f fraction=%.2f",
+                    symbol,
+                    margin_budget,
+                    live_margin_cap,
+                    available_balance,
+                    live_margin_fraction,
+                )
+                margin_budget = live_margin_cap
+                signal_metadata["live_margin_budget_capped"] = True
+                signal_metadata["live_available_balance_usdt"] = round(available_balance, 4)
+                signal_metadata["live_margin_cap_usdt"] = round(live_margin_cap, 4)
         if event_margin_multiplier < 1.0:
             log.info(
                 "[SHARP_EVENT_RISK] symbol=%s multiplier=%.2f margin_budget=%.2f base_margin_budget=%.2f",
@@ -4270,6 +4289,42 @@ class FuturesRuntime:
             log.info("Futures signal skipped: contracts below min volume")
             return False
         projected_margin = contracts * contract_size * entry_price / leverage
+        if not self.config.paper_trade:
+            latest_snapshot = self._account_snapshot(entry_price)
+            latest_available = float(latest_snapshot.get("available_usdt", 0.0) or 0.0) or available_balance
+            live_margin_fraction = max(0.0, min(1.0, float(getattr(scoped, "max_margin_fraction", self.config.max_margin_fraction) or 0.0)))
+            live_margin_cap = latest_available * live_margin_fraction if latest_available > 0 else 0.0
+            if live_margin_cap <= 0:
+                log.info("Futures signal skipped for %s: no live available margin before order", symbol)
+                return False
+            if projected_margin > live_margin_cap:
+                capped_contracts = int((live_margin_cap * leverage) / (contract_size * entry_price)) if contract_size > 0 and entry_price > 0 else 0
+                if capped_contracts < min_vol:
+                    log.info(
+                        "Futures signal skipped for %s: live available margin too low (projected=%.2f cap=%.2f available=%.2f min_vol=%s)",
+                        symbol,
+                        projected_margin,
+                        live_margin_cap,
+                        latest_available,
+                        min_vol,
+                    )
+                    return False
+                log.info(
+                    "[LIVE_MARGIN_CAP] symbol=%s contracts=%s capped_contracts=%s projected_margin=%.2f cap=%.2f available=%.2f fraction=%.2f",
+                    symbol,
+                    contracts,
+                    capped_contracts,
+                    projected_margin,
+                    live_margin_cap,
+                    latest_available,
+                    live_margin_fraction,
+                )
+                signal_metadata["live_contracts_capped"] = True
+                signal_metadata["live_original_contracts"] = int(contracts)
+                signal_metadata["live_available_balance_usdt"] = round(latest_available, 4)
+                signal_metadata["live_margin_cap_usdt"] = round(live_margin_cap, 4)
+                contracts = capped_contracts
+                projected_margin = contracts * contract_size * entry_price / leverage
         # Portfolio margin cap. Default 0 means: cap = max_concurrent_positions * margin_budget.
         cap = self.config.max_total_margin_usdt
         if cap <= 0:
