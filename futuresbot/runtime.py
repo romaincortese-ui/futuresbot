@@ -794,6 +794,17 @@ class FuturesRuntime:
         pnl = self._position_pnl_usdt(position, current_price)
         return pnl / position.margin_usdt * 100.0
 
+    def _position_stop_risk_usdt(self, position: FuturesPosition | None) -> float | None:
+        if position is None or position.entry_price <= 0 or position.sl_price <= 0 or position.base_qty <= 0:
+            return None
+        return abs(position.entry_price - position.sl_price) * position.base_qty
+
+    def _position_stop_risk_pct_of_margin(self, position: FuturesPosition | None) -> float | None:
+        stop_risk = self._position_stop_risk_usdt(position)
+        if position is None or stop_risk is None or position.margin_usdt <= 0:
+            return None
+        return stop_risk / position.margin_usdt * 100.0
+
     @staticmethod
     def _metadata_float(metadata: dict[str, Any], key: str) -> float | None:
         try:
@@ -997,7 +1008,7 @@ class FuturesRuntime:
         return (
             f"Last: <b>{html.escape(str(trade.get('symbol', self.config.symbol)))}</b> "
             f"{html.escape(_exit_reason_label(trade.get('exit_reason', 'CLOSED'), pnl_usdt=pnl_usdt, pnl_pct=pnl_pct))} | "
-            f"<b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}%)"
+            f"<b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}% of margin)"
         )
 
     def _signal_line(self, signal: dict[str, Any] | None) -> str:
@@ -1040,8 +1051,12 @@ class FuturesRuntime:
                 progress = self._tp_progress(position, mark)
                 progress_text = f" | TP {progress * 100:.0f}%" if progress is not None and math.isfinite(progress) else ""
                 pnl_text = f"${pnl_usdt:+.2f}" if mark is not None else "n/a"
-                pct_text = f" ({pnl_pct:+.2f}%)" if pnl_pct is not None else ""
+                pct_text = f" ({pnl_pct:+.2f}% of margin)" if pnl_pct is not None else ""
                 mark_text = f"${self._format_price(mark)}" if mark else "n/a"
+                stop_risk = self._position_stop_risk_usdt(position)
+                stop_risk_pct = self._position_stop_risk_pct_of_margin(position)
+                stop_risk_text = f"${stop_risk:.2f}" if stop_risk is not None else "n/a"
+                stop_risk_pct_text = f" ({stop_risk_pct:.2f}% of margin)" if stop_risk_pct is not None else ""
                 lines.append(
                     f"<b>{html.escape(position.side)}</b> {html.escape(position.symbol)} x{position.leverage} | "
                     f"{html.escape(position.entry_signal)} | margin <b>${position.margin_usdt:.2f}</b>"
@@ -1051,6 +1066,7 @@ class FuturesRuntime:
                     f"TP <b>${self._format_price(position.tp_price)}</b> | SL <b>${self._format_price(position.sl_price)}</b>"
                 )
                 lines.append(f"  PnL: <b>{pnl_text}</b>{pct_text}{progress_text}")
+                lines.append(f"  Risk at SL: <b>{stop_risk_text}</b>{stop_risk_pct_text}")
             if self._available_slots() > 0:
                 lines.append(self._signal_line(signal))
         last_trade = self._last_trade_line()
@@ -1086,10 +1102,12 @@ class FuturesRuntime:
                 mark = price_map.get(position.symbol)
                 pnl_usdt = self._position_pnl_usdt(position, mark)
                 pnl_pct = self._position_pnl_pct(position, mark)
-                pct_text = f" ({pnl_pct:+.2f}%)" if pnl_pct is not None else ""
+                pct_text = f" ({pnl_pct:+.2f}% of margin)" if pnl_pct is not None else ""
+                stop_risk = self._position_stop_risk_usdt(position)
+                stop_risk_text = f" | risk at SL ${stop_risk:.2f}" if stop_risk is not None else ""
                 lines.append(
                     f"• <b>{html.escape(position.side)}</b> {html.escape(position.symbol)} | "
-                    f"entry ${self._format_price(position.entry_price)} | unrealized <b>${pnl_usdt:+.2f}</b>{pct_text}"
+                    f"entry ${self._format_price(position.entry_price)} | unrealized <b>${pnl_usdt:+.2f}</b>{pct_text}{stop_risk_text}"
                 )
         last_trade = self._last_trade_line()
         if last_trade:
@@ -1106,12 +1124,17 @@ class FuturesRuntime:
         return "\n".join(lines)
 
     def _entry_message(self, position: FuturesPosition) -> str:
+        stop_risk = self._position_stop_risk_usdt(position)
+        stop_risk_pct = self._position_stop_risk_pct_of_margin(position)
+        stop_risk_text = f"${stop_risk:.2f}" if stop_risk is not None else "n/a"
+        stop_risk_pct_text = f" ({stop_risk_pct:.2f}% of margin)" if stop_risk_pct is not None else ""
         return (
             f"🚀 <b>Futures Position Opened</b> [{self._mode_label()}]\n"
             f"━━━━━━━━━━━━━━━\n"
             f"<b>{html.escape(position.side)}</b> {html.escape(position.symbol)} | {html.escape(position.entry_signal)}\n"
             f"Entry <b>${self._format_price(position.entry_price)}</b> | x{position.leverage} | margin <b>${position.margin_usdt:.2f}</b>\n"
             f"TP <b>${self._format_price(position.tp_price)}</b> | SL <b>${self._format_price(position.sl_price)}</b>\n"
+            f"Risk at SL <b>{stop_risk_text}</b>{stop_risk_pct_text}\n"
             f"Score {position.score:.1f} | Cert {position.certainty * 100:.0f}%"
         )
 
@@ -1125,7 +1148,7 @@ class FuturesRuntime:
             f"<b>{html.escape(str(trade.get('side') or '?'))}</b> {html.escape(str(trade.get('symbol') or self.config.symbol))}\n"
             f"Reason: <b>{html.escape(reason_label)}</b>\n"
             f"Entry <b>${self._format_price(float(trade.get('entry_price') or 0.0))}</b> | Exit <b>${self._format_price(float(trade.get('exit_price') or 0.0))}</b>\n"
-            f"PnL <b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}%)"
+            f"PnL <b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}% of margin)"
         )
 
     def _send_startup_message(self) -> None:
