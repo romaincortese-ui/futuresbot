@@ -14,6 +14,7 @@ from futuresbot.opportunity_score import opportunity_metadata
 
 _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
     "BTC_USDT": (
+        "COIL_BREAKOUT_LONG",
         "MOMENTUM_BREAKAWAY_LONG",
         "MOMENTUM_BREAKAWAY_SHORT",
         "BTC_ROUND_LEVEL_LONG",

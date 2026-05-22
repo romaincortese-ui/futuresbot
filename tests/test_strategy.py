@@ -52,7 +52,8 @@ def _disable_competing_entry_paths(monkeypatch):
     monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
 
 
-def test_strategy_produces_long_signal_on_uptrend_breakout():
+def test_strategy_produces_long_signal_on_uptrend_breakout(monkeypatch):
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     base = [90000 + idx * 12 + math.sin(idx / 5.0) * 38 + math.cos(idx / 11.0) * 22 + ((idx % 5) - 2) * 14 for idx in range(520)]
     base[-20:-1] = [base[-21] + ((idx % 4) - 1) * 15 for idx in range(19)]
     base[-1] = max(base[-20:-1]) + 220
@@ -107,14 +108,14 @@ def test_late_impulse_chase_guard_blocks_adverse_short_near_low(monkeypatch):
 def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     cfg = replace(_config(), symbol="BTC_USDT")
 
-    assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+    assert _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_SHORT")
     assert _entry_signal_disabled(cfg, "BTC_ROUND_LEVEL_LONG")
     assert _entry_signal_disabled(cfg, "BREAKOUT_HOLD_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
 
-    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "COIL_BREAKOUT_LONG")
-    assert _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+    monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "PRESSURE_BREAK_LONG")
+    assert _entry_signal_disabled(cfg, "PRESSURE_BREAK_LONG")
 
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     assert not _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")

@@ -1117,7 +1117,7 @@ def test_micro_lock_bar_honors_position_overrides():
     assert second[1] == "MICRO_PROFIT_LOCK"
 
 
-def test_micro_lock_bar_ignores_non_event_entry_signal_by_default():
+def test_micro_lock_bar_protects_trend_lane_by_default():
     position = FuturesPosition(
         symbol="SEI_USDT",
         side="LONG",
@@ -1148,7 +1148,131 @@ def test_micro_lock_bar_ignores_non_event_entry_signal_by_default():
     )
 
     assert exit_result is None
-    assert changed is False
+    assert changed is True
+    assert round(position.metadata["micro_profit_lock_peak_gross_pnl_pct"], 3) == 10.0
+    assert round(position.metadata["micro_profit_lock_stop_gross_pnl_pct"], 3) == 5.5
+
+    second, _changed = evaluate_micro_lock_bar(
+        position,
+        high=101.0,
+        low=100.2,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+    )
+
+    assert second is not None
+    assert round(second[0], 4) == 100.55
+    assert second[1] == "MICRO_PROFIT_LOCK"
+
+
+def test_micro_lock_bar_protects_any_lane_even_with_old_env_lane_list():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="SHORT",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=10,
+        margin_usdt=10.0,
+        tp_price=92.0,
+        sl_price=103.0,
+        position_id="micro-lock-mean-reversion",
+        order_id="entry-micro-lock-mean-reversion",
+        opened_at=datetime(2026, 5, 22, 12, 20, tzinfo=timezone.utc),
+        score=73.0,
+        certainty=0.7,
+        entry_signal="MEAN_REVERSION",
+    )
+
+    first, changed = evaluate_micro_lock_bar(
+        position,
+        high=99.8,
+        low=99.5,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+        entry_signals="IMPULSE_EVENT_CONTINUATION_LONG,IMPULSE_EVENT_CONTINUATION_SHORT",
+    )
+
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["micro_profit_lock_peak_gross_pnl_pct"], 3) == 5.0
+
+    second, _changed = evaluate_micro_lock_bar(
+        position,
+        high=99.8,
+        low=99.5,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+        entry_signals="IMPULSE_EVENT_CONTINUATION_LONG,IMPULSE_EVENT_CONTINUATION_SHORT",
+    )
+
+    assert second is not None
+    assert round(second[0], 4) == 99.725
+    assert second[1] == "MICRO_PROFIT_LOCK"
+
+
+def test_micro_lock_protects_sharp_event_breakout_even_with_old_env_lane_list():
+    position = FuturesPosition(
+        symbol="INJ_USDT",
+        side="LONG",
+        entry_price=5.492,
+        contracts=39,
+        contract_size=1.0,
+        leverage=5,
+        margin_usdt=42.9661128,
+        tp_price=6.08,
+        sl_price=5.40,
+        position_id="inj-sharp-event",
+        order_id="entry-inj-sharp-event",
+        opened_at=datetime(2026, 5, 22, 12, 20, tzinfo=timezone.utc),
+        score=86.0,
+        certainty=0.9,
+        entry_signal="SHARP_EVENT_BREAKOUT_LONG",
+        metadata={"sharp_event_synthetic_signal": 1.0},
+    )
+
+    first, changed = evaluate_micro_lock_bar(
+        position,
+        high=5.526,
+        low=5.514,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+        entry_signals="IMPULSE_EVENT_CONTINUATION_LONG,IMPULSE_EVENT_CONTINUATION_SHORT",
+    )
+
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["micro_profit_lock_peak_gross_pnl_pct"], 2) == 3.09
+    assert round(position.metadata["micro_profit_lock_peak_pnl_pct"], 2) == 2.49
+    assert position.metadata["micro_profit_lock_stop_gross_pnl_pct"] > 1.6
+
+    second, _changed = evaluate_micro_lock_bar(
+        position,
+        high=5.526,
+        low=5.500,
+        taker_fee_rate=0.0006,
+        trigger_pct=2.0,
+        pullback_fraction=0.45,
+        floor_pct=0.65,
+        min_exit_net_pct=0.05,
+        entry_signals="IMPULSE_EVENT_CONTINUATION_LONG,IMPULSE_EVENT_CONTINUATION_SHORT",
+    )
+
+    assert second is not None
+    assert round(second[0], 4) == 5.5107
+    assert second[1] == "MICRO_PROFIT_LOCK"
 
 
 def test_one_way_close_side_uses_opposite_reduce_only_direction(tmp_path):

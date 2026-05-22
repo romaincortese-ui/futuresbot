@@ -30,12 +30,7 @@ STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS = frozenset(
         "EVENT_CATALYST_SHORT",
     }
 )
-MICRO_LOCK_DEFAULT_ENTRY_SIGNALS = frozenset(
-    {
-        "IMPULSE_EVENT_CONTINUATION_LONG",
-        "IMPULSE_EVENT_CONTINUATION_SHORT",
-    }
-)
+MICRO_LOCK_DEFAULT_ENTRY_SIGNALS = frozenset({"*"})
 MICRO_LOCK_DEFAULT_RECOVERED_ENTRY_SIGNALS = frozenset({"RECOVERED"})
 
 MICRO_LOCK_DEFAULT_SYMBOLS = frozenset(
@@ -243,17 +238,10 @@ def micro_lock_eligible(
     if symbol in excluded:
         return False
 
-    allowed_entry_signals = _symbol_tokens(entry_signals) if entry_signals is not None else set(MICRO_LOCK_DEFAULT_ENTRY_SIGNALS)
-    if allowed_entry_signals and "*" not in allowed_entry_signals:
-        entry_signal = str(getattr(position, "entry_signal", "") or "").upper()
-        if entry_signal not in allowed_entry_signals:
-            recovered_signals = (
-                _symbol_tokens(recovered_entry_signals)
-                if recovered_entry_signals is not None
-                else set(MICRO_LOCK_DEFAULT_RECOVERED_ENTRY_SIGNALS)
-            )
-            if entry_signal not in recovered_signals or not included_by_symbol:
-                return False
+    # Entry-signal parameters are retained for env/backtest compatibility, but
+    # micro-lock protection is lane-agnostic: eligible positions should not give
+    # back small gains just because they came from a different setup lane.
+    _ = (entry_signals, recovered_entry_signals)
 
     if included_by_symbol:
         return True
