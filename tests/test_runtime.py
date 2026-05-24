@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
-from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
+from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.runtime import FuturesRuntime
 
@@ -762,6 +762,136 @@ def test_adverse_peak_trail_ignores_moves_below_trigger():
     assert exit_signal is None
     assert changed is True
     assert "adverse_peak_trail_stop_gross_pnl_pct" not in position.metadata
+
+
+def test_no_progress_exit_closes_after_warmup_loss(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "0")
+    monkeypatch.setenv("FUTURES_MICRO_LOCK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_NO_PROGRESS_EXIT_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_NO_PROGRESS_EXIT_MINUTES", "60")
+    monkeypatch.setenv("FUTURES_NO_PROGRESS_EXIT_LOSS_PCT", "1.75")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=1.0,
+        leverage=8,
+        margin_usdt=100.0,
+        tp_price=105.0,
+        sl_price=97.0,
+        position_id="paper-no-progress",
+        order_id="entry-no-progress",
+        opened_at=datetime(2026, 5, 24, 14, 0, tzinfo=timezone.utc),
+        score=79.0,
+        certainty=0.95,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=99.80, now=datetime(2026, 5, 24, 14, 45, tzinfo=timezone.utc)) is False
+
+    assert runtime._hourly_exit(position, current_price=99.80, now=datetime(2026, 5, 24, 15, 5, tzinfo=timezone.utc)) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "NO_PROGRESS_LOSS_EXIT"
+    assert runtime.trade_history[-1]["pnl_usdt"] < 0
+
+
+def test_no_progress_exit_ignores_trade_with_favorable_spark():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=1.0,
+        leverage=8,
+        margin_usdt=100.0,
+        tp_price=105.0,
+        sl_price=97.0,
+        position_id="paper-no-progress-spark",
+        order_id="entry-no-progress-spark",
+        opened_at=datetime(2026, 5, 24, 14, 0, tzinfo=timezone.utc),
+        score=79.0,
+        certainty=0.95,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+
+    exit_signal, changed = evaluate_no_progress_loss_exit(
+        position,
+        100.03,
+        now=datetime(2026, 5, 24, 14, 15, tzinfo=timezone.utc),
+        activation_minutes=60,
+        max_favorable_pct=0.25,
+        loss_pct=1.75,
+        tighten_after_minutes=180,
+        tightened_loss_pct=0.75,
+    )
+    assert exit_signal is None
+    assert changed is True
+    assert round(position.metadata["no_progress_exit_peak_gross_pnl_pct"], 3) == 0.3
+
+    exit_signal, changed = evaluate_no_progress_loss_exit(
+        position,
+        99.70,
+        now=datetime(2026, 5, 24, 15, 30, tzinfo=timezone.utc),
+        activation_minutes=60,
+        max_favorable_pct=0.25,
+        loss_pct=1.75,
+        tighten_after_minutes=180,
+        tightened_loss_pct=0.75,
+    )
+    assert exit_signal is None
+    assert changed is False
+
+
+def test_no_progress_exit_loss_limit_tightens_with_age():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=1.0,
+        leverage=8,
+        margin_usdt=100.0,
+        tp_price=105.0,
+        sl_price=97.0,
+        position_id="paper-no-progress-tighten",
+        order_id="entry-no-progress-tighten",
+        opened_at=datetime(2026, 5, 24, 14, 0, tzinfo=timezone.utc),
+        score=79.0,
+        certainty=0.95,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+    )
+
+    exit_signal, changed = evaluate_no_progress_loss_exit(
+        position,
+        99.90,
+        now=datetime(2026, 5, 24, 15, 5, tzinfo=timezone.utc),
+        activation_minutes=60,
+        max_favorable_pct=0.25,
+        loss_pct=1.75,
+        tighten_after_minutes=180,
+        tightened_loss_pct=0.75,
+    )
+    assert exit_signal is None
+    assert changed is True
+
+    exit_signal, changed = evaluate_no_progress_loss_exit(
+        position,
+        99.90,
+        now=datetime(2026, 5, 24, 17, 5, tzinfo=timezone.utc),
+        activation_minutes=60,
+        max_favorable_pct=0.25,
+        loss_pct=1.75,
+        tighten_after_minutes=180,
+        tightened_loss_pct=0.75,
+    )
+    assert changed is True
+    assert exit_signal == (99.90, "NO_PROGRESS_LOSS_EXIT")
+    assert round(position.metadata["no_progress_exit_loss_limit_gross_pnl_pct"], 3) == -0.75
 
 
 def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):

@@ -16,6 +16,7 @@ def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
         "BREAKEVEN_PROFIT_LOCK": "Breakeven protection exit",
         "BREAKEVEN_PROTECTION_GAP_EXIT": "Breakeven protection gap exit",
         "ADVERSE_PEAK_TRAIL": "Early adverse peak trail exit",
+        "NO_PROGRESS_LOSS_EXIT": "No-progress loss exit",
         "TRAILING_TAKE_PROFIT": "Trailing take profit",
         "HOURLY_TAKE_PROFIT": "Take profit",
         "TAKE_PROFIT": "Take profit",
@@ -82,7 +83,7 @@ from futuresbot.calibration import load_trade_calibration, setup_regime_for_sign
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
-from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lock_tick, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
+from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lock_tick, evaluate_no_progress_loss_exit, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -1011,6 +1012,39 @@ class FuturesRuntime:
                 f"{gross_pnl_pct:+.2f}" if gross_pnl_pct is not None else "n/a",
                 f"{peak_pct:+.2f}" if peak_pct is not None else "n/a",
                 f"{stop_pct:+.2f}" if stop_pct is not None else "n/a",
+                self._format_price(exit_price),
+            )
+            return self._close_position_for_exit(position, current_price=exit_price, reason=reason)
+        if changed:
+            self._save_state()
+        return False
+
+    def _no_progress_loss_exit(self, position: FuturesPosition, current_price: float, now: datetime | None = None) -> bool:
+        if os.environ.get("FUTURES_NO_PROGRESS_EXIT_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+            return False
+        no_progress_exit, changed = evaluate_no_progress_loss_exit(
+            position,
+            current_price,
+            now=now or datetime.now(timezone.utc),
+            activation_minutes=max(0.0, self._env_float("FUTURES_NO_PROGRESS_EXIT_MINUTES", 60.0)),
+            max_favorable_pct=max(0.0, self._env_float("FUTURES_NO_PROGRESS_EXIT_MAX_FAVORABLE_PCT", 0.25)),
+            loss_pct=max(0.0, self._env_float("FUTURES_NO_PROGRESS_EXIT_LOSS_PCT", 3.50)),
+            tighten_after_minutes=max(0.0, self._env_float("FUTURES_NO_PROGRESS_EXIT_TIGHTEN_AFTER_MINUTES", 180.0)),
+            tightened_loss_pct=max(0.0, self._env_float("FUTURES_NO_PROGRESS_EXIT_TIGHTENED_LOSS_PCT", 0.75)),
+        )
+        if no_progress_exit is not None:
+            exit_price, reason = no_progress_exit
+            metadata = position.metadata or {}
+            gross_pnl_pct = self._position_pnl_pct(position, current_price)
+            peak_pct = self._metadata_float(metadata, "no_progress_exit_peak_gross_pnl_pct")
+            loss_limit_pct = self._metadata_float(metadata, "no_progress_exit_loss_limit_gross_pnl_pct")
+            log.warning(
+                "[NO_PROGRESS_LOSS_EXIT] symbol=%s side=%s gross_pnl_pct=%s peak_pct=%s loss_limit_pct=%s price=%s",
+                position.symbol,
+                position.side,
+                f"{gross_pnl_pct:+.2f}" if gross_pnl_pct is not None else "n/a",
+                f"{peak_pct:+.2f}" if peak_pct is not None else "n/a",
+                f"{loss_limit_pct:+.2f}" if loss_limit_pct is not None else "n/a",
                 self._format_price(exit_price),
             )
             return self._close_position_for_exit(position, current_price=exit_price, reason=reason)
@@ -2030,6 +2064,8 @@ class FuturesRuntime:
         if self._micro_lock_exit(position, current_price):
             return True
         if self._adverse_peak_trail_exit(position, current_price):
+            return True
+        if self._no_progress_loss_exit(position, current_price, now=now):
             return True
         stagnation_enabled = os.environ.get("FUTURES_STAGNATION_EXIT_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
         if stagnation_enabled:

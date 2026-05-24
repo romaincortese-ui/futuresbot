@@ -23,6 +23,9 @@ MICRO_LOCK_RELEASED_KEY = "micro_profit_lock_released"
 ADVERSE_PEAK_TRAIL_PEAK_GROSS_PCT_KEY = "adverse_peak_trail_peak_gross_pnl_pct"
 ADVERSE_PEAK_TRAIL_PEAK_PRICE_KEY = "adverse_peak_trail_peak_price"
 ADVERSE_PEAK_TRAIL_STOP_GROSS_PCT_KEY = "adverse_peak_trail_stop_gross_pnl_pct"
+NO_PROGRESS_EXIT_PEAK_GROSS_PCT_KEY = "no_progress_exit_peak_gross_pnl_pct"
+NO_PROGRESS_EXIT_PEAK_PRICE_KEY = "no_progress_exit_peak_price"
+NO_PROGRESS_EXIT_LOSS_LIMIT_GROSS_PCT_KEY = "no_progress_exit_loss_limit_gross_pnl_pct"
 STAGNATION_EXIT_PEAK_PROGRESS_KEY = "stagnation_exit_peak_tp_progress"
 STAGNATION_EXIT_PEAK_PRICE_KEY = "stagnation_exit_peak_price"
 STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS = frozenset(
@@ -596,6 +599,101 @@ def evaluate_adverse_peak_trail_bar(
     if exit_price is None or exit_price <= 0:
         exit_price = adverse_price
     return (exit_price, "ADVERSE_PEAK_TRAIL"), changed
+
+
+def _update_no_progress_peak(position: FuturesPosition, price: float) -> tuple[bool, float]:
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    gross_pnl_pct = position_margin_pnl_pct(position, price)
+    if gross_pnl_pct is None:
+        return False, 0.0
+    changed = False
+    peak_pct = _metadata_float(metadata, NO_PROGRESS_EXIT_PEAK_GROSS_PCT_KEY) or 0.0
+    if gross_pnl_pct > peak_pct:
+        peak_pct = gross_pnl_pct
+        metadata[NO_PROGRESS_EXIT_PEAK_GROSS_PCT_KEY] = float(gross_pnl_pct)
+        metadata[NO_PROGRESS_EXIT_PEAK_PRICE_KEY] = float(price)
+        changed = True
+    return changed, peak_pct
+
+
+def _no_progress_loss_limit_pct(
+    elapsed_minutes: float,
+    *,
+    activation_minutes: float,
+    loss_pct: float,
+    tighten_after_minutes: float,
+    tightened_loss_pct: float,
+) -> float:
+    initial_loss_pct = max(0.0, loss_pct)
+    if initial_loss_pct <= 0:
+        return 0.0
+    final_loss_pct = max(0.0, tightened_loss_pct)
+    if final_loss_pct <= 0:
+        final_loss_pct = initial_loss_pct
+    final_loss_pct = min(initial_loss_pct, final_loss_pct)
+    if tighten_after_minutes <= activation_minutes:
+        return -final_loss_pct
+    if elapsed_minutes <= activation_minutes:
+        return -initial_loss_pct
+    if elapsed_minutes >= tighten_after_minutes:
+        return -final_loss_pct
+    age_progress = (elapsed_minutes - activation_minutes) / (tighten_after_minutes - activation_minutes)
+    loss_pct_now = initial_loss_pct + (final_loss_pct - initial_loss_pct) * max(0.0, min(1.0, age_progress))
+    return -loss_pct_now
+
+
+def evaluate_no_progress_loss_exit(
+    position: FuturesPosition,
+    price: float,
+    *,
+    now: datetime,
+    activation_minutes: float,
+    max_favorable_pct: float,
+    loss_pct: float,
+    tighten_after_minutes: float,
+    tightened_loss_pct: float,
+) -> tuple[tuple[float, str] | None, bool]:
+    if activation_minutes <= 0 or price <= 0:
+        return None, False
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    activation_minutes = _metadata_float(metadata, "no_progress_exit_minutes_override") or activation_minutes
+    max_favorable_pct = _metadata_float(metadata, "no_progress_exit_max_favorable_pct_override") or max_favorable_pct
+    loss_pct = _metadata_float(metadata, "no_progress_exit_loss_pct_override") or loss_pct
+    tighten_after_minutes = _metadata_float(metadata, "no_progress_exit_tighten_after_minutes_override") or tighten_after_minutes
+    tightened_loss_pct = _metadata_float(metadata, "no_progress_exit_tightened_loss_pct_override") or tightened_loss_pct
+
+    changed, peak_pct = _update_no_progress_peak(position, price)
+    if peak_pct >= max(0.0, max_favorable_pct):
+        return None, changed
+
+    opened_at = _opened_at_utc(position)
+    if opened_at is None:
+        return None, changed
+    current = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    elapsed_minutes = (current - opened_at).total_seconds() / 60.0
+    if elapsed_minutes < activation_minutes:
+        return None, changed
+
+    gross_pnl_pct = position_margin_pnl_pct(position, price)
+    if gross_pnl_pct is None:
+        return None, changed
+    loss_limit_pct = _no_progress_loss_limit_pct(
+        elapsed_minutes,
+        activation_minutes=activation_minutes,
+        loss_pct=loss_pct,
+        tighten_after_minutes=tighten_after_minutes,
+        tightened_loss_pct=tightened_loss_pct,
+    )
+    if metadata.get(NO_PROGRESS_EXIT_LOSS_LIMIT_GROSS_PCT_KEY) != loss_limit_pct:
+        metadata[NO_PROGRESS_EXIT_LOSS_LIMIT_GROSS_PCT_KEY] = float(loss_limit_pct)
+        changed = True
+    if gross_pnl_pct > loss_limit_pct:
+        return None, changed
+    return (price, "NO_PROGRESS_LOSS_EXIT"), changed
 
 
 def _opened_at_utc(position: FuturesPosition) -> datetime | None:

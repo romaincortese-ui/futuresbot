@@ -15,7 +15,7 @@ from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
-from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
+from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
@@ -700,6 +700,19 @@ class FuturesBacktestEngine:
 		return None
 
 	def _hourly_exit(self, position: FuturesPosition, close_price: float, now: datetime | None = None) -> tuple[float, str] | None:
+		if _env_bool("FUTURES_NO_PROGRESS_EXIT_ENABLED", True):
+			no_progress_exit, _changed = evaluate_no_progress_loss_exit(
+				position,
+				close_price,
+				now=now or datetime.now(timezone.utc),
+				activation_minutes=max(0.0, _env_float("FUTURES_NO_PROGRESS_EXIT_MINUTES", 60.0)),
+				max_favorable_pct=max(0.0, _env_float("FUTURES_NO_PROGRESS_EXIT_MAX_FAVORABLE_PCT", 0.25)),
+				loss_pct=max(0.0, _env_float("FUTURES_NO_PROGRESS_EXIT_LOSS_PCT", 3.50)),
+				tighten_after_minutes=max(0.0, _env_float("FUTURES_NO_PROGRESS_EXIT_TIGHTEN_AFTER_MINUTES", 180.0)),
+				tightened_loss_pct=max(0.0, _env_float("FUTURES_NO_PROGRESS_EXIT_TIGHTENED_LOSS_PCT", 0.75)),
+			)
+			if no_progress_exit is not None:
+				return no_progress_exit
 		if _env_bool("FUTURES_STAGNATION_EXIT_ENABLED", True):
 			should_close, _changed, _reason = evaluate_stagnation_exit(
 				position,

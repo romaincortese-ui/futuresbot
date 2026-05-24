@@ -37,6 +37,12 @@ os.environ.setdefault("FUTURES_ADVERSE_PEAK_TRAIL_TRIGGER_PCT", "0.25")
 os.environ.setdefault("FUTURES_ADVERSE_PEAK_TRAIL_GIVEBACK_PCT", "1.25")
 os.environ.setdefault("FUTURES_ADVERSE_PEAK_TRAIL_PULLBACK_FRACTION", "0.45")
 os.environ.setdefault("FUTURES_ADVERSE_PEAK_TRAIL_MAX_LOSS_PCT", "2.0")
+os.environ.setdefault("FUTURES_NO_PROGRESS_EXIT_ENABLED", "1")
+os.environ.setdefault("FUTURES_NO_PROGRESS_EXIT_MINUTES", "60")
+os.environ.setdefault("FUTURES_NO_PROGRESS_EXIT_MAX_FAVORABLE_PCT", "0.25")
+os.environ.setdefault("FUTURES_NO_PROGRESS_EXIT_LOSS_PCT", "3.5")
+os.environ.setdefault("FUTURES_NO_PROGRESS_EXIT_TIGHTEN_AFTER_MINUTES", "180")
+os.environ.setdefault("FUTURES_NO_PROGRESS_EXIT_TIGHTENED_LOSS_PCT", "0.75")
 os.environ.setdefault("USE_OPEN_POSITION_GUARD", "1")      # tight polling while a leveraged position is open
 os.environ.setdefault("USE_FUTURES_FAIR_PRICE_WS", "1")    # stream fair price during open-position guard, REST fallback on stale data
 os.environ.setdefault("FUTURES_FAIR_PRICE_WS_STALE_SECONDS", "5.0")
