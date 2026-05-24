@@ -31,11 +31,11 @@ jobs:
         # propagates downstream.
         run: |
           set -e
-          if find futuresbot -type d -name __pycache__ | grep . ; then
+          if git ls-files futuresbot | grep -E '(^|/)__pycache__/'; then
             echo "::error::__pycache__ directories committed under futuresbot/"
             exit 1
           fi
-          if find futuresbot -type f \( -name '*.pyc' -o -name '*.pyo' \) | grep . ; then
+          if git ls-files futuresbot | grep -E '\.py[co]$'; then
             echo "::error::compiled bytecode committed under futuresbot/"
             exit 1
           fi
