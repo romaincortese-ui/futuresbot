@@ -15,7 +15,7 @@ from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
-from futuresbot.exits import evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
+from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
@@ -655,6 +655,18 @@ class FuturesBacktestEngine:
 			)
 			if micro_lock_exit is not None:
 				return micro_lock_exit
+		if _env_bool("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", True):
+			adverse_peak_trail_exit, _changed = evaluate_adverse_peak_trail_bar(
+				position,
+				high=high,
+				low=low,
+				trigger_pct=max(0.0, _env_float("FUTURES_ADVERSE_PEAK_TRAIL_TRIGGER_PCT", 0.25)),
+				giveback_pct=max(0.0, _env_float("FUTURES_ADVERSE_PEAK_TRAIL_GIVEBACK_PCT", 1.25)),
+				pullback_fraction=_env_float("FUTURES_ADVERSE_PEAK_TRAIL_PULLBACK_FRACTION", 0.45),
+				max_loss_pct=max(0.0, _env_float("FUTURES_ADVERSE_PEAK_TRAIL_MAX_LOSS_PCT", 2.0)),
+			)
+			if adverse_peak_trail_exit is not None:
+				return adverse_peak_trail_exit
 		if position.side == "LONG":
 			if low <= position.sl_price:
 				return position.sl_price, "STOP_LOSS"

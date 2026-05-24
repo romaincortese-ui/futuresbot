@@ -15,6 +15,7 @@ def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
         "MICRO_PROTECTION_GAP_EXIT": "High-beta micro protection gap exit",
         "BREAKEVEN_PROFIT_LOCK": "Breakeven protection exit",
         "BREAKEVEN_PROTECTION_GAP_EXIT": "Breakeven protection gap exit",
+        "ADVERSE_PEAK_TRAIL": "Early adverse peak trail exit",
         "TRAILING_TAKE_PROFIT": "Trailing take profit",
         "HOURLY_TAKE_PROFIT": "Take profit",
         "TAKE_PROFIT": "Take profit",
@@ -81,7 +82,7 @@ from futuresbot.calibration import load_trade_calibration, setup_regime_for_sign
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
-from futuresbot.exits import evaluate_micro_lock_tick, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
+from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lock_tick, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -979,6 +980,37 @@ class FuturesRuntime:
                 position.side,
                 reason,
                 f"{net_pnl_pct:+.2f}" if net_pnl_pct is not None else "n/a",
+                self._format_price(exit_price),
+            )
+            return self._close_position_for_exit(position, current_price=exit_price, reason=reason)
+        if changed:
+            self._save_state()
+        return False
+
+    def _adverse_peak_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
+        if os.environ.get("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+            return False
+        adverse_exit, changed = evaluate_adverse_peak_trail_tick(
+            position,
+            current_price,
+            trigger_pct=max(0.0, self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_TRIGGER_PCT", 0.25)),
+            giveback_pct=max(0.0, self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_GIVEBACK_PCT", 1.25)),
+            pullback_fraction=self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_PULLBACK_FRACTION", 0.45),
+            max_loss_pct=max(0.0, self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_MAX_LOSS_PCT", 2.0)),
+        )
+        if adverse_exit is not None:
+            exit_price, reason = adverse_exit
+            metadata = position.metadata or {}
+            gross_pnl_pct = self._position_pnl_pct(position, current_price)
+            peak_pct = self._metadata_float(metadata, "adverse_peak_trail_peak_gross_pnl_pct")
+            stop_pct = self._metadata_float(metadata, "adverse_peak_trail_stop_gross_pnl_pct")
+            log.warning(
+                "[ADVERSE_PEAK_TRAIL_EXIT] symbol=%s side=%s gross_pnl_pct=%s peak_pct=%s stop_pct=%s price=%s",
+                position.symbol,
+                position.side,
+                f"{gross_pnl_pct:+.2f}" if gross_pnl_pct is not None else "n/a",
+                f"{peak_pct:+.2f}" if peak_pct is not None else "n/a",
+                f"{stop_pct:+.2f}" if stop_pct is not None else "n/a",
                 self._format_price(exit_price),
             )
             return self._close_position_for_exit(position, current_price=exit_price, reason=reason)
@@ -1996,6 +2028,8 @@ class FuturesRuntime:
         if self._profit_lock_exit(position, current_price):
             return True
         if self._micro_lock_exit(position, current_price):
+            return True
+        if self._adverse_peak_trail_exit(position, current_price):
             return True
         stagnation_enabled = os.environ.get("FUTURES_STAGNATION_EXIT_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
         if stagnation_enabled:
@@ -3524,6 +3558,37 @@ class FuturesRuntime:
             log.debug("Slippage record skipped: %s", exc)
 
     # ----- Sprint 3 §3.5 maker-first entry ladder ---------------------------
+    def _allow_taker_fallback_after_maker(
+        self,
+        *,
+        symbol: str,
+        side_name: str,
+        signal_payload: dict[str, Any],
+    ) -> bool:
+        if not self._flag("USE_MAKER_LADDER"):
+            return True
+        min_score = max(0.0, self._env_float("MAKER_LADDER_TAKER_FALLBACK_MIN_SCORE", 0.0))
+        min_certainty = max(0.0, self._env_float("MAKER_LADDER_TAKER_FALLBACK_MIN_CERTAINTY", 0.0))
+        if min_score <= 0.0 and min_certainty <= 0.0:
+            return True
+        score = self._safe_float(signal_payload, "score", default=0.0)
+        certainty = self._safe_float(signal_payload, "certainty", default=0.0)
+        score_ok = min_score <= 0.0 or score >= min_score
+        certainty_ok = min_certainty <= 0.0 or certainty >= min_certainty
+        if score_ok and certainty_ok:
+            return True
+        log.info(
+            "[TAKER_FALLBACK_SKIP] symbol=%s side=%s score=%.2f min_score=%.2f "
+            "certainty=%.4f min_certainty=%.4f reason=maker_ladder_unfilled",
+            symbol,
+            side_name,
+            score,
+            min_score,
+            certainty,
+            min_certainty,
+        )
+        return False
+
     def _attempt_maker_ladder(
         self,
         *,
@@ -3556,6 +3621,12 @@ class FuturesRuntime:
             best_bid = float(ticker.get("bid1") or 0.0)
             best_ask = float(ticker.get("ask1") or 0.0)
             if best_bid <= 0 or best_ask <= 0 or best_ask <= best_bid:
+                log.info(
+                    "Maker ladder skipped: invalid_quote symbol=%s bid=%s ask=%s",
+                    symbol,
+                    best_bid,
+                    best_ask,
+                )
                 return None
             tick_size = self._env_float(f"TICK_SIZE_{symbol.replace('_','')}", 0.01)
             cfg = MakerLadderConfig()
@@ -3630,7 +3701,7 @@ class FuturesRuntime:
                             decision.reason,
                         )
                     except Exception as post_exc:
-                        log.debug("Maker post failed, falling back to market: %s", post_exc)
+                        log.info("Maker ladder post failed: %s %s", symbol, post_exc)
                         return None
                 polls += 1
                 time.sleep(poll_interval)
@@ -3640,9 +3711,10 @@ class FuturesRuntime:
                     self.client.cancel_order(working_order_id)
                 except Exception:
                     pass
+            log.info("Maker ladder unfilled: %s %s polls=%s", symbol, side_name, polls)
             return None
         except Exception as exc:
-            log.debug("Maker ladder skipped: %s", exc)
+            log.info("Maker ladder skipped: %s", exc)
             return None
 
     # ----- Sprint 3 §3.6 portfolio VaR --------------------------------------
@@ -4447,6 +4519,14 @@ class FuturesRuntime:
         if maker_result is not None:
             order_id, detail, maker_filled = maker_result
         else:
+            if not self._allow_taker_fallback_after_maker(
+                symbol=symbol,
+                side_name=side_name,
+                signal_payload=signal_payload,
+            ):
+                self._record_activity(f"Skipped taker fallback: {side_name} {symbol}")
+                self._save_state()
+                return False
             order = self.client.place_order(
                 symbol=symbol,
                 side=side,

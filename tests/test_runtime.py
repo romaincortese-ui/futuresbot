@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
-from futuresbot.exits import evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
+from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.runtime import FuturesRuntime
 
@@ -593,6 +593,7 @@ def test_stagnation_exit_flattens_late_chase_retrace(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MIN_PEAK_TP_PROGRESS", "0.10")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_RETRACE_FRACTION", "0.65")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MIN_NET_PNL_PCT", "-2.5")
+    monkeypatch.setenv("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "0")
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
     opened_at = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)
     position = FuturesPosition(
@@ -627,6 +628,7 @@ def test_stagnation_exit_ignores_breakout_hold_retrace(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_MICRO_LOCK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_ENABLED", "1")
     monkeypatch.setenv("FUTURES_STAGNATION_EXIT_MINUTES", "180")
+    monkeypatch.setenv("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "0")
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
     opened_at = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)
     position = FuturesPosition(
@@ -652,6 +654,114 @@ def test_stagnation_exit_ignores_breakout_hold_retrace(tmp_path, monkeypatch):
     assert runtime._hourly_exit(position, current_price=104.0, now=datetime(2026, 5, 21, 14, 0, tzinfo=timezone.utc)) is False
     assert runtime._hourly_exit(position, current_price=100.8, now=datetime(2026, 5, 21, 14, 15, tzinfo=timezone.utc)) is False
     assert runtime.open_position is position
+
+
+def test_adverse_peak_trail_flattens_small_peak_reversal(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "0")
+    monkeypatch.setenv("FUTURES_MICRO_LOCK_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_STAGNATION_EXIT_ENABLED", "0")
+    monkeypatch.setenv("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_ADVERSE_PEAK_TRAIL_TRIGGER_PCT", "0.25")
+    monkeypatch.setenv("FUTURES_ADVERSE_PEAK_TRAIL_GIVEBACK_PCT", "1.25")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="SHORT",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=1.0,
+        leverage=8,
+        margin_usdt=100.0,
+        tp_price=95.0,
+        sl_price=103.0,
+        position_id="paper-adverse-peak",
+        order_id="entry-adverse-peak",
+        opened_at=datetime(2026, 5, 24, 14, 19, tzinfo=timezone.utc),
+        score=79.0,
+        certainty=0.95,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_SHORT",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=99.95, now=datetime(2026, 5, 24, 14, 20, tzinfo=timezone.utc)) is False
+    assert round(position.metadata["adverse_peak_trail_peak_gross_pnl_pct"], 3) == 0.5
+    assert round(position.metadata["adverse_peak_trail_stop_gross_pnl_pct"], 3) == -0.75
+
+    assert runtime._hourly_exit(position, current_price=100.10, now=datetime(2026, 5, 24, 14, 24, tzinfo=timezone.utc)) is True
+    assert runtime.open_position is None
+    assert runtime.trade_history[-1]["exit_reason"] == "ADVERSE_PEAK_TRAIL"
+    assert runtime.trade_history[-1]["pnl_usdt"] < 0
+
+
+def test_adverse_peak_trail_bar_waits_until_after_activation_bar():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="SHORT",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=1.0,
+        leverage=8,
+        margin_usdt=100.0,
+        tp_price=95.0,
+        sl_price=103.0,
+        position_id="paper-adverse-peak-bar",
+        order_id="entry-adverse-peak-bar",
+        opened_at=datetime(2026, 5, 24, 14, 19, tzinfo=timezone.utc),
+        score=79.0,
+        certainty=0.95,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_SHORT",
+    )
+
+    exit_signal, changed = evaluate_adverse_peak_trail_bar(
+        position,
+        high=100.20,
+        low=99.95,
+        trigger_pct=0.25,
+        giveback_pct=1.25,
+    )
+    assert exit_signal is None
+    assert changed is True
+
+    exit_signal, changed = evaluate_adverse_peak_trail_bar(
+        position,
+        high=100.10,
+        low=100.0,
+        trigger_pct=0.25,
+        giveback_pct=1.25,
+    )
+    assert changed is False
+    assert exit_signal == (100.075, "ADVERSE_PEAK_TRAIL")
+
+
+def test_adverse_peak_trail_ignores_moves_below_trigger():
+    position = FuturesPosition(
+        symbol="SEI_USDT",
+        side="SHORT",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=1.0,
+        leverage=8,
+        margin_usdt=100.0,
+        tp_price=95.0,
+        sl_price=103.0,
+        position_id="paper-adverse-peak-inactive",
+        order_id="entry-adverse-peak-inactive",
+        opened_at=datetime(2026, 5, 24, 14, 19, tzinfo=timezone.utc),
+        score=79.0,
+        certainty=0.95,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_SHORT",
+    )
+
+    exit_signal, changed = evaluate_adverse_peak_trail_bar(
+        position,
+        high=100.20,
+        low=99.98,
+        trigger_pct=0.25,
+        giveback_pct=1.25,
+    )
+    assert exit_signal is None
+    assert changed is True
+    assert "adverse_peak_trail_stop_gross_pnl_pct" not in position.metadata
 
 
 def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
@@ -1925,6 +2035,63 @@ def test_live_enter_trade_does_not_register_without_exchange_position(tmp_path, 
     assert runtime.client.cancelled == ["entry-1"]
     assert any("Futures Entry Not Confirmed" in message for message in sent_messages)
     assert not any("Futures Position Opened" in message for message in sent_messages)
+
+
+def test_live_enter_trade_can_skip_low_score_taker_fallback_after_unfilled_maker(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_MAKER_LADDER", "1")
+    monkeypatch.setenv("MAKER_LADDER_MAX_POLLS", "1")
+    monkeypatch.setenv("MAKER_LADDER_POLL_SECONDS", "0")
+    monkeypatch.setenv("MAKER_LADDER_TAKER_FALLBACK_MIN_SCORE", "70")
+
+    class UnfilledMakerClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.orders: list[dict[str, object]] = []
+            self.cancelled: list[str] = []
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def get_ticker(self, symbol: str) -> dict[str, str]:
+            return {"bid1": "99.99", "ask1": "100.01", "lastPrice": "100.0"}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            return {"orderId": f"maker-{len(self.orders)}"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            return {"orderId": order_id, "dealVol": "0"}
+
+        def cancel_order(self, order_id: str):
+            self.cancelled.append(order_id)
+            return {"success": True}
+
+    client = UnfilledMakerClient()
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=50.0), client)
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "SHORT",
+        "entry_price": 100.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 96.0,
+        "sl_price": 102.0,
+        "score": 64.0,
+        "certainty": 0.49,
+        "entry_signal": "EVENT_CATALYST_SHORT",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is False
+    assert [order["order_type"] for order in client.orders] == [2]
+    assert client.cancelled == ["maker-1"]
+    assert runtime.open_positions == {}
 
 
 def test_live_enter_trade_registers_only_confirmed_exchange_position(tmp_path, monkeypatch):

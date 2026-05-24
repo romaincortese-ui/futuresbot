@@ -20,6 +20,9 @@ MICRO_LOCK_PEAK_PRICE_KEY = "micro_profit_lock_peak_price"
 MICRO_LOCK_STOP_PCT_KEY = "micro_profit_lock_stop_pnl_pct"
 MICRO_LOCK_STOP_GROSS_PCT_KEY = "micro_profit_lock_stop_gross_pnl_pct"
 MICRO_LOCK_RELEASED_KEY = "micro_profit_lock_released"
+ADVERSE_PEAK_TRAIL_PEAK_GROSS_PCT_KEY = "adverse_peak_trail_peak_gross_pnl_pct"
+ADVERSE_PEAK_TRAIL_PEAK_PRICE_KEY = "adverse_peak_trail_peak_price"
+ADVERSE_PEAK_TRAIL_STOP_GROSS_PCT_KEY = "adverse_peak_trail_stop_gross_pnl_pct"
 STAGNATION_EXIT_PEAK_PROGRESS_KEY = "stagnation_exit_peak_tp_progress"
 STAGNATION_EXIT_PEAK_PRICE_KEY = "stagnation_exit_peak_price"
 STAGNATION_EXIT_DEFAULT_ENTRY_SIGNALS = frozenset(
@@ -477,6 +480,122 @@ def position_net_pnl_pct(position: FuturesPosition, price: float, taker_fee_rate
         return None
     net_pnl = position_margin_pnl_usdt(position, price) - estimated_round_trip_fees_usdt(position, price, taker_fee_rate)
     return net_pnl / position.margin_usdt * 100.0
+
+
+def _update_adverse_peak_trail_peak(position: FuturesPosition, price: float) -> tuple[bool, float]:
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    gross_pnl_pct = position_margin_pnl_pct(position, price)
+    if gross_pnl_pct is None:
+        return False, 0.0
+    changed = False
+    peak_pct = _metadata_float(metadata, ADVERSE_PEAK_TRAIL_PEAK_GROSS_PCT_KEY) or 0.0
+    if gross_pnl_pct > peak_pct:
+        peak_pct = gross_pnl_pct
+        metadata[ADVERSE_PEAK_TRAIL_PEAK_GROSS_PCT_KEY] = float(gross_pnl_pct)
+        metadata[ADVERSE_PEAK_TRAIL_PEAK_PRICE_KEY] = float(price)
+        changed = True
+    return changed, peak_pct
+
+
+def _adverse_peak_trail_stop_pct(
+    peak_pct: float,
+    *,
+    giveback_pct: float,
+    pullback_fraction: float,
+    max_loss_pct: float,
+) -> float:
+    fixed_stop = peak_pct - max(0.0, giveback_pct)
+    bounded_pullback = min(0.95, max(0.0, pullback_fraction))
+    proportional_stop = peak_pct * (1.0 - bounded_pullback)
+    stop_pct = min(fixed_stop, proportional_stop)
+    if max_loss_pct > 0:
+        stop_pct = max(stop_pct, -max_loss_pct)
+    return stop_pct
+
+
+def evaluate_adverse_peak_trail_tick(
+    position: FuturesPosition,
+    price: float,
+    *,
+    trigger_pct: float,
+    giveback_pct: float,
+    pullback_fraction: float = 0.45,
+    max_loss_pct: float = 2.0,
+) -> tuple[tuple[float, str] | None, bool]:
+    if trigger_pct <= 0 or price <= 0:
+        return None, False
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    trigger_pct = _metadata_float(metadata, "adverse_peak_trail_trigger_pct_override") or trigger_pct
+    giveback_pct = _metadata_float(metadata, "adverse_peak_trail_giveback_pct_override") or giveback_pct
+    pullback_fraction = _metadata_float(metadata, "adverse_peak_trail_pullback_fraction_override") or pullback_fraction
+    max_loss_pct = _metadata_float(metadata, "adverse_peak_trail_max_loss_pct_override") or max_loss_pct
+
+    changed, peak_pct = _update_adverse_peak_trail_peak(position, price)
+    if peak_pct < max(0.0, trigger_pct):
+        return None, changed
+    stop_pct = _adverse_peak_trail_stop_pct(
+        peak_pct,
+        giveback_pct=giveback_pct,
+        pullback_fraction=pullback_fraction,
+        max_loss_pct=max_loss_pct,
+    )
+    if metadata.get(ADVERSE_PEAK_TRAIL_STOP_GROSS_PCT_KEY) != stop_pct:
+        metadata[ADVERSE_PEAK_TRAIL_STOP_GROSS_PCT_KEY] = float(stop_pct)
+        changed = True
+    gross_pnl_pct = position_margin_pnl_pct(position, price)
+    if gross_pnl_pct is None or gross_pnl_pct > stop_pct:
+        return None, changed
+    return (price, "ADVERSE_PEAK_TRAIL"), changed
+
+
+def evaluate_adverse_peak_trail_bar(
+    position: FuturesPosition,
+    *,
+    high: float,
+    low: float,
+    trigger_pct: float,
+    giveback_pct: float,
+    pullback_fraction: float = 0.45,
+    max_loss_pct: float = 2.0,
+) -> tuple[tuple[float, str] | None, bool]:
+    if trigger_pct <= 0 or high <= 0 or low <= 0:
+        return None, False
+    metadata = position.metadata if isinstance(position.metadata, dict) else {}
+    if metadata is not position.metadata:
+        position.metadata = metadata
+    trigger_pct = _metadata_float(metadata, "adverse_peak_trail_trigger_pct_override") or trigger_pct
+    giveback_pct = _metadata_float(metadata, "adverse_peak_trail_giveback_pct_override") or giveback_pct
+    pullback_fraction = _metadata_float(metadata, "adverse_peak_trail_pullback_fraction_override") or pullback_fraction
+    max_loss_pct = _metadata_float(metadata, "adverse_peak_trail_max_loss_pct_override") or max_loss_pct
+
+    armed_before_bar = (_metadata_float(metadata, ADVERSE_PEAK_TRAIL_STOP_GROSS_PCT_KEY) or 0.0) != 0.0
+    favorable_price = high if position.side == "LONG" else low
+    adverse_price = low if position.side == "LONG" else high
+    changed, peak_pct = _update_adverse_peak_trail_peak(position, favorable_price)
+    if peak_pct < max(0.0, trigger_pct):
+        return None, changed
+    stop_pct = _adverse_peak_trail_stop_pct(
+        peak_pct,
+        giveback_pct=giveback_pct,
+        pullback_fraction=pullback_fraction,
+        max_loss_pct=max_loss_pct,
+    )
+    if metadata.get(ADVERSE_PEAK_TRAIL_STOP_GROSS_PCT_KEY) != stop_pct:
+        metadata[ADVERSE_PEAK_TRAIL_STOP_GROSS_PCT_KEY] = float(stop_pct)
+        changed = True
+    if not armed_before_bar:
+        return None, changed
+    adverse_gross_pct = position_margin_pnl_pct(position, adverse_price)
+    if adverse_gross_pct is None or adverse_gross_pct > stop_pct:
+        return None, changed
+    exit_price = price_for_margin_pnl_pct(position, stop_pct)
+    if exit_price is None or exit_price <= 0:
+        exit_price = adverse_price
+    return (exit_price, "ADVERSE_PEAK_TRAIL"), changed
 
 
 def _opened_at_utc(position: FuturesPosition) -> datetime | None:
