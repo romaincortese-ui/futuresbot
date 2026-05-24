@@ -3433,7 +3433,8 @@ class FuturesRuntime:
         try:
             from futuresbot.walk_forward import WalkForwardMetrics, evaluate_walk_forward
 
-            min_total = int(self._env_float("WALK_FORWARD_MIN_TRADES", 50))
+            min_oos_trades = int(self._env_float("WALK_FORWARD_MIN_OOS_TRADES", 20))
+            min_total = max(int(self._env_float("WALK_FORWARD_MIN_TRADES", 50)), min_oos_trades * 5)
             if len(trade_history) < min_total:
                 return True  # not enough data — fall open
             ordered = sorted(
@@ -3463,7 +3464,7 @@ class FuturesRuntime:
                 is_metrics=WalkForwardMetrics(trades=is_n, profit_factor=is_pf, win_rate=is_wr, expectancy=is_exp),
                 oos_metrics=WalkForwardMetrics(trades=oos_n, profit_factor=oos_pf, win_rate=oos_wr, expectancy=oos_exp),
                 min_oos_pf=self._env_float("WALK_FORWARD_MIN_OOS_PF", 1.15),
-                min_oos_trades=int(self._env_float("WALK_FORWARD_MIN_OOS_TRADES", 20)),
+                min_oos_trades=min_oos_trades,
                 max_is_oos_degradation=self._env_float("WALK_FORWARD_MAX_DEGRADATION", 0.40),
             )
             if not gate.accepted:

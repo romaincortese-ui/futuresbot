@@ -541,3 +541,19 @@ def test_refresh_calibration_uses_stale_file_as_seed_when_seed_key_empty(tmp_pat
     assert runtime.calibration is not None
     assert runtime.calibration["total_trades"] == 39
     assert any("CALIBRATION_SEED_FALLBACK" in record.message for record in caplog.records)
+
+
+def test_walk_forward_gate_waits_until_oos_sample_is_large_enough(tmp_path, monkeypatch):
+    monkeypatch.delenv("WALK_FORWARD_MIN_TRADES", raising=False)
+    monkeypatch.delenv("WALK_FORWARD_MIN_OOS_TRADES", raising=False)
+    runtime = FuturesRuntime(_config(tmp_path), _SpecClient({}))
+    trade_history = [
+        {
+            "entry_time": f"2026-05-{index + 1:02d}T00:00:00+00:00",
+            "exit_time": f"2026-05-{index + 1:02d}T01:00:00+00:00",
+            "pnl_usdt": -1.0,
+        }
+        for index in range(52)
+    ]
+
+    assert runtime._walk_forward_gate_passes(trade_history) is True
