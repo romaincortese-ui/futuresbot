@@ -141,7 +141,7 @@ DEFAULT_SYMBOL_PARAMETER_PROFILES: dict[str, dict[str, float | int]] = {
         "funding_rate_abs_max": 0.00022,
     },
     "ZEC_USDT": {
-        "min_confidence_score": 60.0,
+        "min_confidence_score": 65.0,
         "trend_24h_floor": 0.014,
         "trend_6h_floor": 0.003,
         "consolidation_max_range_pct": 0.045,

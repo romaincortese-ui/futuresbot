@@ -314,6 +314,7 @@ def test_backtest_config_uses_scoped_symbol_profile(monkeypatch):
     config = FuturesBacktestConfig.from_env()
 
     assert config.symbol == "ZEC_USDT"
+    assert config.min_confidence_score == pytest.approx(65.0)
     assert config.leverage_max == 20
     assert config.consolidation_max_range_pct == pytest.approx(0.045)
     assert config.min_reward_risk == pytest.approx(1.30)

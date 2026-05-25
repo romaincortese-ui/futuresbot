@@ -109,6 +109,7 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     cfg = replace(_config(), symbol="BTC_USDT")
 
     assert _entry_signal_disabled(cfg, "COIL_BREAKOUT_LONG")
+    assert _entry_signal_disabled(cfg, "MAJOR_THRESHOLD_SHORT")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_SHORT")
     assert _entry_signal_disabled(cfg, "BTC_ROUND_LEVEL_LONG")
     assert _entry_signal_disabled(cfg, "BREAKOUT_HOLD_LONG")
@@ -122,7 +123,10 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     assert not _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
 
     assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "TREND_CONTINUATION_SHORT")
+    assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "TREND_CONTINUATION_LONG")
+    assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "MAJOR_THRESHOLD_LONG")
+    assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
@@ -185,6 +189,8 @@ def test_major_threshold_short_covers_btc_sol_eth(monkeypatch):
         ("SOL_USDT", 140.0, 151.0, 0.35, 0.55, 0.85),
     ]
     for symbol, level, start, prior_gap, first_break, second_break in cases:
+        if symbol == "BTC_USDT":
+            monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
         step = (start - (level + prior_gap)) / 517.0
         prices = [start - idx * step + math.sin(idx / 9.0) * prior_gap * 0.05 for idx in range(518)]
         prices[-1] = level + prior_gap
