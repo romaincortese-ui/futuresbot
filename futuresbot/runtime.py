@@ -84,7 +84,7 @@ from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lock_tick, evaluate_no_progress_loss_exit, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
-from futuresbot.marketdata import MexcFuturesClient
+from futuresbot.marketdata import MexcApiError, MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
 from futuresbot.strategy import score_btc_futures_setup
@@ -3841,6 +3841,112 @@ class FuturesRuntime:
                 return value
         return 0.0
 
+    @staticmethod
+    def _mexc_balance_insufficient_payload(exc: Exception) -> dict[str, Any] | None:
+        payload = exc.payload if isinstance(exc, MexcApiError) else getattr(exc, "payload", None)
+        if isinstance(payload, dict):
+            code = str(payload.get("code") or "")
+            message = str(payload.get("message") or "")
+            if code == "2005" or "balance insufficient" in message.lower():
+                return payload
+        message = str(exc).lower()
+        if "balance insufficient" in message or "'code': 2005" in message or '"code": 2005' in message:
+            return {}
+        return None
+
+    def _place_live_entry_order_with_balance_guard(
+        self,
+        *,
+        symbol: str,
+        side: int,
+        side_name: str,
+        contracts: int,
+        leverage: int,
+        take_profit_price: float | None,
+        stop_loss_price: float,
+        min_vol: int,
+        signal_metadata: dict[str, Any],
+    ) -> tuple[Any, int] | None:
+        max_attempts = max(1, int(self._env_float("FUTURES_BALANCE_GUARD_MAX_ATTEMPTS", 2)))
+        buffer = max(0.05, min(1.0, self._env_float("FUTURES_BALANCE_GUARD_BUFFER", 0.95)))
+        current_contracts = max(0, int(contracts))
+        for attempt in range(max_attempts):
+            try:
+                order = self.client.place_order(
+                    symbol=symbol,
+                    side=side,
+                    vol=current_contracts,
+                    leverage=leverage,
+                    order_type=5,
+                    open_type=self.config.open_type,
+                    position_mode=self.config.position_mode,
+                    take_profit_price=take_profit_price,
+                    stop_loss_price=stop_loss_price,
+                )
+                return order, current_contracts
+            except Exception as exc:
+                payload = self._mexc_balance_insufficient_payload(exc)
+                if payload is None:
+                    raise
+                extend = payload.get("_extend") if isinstance(payload, dict) else None
+                if not isinstance(extend, dict):
+                    extend = {}
+                cost = self._positive_float_from(extend, "cost")
+                available = self._positive_float_from(extend, "available", "availableBalance", "availableMargin")
+                if available <= 0 and isinstance(payload, dict):
+                    available = self._positive_float_from(payload, "available", "availableBalance", "availableMargin")
+                if cost <= 0 or available <= 0:
+                    log.warning(
+                        "Futures signal skipped for %s: live balance insufficient and exchange did not provide usable cost details",
+                        symbol,
+                    )
+                    signal_metadata["live_balance_guard_skipped"] = True
+                    self._record_activity(f"Skipped {side_name} {symbol}: live balance insufficient")
+                    return None
+                capped_contracts = int(current_contracts * min(1.0, available / cost) * buffer)
+                if capped_contracts >= current_contracts:
+                    capped_contracts = current_contracts - 1
+                if capped_contracts < min_vol:
+                    log.warning(
+                        "Futures signal skipped for %s: live balance too low after exchange cost check (contracts=%s cost=%.4f available=%.4f min_vol=%s)",
+                        symbol,
+                        current_contracts,
+                        cost,
+                        available,
+                        min_vol,
+                    )
+                    signal_metadata["live_balance_guard_skipped"] = True
+                    signal_metadata["live_balance_guard_cost_usdt"] = round(cost, 4)
+                    signal_metadata["live_balance_guard_available_usdt"] = round(available, 4)
+                    self._record_activity(f"Skipped {side_name} {symbol}: live balance too low")
+                    return None
+                if attempt >= max_attempts - 1:
+                    log.warning(
+                        "Futures signal skipped for %s: live balance guard exhausted retries (contracts=%s cost=%.4f available=%.4f)",
+                        symbol,
+                        current_contracts,
+                        cost,
+                        available,
+                    )
+                    signal_metadata["live_balance_guard_skipped"] = True
+                    self._record_activity(f"Skipped {side_name} {symbol}: live balance retry exhausted")
+                    return None
+                log.warning(
+                    "[LIVE_BALANCE_GUARD] symbol=%s contracts=%s capped_contracts=%s exchange_cost=%.4f available=%.4f buffer=%.2f",
+                    symbol,
+                    current_contracts,
+                    capped_contracts,
+                    cost,
+                    available,
+                    buffer,
+                )
+                signal_metadata["live_balance_guard_capped"] = True
+                signal_metadata["live_balance_guard_original_contracts"] = int(current_contracts)
+                signal_metadata["live_balance_guard_cost_usdt"] = round(cost, 4)
+                signal_metadata["live_balance_guard_available_usdt"] = round(available, 4)
+                current_contracts = capped_contracts
+        return None
+
     def _open_position_volume(self, row: dict[str, Any]) -> float:
         return self._positive_float_from(
             row,
@@ -4563,17 +4669,22 @@ class FuturesRuntime:
                 self._record_activity(f"Skipped taker fallback: {side_name} {symbol}")
                 self._save_state()
                 return False
-            order = self.client.place_order(
+            guarded_order = self._place_live_entry_order_with_balance_guard(
                 symbol=symbol,
                 side=side,
-                vol=contracts,
+                side_name=side_name,
                 leverage=leverage,
-                order_type=5,
-                open_type=self.config.open_type,
-                position_mode=self.config.position_mode,
+                contracts=contracts,
                 take_profit_price=None if scoped.trailing_exit_drawdown_pct > 0 else float(signal_payload["tp_price"]),
                 stop_loss_price=float(signal_payload["sl_price"]),
+                min_vol=min_vol,
+                signal_metadata=signal_metadata,
             )
+            if guarded_order is None:
+                self._save_state()
+                return False
+            order, contracts = guarded_order
+            projected_margin = contracts * contract_size * entry_price / leverage
             order_id = self._extract_order_id(order)
             detail = {}
             maker_filled = False

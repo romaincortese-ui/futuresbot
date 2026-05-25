@@ -22,6 +22,13 @@ _HTTP_RETRY_ATTEMPTS = 3
 _HTTP_RETRY_SLEEP_SECONDS = 0.75
 
 
+class MexcApiError(RuntimeError):
+    def __init__(self, message: str, *, path: str, payload: dict[str, Any]):
+        super().__init__(message)
+        self.path = path
+        self.payload = payload
+
+
 def build_contract_frame(payload: dict[str, Any]) -> pd.DataFrame:
     data = payload.get("data", {}) if isinstance(payload, dict) else {}
     frame = pd.DataFrame(
@@ -67,7 +74,7 @@ class MexcFuturesClient:
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict) and payload.get("success") is False:
-                    raise RuntimeError(f"MEXC futures public call failed for {path}: {payload}")
+                    raise MexcApiError(f"MEXC futures public call failed for {path}: {payload}", path=path, payload=payload)
                 return payload
             except (requests.RequestException, ValueError, RuntimeError) as exc:
                 last_error = exc
@@ -109,7 +116,7 @@ class MexcFuturesClient:
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict) and payload.get("success") is False:
-                    raise RuntimeError(f"MEXC futures private GET failed for {path}: {payload}")
+                    raise MexcApiError(f"MEXC futures private GET failed for {path}: {payload}", path=path, payload=payload)
                 return payload
             except (requests.RequestException, ValueError, RuntimeError) as exc:
                 last_error = exc
@@ -139,7 +146,7 @@ class MexcFuturesClient:
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict) and payload.get("success") is False:
-                    raise RuntimeError(f"MEXC futures private POST failed for {path}: {payload}")
+                    raise MexcApiError(f"MEXC futures private POST failed for {path}: {payload}", path=path, payload=payload)
                 return payload
             except (requests.RequestException, ValueError, RuntimeError) as exc:
                 last_error = exc

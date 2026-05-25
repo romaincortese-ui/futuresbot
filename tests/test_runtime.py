@@ -9,6 +9,7 @@ import pandas as pd
 
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
+from futuresbot.marketdata import MexcApiError
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.runtime import FuturesRuntime
 
@@ -2354,6 +2355,91 @@ def test_live_enter_trade_caps_order_to_available_balance(tmp_path, monkeypatch)
     position = runtime.open_positions["BTC_USDT"]
     assert position.contracts == order["vol"]
     assert position.metadata["live_margin_budget_capped"] is True
+
+
+def test_live_enter_trade_retries_lower_contracts_on_balance_insufficient(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "0")
+    monkeypatch.setenv("FUTURES_MAX_MARGIN_FRACTION", "0.85")
+    monkeypatch.setenv("FUTURES_BALANCE_GUARD_BUFFER", "0.95")
+
+    class BalanceRetryClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.orders: list[dict[str, object]] = []
+
+        def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
+            return {"availableBalance": "27.82940349334529", "equity": "150.0"}
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            if len(self.orders) == 1:
+                payload = {
+                    "success": False,
+                    "code": 2005,
+                    "message": "Balance insufficient",
+                    "_extend": {"cost": 35.6001366, "available": 27.82940349334529},
+                }
+                raise MexcApiError(
+                    f"MEXC futures private POST failed for /api/v1/private/order/create: {payload}",
+                    path="/api/v1/private/order/create",
+                    payload=payload,
+                )
+            return {"orderId": "entry-balance-retry"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            volume = str(self.orders[-1]["vol"])
+            return {"orderId": order_id, "dealAvgPrice": "10.0", "dealVol": volume, "positionId": "pos-balance-retry"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            volume = str(self.orders[-1]["vol"])
+            margin = float(self.orders[-1]["vol"]) * 10.0 / float(self.orders[-1]["leverage"])
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "positionType": 1,
+                    "holdVol": volume,
+                    "holdAvgPrice": "10.0",
+                    "im": str(margin),
+                    "leverage": str(self.orders[-1]["leverage"]),
+                    "positionId": "pos-balance-retry",
+                }
+            ]
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=150.0), BalanceRetryClient())
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "LONG",
+        "entry_price": 10.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 10.4,
+        "sl_price": 9.8,
+        "score": 70.0,
+        "certainty": 0.75,
+        "entry_signal": "EVENT_CATALYST_LONG",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    assert len(runtime.client.orders) == 2
+    first_order, retry_order = runtime.client.orders
+    assert retry_order["vol"] < first_order["vol"]
+    assert retry_order["vol"] == int(first_order["vol"] * (27.82940349334529 / 35.6001366) * 0.95)
+    position = runtime.open_positions["BTC_USDT"]
+    assert position.contracts == retry_order["vol"]
+    assert position.metadata["live_balance_guard_capped"] is True
+    assert position.metadata["live_balance_guard_available_usdt"] == 27.8294
 
 
 def test_live_enter_trade_enforces_production_leverage_bounds(tmp_path, monkeypatch):
