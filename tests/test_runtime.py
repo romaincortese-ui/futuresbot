@@ -1135,6 +1135,110 @@ def test_profit_lock_bar_waits_until_after_activation_bar_to_exit():
     assert second[1] == "PEAK_PROFIT_LOCK"
 
 
+def test_profit_lock_bar_tracks_runner_peak_after_steady_fade():
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=100,
+        contract_size=0.01,
+        leverage=1,
+        margin_usdt=100.0,
+        tp_price=118.0,
+        sl_price=96.0,
+        position_id="runner-peak-lock-1",
+        order_id="entry-runner-peak-lock-1",
+        opened_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        score=105.0,
+        certainty=0.99,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        metadata={
+            "winner_study_runner_candidate": 1.0,
+            "profit_lock_trigger_pct_override": 4.0,
+            "profit_lock_pullback_fraction_override": 0.15,
+            "profit_lock_floor_pct_override": 2.0,
+            "micro_profit_lock_trigger_pct_override": 99.0,
+            "adverse_peak_trail_trigger_pct_override": 4.0,
+            "adverse_peak_trail_pullback_fraction_override": 0.15,
+        },
+    )
+
+    first, changed = evaluate_profit_lock_bar(
+        position,
+        high=110.0,
+        low=108.5,
+        taker_fee_rate=0.0,
+        trigger_pct=99.0,
+        pullback_fraction=0.95,
+        floor_pct=0.0,
+    )
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 8.5
+
+    second, _changed = evaluate_profit_lock_bar(
+        position,
+        high=109.5,
+        low=107.5,
+        taker_fee_rate=0.0,
+        trigger_pct=99.0,
+        pullback_fraction=0.95,
+        floor_pct=0.0,
+    )
+    assert second == (108.5, "PEAK_PROFIT_LOCK")
+
+
+def test_adverse_peak_trail_bar_tracks_runner_peak_after_steady_fade():
+    position = FuturesPosition(
+        symbol="ZEC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=100,
+        contract_size=0.01,
+        leverage=1,
+        margin_usdt=100.0,
+        tp_price=118.0,
+        sl_price=96.0,
+        position_id="runner-adverse-peak-lock-1",
+        order_id="entry-runner-adverse-peak-lock-1",
+        opened_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        score=105.0,
+        certainty=0.99,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        metadata={
+            "winner_study_runner_candidate": 1.0,
+            "micro_profit_lock_trigger_pct_override": 99.0,
+            "adverse_peak_trail_trigger_pct_override": 4.0,
+            "adverse_peak_trail_giveback_pct_override": 1.25,
+            "adverse_peak_trail_pullback_fraction_override": 0.15,
+        },
+    )
+
+    first, changed = evaluate_adverse_peak_trail_bar(
+        position,
+        high=110.0,
+        low=108.5,
+        trigger_pct=0.25,
+        giveback_pct=1.25,
+        pullback_fraction=0.45,
+        max_loss_pct=2.0,
+    )
+    assert first is None
+    assert changed is True
+    assert round(position.metadata["adverse_peak_trail_stop_gross_pnl_pct"], 3) == 8.5
+
+    second, _changed = evaluate_adverse_peak_trail_bar(
+        position,
+        high=109.5,
+        low=107.5,
+        trigger_pct=0.25,
+        giveback_pct=1.25,
+        pullback_fraction=0.45,
+        max_loss_pct=2.0,
+    )
+    assert second == (108.5, "ADVERSE_PEAK_TRAIL")
+
+
 def test_micro_lock_bar_protects_high_beta_alt_after_activation_bar():
     position = FuturesPosition(
         symbol="SEI_USDT",

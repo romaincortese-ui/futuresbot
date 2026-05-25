@@ -864,6 +864,11 @@ class FuturesRuntime:
         floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0))
         breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
         breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
+        trigger_pct = self._metadata_float(metadata, "profit_lock_trigger_pct_override") or trigger_pct
+        pullback_fraction = self._metadata_float(metadata, "profit_lock_pullback_fraction_override") or pullback_fraction
+        floor_pct = self._metadata_float(metadata, "profit_lock_floor_pct_override") or floor_pct
+        breakeven_arm_pct = self._metadata_float(metadata, "breakeven_arm_pct_override") or breakeven_arm_pct
+        breakeven_floor_pct = self._metadata_float(metadata, "breakeven_floor_pct_override") or breakeven_floor_pct
         if changed and gross_peak_pct > 0.0 and gross_peak_pct < trigger_pct:
             scoped = self._config_for_symbol(position.symbol)
             progress = self._tp_progress(position, current_price)
@@ -893,7 +898,7 @@ class FuturesRuntime:
                 metadata[PROFIT_LOCK_STOP_PCT_KEY] = float(net_stop_pct)
                 changed = True
             if gross_pnl_pct <= stop_pct:
-                min_exit_net_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0))
+                min_exit_net_pct = self._metadata_float(metadata, "profit_lock_exit_min_net_pct_override") or max(0.0, self._env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0))
                 required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
                 log.warning(
                     "[PROFIT_LOCK_EXIT] symbol=%s side=%s gross_pnl_pct=%.2f net_pnl_pct=%.2f "

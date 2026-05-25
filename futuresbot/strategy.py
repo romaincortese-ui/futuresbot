@@ -177,6 +177,73 @@ def _parse_entry_signal_list(raw: str | None) -> set[str]:
     return {item.strip().upper() for item in normalized.split(",") if item.strip()}
 
 
+def _metadata_float_value(metadata: dict[str, float | str], key: str, default: float = 0.0) -> float:
+    try:
+        return float(metadata.get(key, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _apply_winner_study_runner_overrides(
+    *,
+    symbol: str,
+    side: str,
+    entry_signal: str,
+    score: float,
+    metadata: dict[str, float | str],
+) -> dict[str, float | str]:
+    if not _env_bool("FUTURES_WINNER_STUDY_RUNNER_ENABLED", True):
+        return metadata
+    if not _symbol_enabled("FUTURES_WINNER_STUDY_RUNNER_SYMBOLS", symbol, "ZEC_USDT"):
+        return metadata
+    allowed_signals = _parse_entry_signal_list(
+        os.environ.get("FUTURES_WINNER_STUDY_RUNNER_ENTRY_SIGNALS", "IMPULSE_EVENT_CONTINUATION_LONG")
+    )
+    if allowed_signals and entry_signal.upper() not in allowed_signals:
+        return metadata
+
+    volume_ratio = _metadata_float_value(metadata, "volume_ratio")
+    impulse_window_volume_ratio = _metadata_float_value(metadata, "impulse_window_volume_ratio")
+    impulse_move_pct = _metadata_float_value(metadata, "impulse_move_pct")
+    impulse_move_atr = _metadata_float_value(metadata, "impulse_move_atr")
+    trend_6h = _metadata_float_value(metadata, "trend_6h")
+    market_penalty = _metadata_float_value(metadata, "market_gate_penalty")
+    min_score = _env_float("FUTURES_WINNER_STUDY_RUNNER_MIN_SCORE", 77.0)
+    exceptional_score = _env_float("FUTURES_WINNER_STUDY_RUNNER_EXCEPTIONAL_SCORE", 100.0)
+    max_market_penalty = _env_float("FUTURES_WINNER_STUDY_RUNNER_MAX_MARKET_PENALTY", 1.0)
+    min_volume_ratio = _env_float("FUTURES_WINNER_STUDY_RUNNER_MIN_VOLUME_RATIO", 2.0)
+    min_window_volume_ratio = _env_float("FUTURES_WINNER_STUDY_RUNNER_MIN_WINDOW_VOLUME_RATIO", 1.2)
+    min_impulse_move_pct = _env_float("FUTURES_WINNER_STUDY_RUNNER_MIN_IMPULSE_MOVE_PCT", 0.015)
+    min_impulse_move_atr = _env_float("FUTURES_WINNER_STUDY_RUNNER_MIN_IMPULSE_MOVE_ATR", 2.5)
+    min_trend_6h = _env_float("FUTURES_WINNER_STUDY_RUNNER_MIN_TREND_6H", 0.025)
+    direction = 1.0 if side.upper() == "LONG" else -1.0
+    aligned_impulse_pct = impulse_move_pct * direction
+    aligned_trend_6h = trend_6h * direction
+    if (
+        score < min_score
+        or volume_ratio < min_volume_ratio
+        or impulse_window_volume_ratio < min_window_volume_ratio
+        or aligned_impulse_pct < min_impulse_move_pct
+        or impulse_move_atr < min_impulse_move_atr
+        or aligned_trend_6h < min_trend_6h
+        or (score < exceptional_score and market_penalty > max_market_penalty)
+    ):
+        return metadata
+
+    updated = dict(metadata)
+    updated["winner_study_runner_candidate"] = 1.0
+    updated["profit_lock_trigger_pct_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_PROFIT_LOCK_TRIGGER_PCT", 4.0)
+    updated["profit_lock_pullback_fraction_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_PROFIT_LOCK_PULLBACK_FRACTION", 0.15)
+    updated["profit_lock_floor_pct_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_PROFIT_LOCK_FLOOR_PCT", 2.0)
+    updated["profit_lock_exit_min_net_pct_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.20)
+    updated["breakeven_arm_pct_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_BREAKEVEN_ARM_PCT", 10.0)
+    updated["micro_profit_lock_trigger_pct_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_MICRO_LOCK_TRIGGER_PCT", 99.0)
+    updated["adverse_peak_trail_trigger_pct_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_ADVERSE_TRIGGER_PCT", 4.0)
+    updated["adverse_peak_trail_giveback_pct_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_ADVERSE_GIVEBACK_PCT", 1.25)
+    updated["adverse_peak_trail_pullback_fraction_override"] = _env_float("FUTURES_WINNER_STUDY_RUNNER_ADVERSE_PULLBACK_FRACTION", 0.15)
+    return updated
+
+
 # Canonical "simplified" strategy whitelist — based on 30d baseline backtest
 # evidence (Apr14–May14 2026). The signals kept here are EMA trend-pullback,
 # Donchian-style consolidation breakouts, and ATR-impulse continuation — the
@@ -586,6 +653,13 @@ def _build_signal(
         **cost_extension_metadata,
         **(cost_projection or {}),
     }
+    signal_metadata = _apply_winner_study_runner_overrides(
+        symbol=getattr(config, "symbol", ""),
+        side=side,
+        entry_signal=entry_signal,
+        score=score,
+        metadata=signal_metadata,
+    )
     return FuturesSignal(
         symbol=config.symbol,
         side=side,

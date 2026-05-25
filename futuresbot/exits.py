@@ -830,6 +830,10 @@ def evaluate_profit_lock_bar(
     metadata = position.metadata if isinstance(position.metadata, dict) else {}
     if metadata is not position.metadata:
         position.metadata = metadata
+    trigger_pct = _metadata_float(metadata, "profit_lock_trigger_pct_override") or trigger_pct
+    pullback_fraction = _metadata_float(metadata, "profit_lock_pullback_fraction_override") or pullback_fraction
+    floor_pct = _metadata_float(metadata, "profit_lock_floor_pct_override") or floor_pct
+    min_exit_net_pct = _metadata_float(metadata, "profit_lock_exit_min_net_pct_override") or min_exit_net_pct
     armed_before_bar = (_metadata_float(metadata, PROFIT_LOCK_STOP_GROSS_PCT_KEY) or 0.0) > 0.0
     favorable_price = high if position.side == "LONG" else low
     adverse_price = low if position.side == "LONG" else high

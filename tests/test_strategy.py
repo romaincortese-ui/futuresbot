@@ -52,6 +52,73 @@ def _disable_competing_entry_paths(monkeypatch):
     monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
 
 
+def test_build_signal_marks_exceptional_winner_study_runner(monkeypatch):
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    monkeypatch.setenv("FUTURES_WINNER_STUDY_RUNNER_ENABLED", "1")
+    cfg = replace(_config(), symbol="ZEC_USDT")
+
+    signal = _build_signal(
+        side="LONG",
+        score=105.0,
+        entry_price=100.0,
+        tp_price=104.0,
+        sl_price=98.0,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        config=cfg,
+        metadata={
+            "volume_ratio": 3.0,
+            "impulse_window_volume_ratio": 1.5,
+            "impulse_move_pct": 0.02,
+            "impulse_move_atr": 3.0,
+            "trend_6h": 0.03,
+            "market_gate_penalty": 5.0,
+        },
+        leverage_min_override=5,
+        leverage_max_override=8,
+    )
+
+    assert signal is not None
+    assert signal.metadata["winner_study_runner_candidate"] == 1.0
+    assert signal.metadata["profit_lock_trigger_pct_override"] == 4.0
+    assert signal.metadata["profit_lock_pullback_fraction_override"] == 0.15
+    assert signal.metadata["profit_lock_floor_pct_override"] == 2.0
+    assert signal.metadata["profit_lock_exit_min_net_pct_override"] == 0.20
+    assert signal.metadata["breakeven_arm_pct_override"] == 10.0
+    assert signal.metadata["micro_profit_lock_trigger_pct_override"] == 99.0
+    assert signal.metadata["adverse_peak_trail_trigger_pct_override"] == 4.0
+    assert signal.metadata["adverse_peak_trail_giveback_pct_override"] == 1.25
+    assert signal.metadata["adverse_peak_trail_pullback_fraction_override"] == 0.15
+
+
+def test_build_signal_skips_runner_when_market_quality_is_not_exceptional(monkeypatch):
+    monkeypatch.setenv("USE_COST_BUDGET_RR", "0")
+    monkeypatch.setenv("FUTURES_WINNER_STUDY_RUNNER_ENABLED", "1")
+    cfg = replace(_config(), symbol="ZEC_USDT")
+
+    signal = _build_signal(
+        side="LONG",
+        score=80.0,
+        entry_price=100.0,
+        tp_price=104.0,
+        sl_price=98.0,
+        entry_signal="IMPULSE_EVENT_CONTINUATION_LONG",
+        config=cfg,
+        metadata={
+            "volume_ratio": 3.0,
+            "impulse_window_volume_ratio": 1.5,
+            "impulse_move_pct": 0.02,
+            "impulse_move_atr": 3.0,
+            "trend_6h": 0.03,
+            "market_gate_penalty": 5.0,
+        },
+        leverage_min_override=5,
+        leverage_max_override=8,
+    )
+
+    assert signal is not None
+    assert "winner_study_runner_candidate" not in signal.metadata
+
+
 def test_strategy_produces_long_signal_on_uptrend_breakout(monkeypatch):
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "none")
     base = [90000 + idx * 12 + math.sin(idx / 5.0) * 38 + math.cos(idx / 11.0) * 22 + ((idx % 5) - 2) * 14 for idx in range(520)]
