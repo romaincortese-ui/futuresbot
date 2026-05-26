@@ -404,6 +404,10 @@ EVENT_CALIBRATION_RELIEF_CAP = 4.0
 EVENT_BLOCK_OVERRIDE_SCORE_DEFAULT = 85.0
 EVENT_BLOCK_OVERRIDE_RISK_MULT_DEFAULT = 0.35
 EVENT_BLOCK_OVERRIDE_MAX_LEVERAGE_DEFAULT = 6
+ZEC_CRASH_SHORT_OVERRIDE_SCORE_DEFAULT = 78.0
+ZEC_CRASH_SHORT_OVERRIDE_NO_EVENT_SCORE_DEFAULT = 84.0
+ZEC_CRASH_SHORT_OVERRIDE_RISK_MULT_DEFAULT = 0.30
+ZEC_CRASH_SHORT_OVERRIDE_MAX_LEVERAGE_DEFAULT = 5
 
 EVENT_FAMILY_CALIBRATION_BUCKETS = {
     "LONG": (
@@ -449,6 +453,15 @@ def _env_int(name: str, default: int) -> int:
         if raw is None or raw.strip() == "":
             return default
         return int(float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _metadata_float(metadata: Mapping[str, Any] | None, key: str, default: float = 0.0) -> float:
+    try:
+        if metadata is None:
+            return default
+        return float(metadata.get(key, default) or default)
     except (TypeError, ValueError):
         return default
 
@@ -543,11 +556,102 @@ def _fresh_event_aligned(signal: FuturesSignal) -> bool:
     return side_sign != 0.0 and side_sign * bias > 0.0
 
 
+def _zec_crash_short_override_adjustment(
+    signal: FuturesSignal,
+    adjustment: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if not _env_bool("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_ENABLED", True):
+        return None
+    if str(signal.symbol or "").upper() != "ZEC_USDT" or str(signal.side or "").upper() != "SHORT":
+        return None
+    entry_signal = str(signal.entry_signal or "").upper()
+    if entry_signal not in {"IMPULSE_EVENT_CONTINUATION_SHORT", "EVENT_CATALYST_SHORT"}:
+        return None
+    block_reason = str(adjustment.get("block_reason") or "")
+    if not block_reason:
+        return None
+    metadata = signal.metadata or {}
+    score_floor = _env_float("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_SCORE", ZEC_CRASH_SHORT_OVERRIDE_SCORE_DEFAULT)
+    no_event_score_floor = _env_float(
+        "FUTURES_ZEC_CRASH_SHORT_OVERRIDE_NO_EVENT_SCORE",
+        ZEC_CRASH_SHORT_OVERRIDE_NO_EVENT_SCORE_DEFAULT,
+    )
+    if float(signal.score) < score_floor:
+        return None
+    if not _fresh_event_aligned(signal) and float(signal.score) < no_event_score_floor:
+        return None
+    trend_24h = _metadata_float(metadata, "trend_24h")
+    trend_6h = _metadata_float(metadata, "trend_6h")
+    impulse_move_atr = _metadata_float(metadata, "impulse_move_atr")
+    volume_ratio = _metadata_float(metadata, "volume_ratio")
+    atr_15m_pct = _metadata_float(metadata, "atr_15m_pct")
+    if trend_24h > _env_float("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_MAX_TREND_24H", -0.08):
+        return None
+    if trend_6h > _env_float("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_MAX_TREND_6H", -0.025):
+        return None
+    if impulse_move_atr < _env_float("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_MIN_IMPULSE_MOVE_ATR", 1.25):
+        return None
+    if volume_ratio < _env_float("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_MIN_VOLUME_RATIO", 1.0):
+        return None
+    if atr_15m_pct < _env_float("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_MIN_ATR_15M_PCT", 0.008):
+        return None
+    override = dict(adjustment)
+    override["block_reason"] = None
+    override["risk_mult"] = max(
+        0.0,
+        _env_float("FUTURES_ZEC_CRASH_SHORT_OVERRIDE_RISK_MULT", ZEC_CRASH_SHORT_OVERRIDE_RISK_MULT_DEFAULT),
+    )
+    override["block_override_min_score"] = score_floor if _fresh_event_aligned(signal) else no_event_score_floor
+    override["block_override_max_leverage"] = max(
+        1,
+        _env_int(
+            "FUTURES_ZEC_CRASH_SHORT_OVERRIDE_MAX_LEVERAGE",
+            ZEC_CRASH_SHORT_OVERRIDE_MAX_LEVERAGE_DEFAULT,
+        ),
+    )
+    override["calibration_block_override_applied"] = 1.0
+    override["calibration_block_override_reason"] = block_reason
+    override["calibration_block_override_type"] = "zec_crash_short"
+    override["source"] = override.get("source") or "zec_crash_short_override"
+    return override
+
+
+def _sei_relative_strength_short_veto(signal: FuturesSignal) -> str | None:
+    if not _env_bool("FUTURES_SEI_RELATIVE_STRENGTH_SHORT_VETO_ENABLED", True):
+        return None
+    if str(signal.symbol or "").upper() != "SEI_USDT" or str(signal.side or "").upper() != "SHORT":
+        return None
+    entry_signal = str(signal.entry_signal or "").upper()
+    if entry_signal not in {
+        "COIL_BREAKDOWN_SHORT",
+        "PRESSURE_BREAK_SHORT",
+        "TREND_CONTINUATION_SHORT",
+        "IMPULSE_EVENT_CONTINUATION_SHORT",
+        "EVENT_CATALYST_SHORT",
+        "RANGE_EXPANSION_CONTINUATION_SHORT",
+    }:
+        return None
+    max_score = _env_float("FUTURES_SEI_RELATIVE_STRENGTH_SHORT_VETO_MAX_SCORE", 94.0)
+    if float(signal.score) >= max_score:
+        return None
+    metadata = signal.metadata or {}
+    trend_24h = _metadata_float(metadata, "trend_24h")
+    trend_6h = _metadata_float(metadata, "trend_6h")
+    strong_24h = trend_24h >= _env_float("FUTURES_SEI_RELATIVE_STRENGTH_SHORT_VETO_MIN_TREND_24H", 0.015)
+    strong_6h = trend_6h >= _env_float("FUTURES_SEI_RELATIVE_STRENGTH_SHORT_VETO_MIN_TREND_6H", 0.006)
+    if not (strong_24h or (trend_24h >= 0.0 and strong_6h)):
+        return None
+    return "calibration block: SEI relative-strength short veto"
+
+
 def _calibration_block_override_adjustment(
     signal: FuturesSignal,
     primary_adjustment: Mapping[str, Any],
     adjustment: Mapping[str, Any],
 ) -> dict[str, Any] | None:
+    zec_override = _zec_crash_short_override_adjustment(signal, adjustment)
+    if zec_override is not None:
+        return zec_override
     if not _env_bool("FUTURES_CALIBRATION_BLOCK_OVERRIDE_ENABLED", True):
         return None
     block_reason = str(adjustment.get("block_reason") or "")
@@ -591,6 +695,7 @@ def apply_signal_calibration(
             "calibration_event_relief_applied": 0.0,
             "calibration_block_override_applied": float(adjustment.get("calibration_block_override_applied") or 0.0),
             "calibration_block_override_reason": adjustment.get("calibration_block_override_reason"),
+            "calibration_block_override_type": adjustment.get("calibration_block_override_type"),
             "calibration_block_override_min_score": adjustment.get("block_override_min_score"),
             "event_family_calibration_applied": float(adjustment.get("event_family_calibration_applied") or 0.0),
             "event_family_calibration_sources": adjustment.get("event_family_calibration_sources"),
@@ -603,6 +708,11 @@ def apply_signal_calibration(
     block_reason = str(adjustment.get("block_reason") or "")
     if block_reason:
         signal.metadata["calibration_block_reason"] = block_reason
+        return None
+    sei_short_veto = _sei_relative_strength_short_veto(signal)
+    if sei_short_veto:
+        signal.metadata["calibration_block_reason"] = sei_short_veto
+        signal.metadata["calibration_relative_strength_short_veto"] = 1.0
         return None
     event_relief = _event_calibration_relief(signal, threshold_offset)
     block_override_min_score = float(adjustment.get("block_override_min_score") or 0.0)
@@ -648,6 +758,7 @@ def apply_signal_calibration(
             "calibration_event_relief_applied": round(event_relief, 3),
             "calibration_block_override_applied": float(adjustment.get("calibration_block_override_applied") or 0.0),
             "calibration_block_override_reason": adjustment.get("calibration_block_override_reason"),
+            "calibration_block_override_type": adjustment.get("calibration_block_override_type"),
             "calibration_block_override_min_score": adjustment.get("block_override_min_score"),
             "calibration_block_override_max_leverage": override_max_leverage or None,
             "calibration_risk_mult": risk_mult,

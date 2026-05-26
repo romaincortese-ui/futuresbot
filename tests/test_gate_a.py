@@ -393,6 +393,100 @@ def test_event_family_inherited_block_does_not_get_high_score_override(monkeypat
     assert signal.metadata["calibration_block_reason"] == "BNB impulse shorts underperformed"
 
 
+def test_zec_crash_short_override_can_bypass_event_family_block(monkeypatch):
+    calibration = {
+        "entry_adjustments": {
+            "by_strategy_symbol_signal": {
+                "BTC_FUTURES": {
+                    "ZEC_USDT": {
+                        "IMPULSE_EVENT_CONTINUATION_SHORT": {
+                            "threshold_offset": 0.0,
+                            "risk_mult": 0.0,
+                            "block_reason": "ZEC impulse shorts underperformed",
+                        }
+                    }
+                }
+            }
+        }
+    }
+    signal = FuturesSignal(
+        symbol="ZEC_USDT",
+        side="SHORT",
+        score=82.5,
+        certainty=0.88,
+        entry_price=42.0,
+        tp_price=38.0,
+        sl_price=43.5,
+        leverage=12,
+        entry_signal="EVENT_CATALYST_SHORT",
+        metadata={
+            "crypto_event_bias": -0.8,
+            "crypto_event_threshold_relief": 2.0,
+            "crypto_event_fresh": 1.0,
+            "trend_24h": -0.114,
+            "trend_6h": -0.041,
+            "impulse_move_atr": 1.9,
+            "volume_ratio": 1.35,
+            "atr_15m_pct": 0.012,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, calibration, base_threshold=75.0, leverage_min=1, leverage_max=20)
+
+    assert calibrated is not None
+    assert calibrated.metadata["calibration_block_override_applied"] == pytest.approx(1.0)
+    assert calibrated.metadata["calibration_block_override_reason"] == "ZEC impulse shorts underperformed"
+    assert calibrated.metadata["calibration_block_override_type"] == "zec_crash_short"
+    assert calibrated.metadata["calibration_risk_mult"] == pytest.approx(0.30)
+    assert calibrated.leverage == 4
+
+
+def test_sei_relative_strength_short_veto_blocks_non_decisive_short():
+    signal = FuturesSignal(
+        symbol="SEI_USDT",
+        side="SHORT",
+        score=88.0,
+        certainty=0.82,
+        entry_price=0.41,
+        tp_price=0.38,
+        sl_price=0.422,
+        leverage=8,
+        entry_signal="TREND_CONTINUATION_SHORT",
+        metadata={
+            "trend_24h": 0.031,
+            "trend_6h": 0.012,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, {}, base_threshold=75.0, leverage_min=1, leverage_max=20)
+
+    assert calibrated is None
+    assert signal.metadata["calibration_block_reason"] == "calibration block: SEI relative-strength short veto"
+    assert signal.metadata["calibration_relative_strength_short_veto"] == pytest.approx(1.0)
+
+
+def test_sei_relative_strength_short_veto_skips_high_conviction_breakdown():
+    signal = FuturesSignal(
+        symbol="SEI_USDT",
+        side="SHORT",
+        score=95.0,
+        certainty=0.9,
+        entry_price=0.41,
+        tp_price=0.36,
+        sl_price=0.425,
+        leverage=8,
+        entry_signal="TREND_CONTINUATION_SHORT",
+        metadata={
+            "trend_24h": 0.031,
+            "trend_6h": 0.012,
+        },
+    )
+
+    calibrated = apply_signal_calibration(signal, {}, base_threshold=75.0, leverage_min=1, leverage_max=20)
+
+    assert calibrated is not None
+
+
 def test_event_catalyst_short_inherits_impulse_event_family_tightening():
     calibration = {
         "entry_adjustments": {
