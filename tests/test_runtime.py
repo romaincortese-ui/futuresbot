@@ -2178,6 +2178,15 @@ def test_enter_trade_caps_opportunity_bucket_with_nav_risk(tmp_path, monkeypatch
     monkeypatch.setenv("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", "1")
     monkeypatch.setenv("USE_NAV_RISK_SIZING", "1")
     monkeypatch.setenv("FUTURES_OPPORTUNITY_NAV_RISK_PCT", "0.04")
+    for name in (
+        "FUTURES_OPPORTUNITY_NAV_RISK_PCT_SCORE6",
+        "FUTURES_OPPORTUNITY_NAV_RISK_PCT_SCORE6_7",
+        "FUTURES_OPPORTUNITY_NAV_RISK_PCT_SCORE7",
+        "FUTURES_OPPORTUNITY_NAV_RISK_PCT_SCORE8",
+        "FUTURES_OPPORTUNITY_NAV_RISK_PCT_SCORE9",
+        "FUTURES_OPPORTUNITY_NAV_RISK_PCT_SCORE10",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("FUTURES_CONFIDENCE_RISK_SIZING_ENABLED", "0")
     monkeypatch.setenv("NAV_LEVERAGE_MIN", "1")
     monkeypatch.setenv("NAV_LEVERAGE_MAX", "20")
@@ -2214,6 +2223,7 @@ def test_enter_trade_caps_opportunity_bucket_with_nav_risk(tmp_path, monkeypatch
     assert position.leverage == 2
     assert position.metadata["opportunity_score_10"] == 9
     assert position.metadata["opportunity_balance_fraction"] == 0.75
+    assert position.metadata["opportunity_nav_risk_pct"] == 0.04
     assert position.metadata["opportunity_margin_budget_usdt"] == 150.0
 
 

@@ -18,7 +18,7 @@ from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
-from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
+from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.sharp_opportunity import (
 	annotate_sharp_event_signal,
 	build_sharp_event_signal,
@@ -149,6 +149,8 @@ def build_report(equity_curve: list[dict[str, Any]], trades: list[dict[str, Any]
 		"by_strategy_signal": _group_trade_metrics(trades_df, ["strategy", "entry_signal"]),
 		"by_strategy_symbol": _group_trade_metrics(trades_df, ["strategy", "symbol"]),
 		"by_strategy_symbol_signal": _group_trade_metrics(trades_df, ["strategy", "symbol", "entry_signal"]),
+		"by_opportunity_score": _group_trade_metrics(trades_df, ["opportunity_score_10"]),
+		"by_opportunity_score_signal": _group_trade_metrics(trades_df, ["opportunity_score_10", "entry_signal"]),
 	}
 	return report
 
@@ -317,9 +319,9 @@ class FuturesBacktestEngine:
 				from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
 
 				opportunity_sizing = _opportunity_bucket_sizing_enabled()
-				risk_pct = _env_float(
-					"FUTURES_OPPORTUNITY_NAV_RISK_PCT",
-					_env_float("NAV_RISK_PCT", 0.04),
+				risk_pct = opportunity_nav_risk_pct(
+					score,
+					default=_env_float("NAV_RISK_PCT", 0.04),
 				) if opportunity_sizing else _env_float("NAV_RISK_PCT", 0.01)
 				# Confidence-scaled risk sizing — mirror runtime._apply_nav_risk_sizing.
 				if os.environ.get("FUTURES_CONFIDENCE_RISK_SIZING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "y", "on"} and score is not None:
@@ -484,6 +486,7 @@ class FuturesBacktestEngine:
 			"score": position.score,
 			"opportunity_score_10": int((position.metadata or {}).get("opportunity_score_10") or 0),
 			"opportunity_balance_fraction": float((position.metadata or {}).get("opportunity_balance_fraction") or 0.0),
+			"opportunity_nav_risk_pct": float((position.metadata or {}).get("opportunity_nav_risk_pct") or 0.0),
 			"certainty": position.certainty,
 			"exit_reason": reason,
 			"tp_price": _round_price(position.tp_price),

@@ -91,7 +91,7 @@ from futuresbot.strategy import score_btc_futures_setup
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
-from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata
+from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -4503,10 +4503,11 @@ class FuturesRuntime:
         risk_pct = None
         if opportunity_sizing:
             nav_usdt = float(account_snapshot.get("equity_usdt", 0.0) or 0.0) or available_balance
-            risk_pct = self._env_float(
-                "FUTURES_OPPORTUNITY_NAV_RISK_PCT",
-                self._env_float("NAV_RISK_PCT", 0.04),
+            risk_pct = opportunity_nav_risk_pct(
+                float(signal_payload.get("score") or 0.0),
+                default=self._env_float("NAV_RISK_PCT", 0.04),
             )
+            signal_metadata["opportunity_nav_risk_pct"] = round(risk_pct, 6)
         nav_sized = self._apply_nav_risk_sizing(
             entry_price=entry_price,
             sl_price=sl_price_for_sizing,
