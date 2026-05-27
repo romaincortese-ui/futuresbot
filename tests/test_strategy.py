@@ -196,6 +196,7 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_SHORT")
+    assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="ZEC_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
 

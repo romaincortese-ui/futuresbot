@@ -1816,6 +1816,21 @@ def test_handle_telegram_commands_supports_pnl_logs_and_pause_resume(tmp_path):
     assert runtime._last_telegram_update == 6
 
 
+def test_handle_telegram_commands_resume_is_idempotent_when_active(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    runtime.telegram.get_updates = lambda **kwargs: [
+        {"update_id": 7, "message": {"chat": {"id": "1"}, "text": "/resume"}},
+    ]
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._handle_telegram_commands()
+
+    assert sent_messages == []
+    assert runtime._paused is False
+    assert runtime._last_telegram_update == 7
+
+
 def test_handle_telegram_commands_accepts_bot_suffix_and_persists_offset(tmp_path):
     config = replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1")
     runtime = FuturesRuntime(config, StubClient())

@@ -1416,15 +1416,15 @@ class FuturesRuntime:
                 self._notify(self._build_logs_message())
                 self._record_activity("Telegram: /logs")
             elif command == "/pause":
-                self._paused = True
-                self._save_state()
-                self._record_activity("Telegram: entries paused")
-                self._notify("⏸️ <b>Futures entries paused.</b> Open position management stays active.")
+                if not self._paused:
+                    self._paused = True
+                    self._record_activity("Telegram: entries paused")
+                    self._notify("⏸️ <b>Futures entries paused.</b> Open position management stays active.")
             elif command == "/resume":
-                self._paused = False
-                self._save_state()
-                self._record_activity("Telegram: entries resumed")
-                self._notify("▶️ <b>Futures entries resumed.</b>")
+                if self._paused:
+                    self._paused = False
+                    self._record_activity("Telegram: entries resumed")
+                    self._notify("▶️ <b>Futures entries resumed.</b>")
             elif command == "/close":
                 # Parse optional argument: /close, /close SYMBOL, /close all
                 if arg.lower() == "all":
