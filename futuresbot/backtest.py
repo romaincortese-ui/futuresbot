@@ -26,7 +26,7 @@ from futuresbot.sharp_opportunity import (
 	sharp_event_margin_multiplier,
 	sharp_event_signal_allowed,
 )
-from futuresbot.strategy import score_btc_futures_setup
+from futuresbot.strategy import score_btc_futures_setup, score_round_level_signal
 
 
 def _env_float(name: str, default: float) -> float:
@@ -799,6 +799,14 @@ class FuturesBacktestEngine:
 				calibrated = self._candidate_signal_for_frame(frame_15m.iloc[: index + 1], close_time.to_pydatetime(), len(frame_15m) - index - 1)
 				if calibrated is not None:
 					state.pending_signal = calibrated
+					state.pending_entry_time = frame_15m.index[index + 1]
+
+			# Round-number level crossing: fires on any 15m candle (both SHORT and LONG).
+			# Only checked when no position is open and no signal is already pending.
+			if state.open_position is None and state.pending_signal is None and index + 1 < len(frame_15m):
+				rl_signal = score_round_level_signal(frame_15m.iloc[: index + 1], self.config)
+				if rl_signal is not None:
+					state.pending_signal = rl_signal
 					state.pending_entry_time = frame_15m.index[index + 1]
 
 			equity_curve.append(

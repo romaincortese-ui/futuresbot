@@ -22,7 +22,7 @@ _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
         "BREAKOUT_HOLD_LONG",
         "LEVEL_BREAK_SHORT",
     ),
-    "ETH_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT"),
+    "ETH_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT", "MOMENTUM_BREAKAWAY_LONG", "DOWNTREND_MOMENTUM_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT"),
     "SOL_USDT": (
         "COIL_BREAKOUT_LONG",
         "TREND_CONTINUATION_LONG",
@@ -259,6 +259,8 @@ _SIMPLIFIED_STRATEGY_KEEP = frozenset({
     "PRESSURE_BREAK_SHORT",
     "IMPULSE_EVENT_CONTINUATION_LONG",
     "IMPULSE_EVENT_CONTINUATION_SHORT",
+    "DOWNTREND_MOMENTUM_SHORT",
+    "UPTREND_MOMENTUM_LONG",
 })
 _SIMPLIFIED_STRATEGY_DISABLE = frozenset({
     "MAJOR_THRESHOLD_LONG",
@@ -593,6 +595,7 @@ def _build_signal(
     metadata: dict[str, float | str],
     leverage_min_override: int | None = None,
     leverage_max_override: int | None = None,
+    leverage_hard_floor: int | None = None,
 ) -> FuturesSignal | None:
     sl_distance_pct = abs(entry_price - sl_price) / entry_price if entry_price > 0 else 0.0
     certainty = _confidence(score, config.min_confidence_score)
@@ -611,6 +614,15 @@ def _build_signal(
     leverage = leverage_decision.leverage
     if leverage is None:
         return None
+    # If a hard leverage floor was explicitly requested for a specific signal path
+    # (e.g. DTM signals must use at least x20) and the SL-based stop_cap permits it,
+    # raise the computed leverage to meet that floor.
+    if (
+        leverage_hard_floor is not None
+        and leverage < leverage_hard_floor
+        and leverage_decision.stop_cap >= leverage_hard_floor
+    ):
+        leverage = leverage_hard_floor
     extension = _extend_tp_for_cost_budget(
         side=side,
         entry_signal=entry_signal,
@@ -643,7 +655,7 @@ def _build_signal(
         "sl_distance_pct": round(sl_distance_pct, 6),
         "tp_distance_pct": round(abs(tp_price - entry_price) / entry_price if entry_price > 0 else 0.0, 6),
         "leverage_min_bound": float(leverage_decision.min_leverage),
-        "leverage_max_bound": float(leverage_decision.final_cap if leverage_decision.enabled else leverage_max_bound),
+        "leverage_max_bound": float(max(leverage_decision.final_cap if leverage_decision.enabled else leverage_max_bound, leverage)),
         "dynamic_leverage_enabled": 1.0 if leverage_decision.enabled else 0.0,
         "dynamic_leverage_score_cap": float(leverage_decision.score_cap),
         "dynamic_leverage_stop_cap": float(leverage_decision.stop_cap),
@@ -738,8 +750,19 @@ def score_btc_futures_setup(
 
     trend_24h = (float(close_1h.iloc[-1]) / float(close_1h.iloc[-25])) - 1.0 if len(close_1h) >= 25 else 0.0
     trend_6h = (float(close_1h.iloc[-1]) / float(close_1h.iloc[-7])) - 1.0 if len(close_1h) >= 7 else 0.0
+    # 4-hour trend from raw 15m bars (16 bars × 15min = 4 h); used by DOWNTREND/UPTREND_MOMENTUM signal.
+    trend_4h = (float(close_15.iloc[-1]) / float(close_15.iloc[-17])) - 1.0 if len(close_15) >= 17 else 0.0
     ema_gap = (current_ema20 / current_ema50) - 1.0 if current_ema50 > 0 else 0.0
     ema_slope = (current_ema20 / float(ema20.iloc[-6])) - 1.0 if len(ema20) >= 6 and float(ema20.iloc[-6]) > 0 else 0.0
+    # Fast 15m EMAs for the DOWNTREND_MOMENTUM_SHORT / UPTREND_MOMENTUM_LONG signal.
+    # EMA-9(15m) ≈ 2.25 h, EMA-21(15m) ≈ 5.25 h, EMA-50(15m) ≈ 12.5 h — all much faster
+    # than the 1h EMA stack (EMA20 ≈ 20 h) and allow catching early trend phase entries.
+    _ema9_15m_series = calc_ema(close_15, 9)
+    _ema21_15m_series = calc_ema(close_15, 21)
+    _ema50_15m_series = calc_ema(close_15, 50)
+    ema9_15m = _safe_float(_ema9_15m_series.iloc[-1]) if len(_ema9_15m_series) > 0 else float("nan")
+    ema21_15m = _safe_float(_ema21_15m_series.iloc[-1]) if len(_ema21_15m_series) > 0 else float("nan")
+    ema50_15m = _safe_float(_ema50_15m_series.iloc[-1]) if len(_ema50_15m_series) > 0 else float("nan")
     breakout_buffer = current_atr_15 * config.breakout_buffer_atr
 
     breakout_long = current_price > consolidation_high + breakout_buffer
@@ -1753,6 +1776,68 @@ def score_btc_futures_setup(
         and volume_ratio >= volume_floor_cfg
     )
 
+    # ── DOWNTREND_MOMENTUM_SHORT / UPTREND_MOMENTUM_LONG ────────────────────
+    # Catches shorter-term directional moves (e.g. BTC -2-3% over 2 days) that
+    # the 1h-EMA-stack continuation signal misses because the full EMA20<EMA50
+    # <EMA100 alignment takes many hours to establish from a prior uptrend.
+    # Uses EMA-9/21/50 on the 15m frame (2.25 h / 5.25 h / 12.5 h) to detect
+    # the early phase of a new leg.  Targets x15-x20 leverage with a 1-1.5% SL
+    # (≈ -15% to -30% margin loss), so only fires on confident setups.
+    _dtm_ema_ready = (
+        math.isfinite(ema9_15m) and math.isfinite(ema21_15m) and math.isfinite(ema50_15m)
+        and ema9_15m > 0 and ema21_15m > 0 and ema50_15m > 0
+    )
+    _dtm_enabled = _env_bool("FUTURES_DOWNTREND_MOMENTUM_ENABLED", True)
+    _dtm_adx_min = _env_float("FUTURES_DOWNTREND_MOMENTUM_ADX_MIN", 14.0)
+    _dtm_trend_4h_min = _env_float("FUTURES_DOWNTREND_MOMENTUM_TREND_4H_MIN", 0.010)
+    _dtm_volume_floor = _env_float("FUTURES_DOWNTREND_MOMENTUM_VOLUME_FLOOR", 0.90)
+    _dtm_rsi_short_max = _env_float("FUTURES_DOWNTREND_MOMENTUM_RSI_15_SHORT_MAX", 52.0)
+    _dtm_rsi_short_min = _env_float("FUTURES_DOWNTREND_MOMENTUM_RSI_15_SHORT_MIN", 18.0)
+    _dtm_rsi_long_min = _env_float("FUTURES_DOWNTREND_MOMENTUM_RSI_15_LONG_MIN", 48.0)
+    _dtm_rsi_long_max = _env_float("FUTURES_DOWNTREND_MOMENTUM_RSI_15_LONG_MAX", 82.0)
+    _dtm_max_ext_atr = _env_float("FUTURES_DOWNTREND_MOMENTUM_MAX_EMA_EXTENSION_ATR", 4.0)
+    # Stronger signals take priority — this only fires when nothing else qualifies.
+    _dtm_no_existing_short = not (
+        major_threshold_short_ok or btc_reversal_short_ok or short_ok or continuation_short_ok
+        or level_break_short_ok or impulse_short_ok or breakaway_short_ok
+        or range_expansion_short_ok or event_catalyst_short_ok
+    )
+    _dtm_no_existing_long = not (
+        major_threshold_long_ok or btc_round_level_long_ok or long_ok or continuation_long_ok
+        or level_break_long_ok or impulse_long_ok or breakout_hold_long_ok
+        or breakaway_long_ok or range_expansion_long_ok or event_catalyst_long_ok
+    )
+    downtrend_momentum_short_ok = (
+        _dtm_enabled
+        and _dtm_ema_ready
+        and not btc_short_uptrend_guard_active
+        and ema9_15m < ema21_15m          # fast 15m bearish structure (~2.25 h)
+        and ema21_15m < ema50_15m         # medium 15m also bearish (~5.25 h)
+        and trend_4h <= -_dtm_trend_4h_min  # meaningful 4 h decline
+        and current_price <= ema21_15m    # price below medium-fast EMA (bearish side)
+        and current_adx >= _dtm_adx_min
+        and volume_ratio >= _dtm_volume_floor
+        and current_rsi_15 <= _dtm_rsi_short_max
+        and current_rsi_15 >= _dtm_rsi_short_min
+        and impulse_ema_extension <= _dtm_max_ext_atr
+        and _dtm_no_existing_short
+    )
+    uptrend_momentum_long_ok = (
+        _dtm_enabled
+        and _dtm_ema_ready
+        and not high_beta_local_high_long_block
+        and ema9_15m > ema21_15m          # fast 15m bullish structure
+        and ema21_15m > ema50_15m         # medium 15m also bullish
+        and trend_4h >= _dtm_trend_4h_min   # meaningful 4 h advance
+        and current_price >= ema21_15m    # price above medium-fast EMA (bullish side)
+        and current_adx >= _dtm_adx_min
+        and volume_ratio >= _dtm_volume_floor
+        and current_rsi_15 >= _dtm_rsi_long_min
+        and current_rsi_15 <= _dtm_rsi_long_max
+        and impulse_ema_extension <= _dtm_max_ext_atr
+        and _dtm_no_existing_long
+    )
+
     long_score = 40.0
     if major_threshold_long_ok:
         long_score += _major_threshold_float(symbol_name, "SCORE_BONUS", 18.0)
@@ -1843,6 +1928,19 @@ def score_btc_futures_setup(
         long_score += 4.0 if impulse_close_near_high else 0.0
         long_score += 3.0 if trend_6h > 0 or ema_slope > 0 else 0.0
         long_score -= event_penalty
+    elif uptrend_momentum_long_ok:
+        # UPTREND_MOMENTUM_LONG: fast 15m EMA bullish structure + 4 h trend confirmed.
+        # Base bonus rewards the structural quality of the early-trend setup.
+        long_score += _env_float("FUTURES_DOWNTREND_MOMENTUM_SCORE_BONUS", 10.0)
+        long_score += min(18.0, max(0.0, trend_4h * 900.0))                     # 4h trend strength
+        long_score += min(12.0, max(0.0, (current_adx - _dtm_adx_min) * 0.75))  # ADX directional
+        long_score += min(8.0, max(0.0, (volume_ratio - _dtm_volume_floor) * 12.0))  # volume
+        if ema50_15m > 0:
+            long_score += min(6.0, max(0.0, (ema21_15m - ema50_15m) / ema50_15m * 600.0))  # EMA gap
+        long_score += 4.0 if current_rsi_15 >= 50.0 and current_rsi_15 <= 72.0 else 0.0  # RSI sweet spot
+        long_score += 5.0 if trend_6h > 0.005 else 0.0                         # short-term trend
+        long_score += 3.0 if ema9_15m > ema21_15m else 0.0                     # fast EMA structure
+        long_score += 4.0 if trend_24h > 0.009 else 0.0                        # 24h context
 
     short_score = 40.0
     if major_threshold_short_ok:
@@ -1923,6 +2021,20 @@ def score_btc_futures_setup(
         short_score += 4.0 if impulse_close_near_low else 0.0
         short_score += 3.0 if trend_6h < 0 or ema_slope < 0 else 0.0
         short_score -= event_penalty
+    elif downtrend_momentum_short_ok:
+        # DOWNTREND_MOMENTUM_SHORT: fast 15m EMA bearish structure + 4 h trend confirmed.
+        # Catches early-phase downtrend moves (e.g. BTC -2-3% over 2 days) that the
+        # full 1h-EMA-stack continuation signal misses while the slow EMAs realign.
+        short_score += _env_float("FUTURES_DOWNTREND_MOMENTUM_SCORE_BONUS", 10.0)
+        short_score += min(18.0, max(0.0, abs(trend_4h) * 900.0))               # 4h trend strength
+        short_score += min(12.0, max(0.0, (current_adx - _dtm_adx_min) * 0.75)) # ADX directional
+        short_score += min(8.0, max(0.0, (volume_ratio - _dtm_volume_floor) * 12.0))  # volume
+        if ema50_15m > 0:
+            short_score += min(6.0, max(0.0, (ema50_15m - ema21_15m) / ema50_15m * 600.0))  # EMA gap
+        short_score += 4.0 if current_rsi_15 >= 28.0 and current_rsi_15 <= 46.0 else 0.0   # RSI sweet spot
+        short_score += 5.0 if trend_6h < -0.005 else 0.0                        # short-term trend
+        short_score += 3.0 if ema9_15m < ema21_15m else 0.0                     # fast EMA structure
+        short_score += 4.0 if trend_24h < -0.009 else 0.0                       # 24h context aligned
 
     long_threshold = _side_threshold(config, "LONG", long_threshold_offset)
     short_threshold = _side_threshold(config, "SHORT", short_threshold_offset)
@@ -1941,6 +2053,8 @@ def score_btc_futures_setup(
             breakaway_path = breakaway_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or major_threshold_path)
             range_expansion_path = range_expansion_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok or major_threshold_path)
             event_path = event_catalyst_long_ok and not (long_ok or continuation_long_ok or impulse_long_ok or breakout_hold_path or level_break_path or btc_round_level_path or breakaway_long_ok or range_expansion_long_ok or major_threshold_path)
+            # uptrend_momentum fires only when none of the above qualify (already enforced in flag).
+            uptrend_momentum_path = uptrend_momentum_long_ok
             if major_threshold_path:
                 configured_cap = _major_threshold_float(symbol_name, "LEVERAGE_MAX", 8.0)
                 hard_cap = _major_threshold_float(symbol_name, "HARD_LEVERAGE_MAX", configured_cap)
@@ -2026,6 +2140,24 @@ def score_btc_futures_setup(
                 )
                 if sl_price >= current_price:
                     sl_price = current_price - current_atr_15 * _env_float("FUTURES_IMPULSE_SL_ATR_MULT", 3.0)
+            elif uptrend_momentum_path:
+                # Tight SL just below EMA-9(15m) — fast mean reversion target.
+                # Leverage is floored at 20; resolve_dynamic_leverage now respects leverage_min.
+                _dtm_lev_min = max(config.leverage_min, int(_env_float("FUTURES_DOWNTREND_MOMENTUM_LEVERAGE_MIN", 20.0)))
+                _dtm_lev_max = min(config.leverage_max, int(_env_float("FUTURES_DOWNTREND_MOMENTUM_LEVERAGE_MAX", 20.0)))
+                leverage_max = max(1, _dtm_lev_max)
+                leverage_min = min(_dtm_lev_min, leverage_max)
+                tp_move = max(
+                    _env_float("FUTURES_DOWNTREND_MOMENTUM_TP_ATR_MULT", 5.0) * current_atr_15,
+                    _env_float("FUTURES_DOWNTREND_MOMENTUM_TP_FLOOR_PCT", 0.020) * current_price,
+                )
+                _dtm_max_stop = _env_float("FUTURES_DOWNTREND_MOMENTUM_MAX_STOP_PCT", 0.015)
+                _dtm_min_stop = _env_float("FUTURES_DOWNTREND_MOMENTUM_MIN_STOP_PCT", 0.007)
+                # SL: below EMA-9(15m) minus buffer, but no more than 1.5% below entry.
+                sl_raw = ema9_15m - current_atr_15 * _env_float("FUTURES_DOWNTREND_MOMENTUM_SL_BUFFER_ATR", 0.5)
+                sl_price = max(sl_raw, current_price * (1.0 - _dtm_max_stop))
+                if sl_price >= current_price:
+                    sl_price = current_price * (1.0 - _dtm_min_stop)
             else:
                 leverage_min = leverage_max = None
                 tp_move = max(config.tp_atr_mult * current_atr_1h, config.tp_range_mult * consolidation_range, config.tp_floor_pct * current_price)
@@ -2070,6 +2202,7 @@ def score_btc_futures_setup(
                 else "IMPULSE_EVENT_CONTINUATION_LONG" if impulse_path
                 else "MOMENTUM_BREAKAWAY_LONG" if breakaway_path
                 else "RANGE_EXPANSION_CONTINUATION_LONG" if range_expansion_path
+                else "UPTREND_MOMENTUM_LONG" if uptrend_momentum_path
                 else "EVENT_CATALYST_LONG"
             )
             if _entry_signal_disabled(config, entry_signal):
@@ -2090,6 +2223,7 @@ def score_btc_futures_setup(
                 entry_signal=entry_signal,
                 config=config,
                 leverage_min_override=leverage_min,
+                leverage_hard_floor=int(leverage_min) if uptrend_momentum_path else None,
                 leverage_max_override=leverage_max,
                 metadata={
                     "trend_24h": round(trend_24h, 6),
@@ -2157,6 +2291,10 @@ def score_btc_futures_setup(
                     "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                     "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
                     "crypto_event_count": float(event_count or 0),
+                    # ADVERSE_PEAK_TRAIL: revert to global default (0.0 = no override = tight 0.25% trigger)
+                    "adverse_peak_trail_trigger_pct_override": 0.0,
+                    "adverse_peak_trail_giveback_pct_override": 0.0,
+                    "adverse_peak_trail_pullback_fraction_override": 0.0,
                 },
             )
 
@@ -2167,6 +2305,8 @@ def score_btc_futures_setup(
         breakaway_path = breakaway_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path)
         range_expansion_path = range_expansion_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok)
         event_path = event_catalyst_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok)
+        # downtrend_momentum fires only when none of the above qualify (already enforced in flag).
+        downtrend_momentum_path = downtrend_momentum_short_ok
         if major_threshold_path:
             configured_cap = _major_threshold_float(symbol_name, "LEVERAGE_MAX", 8.0)
             hard_cap = _major_threshold_float(symbol_name, "HARD_LEVERAGE_MAX", configured_cap)
@@ -2244,6 +2384,24 @@ def score_btc_futures_setup(
             )
             if sl_price <= current_price:
                 sl_price = current_price + current_atr_15 * _env_float("FUTURES_IMPULSE_SL_ATR_MULT", 3.0)
+        elif downtrend_momentum_path:
+            # Tight SL just above EMA-9(15m) — fast mean reversion / continuation target.
+            # Leverage is floored at 20; resolve_dynamic_leverage now respects leverage_min.
+            _dtm_lev_min = max(config.leverage_min, int(_env_float("FUTURES_DOWNTREND_MOMENTUM_LEVERAGE_MIN", 20.0)))
+            _dtm_lev_max = min(config.leverage_max, int(_env_float("FUTURES_DOWNTREND_MOMENTUM_LEVERAGE_MAX", 20.0)))
+            leverage_max = max(1, _dtm_lev_max)
+            leverage_min = min(_dtm_lev_min, leverage_max)
+            tp_move = max(
+                _env_float("FUTURES_DOWNTREND_MOMENTUM_TP_ATR_MULT", 5.0) * current_atr_15,
+                _env_float("FUTURES_DOWNTREND_MOMENTUM_TP_FLOOR_PCT", 0.020) * current_price,
+            )
+            _dtm_max_stop = _env_float("FUTURES_DOWNTREND_MOMENTUM_MAX_STOP_PCT", 0.015)
+            _dtm_min_stop = _env_float("FUTURES_DOWNTREND_MOMENTUM_MIN_STOP_PCT", 0.007)
+            # SL: above EMA-9(15m) plus buffer, but no more than 1.5% above entry.
+            sl_raw = ema9_15m + current_atr_15 * _env_float("FUTURES_DOWNTREND_MOMENTUM_SL_BUFFER_ATR", 0.5)
+            sl_price = min(sl_raw, current_price * (1.0 + _dtm_max_stop))
+            if sl_price <= current_price:
+                sl_price = current_price * (1.0 + _dtm_min_stop)
         else:
             leverage_min = leverage_max = None
             tp_move = max(config.tp_atr_mult * current_atr_1h, config.tp_range_mult * consolidation_range, config.tp_floor_pct * current_price)
@@ -2287,6 +2445,7 @@ def score_btc_futures_setup(
             else "IMPULSE_EVENT_CONTINUATION_SHORT" if impulse_path
             else "MOMENTUM_BREAKAWAY_SHORT" if breakaway_path
             else "RANGE_EXPANSION_CONTINUATION_SHORT" if range_expansion_path
+            else "DOWNTREND_MOMENTUM_SHORT" if downtrend_momentum_path
             else "EVENT_CATALYST_SHORT"
         )
         if _entry_signal_disabled(config, entry_signal):
@@ -2300,6 +2459,7 @@ def score_btc_futures_setup(
             entry_signal=entry_signal,
             config=config,
             leverage_min_override=leverage_min,
+            leverage_hard_floor=int(leverage_min) if downtrend_momentum_path else None,
             leverage_max_override=leverage_max,
             metadata={
                 "trend_24h": round(trend_24h, 6),
@@ -2352,6 +2512,10 @@ def score_btc_futures_setup(
                 "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                 "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
                 "crypto_event_count": float(event_count or 0),
+                # ADVERSE_PEAK_TRAIL: revert to global default (0.0 = no override = tight 0.25% trigger)
+                "adverse_peak_trail_trigger_pct_override": 0.0,
+                "adverse_peak_trail_giveback_pct_override": 0.0,
+                "adverse_peak_trail_pullback_fraction_override": 0.0,
             },
         )
 
@@ -2601,3 +2765,165 @@ def diagnose_setup_rejection(frame_15m: pd.DataFrame, config: StrategyConfig) ->
         return "score_or_rr_below_threshold"
     except Exception as exc:
         return f"diagnostic_error={type(exc).__name__}"
+
+
+# ---------------------------------------------------------------------------
+# Round-number level crossing signal
+# ---------------------------------------------------------------------------
+
+# Per-symbol configuration: round level step and max leverage (x20 default).
+# Step is the price increment that defines psychological round levels
+# (e.g. every $1,000 for BTC, every $500 for ETH, every $10 for SOL).
+_ROUND_LEVEL_CONFIGS: dict[str, dict[str, float]] = {
+    "BTC_USDT": {"step": 1000.0, "leverage": 20.0},
+    "ETH_USDT": {"step": 100.0,  "leverage": 20.0},
+    "SOL_USDT": {"step": 10.0,   "leverage": 20.0},
+    "BNB_USDT": {"step": 20.0,   "leverage": 20.0},
+    "ZEC_USDT": {"step": 20.0,   "leverage": 20.0},
+    "SEI_USDT": {"step": 0.02,   "leverage": 20.0},
+}
+
+# LONG side (unchanged): TP=+0.67%, SL=-0.13% from the broken level.
+# Derived from the original BTC example: level=$75k, TP=+$500, SL=-$100.
+_ROUND_LEVEL_LONG_TP_PCT: float = 500.0 / 75_000.0   # ≈ 0.00667
+_ROUND_LEVEL_LONG_SL_PCT: float = 100.0 / 75_000.0   # ≈ 0.00133
+
+# SHORT side (improved): wider TP and SL to survive level bounces and give
+# a better risk:reward at x20 leverage.
+# TP = 1.5% below level (~2 steps down for most symbols).
+# SL = 0.5% above level (3.8× wider than original, absorbs typical bounces).
+_ROUND_LEVEL_SHORT_TP_PCT: float = 0.015   # 1.5%
+_ROUND_LEVEL_SHORT_SL_PCT: float = 0.005   # 0.5%
+
+
+def score_round_level_signal(
+    frame_15m: pd.DataFrame,
+    config: StrategyConfig,
+) -> FuturesSignal | None:
+    """
+    Round-number level-crossing signal — SHORT and LONG.
+
+    LONG (breakout):
+        Price closes above a round level after being below it.
+        TP = level + 0.67 %, SL = level − 0.13 %.  Leverage x20.
+
+    SHORT (breakdown, with EMA9 < EMA21 trend filter):
+        Price closes below a round level after being at or above it,
+        AND the 15-min EMA-9 is below EMA-21 (downtrend confirmation).
+        TP = level − 1.5 %, SL = level + 0.5 %.  Leverage dynamic x10-x20.
+        APT is effectively disabled for SHORT (SL fires first at 0.5%+).
+
+    Dynamic leverage for SHORT (scales with EMA trend gap strength):
+        weak trend  (gap < 0.2%)  → x10
+        moderate    (gap 0.2–0.5%) → x10–x20 (linear)
+        strong      (gap ≥ 0.5%)  → x20
+
+    Opt-in via env: FUTURES_ROUND_LEVEL_ENABLED=1
+    Per-symbol leverage override: FUTURES_{SYMBOL}_ROUND_LEVEL_LEVERAGE=N
+    """
+    if not _env_bool("FUTURES_ROUND_LEVEL_ENABLED", False):
+        return None
+    if frame_15m is None or len(frame_15m) < 2:
+        return None
+
+    symbol = getattr(config, "symbol", "").upper()
+    lc = _ROUND_LEVEL_CONFIGS.get(symbol)
+    if lc is None:
+        return None
+
+    step = float(lc["step"])
+    base_leverage = int(_env_float(
+        f"FUTURES_{_symbol_env_prefix(symbol)}_ROUND_LEVEL_LEVERAGE",
+        lc["leverage"],
+    ))
+
+    close = frame_15m["close"].astype(float)
+    prev = float(close.iloc[-2])
+    curr = float(close.iloc[-1])
+
+    if not (math.isfinite(prev) and math.isfinite(curr) and prev > 0 and curr > 0):
+        return None
+
+    # ── SHORT: price crossed below a round level ──────────────────────────
+    # Candidate level: highest multiple of step that is ≤ prev.
+    short_level = math.floor(prev / step) * step
+    if short_level > 0 and prev >= short_level and curr < short_level:
+        # Require EMA9 < EMA21 to confirm a 15-min downtrend.
+        if len(frame_15m) < 21:
+            return None
+        ema9_s = calc_ema(close, 9)
+        ema21_s = calc_ema(close, 21)
+        ema9_val = float(ema9_s.iloc[-1])
+        ema21_val = float(ema21_s.iloc[-1])
+        if not (math.isfinite(ema9_val) and math.isfinite(ema21_val)):
+            return None
+        if ema9_val >= ema21_val:
+            return None  # No confirmed downtrend — skip SHORT
+
+        # Dynamic leverage: scale with EMA gap (trend strength).
+        # At gap ≥ 0.5% of price → full x20; at gap = 0% → x10.
+        ema_gap_pct = (ema21_val - ema9_val) / ema21_val  # always ≥ 0 here
+        gap_factor = min(1.0, ema_gap_pct / 0.005)        # 0.0 → 1.0 over [0%, 0.5%]
+        short_leverage = max(10, round(base_leverage * (0.5 + 0.5 * gap_factor)))
+
+        short_tp_pct = _env_float("FUTURES_ROUND_LEVEL_SHORT_TP_PCT", _ROUND_LEVEL_SHORT_TP_PCT)
+        short_sl_pct = _env_float("FUTURES_ROUND_LEVEL_SHORT_SL_PCT", _ROUND_LEVEL_SHORT_SL_PCT)
+        tp = short_level * (1.0 - short_tp_pct)
+        sl = short_level * (1.0 + short_sl_pct)
+        entry = curr
+        if tp < entry < sl:
+            return FuturesSignal(
+                symbol=symbol,
+                side="SELL",
+                score=75.0,
+                certainty=0.65,
+                entry_price=entry,
+                tp_price=round(tp, 8),
+                sl_price=round(sl, 8),
+                leverage=short_leverage,
+                entry_signal="ROUND_LEVEL_SHORT",
+                metadata={
+                    "round_level": float(short_level),
+                    "round_level_step": float(step),
+                    "ema_gap_pct": round(ema_gap_pct * 100, 4),
+                    "leverage_max_bound": float(short_leverage),
+                    # Tight APT: arms on any micro-wick in our favour, giving
+                    # a quick exit when price bounces back (limits loss to ~0.02%
+                    # of margin before the wider SL can fire).
+                    "adverse_peak_trail_trigger_pct_override": 0.02,
+                },
+            )
+
+    # ── LONG: price crossed above a round level ───────────────────────────
+    # Candidate level: lowest multiple of step strictly above prev.
+    long_level = math.ceil(prev / step) * step
+    if long_level == prev:
+        long_level += step  # prev was exactly on a level; advance to next
+    if long_level > 0 and prev < long_level <= curr:
+        long_tp_pct = _env_float("FUTURES_ROUND_LEVEL_LONG_TP_PCT", _ROUND_LEVEL_LONG_TP_PCT)
+        long_sl_pct = _env_float("FUTURES_ROUND_LEVEL_LONG_SL_PCT", _ROUND_LEVEL_LONG_SL_PCT)
+        entry = curr
+        tp = long_level * (1.0 + long_tp_pct)
+        sl = long_level * (1.0 - long_sl_pct)
+        if sl < entry < tp:
+            return FuturesSignal(
+                symbol=symbol,
+                side="BUY",
+                score=75.0,
+                certainty=0.65,
+                entry_price=entry,
+                tp_price=round(tp, 8),
+                sl_price=round(sl, 8),
+                leverage=base_leverage,
+                entry_signal="ROUND_LEVEL_LONG",
+                metadata={
+                    "round_level": float(long_level),
+                    "round_level_step": float(step),
+                    "leverage_max_bound": float(base_leverage),
+                    "adverse_peak_trail_trigger_pct_override": 0.0,
+                    "adverse_peak_trail_giveback_pct_override": 0.0,
+                    "adverse_peak_trail_pullback_fraction_override": 0.0,
+                },
+            )
+
+    return None

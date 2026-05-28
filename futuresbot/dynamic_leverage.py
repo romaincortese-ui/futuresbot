@@ -58,6 +58,9 @@ _DEFAULT_SIGNAL_CAPS: tuple[tuple[str, int], ...] = (
     ("BTC_ROUND_LEVEL", 12),
     ("BTC_REVERSAL", 12),
     ("MAJOR_THRESHOLD", 14),
+    # New shorter-timeframe trend signals target x15-x20 leverage.
+    ("DOWNTREND_MOMENTUM", 20),
+    ("UPTREND_MOMENTUM", 20),
 )
 
 

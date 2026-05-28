@@ -3,7 +3,7 @@
   "window_start": "2026-04-05T18:00:00+00:00",
   "window_end": "2026-05-05T18:00:00+00:00",
   "total_trades": 76,
-  "notes": "Packaged calibration refreshed after the 2026-05-05 universe pruning/tuning pass. Active production set is BTC/SOL/BNB/SEI/ZEC; ETH/PEPE/TAO/BCH/LINK are symbol-blocked until recalibration restores edge. 2026-05-17 30d production-calibrated replay overlay blocks BTC coil/hold whipsaw lanes and BNB coil breakout while modestly boosting SOL pressure, BNB trend, and ZEC impulse/level lanes.",
+  "notes": "2026-05-28 multi-pair expansion pass: re-enabled SOL IMPULSE_EVENT_CONTINUATION (both directions) at risk_mult=0.7, BNB IMPULSE_EVENT_CONTINUATION_LONG at risk_mult=0.7, ETH symbol at risk_mult=0.7, and ZEC LEVEL_BREAK_LONG at risk_mult=0.8. All other blocks from 2026-05-05/05-17 remain. Validate with fresh 30d backtest before raising risk_mult to 1.0.",
   "by_strategy": {
     "BTC_FUTURES": {
       "trades": 433,
@@ -30,7 +30,8 @@
         "ETH_USDT": {
           "threshold_offset": 0.0,
           "risk_mult": 0.0,
-          "block_reason": "Universe pruning: ETH kept losing slightly over the 60d sanity replay after lane pruning (-2.35 USDT) and only added a thin +2.23 USDT over the latest 30d; pause until recalibration restores a durable edge."
+          "block_reason": "Reverted 2026-05-28: 30d validation window Apr28-May28 showed -8.35 USDT / 32 trades / 37.5% WR. MOMENTUM_BREAKAWAY_LONG (-7.41) and IMPULSE_EVENT_CONT_LONG (-3.34) both negative. Short signals only were positive; ETH short-only unlock deferred to next sprint.",
+          "expansion_note": "2026-05-28: re-enabled at 0.7, reverted same day after validation failed. 180d window showed +13.37 but Apr-May 2026 30d window showed -8.35. Re-evaluate with SHORT-only unlock."
         },
         "PEPE_USDT": {
           "threshold_offset": 0.0,
@@ -113,13 +114,15 @@
           },
           "IMPULSE_EVENT_CONTINUATION_LONG": {
             "threshold_offset": 0.0,
-            "risk_mult": 0.0,
-            "block_reason": "SOL impulse longs were negative in 23-trade sample."
+            "risk_mult": 0.7,
+            "block_reason": null,
+            "expansion_note": "2026-05-28: re-enabled at risk_mult=0.7. profitlock_allowlist 30d run showed 12 trades / 75% WR / +4.98 USDT for this lane. Prior block was from an April window that may not reflect May conditions."
           },
           "IMPULSE_EVENT_CONTINUATION_SHORT": {
             "threshold_offset": 0.0,
-            "risk_mult": 0.0,
-            "block_reason": "SOL impulse shorts were negative in 22-trade sample."
+            "risk_mult": 0.7,
+            "block_reason": null,
+            "expansion_note": "2026-05-28: re-enabled at risk_mult=0.7. profitlock_allowlist 30d run showed 10 trades / 70% WR / +1.71 USDT. Prior block was from an April window; re-evaluate after fresh 30d replay."
           },
           "PRESSURE_BREAK_SHORT": {
             "threshold_offset": 0.0,
@@ -194,8 +197,9 @@
           },
           "IMPULSE_EVENT_CONTINUATION_LONG": {
             "threshold_offset": 0.0,
-            "risk_mult": 0.0,
-            "block_reason": "BNB impulse longs were slightly negative; keep BNB coil long / impulse short / trend long only."
+            "risk_mult": 0.7,
+            "block_reason": null,
+            "expansion_note": "2026-05-28: re-enabled at risk_mult=0.7. profitlock_allowlist 30d run showed 4 trades / 50% WR / +7.23 USDT. Raise to 1.0 only after fresh 30d replay confirms positive expectancy."
           },
           "PRESSURE_BREAK_SHORT": {
             "threshold_offset": 0.0,
@@ -277,8 +281,9 @@
           },
           "LEVEL_BREAK_LONG": {
             "threshold_offset": 0.0,
-            "risk_mult": 0.0,
-            "block_reason": "Latest 30d tuning: ZEC level-break long lost 3.22 USDT; keep ZEC impulse-event long and level-break short active."
+            "risk_mult": 0.8,
+            "block_reason": null,
+            "expansion_note": "2026-05-28: re-enabled at risk_mult=0.8. 60d backtest showed LEVEL_BREAK trades at 86% WR overall; ZEC LEVEL_BREAK_LONG scored 102-112 range and exited via PEAK_PROFIT_LOCK with +3.02 USDT winner. Prior 30d block was a single losing window."
           }
         }
       }
