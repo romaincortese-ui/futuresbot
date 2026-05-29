@@ -87,7 +87,7 @@ from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lo
 from futuresbot.marketdata import MexcApiError, MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
-from futuresbot.strategy import score_btc_futures_setup
+from futuresbot.strategy import score_btc_futures_setup, score_round_level_signal
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
@@ -2596,6 +2596,26 @@ class FuturesRuntime:
                 mr_signal = self._mean_reversion_candidate(sym, scoring_config, frame, raw_signal)
                 if mr_signal is not None:
                     raw_signal = mr_signal
+            # Round-level fallback — fires when the primary scorer returned nothing
+            # and price has just crossed a major round number (e.g. $500, $530…).
+            # BTC is excluded: it has its own round-level logic inside
+            # score_btc_futures_setup (btc_round_level_path).  Gated by the same
+            # FUTURES_ROUND_LEVEL_ENABLED env flag as the backtest path.
+            if self._flag("FUTURES_ROUND_LEVEL_ENABLED") and raw_signal is None and sym != "BTC_USDT":
+                try:
+                    rl_signal = score_round_level_signal(frame, scoring_config)
+                    if rl_signal is not None:
+                        raw_signal = rl_signal
+                        log.info(
+                            "[ROUND_LEVEL_SIGNAL] symbol=%s side=%s entry=%s level=%s step=%s",
+                            sym,
+                            rl_signal.side,
+                            self._format_price(rl_signal.entry_price),
+                            (rl_signal.metadata or {}).get("round_level"),
+                            (rl_signal.metadata or {}).get("round_level_step"),
+                        )
+                except Exception as _rl_exc:
+                    log.debug("Round-level candidate skipped: %s", _rl_exc)
             if sharp_decision is not None:
                 raw_signal = build_sharp_event_signal(
                     frame,
