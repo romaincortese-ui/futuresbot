@@ -55,7 +55,12 @@ MICRO_LOCK_DEFAULT_SYMBOLS = frozenset(
         "ZEC_USDT",
     }
 )
-MICRO_LOCK_DEFAULT_EXCLUDED_SYMBOLS = frozenset({"BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT"})
+# SOL is intentionally NOT in the exclusion list: its micro-lock releases at
+# 50% TP progress (FUTURES_MICRO_LOCK_MAX_PEAK_TP_PROGRESS), which already
+# prevents the lock from cutting large SOL runs short.  Keeping SOL excluded
+# meant that trades peaking at 2–3% gross (below the 4% peak-lock trigger)
+# had no protection at all against giving back their gains.
+MICRO_LOCK_DEFAULT_EXCLUDED_SYMBOLS = frozenset({"BTC_USDT", "ETH_USDT", "BNB_USDT"})
 
 
 def _total_and_current_move(position: FuturesPosition, price: float) -> tuple[float, float]:

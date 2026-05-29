@@ -13,6 +13,7 @@ def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
         "PEAK_PROTECTION_GAP_EXIT": "Peak protection gap exit",
         "MICRO_PROFIT_LOCK": "Profit taken: high-beta micro lock",
         "MICRO_PROTECTION_GAP_EXIT": "High-beta micro protection gap exit",
+        "MID_PROFIT_LOCK": "Mid-profit protection exit",
         "BREAKEVEN_PROFIT_LOCK": "Breakeven protection exit",
         "BREAKEVEN_PROTECTION_GAP_EXIT": "Breakeven protection gap exit",
         "ADVERSE_PEAK_TRAIL": "Early adverse peak trail exit",
@@ -268,6 +269,20 @@ class FuturesRuntime:
         self._recent_activity.appendleft(f"{timestamp} {message}")
 
     def _log_cycle_summary(self, *, price: float, signal: dict[str, Any] | None) -> None:
+        # [ACCOUNT] per-cycle equity audit — makes every drawdown reconstruction
+        # exact rather than inferential (assessment recommendation §6).
+        try:
+            _snap = self._account_snapshot(price)
+            log.info(
+                "[ACCOUNT] equity=%.2f available=%.2f open_margin=%.2f unrealized=%.2f positions=%d",
+                float(_snap.get("equity_usdt", 0.0) or 0.0),
+                float(_snap.get("available_usdt", 0.0) or 0.0),
+                self._total_open_margin(),
+                float(_snap.get("unrealized_pnl_usdt", 0.0) or 0.0),
+                len(self.open_positions),
+            )
+        except Exception:
+            pass
         # P1 §8 — emit gate-block aggregate first so the "why didn't we trade?"
         # answer sits next to the cycle outcome, not buried in a wall of
         # per-symbol [GATE_BLOCK] INFO lines.
@@ -899,6 +914,41 @@ class FuturesRuntime:
                 f"{progress:.2f}" if progress is not None else "n/a",
                 trailing_activation_progress,
             )
+        # ── Mid-profit protection ────────────────────────────────────────────
+        # Fills the gap between the symbol-restricted micro lock (trigger ≈2%)
+        # and the full peak lock (trigger ≈4%).  Universal — no symbol exclusion
+        # — so SOL, ZEC and event-alt trades that peak in the 3–4% range are
+        # protected even when the micro lock doesn't apply.
+        # Only active while the main peak lock has not yet armed (peak < 4%).
+        # Gate: FUTURES_MID_PROFIT_LOCK_ENABLED (default 1).
+        if os.environ.get("FUTURES_MID_PROFIT_LOCK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
+            mid_trigger_pct = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_TRIGGER_PCT", 3.0))
+            if 0.0 < mid_trigger_pct < trigger_pct and gross_peak_pct >= mid_trigger_pct:
+                mid_floor_pct  = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_FLOOR_PCT", 1.5))
+                mid_pullback   = min(0.95, max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_PULLBACK_FRACTION", 0.35)))
+                mid_stop_pct   = max(mid_floor_pct, gross_peak_pct * (1.0 - mid_pullback))
+                if metadata.get("mid_profit_lock_stop_gross_pnl_pct") != mid_stop_pct:
+                    metadata["mid_profit_lock_stop_gross_pnl_pct"] = float(mid_stop_pct)
+                    metadata["mid_profit_lock_peak_gross_pnl_pct"] = float(gross_peak_pct)
+                    changed = True
+                if gross_pnl_pct <= mid_stop_pct:
+                    log.warning(
+                        "[MID_PROFIT_LOCK_EXIT] symbol=%s side=%s gross_pnl_pct=%.2f "
+                        "gross_peak_pct=%.2f mid_stop_pct=%.2f (floor=%.2f pullback=%.2f) "
+                        "net_pnl_pct=%.2f pnl_usdt=%+.2f price=%s",
+                        position.symbol,
+                        position.side,
+                        gross_pnl_pct,
+                        gross_peak_pct,
+                        mid_stop_pct,
+                        mid_floor_pct,
+                        mid_pullback,
+                        net_pnl_pct,
+                        pnl_usdt,
+                        self._format_price(current_price),
+                    )
+                    return self._close_position_for_exit(position, current_price=current_price, reason="MID_PROFIT_LOCK")
+        # ── Main peak-profit lock ────────────────────────────────────────────
         if gross_peak_pct >= trigger_pct:
             stop_pct = max(floor_pct, gross_peak_pct * (1.0 - pullback_fraction))
             net_stop_pct = max(0.0, peak_pct * (1.0 - pullback_fraction))
@@ -1010,7 +1060,7 @@ class FuturesRuntime:
         adverse_exit, changed = evaluate_adverse_peak_trail_tick(
             position,
             current_price,
-            trigger_pct=max(0.0, self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_TRIGGER_PCT", 0.25)),
+            trigger_pct=max(0.0, self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_TRIGGER_PCT", 1.5)),
             giveback_pct=max(0.0, self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_GIVEBACK_PCT", 1.25)),
             pullback_fraction=self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_PULLBACK_FRACTION", 0.45),
             max_loss_pct=max(0.0, self._env_float("FUTURES_ADVERSE_PEAK_TRAIL_MAX_LOSS_PCT", 2.0)),
