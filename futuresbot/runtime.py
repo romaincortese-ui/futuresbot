@@ -1480,12 +1480,12 @@ class FuturesRuntime:
                 if not self._paused:
                     self._paused = True
                     self._record_activity("Telegram: entries paused")
-                    self._notify("⏸️ <b>Futures entries paused.</b> Open position management stays active.")
+                    self._notify_once("entries_paused", "⏸️ <b>Futures entries paused.</b> Open position management stays active.", cooldown_seconds=3600)
             elif command == "/resume":
                 if self._paused:
                     self._paused = False
                     self._record_activity("Telegram: entries resumed")
-                    self._notify("▶️ <b>Futures entries resumed.</b>")
+                    self._notify_once("entries_resumed", "▶️ <b>Futures entries resumed.</b>", cooldown_seconds=3600)
             elif command == "/close":
                 # Parse optional argument: /close, /close SYMBOL, /close all
                 if arg.lower() == "all":
@@ -1520,6 +1520,10 @@ class FuturesRuntime:
         latest = max(int(update.get("update_id", 0) or 0) for update in updates)
         if latest <= 0:
             return
+        # Acknowledge all pending updates with Telegram so they are not
+        # re-delivered on the next getUpdates call (prevents stale /pause,
+        # /resume, /status commands from replaying after a container restart).
+        self.telegram.get_updates(offset=latest + 1, limit=1, timeout=0)
         self._last_telegram_update = latest
         self._record_activity("Telegram backlog synced on startup")
         self._save_state()
