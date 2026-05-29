@@ -40,7 +40,7 @@ _DEFAULT_SYMBOL_CAPS: dict[str, int] = {
     "BNB_USDT": 12,
     "LINK_USDT": 12,
     "TAO_USDT": 10,
-    "ZEC_USDT": 8,
+    "ZEC_USDT": 5,
     "DASH_USDT": 8,
     "SEI_USDT": 8,
     "PEPE_USDT": 6,

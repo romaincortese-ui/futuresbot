@@ -4123,8 +4123,8 @@ class FuturesRuntime:
         order_id: str,
         expected_contracts: int,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        attempts = max(1, int(self._env_float("FUTURES_ENTRY_CONFIRM_ATTEMPTS", 6.0)))
-        sleep_seconds = max(0.0, self._env_float("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", 0.5))
+        attempts = max(1, int(self._env_float("FUTURES_ENTRY_CONFIRM_ATTEMPTS", 12.0)))
+        sleep_seconds = max(0.0, self._env_float("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", 1.0))
         detail: dict[str, Any] = {}
         last_error: Exception | None = None
         for attempt in range(attempts):
@@ -4153,11 +4153,61 @@ class FuturesRuntime:
         return detail, None
 
     def _handle_unconfirmed_live_entry(self, *, symbol: str, side_name: str, order_id: str) -> None:
+        cancel_attempted = False
+        cancel_exc: Exception | None = None
         if order_id:
             try:
                 self.client.cancel_order(order_id)
+                cancel_attempted = True
             except Exception as exc:
+                cancel_exc = exc
                 log.debug("Unconfirmed entry cancel skipped for %s: %s", order_id, exc)
+        # Post-cancel safety check: if MEXC filled the order just before or during the
+        # cancel, the position is live but will not be tracked locally.  One final poll
+        # catches that race and escalates to a manual-intervention alert.
+        post_cancel_position = self._matching_exchange_position_row(symbol=symbol, side_name=side_name)
+        if post_cancel_position is not None:
+            log.error(
+                "[ENTRY_UNCONFIRMED_FILLED] symbol=%s side=%s order=%s "
+                "reason=position_found_after_cancel cancel_attempted=%s cancel_error=%s",
+                symbol, side_name, order_id or "", cancel_attempted,
+                type(cancel_exc).__name__ if cancel_exc else "none",
+            )
+            self._notify_once(
+                f"futures_entry_unconfirmed_filled_{symbol}_{order_id or 'no_order'}",
+                f"🚨 <b>Futures Entry: Untracked Live Position</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"<b>{html.escape(side_name)}</b> {html.escape(symbol)} was initially unconfirmed, "
+                f"but an open position was found on MEXC after the cancel attempt. "
+                f"<b>The order was likely filled. The position is live but NOT tracked locally.\n"
+                f"⚠️ Manual action required: close the position on MEXC immediately.</b>",
+            )
+            self._record_activity(f"Entry unconfirmed but position found post-cancel: {side_name} {symbol} order={order_id or 'n/a'}")
+            self._save_state()
+            return
+        # Secondary check: non-zero deal volume on the order means it filled.
+        if order_id:
+            try:
+                final_detail = self.client.get_order(order_id)
+                if isinstance(final_detail, dict) and self._order_deal_volume(final_detail) > 0:
+                    log.error(
+                        "[ENTRY_UNCONFIRMED_FILLED_ORDER] symbol=%s side=%s order=%s dealVol=%s "
+                        "reason=deal_volume_nonzero_post_cancel",
+                        symbol, side_name, order_id, self._order_deal_volume(final_detail),
+                    )
+                    self._notify_once(
+                        f"futures_entry_unconfirmed_dealvol_{symbol}_{order_id}",
+                        f"🚨 <b>Futures Entry: Possible Untracked Fill</b> [{self._mode_label()}]\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"<b>{html.escape(side_name)}</b> {html.escape(symbol)} order "
+                        f"(order <code>{html.escape(order_id)}</code>) shows non-zero deal volume "
+                        f"after cancel attempt. <b>Verify on MEXC and close the position if it is open.</b>",
+                    )
+                    self._record_activity(f"Entry unconfirmed but deal volume detected: {side_name} {symbol} order={order_id}")
+                    self._save_state()
+                    return
+            except Exception as exc:
+                log.debug("Post-cancel order status check failed for %s: %s", order_id, exc)
         order_text = f" (order <code>{html.escape(order_id)}</code>)" if order_id else ""
         self._notify_once(
             f"futures_entry_unconfirmed_{symbol}_{order_id or 'no_order'}",

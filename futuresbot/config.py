@@ -148,7 +148,7 @@ DEFAULT_SYMBOL_PARAMETER_PROFILES: dict[str, dict[str, float | int]] = {
         "consolidation_atr_mult": 2.15,
         "volume_ratio_floor": 1.10,
         "adx_floor": 17.0,
-        "leverage_max": 20,
+        "leverage_max": 8,
         "min_reward_risk": 1.30,
         "funding_rate_abs_max": 0.00025,
     },
