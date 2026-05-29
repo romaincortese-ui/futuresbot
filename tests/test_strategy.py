@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from futuresbot.config import FuturesBacktestConfig
-from futuresbot.strategy import _build_signal, _entry_signal_disabled, diagnose_impulse_rejection, score_btc_futures_setup
+from futuresbot.strategy import _build_signal, _entry_signal_disabled, diagnose_impulse_rejection, score_btc_futures_setup, score_round_level_signal
 
 
 def _config() -> FuturesBacktestConfig:
@@ -199,6 +199,23 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="ZEC_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
+
+
+def test_round_level_requires_explicit_symbol_allowlist(monkeypatch):
+    monkeypatch.setenv("FUTURES_ROUND_LEVEL_ENABLED", "1")
+    prices = [560.0 - idx * 0.5 for idx in range(30)] + [541.0, 539.0]
+    frame = _frame_from_prices(prices)
+    cfg = replace(_config(), symbol="ZEC_USDT")
+
+    assert score_round_level_signal(frame, cfg) is None
+
+    monkeypatch.setenv("FUTURES_ROUND_LEVEL_SYMBOLS", "ZEC_USDT")
+    signal = score_round_level_signal(frame, cfg)
+    assert signal is not None
+    assert signal.entry_signal == "ROUND_LEVEL_SHORT"
+
+    monkeypatch.setenv("FUTURES_ZECUSDT_DISABLED_ENTRY_SIGNALS", "ROUND_LEVEL_SHORT")
+    assert score_round_level_signal(frame, cfg) is None
 
 
 def test_major_threshold_long_covers_btc_sol_eth(monkeypatch):

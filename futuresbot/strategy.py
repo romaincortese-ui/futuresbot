@@ -2835,6 +2835,7 @@ _ROUND_LEVEL_CONFIGS: dict[str, dict[str, float]] = {
     "ZEC_USDT": {"step": 20.0,   "leverage": 20.0},
     "SEI_USDT": {"step": 0.02,   "leverage": 20.0},
 }
+_ROUND_LEVEL_DEFAULT_SYMBOLS = ""
 
 # LONG side (unchanged): TP=+0.67%, SL=-0.13% from the broken level.
 # Derived from the original BTC example: level=$75k, TP=+$500, SL=-$100.
@@ -2883,6 +2884,8 @@ def score_round_level_signal(
     lc = _ROUND_LEVEL_CONFIGS.get(symbol)
     if lc is None:
         return None
+    if not _symbol_enabled("FUTURES_ROUND_LEVEL_SYMBOLS", symbol, _ROUND_LEVEL_DEFAULT_SYMBOLS):
+        return None
 
     step = float(lc["step"])
     base_leverage = int(_env_float(
@@ -2901,6 +2904,8 @@ def score_round_level_signal(
     # Candidate level: highest multiple of step that is ≤ prev.
     short_level = math.floor(prev / step) * step
     if short_level > 0 and prev >= short_level and curr < short_level:
+        if _entry_signal_disabled(config, "ROUND_LEVEL_SHORT"):
+            return None
         # Require EMA9 < EMA21 to confirm a 15-min downtrend.
         if len(frame_15m) < 21:
             return None
@@ -2953,6 +2958,8 @@ def score_round_level_signal(
     if long_level == prev:
         long_level += step  # prev was exactly on a level; advance to next
     if long_level > 0 and prev < long_level <= curr:
+        if _entry_signal_disabled(config, "ROUND_LEVEL_LONG"):
+            return None
         long_tp_pct = _env_float("FUTURES_ROUND_LEVEL_LONG_TP_PCT", _ROUND_LEVEL_LONG_TP_PCT)
         long_sl_pct = _env_float("FUTURES_ROUND_LEVEL_LONG_SL_PCT", _ROUND_LEVEL_LONG_SL_PCT)
         entry = curr

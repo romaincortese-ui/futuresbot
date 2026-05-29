@@ -1852,15 +1852,22 @@ def test_handle_telegram_commands_accepts_bot_suffix_and_persists_offset(tmp_pat
 def test_startup_telegram_sync_discards_stale_commands_without_processing(tmp_path):
     runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
     runtime.open_position = _make_position("BTC_USDT")
-    runtime.telegram.get_updates = lambda **kwargs: [
-        {"update_id": 77, "message": {"chat": {"id": "1"}, "text": "/close"}},
-    ]
+    calls: list[dict[str, object]] = []
+
+    def fake_updates(**kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("offset") == -1:
+            return [{"update_id": 77, "message": {"chat": {"id": "1"}, "text": "/close"}}]
+        return []
+
+    runtime.telegram.get_updates = fake_updates
     sent_messages: list[str] = []
     runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
 
     runtime._sync_telegram_update_offset_on_startup()
 
     assert runtime._last_telegram_update == 77
+    assert calls[-1]["offset"] == 78
     assert runtime.open_position is not None
     assert sent_messages == []
 
@@ -2097,6 +2104,24 @@ def test_drawdown_halt_blocks_without_manual_pause(tmp_path, monkeypatch, caplog
     assert multiplier == 0.0
     assert runtime._paused is False
     assert any("Drawdown HALT active" in entry.message for entry in caplog.records)
+
+
+def test_live_drawdown_halt_ignores_stale_override_without_confirmation(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "1")
+    monkeypatch.setenv("IGNORE_HALT", "true")
+    monkeypatch.delenv("FUTURES_ALLOW_LIVE_HALT_OVERRIDE", raising=False)
+    config = replace(_config(tmp_path), margin_budget_usdt=100.0, paper_trade=False)
+    runtime = FuturesRuntime(config, StubClient())
+    runtime.trade_history = [
+        {"pnl_usdt": 100.0, "closed_at": "2026-05-01T00:00:00+00:00"},
+        {"pnl_usdt": -100.0, "closed_at": "2026-05-02T00:00:00+00:00"},
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="futuresbot.runtime"):
+        multiplier = runtime._drawdown_size_multiplier()
+
+    assert multiplier == 0.0
+    assert any("IGNORE_HALT requested but ignored in live mode" in entry.message for entry in caplog.records)
 
 
 def test_live_drawdown_uses_current_equity_after_deposit(tmp_path, monkeypatch, caplog):

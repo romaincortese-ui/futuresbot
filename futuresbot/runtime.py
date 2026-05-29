@@ -3023,8 +3023,12 @@ class FuturesRuntime:
         try:
             from futuresbot.drawdown_kill import compute_drawdown_state
 
-            # IGNORE_HALT override: allow trading even if HALT is active
-            ignore_halt = os.getenv("IGNORE_HALT", "false").strip().lower() in {"1", "true", "yes", "on"}
+            # In live trading, require a second explicit safety flag before an
+            # operator can bypass a drawdown halt. This prevents stale Railway
+            # variables from silently allowing new entries during deep drawdown.
+            ignore_halt_requested = os.getenv("IGNORE_HALT", "false").strip().lower() in {"1", "true", "yes", "on"}
+            allow_live_override = self.config.paper_trade or self._flag("FUTURES_ALLOW_LIVE_HALT_OVERRIDE")
+            ignore_halt = ignore_halt_requested and allow_live_override
 
             account_snapshot = None if self.config.paper_trade else self._account_snapshot()
             curve = self._build_equity_curve(account_snapshot=account_snapshot)
@@ -3051,6 +3055,8 @@ class FuturesRuntime:
                 if ignore_halt:
                     log.warning("IGNORE_HALT override active: bypassing drawdown HALT and allowing entries!")
                     return 1.0
+                if ignore_halt_requested:
+                    log.warning("IGNORE_HALT requested but ignored in live mode; set FUTURES_ALLOW_LIVE_HALT_OVERRIDE=true to bypass intentionally")
                 return 0.0
             if state.label == "THROTTLE":
                 self._notify_once(
