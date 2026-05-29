@@ -550,6 +550,17 @@ class FuturesRuntime:
             os.environ[
                 f"COST_BUDGET_TAKER_FEE_RATE_{self._normalize_symbol_for_env(sym)}"
             ] = f"{taker_resolved:.6f}"
+            # Auto-populate TICK_SIZE_{SYM} from the contract's priceUnit so
+            # the maker ladder uses the correct tick for every symbol (BTC/BNB
+            # need 0.1, not the 0.01 fallback default).
+            tick_env_key = f"TICK_SIZE_{sym.upper().replace('_', '')}"
+            if os.environ.get(tick_env_key) is None:
+                try:
+                    pu_float = float(price_unit)
+                    if pu_float > 0:
+                        os.environ[tick_env_key] = f"{pu_float}"
+                except (TypeError, ValueError):
+                    pass
             log.info(
                 "[CONTRACT_SPEC] symbol=%s contract_size=%s min_vol=%s price_unit=%s "
                 "vol_unit=%s max_leverage=%s taker_fee_rate=%.6f src=%s "

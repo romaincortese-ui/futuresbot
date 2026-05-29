@@ -21,8 +21,25 @@ market-on-signal when off.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
+
+
+def _snap_price(price: float, tick_size: float) -> float:
+    """Snap *price* to the nearest multiple of *tick_size*.
+
+    Prevents MEXC error 2015 (price-precision rejection) which fires when the
+    computed mid ± offset lands on a half-tick (e.g. bid=536.43, ask=536.46
+    gives mid=536.445, which is not a multiple of 0.01).
+    """
+    if tick_size <= 0:
+        return price
+    snapped = round(price / tick_size) * tick_size
+    if tick_size >= 1.0:
+        return float(int(round(snapped)))
+    decimals = max(0, round(-math.log10(tick_size)))
+    return round(snapped, decimals)
 
 LadderAction = Literal["POST_MAKER", "REPOST_MAKER", "CROSS_TAKER", "WAIT", "ABORT"]
 
@@ -116,10 +133,12 @@ def decide_next_action(
 
     offset = config.tick_offsets[min(step, len(config.tick_offsets) - 1)]
     # Maker side: bid below mid for longs, ask above mid for shorts.
+    # Snap to the nearest tick so MEXC does not reject with code 2015 when
+    # mid falls on a half-tick (odd-width spreads produce non-integer multiples).
     if side.upper() == "LONG":
-        price = mid - offset * tick_size
+        price = _snap_price(mid - offset * tick_size, tick_size)
     else:
-        price = mid + offset * tick_size
+        price = _snap_price(mid + offset * tick_size, tick_size)
     action: LadderAction = "POST_MAKER" if step == 0 else "REPOST_MAKER"
     return MakerLadderDecision(
         action=action,
