@@ -754,6 +754,30 @@ def score_btc_futures_setup(
     trend_4h = (float(close_15.iloc[-1]) / float(close_15.iloc[-17])) - 1.0 if len(close_15) >= 17 else 0.0
     ema_gap = (current_ema20 / current_ema50) - 1.0 if current_ema50 > 0 else 0.0
     ema_slope = (current_ema20 / float(ema20.iloc[-6])) - 1.0 if len(ema20) >= 6 and float(ema20.iloc[-6]) > 0 else 0.0
+
+    # ---- Macro trend tilt: multi-day continuous signal in [-1.0, +1.0] ---------
+    # Positive = bullish macro regime; Negative = bearish macro regime.
+    # Purpose: penalise momentum signals that fight the 3–7 day trend — e.g.
+    # UPTREND_MOMENTUM_LONG during a dead-cat bounce within a -12% 7-day
+    # downtrend (ZEC incident, May 2026).  Controlled via env var.
+    _macro_trend_enabled = _env_bool("FUTURES_MACRO_TREND_ENABLED", True)
+    macro_tilt = 0.0
+    if _macro_trend_enabled:
+        _n15 = len(close_15)
+        _lb7d = min(_n15 - 1, 672)   # 7 days × 24 h × 4 bars = 672 bars of 15 m
+        _lb3d = min(_n15 - 1, 288)   # 3 days × 24 h × 4 bars = 288 bars of 15 m
+        _t7 = ((float(close_15.iloc[-1]) / float(close_15.iloc[-_lb7d - 1])) - 1.0) if _lb7d > 0 else 0.0
+        _t3 = ((float(close_15.iloc[-1]) / float(close_15.iloc[-_lb3d - 1])) - 1.0) if _lb3d > 0 else 0.0
+        _eg = ema_gap                                                          # EMA20/50 gap (1h)
+        _pv = ((current_price / current_ema50) - 1.0) if current_ema50 > 0 else 0.0
+        macro_tilt = (
+            0.40 * max(-1.0, min(1.0, _t7 / 0.20))   # 7-day return: ±20 % → ±1.0
+            + 0.25 * max(-1.0, min(1.0, _t3 / 0.10)) # 3-day return: ±10 % → ±1.0
+            + 0.20 * max(-1.0, min(1.0, _eg / 0.05)) # EMA20/50 gap: ± 5 % → ±1.0
+            + 0.15 * max(-1.0, min(1.0, _pv / 0.06)) # price/EMA50:  ± 6 % → ±1.0
+        )
+        macro_tilt = round(max(-1.0, min(1.0, macro_tilt)), 4)
+
     # Fast 15m EMAs for the DOWNTREND_MOMENTUM_SHORT / UPTREND_MOMENTUM_LONG signal.
     # EMA-9(15m) ≈ 2.25 h, EMA-21(15m) ≈ 5.25 h, EMA-50(15m) ≈ 12.5 h — all much faster
     # than the 1h EMA stack (EMA20 ≈ 20 h) and allow catching early trend phase entries.
@@ -1011,6 +1035,15 @@ def score_btc_futures_setup(
                 penalty += 5.0
             if ema_slope >= 0:
                 penalty += 3.0
+        # Macro trend context: add a moderate extra penalty when the signal
+        # direction fights the 7-day macro regime (e.g. IMPULSE/EVENT_CATALYST
+        # long in a multi-day downtrend).  Max 8 pts at full macro tilt.
+        if _macro_trend_enabled:
+            _macro_mkt_max = _env_float("FUTURES_MACRO_TREND_MARKET_PENALTY_MAX", 8.0)
+            if side == "LONG":
+                penalty += max(0.0, -macro_tilt) * _macro_mkt_max
+            else:
+                penalty += max(0.0, macro_tilt) * _macro_mkt_max
         return round(penalty, 4)
 
     impulse_soft_market_gates = _env_bool("FUTURES_IMPULSE_SOFT_MARKET_GATES", True)
@@ -1941,6 +1974,16 @@ def score_btc_futures_setup(
         long_score += 5.0 if trend_6h > 0.005 else 0.0                         # short-term trend
         long_score += 3.0 if ema9_15m > ema21_15m else 0.0                     # fast EMA structure
         long_score += 4.0 if trend_24h > 0.009 else 0.0                        # 24h context
+        # Macro trend alignment: penalise longs that fight the 3–7 day trend.
+        # A dead-cat bounce within a sustained downtrend (e.g. ZEC -12 % over 7
+        # days with a 1-hour spike) produces a strongly negative macro_tilt which
+        # applies a large penalty — blocking the trade without any static rules.
+        # Conversely, a strong macro uptrend boosts the signal confidence.
+        if _macro_trend_enabled:
+            _mtm_penalty_max = _env_float("FUTURES_MACRO_TREND_PENALTY_MOMENTUM", 35.0)
+            _mtm_boost_max = _env_float("FUTURES_MACRO_TREND_BOOST_MOMENTUM", 8.0)
+            long_score -= max(0.0, -macro_tilt) * _mtm_penalty_max
+            long_score += max(0.0, macro_tilt) * _mtm_boost_max
 
     short_score = 40.0
     if major_threshold_short_ok:
@@ -2035,6 +2078,14 @@ def score_btc_futures_setup(
         short_score += 5.0 if trend_6h < -0.005 else 0.0                        # short-term trend
         short_score += 3.0 if ema9_15m < ema21_15m else 0.0                     # fast EMA structure
         short_score += 4.0 if trend_24h < -0.009 else 0.0                       # 24h context aligned
+        # Macro trend alignment: symmetric with UPTREND_MOMENTUM_LONG above.
+        # Penalise shorts that fight a positive 7-day macro trend; boost those
+        # that align with a sustained macro downtrend.
+        if _macro_trend_enabled:
+            _mtm_penalty_max = _env_float("FUTURES_MACRO_TREND_PENALTY_MOMENTUM", 35.0)
+            _mtm_boost_max = _env_float("FUTURES_MACRO_TREND_BOOST_MOMENTUM", 8.0)
+            short_score -= max(0.0, macro_tilt) * _mtm_penalty_max
+            short_score += max(0.0, -macro_tilt) * _mtm_boost_max
 
     long_threshold = _side_threshold(config, "LONG", long_threshold_offset)
     short_threshold = _side_threshold(config, "SHORT", short_threshold_offset)
@@ -2287,6 +2338,7 @@ def score_btc_futures_setup(
                     "micro_profit_lock_floor_pct_override": round(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MICRO_LOCK_FLOOR_PCT", 0.75), 4) if high_beta_local_high_long_watch and local_high_guard_action != "block" else 0.0,
                     "micro_profit_lock_pullback_fraction_override": round(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MICRO_LOCK_PULLBACK_FRACTION", 0.35), 4) if high_beta_local_high_long_watch and local_high_guard_action != "block" else 0.0,
                     "micro_profit_lock_max_peak_tp_progress_override": round(_env_float("FUTURES_HIGH_BETA_LOCAL_HIGH_MICRO_LOCK_MAX_PEAK_TP_PROGRESS", 0.45), 4) if high_beta_local_high_long_watch and local_high_guard_action != "block" else 0.0,
+                    "macro_tilt": macro_tilt,
                     "market_gate_penalty": directional_market_penalty("LONG") if impulse_path or event_path else 0.0,
                     "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                     "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
@@ -2508,6 +2560,7 @@ def score_btc_futures_setup(
                 "late_impulse_chase_watch": 1.0 if late_impulse_short_chase_watch else 0.0,
                 "late_impulse_chase_block": 1.0 if late_impulse_short_chase_block else 0.0,
                 "late_impulse_adverse_bias": 1.0 if late_short_adverse_bias else 0.0,
+                "macro_tilt": macro_tilt,
                 "market_gate_penalty": directional_market_penalty("SHORT") if impulse_path or event_path else 0.0,
                 "crypto_event_bias": round(float(event_bias_score or 0.0), 4),
                 "crypto_event_max_severity": round(float(event_max_severity or 0.0), 4),
