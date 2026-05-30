@@ -1849,6 +1849,26 @@ def test_handle_telegram_commands_accepts_bot_suffix_and_persists_offset(tmp_pat
     assert reloaded._last_telegram_update == 42
 
 
+def test_handle_telegram_commands_confirms_processed_update_with_telegram(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    calls: list[dict[str, object]] = []
+
+    def fake_updates(**kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("offset") in (None, 0):
+            return [{"update_id": 42, "message": {"chat": {"id": "1"}, "text": "/status"}}]
+        return []
+
+    runtime.telegram.get_updates = fake_updates
+    runtime._notify = lambda message, parse_mode="HTML": None
+
+    runtime._handle_telegram_commands()
+
+    assert runtime._last_telegram_update == 42
+    assert calls[-1]["offset"] == 43
+    assert calls[-1]["limit"] == 1
+
+
 def test_startup_telegram_sync_discards_stale_commands_without_processing(tmp_path):
     runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
     runtime.open_position = _make_position("BTC_USDT")
@@ -1893,6 +1913,26 @@ def test_startup_telegram_sync_discards_stale_commands_even_with_saved_offset(tm
     assert runtime._last_telegram_update == 77
     assert calls[-1]["offset"] == 78
     assert sent_messages == []
+
+
+def test_startup_telegram_sync_confirms_saved_offset(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    runtime._last_telegram_update = 77
+    calls: list[dict[str, object]] = []
+
+    def fake_updates(**kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("offset") == -1:
+            return [{"update_id": 77, "message": {"chat": {"id": "1"}, "text": "/status", "date": 1_000}}]
+        return []
+
+    runtime.telegram.get_updates = fake_updates
+
+    runtime._sync_telegram_update_offset_on_startup()
+
+    assert runtime._last_telegram_update == 77
+    assert calls[-1]["offset"] == 78
+    assert calls[-1]["limit"] == 1
 
 
 def test_handle_telegram_commands_skips_stale_status_resume_pause_backlog(tmp_path):

@@ -19,6 +19,7 @@ from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_loc
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
+from futuresbot.prediction_overlay import apply_prediction_overlay, select_point_in_time_prediction_state
 from futuresbot.sharp_opportunity import (
 	annotate_sharp_event_signal,
 	build_sharp_event_signal,
@@ -76,6 +77,16 @@ def _crypto_event_margin_multiplier(metadata: Mapping[str, Any] | None) -> float
 		return 1.0
 	try:
 		value = float(metadata.get("crypto_event_size_multiplier") or 1.0)
+	except (TypeError, ValueError):
+		return 1.0
+	return max(0.0, min(1.0, value))
+
+
+def _prediction_margin_multiplier(metadata: Mapping[str, Any] | None) -> float:
+	if not isinstance(metadata, Mapping):
+		return 1.0
+	try:
+		value = float(metadata.get("prediction_size_multiplier") or 1.0)
 	except (TypeError, ValueError):
 		return 1.0
 	return max(0.0, min(1.0, value))
@@ -207,6 +218,8 @@ class FuturesBacktestEngine:
 		self.min_vol = int(float(self.contract.get("minVol", 1) or 1))
 		self._crypto_event_replay_loaded = False
 		self._crypto_event_replay_payload: Any | None = None
+		self._prediction_overlay_replay_loaded = False
+		self._prediction_overlay_replay_payload: Any | None = None
 
 	def _load_crypto_event_replay(self) -> Any | None:
 		if self._crypto_event_replay_loaded:
@@ -248,6 +261,24 @@ class FuturesBacktestEngine:
 			state.setdefault("generated_at", start.isoformat())
 			selected = state
 		return selected
+
+	def _load_prediction_overlay_replay(self) -> Any | None:
+		if self._prediction_overlay_replay_loaded:
+			return self._prediction_overlay_replay_payload
+		self._prediction_overlay_replay_loaded = True
+		path = str(getattr(self.config, "prediction_overlay_state_file", "") or "").strip()
+		if not path:
+			return None
+		try:
+			self._prediction_overlay_replay_payload = json.loads(Path(path).read_text(encoding="utf-8"))
+		except Exception:
+			self._prediction_overlay_replay_payload = None
+		return self._prediction_overlay_replay_payload
+
+	def _prediction_overlay_state_for(self, now: datetime) -> dict[str, Any] | None:
+		if not getattr(self.config, "prediction_overlay_enabled", False):
+			return None
+		return select_point_in_time_prediction_state(self._load_prediction_overlay_replay(), now)
 
 	def _apply_crypto_event_overlay(self, signal: FuturesSignal, state: dict[str, Any] | None, now: datetime) -> FuturesSignal | None:
 		if not getattr(self.config, "crypto_event_overlay_enabled", True):
@@ -299,6 +330,23 @@ class FuturesBacktestEngine:
 		if not quality.allowed:
 			return None
 		return adjusted
+
+	def _apply_prediction_overlay(self, signal: FuturesSignal, state: dict[str, Any] | None, now: datetime) -> FuturesSignal | None:
+		return apply_prediction_overlay(
+			signal,
+			state,
+			now,
+			enabled=bool(getattr(self.config, "prediction_overlay_enabled", False)),
+			stale_seconds=int(getattr(self.config, "prediction_overlay_stale_seconds", 60)),
+			fallback_mode=str(getattr(self.config, "prediction_overlay_fallback_mode", "neutral")),
+			divergence_threshold=float(getattr(self.config, "prediction_overlay_divergence_threshold", 0.15)),
+			min_favourable_probability=float(getattr(self.config, "prediction_overlay_min_favourable_probability", 0.50)),
+			min_posterior=float(getattr(self.config, "prediction_overlay_min_posterior", 0.50)),
+			event_given_success=float(getattr(self.config, "prediction_overlay_event_given_success", 0.60)),
+			kelly_base_fraction=float(getattr(self.config, "prediction_overlay_kelly_base_fraction", 0.04)),
+			max_size_multiplier=float(getattr(self.config, "prediction_overlay_max_size_multiplier", 1.0)),
+			score_scale=float(getattr(self.config, "prediction_overlay_score_scale", 20.0)),
+		)
 
 	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0, score: float | None = None) -> tuple[int, float, int]:
 		if _opportunity_bucket_sizing_enabled():
@@ -369,7 +417,11 @@ class FuturesBacktestEngine:
 		return position.base_qty * (price - position.entry_price) * direction
 
 	def _open_position(self, signal: FuturesSignal, entry_time: pd.Timestamp, entry_price: float, balance: float) -> FuturesPosition | None:
-		margin_multiplier = sharp_event_margin_multiplier(signal.metadata, 1.0) * _crypto_event_margin_multiplier(signal.metadata)
+		margin_multiplier = (
+			sharp_event_margin_multiplier(signal.metadata, 1.0)
+			* _crypto_event_margin_multiplier(signal.metadata)
+			* _prediction_margin_multiplier(signal.metadata)
+		)
 		contracts, used_margin, applied_leverage = self._contracts_for_entry(
 			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price), margin_multiplier=margin_multiplier, score=float(signal.score),
 		)
@@ -524,6 +576,7 @@ class FuturesBacktestEngine:
 
 	def _candidate_signal_for_frame(self, frame_slice: pd.DataFrame, event_now: datetime, remaining_bars: int | None = None) -> FuturesSignal | None:
 		crypto_event_state = self._crypto_event_state_for(event_now)
+		prediction_overlay_state = self._prediction_overlay_state_for(event_now)
 		event_scan_decision = evaluate_crypto_event_overlay(
 			crypto_event_state,
 			symbol=self.config.symbol,
@@ -578,6 +631,8 @@ class FuturesBacktestEngine:
 			if raw_signal is not None:
 				raw_signal = annotate_event_threshold_relief(raw_signal, event_scan_decision)
 				raw_signal = self._apply_crypto_event_overlay(raw_signal, crypto_event_state, event_now)
+				if raw_signal is not None:
+					raw_signal = self._apply_prediction_overlay(raw_signal, prediction_overlay_state, event_now)
 		calibrated = (
 			apply_signal_calibration(
 				raw_signal,

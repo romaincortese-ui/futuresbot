@@ -256,6 +256,17 @@ def parse_optional_symbol_list(raw: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def parse_csv_list(raw: str) -> tuple[str, ...]:
+    """Parse a comma-separated list while preserving URL punctuation."""
+
+    seen: list[str] = []
+    for part in raw.split(","):
+        item = part.strip()
+        if item and item not in seen:
+            seen.append(item)
+    return tuple(seen)
+
+
 def parse_correlation_buckets(raw: str) -> dict[str, str]:
     """Parse ``SYMBOL:bucket,SYMBOL:bucket`` into a dict.
 
@@ -390,6 +401,30 @@ class FuturesConfig:
     crypto_event_threshold_relief: float = 4.0
     crypto_event_score_boost: float = 5.0
     crypto_event_adverse_score_penalty: float = 4.0
+    prediction_overlay_enabled: bool = False
+    prediction_overlay_redis_key: str = "mexc:prediction_overlay"
+    prediction_overlay_primary_url: str = ""
+    prediction_overlay_secondary_urls: tuple[str, ...] = ()
+    prediction_overlay_request_timeout_seconds: float = 1.5
+    prediction_overlay_refresh_seconds: int = 60
+    prediction_overlay_stale_seconds: int = 60
+    prediction_overlay_fallback_mode: str = "neutral"
+    prediction_overlay_divergence_threshold: float = 0.15
+    prediction_overlay_min_favourable_probability: float = 0.50
+    prediction_overlay_min_posterior: float = 0.50
+    prediction_overlay_event_given_success: float = 0.60
+    prediction_overlay_kelly_base_fraction: float = 0.04
+    prediction_overlay_max_size_multiplier: float = 1.0
+    prediction_overlay_score_scale: float = 20.0
+    prophet_archive_enabled: bool = False
+    prophet_archive_file: str = ""
+    prophet_archive_latest_file: str = ""
+    prophet_archive_redis_key: str = ""
+    prophet_archive_refresh_seconds: int = 300
+    prophet_archive_ttl_seconds: int = 900
+    prophet_archive_page_size: int = 50
+    prophet_archive_max_pages: int = 2
+    prophet_archive_request_timeout_seconds: float = 10.0
     sharp_event_overlay_enabled: bool = False
     sharp_event_overlay_symbols: tuple[str, ...] = ()
     sharp_event_overlay_top_n: int = 60
@@ -457,6 +492,34 @@ class FuturesConfig:
             crypto_event_threshold_relief=env_float("FUTURES_CRYPTO_EVENT_THRESHOLD_RELIEF", 4.0),
             crypto_event_score_boost=env_float("FUTURES_CRYPTO_EVENT_SCORE_BOOST", 5.0),
             crypto_event_adverse_score_penalty=env_float("FUTURES_CRYPTO_EVENT_ADVERSE_SCORE_PENALTY", 4.0),
+            prediction_overlay_enabled=env_bool("FUTURES_PREDICTION_OVERLAY_ENABLED", False),
+            prediction_overlay_redis_key=env_str("FUTURES_PREDICTION_OVERLAY_REDIS_KEY", "mexc:prediction_overlay"),
+            prediction_overlay_primary_url=env_str("FUTURES_PREDICTION_PRIMARY_URL", env_str("PROPHET_PREDICTION_URL", "")),
+            prediction_overlay_secondary_urls=parse_csv_list(env_str("FUTURES_PREDICTION_SECONDARY_URLS", "")),
+            prediction_overlay_request_timeout_seconds=max(0.1, env_float("FUTURES_PREDICTION_REQUEST_TIMEOUT_SECONDS", 1.5)),
+            prediction_overlay_refresh_seconds=max(5, env_int("FUTURES_PREDICTION_REFRESH_SECONDS", 60)),
+            prediction_overlay_stale_seconds=max(1, env_int("FUTURES_PREDICTION_STALE_SECONDS", 60)),
+            prediction_overlay_fallback_mode=env_str("FUTURES_PREDICTION_FALLBACK_MODE", "neutral"),
+            prediction_overlay_divergence_threshold=max(0.0, env_float("FUTURES_PREDICTION_DIVERGENCE_THRESHOLD", 0.15)),
+            prediction_overlay_min_favourable_probability=max(0.0, min(1.0, env_float("FUTURES_PREDICTION_MIN_FAVOURABLE_PROBABILITY", 0.50))),
+            prediction_overlay_min_posterior=max(0.0, min(1.0, env_float("FUTURES_PREDICTION_MIN_POSTERIOR", 0.50))),
+            prediction_overlay_event_given_success=max(0.0, min(1.0, env_float("FUTURES_PREDICTION_EVENT_GIVEN_SUCCESS", 0.60))),
+            prediction_overlay_kelly_base_fraction=max(0.001, env_float("FUTURES_PREDICTION_KELLY_BASE_FRACTION", 0.04)),
+            prediction_overlay_max_size_multiplier=max(0.0, env_float("FUTURES_PREDICTION_MAX_SIZE_MULTIPLIER", 1.0)),
+            prediction_overlay_score_scale=max(0.0, env_float("FUTURES_PREDICTION_SCORE_SCALE", 20.0)),
+            prophet_archive_enabled=env_bool("FUTURES_PROPHET_ARCHIVE_ENABLED", False),
+            prophet_archive_file=resolve_repo_path(env_str("FUTURES_PROPHET_ARCHIVE_FILE", "data/prophet_prediction_overlay.jsonl")),
+            prophet_archive_latest_file=(
+                resolve_repo_path(env_str("FUTURES_PROPHET_LATEST_FILE", ""))
+                if env_str("FUTURES_PROPHET_LATEST_FILE", "")
+                else ""
+            ),
+            prophet_archive_redis_key=env_str("FUTURES_PROPHET_ARCHIVE_REDIS_KEY", env_str("FUTURES_PREDICTION_OVERLAY_REDIS_KEY", "mexc:prediction_overlay")),
+            prophet_archive_refresh_seconds=max(60, env_int("FUTURES_PROPHET_ARCHIVE_REFRESH_SECONDS", 300)),
+            prophet_archive_ttl_seconds=max(60, env_int("FUTURES_PROPHET_ARCHIVE_TTL_SECONDS", 900)),
+            prophet_archive_page_size=max(1, min(100, env_int("FUTURES_PROPHET_ARCHIVE_PAGE_SIZE", 50))),
+            prophet_archive_max_pages=max(1, env_int("FUTURES_PROPHET_ARCHIVE_MAX_PAGES", 2)),
+            prophet_archive_request_timeout_seconds=max(1.0, env_float("FUTURES_PROPHET_ARCHIVE_TIMEOUT_SECONDS", 10.0)),
             sharp_event_overlay_enabled=env_bool("FUTURES_SHARP_EVENT_OVERLAY_ENABLED", False),
             sharp_event_overlay_symbols=parse_optional_symbol_list(env_str("FUTURES_SHARP_EVENT_OVERLAY_SYMBOLS", "")),
             sharp_event_overlay_top_n=max(1, min(100, env_int("FUTURES_SHARP_EVENT_OVERLAY_TOP_N", 60))),
@@ -749,6 +812,17 @@ class FuturesBacktestConfig:
     crypto_event_threshold_relief: float = 4.0
     crypto_event_score_boost: float = 5.0
     crypto_event_adverse_score_penalty: float = 4.0
+    prediction_overlay_enabled: bool = False
+    prediction_overlay_state_file: str = ""
+    prediction_overlay_stale_seconds: int = 60
+    prediction_overlay_fallback_mode: str = "neutral"
+    prediction_overlay_divergence_threshold: float = 0.15
+    prediction_overlay_min_favourable_probability: float = 0.50
+    prediction_overlay_min_posterior: float = 0.50
+    prediction_overlay_event_given_success: float = 0.60
+    prediction_overlay_kelly_base_fraction: float = 0.04
+    prediction_overlay_max_size_multiplier: float = 1.0
+    prediction_overlay_score_scale: float = 20.0
     redis_url: str = ""
     anthropic_api_key: str = ""
 
@@ -760,6 +834,10 @@ class FuturesBacktestConfig:
         crypto_event_state_file = env_str(
             "FUTURES_BACKTEST_CRYPTO_EVENT_STATE_FILE",
             env_str("FUTURES_CRYPTO_EVENT_STATE_FILE", ""),
+        )
+        prediction_overlay_state_file = env_str(
+            "FUTURES_BACKTEST_PREDICTION_STATE_FILE",
+            env_str("FUTURES_PREDICTION_STATE_FILE", ""),
         )
         return cls(
             start=start,
@@ -813,6 +891,17 @@ class FuturesBacktestConfig:
             crypto_event_threshold_relief=live.crypto_event_threshold_relief,
             crypto_event_score_boost=live.crypto_event_score_boost,
             crypto_event_adverse_score_penalty=live.crypto_event_adverse_score_penalty,
+            prediction_overlay_enabled=live.prediction_overlay_enabled,
+            prediction_overlay_state_file=resolve_repo_path(prediction_overlay_state_file) if prediction_overlay_state_file else "",
+            prediction_overlay_stale_seconds=live.prediction_overlay_stale_seconds,
+            prediction_overlay_fallback_mode=live.prediction_overlay_fallback_mode,
+            prediction_overlay_divergence_threshold=live.prediction_overlay_divergence_threshold,
+            prediction_overlay_min_favourable_probability=live.prediction_overlay_min_favourable_probability,
+            prediction_overlay_min_posterior=live.prediction_overlay_min_posterior,
+            prediction_overlay_event_given_success=live.prediction_overlay_event_given_success,
+            prediction_overlay_kelly_base_fraction=live.prediction_overlay_kelly_base_fraction,
+            prediction_overlay_max_size_multiplier=live.prediction_overlay_max_size_multiplier,
+            prediction_overlay_score_scale=live.prediction_overlay_score_scale,
             redis_url=env_str("REDIS_URL", ""),
             anthropic_api_key=live.anthropic_api_key,
         )

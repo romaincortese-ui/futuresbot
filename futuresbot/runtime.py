@@ -88,6 +88,7 @@ from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lo
 from futuresbot.marketdata import MexcApiError, MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
+from futuresbot.prediction_overlay import apply_prediction_overlay, evaluate_prediction_overlay, merge_prediction_states
 from futuresbot.strategy import score_btc_futures_setup, score_round_level_signal
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
@@ -169,6 +170,11 @@ class FuturesRuntime:
         self._crypto_event_state: dict[str, Any] | None = None
         self._last_crypto_event_refresh_at = 0.0
         self._last_crypto_event_error_at = 0.0
+        self._prediction_overlay_state: dict[str, Any] | None = None
+        self._last_prediction_overlay_refresh_at = 0.0
+        self._last_prediction_overlay_error_at = 0.0
+        self._last_prophet_archive_at = 0.0
+        self._last_prophet_archive_error_at = 0.0
         self._sharp_event_symbols: tuple[str, ...] = ()
         self._last_sharp_event_symbol_refresh_at = 0.0
         self.missed_opportunities: dict[str, dict[str, Any]] = {}
@@ -1532,7 +1538,16 @@ class FuturesRuntime:
         if saw_update and hit_batch_cap:
             log.warning("Telegram command backlog exceeded %d batches; remaining updates will be drained next cycle", TELEGRAM_COMMAND_MAX_BATCHES)
         if saw_update:
+            self._acknowledge_telegram_updates(self._last_telegram_update)
             self._save_state()
+
+    def _acknowledge_telegram_updates(self, latest_update_id: int) -> None:
+        if not self.telegram.configured or latest_update_id <= 0:
+            return
+        # Telegram only marks updates confirmed once getUpdates is called with
+        # an offset greater than the update id. Do this in the same cycle so
+        # command replies cannot replay after a quick restart.
+        self.telegram.get_updates(offset=int(latest_update_id) + 1, limit=1, timeout=0)
 
     def _telegram_update_timestamp(self, update: dict[str, Any]) -> float | None:
         message = update.get("message", {}) if isinstance(update, dict) else {}
@@ -1559,6 +1574,7 @@ class FuturesRuntime:
         if latest <= 0:
             return
         if latest <= self._last_telegram_update:
+            self._acknowledge_telegram_updates(self._last_telegram_update)
             return
         latest_ts = self._telegram_update_timestamp(latest_update)
         if latest_ts is not None and latest_ts >= self._telegram_command_started_after_ts:
@@ -1567,7 +1583,7 @@ class FuturesRuntime:
         # Acknowledge all pending updates with Telegram so they are not
         # re-delivered on the next getUpdates call (prevents stale /pause,
         # /resume, /status commands from replaying after a container restart).
-        self.telegram.get_updates(offset=latest + 1, limit=1, timeout=0)
+        self._acknowledge_telegram_updates(latest)
         self._last_telegram_update = latest
         self._record_activity("Telegram backlog synced on startup")
         self._save_state()
@@ -2625,6 +2641,7 @@ class FuturesRuntime:
         start = end - 900 * 720
         best: tuple[float, Any] | None = None
         crypto_event_state = self._refresh_crypto_event_state()
+        prediction_overlay_state = self._refresh_prediction_overlay_state()
         event_now = datetime.now(timezone.utc)
         scan_symbols = self._scan_symbols_for_cycle()
         for sym in scan_symbols:
@@ -2780,6 +2797,9 @@ class FuturesRuntime:
             raw_signal = self._apply_crypto_event_overlay(raw_signal, crypto_event_state, event_now)
             if raw_signal is None:
                 continue
+            raw_signal = self._apply_prediction_overlay(raw_signal, prediction_overlay_state, event_now)
+            if raw_signal is None:
+                continue
             calibration_payload = self.calibration
             if (
                 self.config.sharp_event_bypass_symbol_calibration
@@ -2906,6 +2926,107 @@ class FuturesRuntime:
                 self._last_crypto_event_error_at = now
             return self._crypto_event_state
 
+    def _refresh_prediction_overlay_state(self) -> dict[str, Any] | None:
+        if not getattr(self.config, "prediction_overlay_enabled", False):
+            return None
+        now = time.monotonic()
+        if (
+            self._prediction_overlay_state is not None
+            and now - self._last_prediction_overlay_refresh_at < self.config.prediction_overlay_refresh_seconds
+        ):
+            return self._prediction_overlay_state
+        self._last_prediction_overlay_refresh_at = now
+        try:
+            state = self._load_prediction_overlay_state_from_redis()
+            if state is None:
+                state = self._load_prediction_overlay_state_from_apis()
+            self._prediction_overlay_state = state
+            return self._prediction_overlay_state
+        except Exception as exc:
+            if now - self._last_prediction_overlay_error_at >= 900:
+                log.warning("Prediction overlay refresh failed; using cached/neutral state: %s", exc)
+                self._last_prediction_overlay_error_at = now
+            return self._prediction_overlay_state
+
+    def _load_prediction_overlay_state_from_redis(self) -> dict[str, Any] | None:
+        if not self.config.redis_url or not self.config.prediction_overlay_redis_key:
+            return None
+        try:
+            import redis
+
+            client = redis.from_url(self.config.redis_url, socket_timeout=1.5, socket_connect_timeout=1.5)
+            raw = client.get(self.config.prediction_overlay_redis_key)
+            if raw is None:
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception as exc:
+            log.debug("Prediction overlay Redis fetch skipped: %s", exc)
+            return None
+
+    def _load_prediction_overlay_state_from_apis(self) -> dict[str, Any] | None:
+        primary_url = str(self.config.prediction_overlay_primary_url or "").strip()
+        if not primary_url:
+            return None
+        try:
+            import requests
+        except Exception:
+            return None
+
+        timeout = max(0.1, float(self.config.prediction_overlay_request_timeout_seconds))
+
+        def _fetch(url: str) -> dict[str, Any] | None:
+            try:
+                response = requests.get(url, timeout=timeout)
+                response.raise_for_status()
+                payload = response.json()
+                return payload if isinstance(payload, dict) else None
+            except Exception as exc:
+                log.debug("Prediction overlay API fetch failed for %s: %s", url, exc)
+                return None
+
+        primary = _fetch(primary_url)
+        if primary is None:
+            return None
+        secondaries = [_fetch(url) for url in self.config.prediction_overlay_secondary_urls]
+        return merge_prediction_states(primary, [state for state in secondaries if state is not None])
+
+    def _archive_prophet_prediction_odds(self) -> None:
+        if not getattr(self.config, "prophet_archive_enabled", False):
+            return
+        now = time.monotonic()
+        if now - self._last_prophet_archive_at < self.config.prophet_archive_refresh_seconds:
+            return
+        self._last_prophet_archive_at = now
+        try:
+            from futuresbot.prophet_prediction_archive import archive_current_prophet_odds
+
+            result = archive_current_prophet_odds(
+                archive_path=self.config.prophet_archive_file or None,
+                latest_path=self.config.prophet_archive_latest_file or None,
+                symbols=self._active_symbols or self.config.symbols,
+                page_size=self.config.prophet_archive_page_size,
+                max_pages=self.config.prophet_archive_max_pages,
+                ttl_seconds=self.config.prophet_archive_ttl_seconds,
+                timeout_seconds=self.config.prophet_archive_request_timeout_seconds,
+                redis_url=self.config.redis_url,
+                redis_key=self.config.prophet_archive_redis_key,
+                redis_ttl_seconds=max(self.config.prophet_archive_ttl_seconds, self.config.prophet_archive_refresh_seconds * 2),
+            )
+            log.info(
+                "Prophet prediction archive updated markets=%d events=%d file=%s redis=%s",
+                result.raw_market_count,
+                result.event_count,
+                result.archive_path or "disabled",
+                "published" if result.published_redis else "disabled",
+            )
+        except Exception as exc:
+            if now - self._last_prophet_archive_error_at >= 900:
+                log.warning("Prophet prediction archive refresh failed: %s", exc)
+                self._last_prophet_archive_error_at = now
+
     def _apply_crypto_event_overlay(self, signal: Any, state: dict[str, Any] | None, now: datetime) -> Any | None:
         if not getattr(self.config, "crypto_event_overlay_enabled", True):
             return signal
@@ -2994,6 +3115,65 @@ class FuturesRuntime:
                 f"{quality.min_score:.1f}" if quality.min_score is not None else "n/a",
             )
             return None
+        return adjusted
+
+    def _apply_prediction_overlay(self, signal: Any, state: dict[str, Any] | None, now: datetime) -> Any | None:
+        if not getattr(self.config, "prediction_overlay_enabled", False):
+            return signal
+        decision = evaluate_prediction_overlay(
+            signal,
+            state,
+            now,
+            enabled=True,
+            stale_seconds=int(self.config.prediction_overlay_stale_seconds),
+            fallback_mode=str(self.config.prediction_overlay_fallback_mode),
+            divergence_threshold=float(self.config.prediction_overlay_divergence_threshold),
+            min_favourable_probability=float(self.config.prediction_overlay_min_favourable_probability),
+            min_posterior=float(self.config.prediction_overlay_min_posterior),
+            event_given_success=float(self.config.prediction_overlay_event_given_success),
+            kelly_base_fraction=float(self.config.prediction_overlay_kelly_base_fraction),
+            max_size_multiplier=float(self.config.prediction_overlay_max_size_multiplier),
+            score_scale=float(self.config.prediction_overlay_score_scale),
+        )
+        if not decision.allowed:
+            log.info(
+                "Signal scan: %s %s blocked by prediction overlay (%s event=%s p=%.2f posterior=%.2f divergence=%s)",
+                signal.symbol,
+                signal.side,
+                decision.reason,
+                decision.event_id or decision.event_title or "?",
+                decision.favourable_probability,
+                decision.bayesian_success_probability,
+                "n/a" if decision.divergence is None else f"{decision.divergence:.2f}",
+            )
+            return None
+        adjusted = apply_prediction_overlay(
+            signal,
+            state,
+            now,
+            enabled=True,
+            stale_seconds=int(self.config.prediction_overlay_stale_seconds),
+            fallback_mode=str(self.config.prediction_overlay_fallback_mode),
+            divergence_threshold=float(self.config.prediction_overlay_divergence_threshold),
+            min_favourable_probability=float(self.config.prediction_overlay_min_favourable_probability),
+            min_posterior=float(self.config.prediction_overlay_min_posterior),
+            event_given_success=float(self.config.prediction_overlay_event_given_success),
+            kelly_base_fraction=float(self.config.prediction_overlay_kelly_base_fraction),
+            max_size_multiplier=float(self.config.prediction_overlay_max_size_multiplier),
+            score_scale=float(self.config.prediction_overlay_score_scale),
+        )
+        if decision.fresh and decision.reason == "prediction_overlay_pass":
+            log.info(
+                "Prediction overlay pass for %s %s: p=%.2f posterior=%.2f kelly=%.3f size_mult=%.2f score %.1f -> %.1f",
+                signal.symbol,
+                signal.side,
+                decision.favourable_probability,
+                decision.bayesian_success_probability,
+                decision.kelly_fraction,
+                decision.size_multiplier,
+                signal.score,
+                getattr(adjusted, "score", signal.score) if adjusted is not None else signal.score,
+            )
         return adjusted
 
     # ------------------------------------------------------------------
@@ -4669,6 +4849,20 @@ class FuturesRuntime:
                 size_multiplier,
                 signal_metadata.get("crypto_event_policy_reasons") or [],
             )
+        prediction_size_multiplier = signal_metadata.get("prediction_size_multiplier")
+        try:
+            prediction_size_multiplier = float(prediction_size_multiplier)
+        except (TypeError, ValueError):
+            prediction_size_multiplier = 1.0
+        if prediction_size_multiplier < 1.0:
+            size_multiplier *= max(0.0, min(1.0, prediction_size_multiplier))
+            log.info(
+                "[PREDICTION_OVERLAY_RISK] symbol=%s size_multiplier=%.3f event=%s reason=%s",
+                symbol,
+                size_multiplier,
+                signal_metadata.get("prediction_event_id") or signal_metadata.get("prediction_event_title") or "?",
+                signal_metadata.get("prediction_reason"),
+            )
         # Sprint 1 §2.1 — NAV-anchored sizing. Replaces the legacy
         # (margin_budget × leverage / price) formula when USE_NAV_RISK_SIZING=1.
         sl_price_for_sizing = float(signal_payload.get("sl_price") or 0.0)
@@ -5316,6 +5510,7 @@ class FuturesRuntime:
             try:
                 log.info("Beginning futures cycle")
                 self._handle_telegram_commands()
+                self._archive_prophet_prediction_odds()
                 self._validate_symbols()
                 self.refresh_calibration()
                 self.refresh_daily_review()
