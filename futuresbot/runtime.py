@@ -1472,6 +1472,7 @@ class FuturesRuntime:
             if not updates:
                 break
             saw_update = True
+            batch_had_stale = False
             for update in updates:
                 update_id = int(update.get("update_id", 0) or 0) if isinstance(update, dict) else 0
                 if update_id > 0:
@@ -1479,6 +1480,7 @@ class FuturesRuntime:
                 message = update.get("message", {}) if isinstance(update, dict) else {}
                 if self._telegram_update_is_stale(update):
                     skipped_stale += 1
+                    batch_had_stale = True
                     continue
                 chat_id = str(message.get("chat", {}).get("id", "")) if isinstance(message, dict) else ""
                 if self.config.telegram_chat_id and chat_id != self.config.telegram_chat_id:
@@ -1529,7 +1531,7 @@ class FuturesRuntime:
                     self._notify(self._build_help_message())
                     self._record_activity("Telegram: /help")
             offset = self._last_telegram_update + 1 if self._last_telegram_update else None
-            if len(updates) < TELEGRAM_COMMAND_UPDATE_LIMIT:
+            if len(updates) < TELEGRAM_COMMAND_UPDATE_LIMIT and not batch_had_stale:
                 break
         else:
             hit_batch_cap = True
