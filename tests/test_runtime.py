@@ -1869,6 +1869,38 @@ def test_handle_telegram_commands_confirms_processed_update_with_telegram(tmp_pa
     assert calls[-1]["limit"] == 1
 
 
+def test_handle_telegram_commands_does_not_reprocess_duplicate_update(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+
+    def fake_updates(**kwargs):
+        return [{"update_id": 42, "message": {"chat": {"id": "1"}, "text": "/status"}}]
+
+    runtime.telegram.get_updates = fake_updates
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._handle_telegram_commands()
+    runtime._handle_telegram_commands()
+
+    assert sum("📋 <b>Status</b>" in message for message in sent_messages) == 1
+    assert runtime._last_telegram_update == 42
+
+
+def test_status_command_resets_heartbeat_timer(tmp_path, monkeypatch):
+    config = replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1", heartbeat_seconds=300)
+    runtime = FuturesRuntime(config, StubClient())
+    runtime._last_heartbeat_at = 0.0
+    runtime.telegram.get_updates = lambda **kwargs: [
+        {"update_id": 43, "message": {"chat": {"id": "1"}, "text": "/status"}},
+    ]
+    runtime._notify = lambda message, parse_mode="HTML": None
+
+    monkeypatch.setattr("futuresbot.runtime.time.time", lambda: 1_000.0)
+    runtime._handle_telegram_commands()
+
+    assert runtime._last_heartbeat_at == 1_000.0
+
+
 def test_startup_telegram_sync_discards_stale_commands_without_processing(tmp_path):
     runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
     runtime.open_position = _make_position("BTC_USDT")
@@ -2047,6 +2079,20 @@ def test_heartbeat_waits_for_interval_and_persists_timestamp(tmp_path, monkeypat
     assert "💓 <b>Heartbeat</b>" in sent_messages[0]
     reloaded = FuturesRuntime(config, StubClient())
     assert reloaded._last_heartbeat_at == 21_700.0
+
+
+def test_heartbeat_can_be_disabled_for_command_only_telegram(tmp_path, monkeypatch):
+    config = replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1", heartbeat_seconds=0)
+    runtime = FuturesRuntime(config, StubClient())
+    runtime._last_heartbeat_at = 0.0
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    monkeypatch.setattr("futuresbot.runtime.time.time", lambda: 10_000.0)
+    runtime._send_heartbeat(price=91_000.0, signal=None)
+
+    assert sent_messages == []
+    assert runtime._last_heartbeat_at == 0.0
 
 
 # ---------------------------------------------------------------------------

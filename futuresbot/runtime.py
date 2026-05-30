@@ -1366,14 +1366,19 @@ class FuturesRuntime:
             "━━━━━━━━━━━━━━━",
             f"{balance_line} | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>",
             caps_line,
-            f"Hourly checks: <b>{self.config.hourly_check_seconds}s</b> | Heartbeat: <b>{self.config.heartbeat_seconds}s</b>",
+            f"Hourly checks: <b>{self.config.hourly_check_seconds}s</b> | Heartbeat: <b>{self._heartbeat_label()}</b>",
         ])
         self._notify(
             "\n".join(message_parts)
         )
 
+    def _heartbeat_label(self) -> str:
+        return "disabled" if self.config.heartbeat_seconds <= 0 else f"{self.config.heartbeat_seconds}s"
+
     def _send_heartbeat(self, *, price: float | None = None, signal: dict[str, Any] | None = None) -> None:
         if not self.telegram.configured:
+            return
+        if self.config.heartbeat_seconds <= 0:
             return
         now_ts = time.time()
         if now_ts - self._last_heartbeat_at < self.config.heartbeat_seconds:
@@ -1509,6 +1514,8 @@ class FuturesRuntime:
             batch_had_stale = False
             for update in updates:
                 update_id = int(update.get("update_id", 0) or 0) if isinstance(update, dict) else 0
+                if update_id > 0 and update_id <= self._last_telegram_update:
+                    continue
                 if update_id > 0:
                     self._last_telegram_update = max(self._last_telegram_update, update_id)
                 message = update.get("message", {}) if isinstance(update, dict) else {}
@@ -1525,6 +1532,7 @@ class FuturesRuntime:
                 arg = command_arg.strip()
                 if command == "/status":
                     self._notify(self._build_status_message(price=self._get_reference_price()))
+                    self._last_heartbeat_at = time.time()
                     self._record_activity("Telegram: /status")
                 elif command == "/pnl":
                     self._notify(self._build_pnl_message())
