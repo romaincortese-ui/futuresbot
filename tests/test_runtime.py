@@ -1872,6 +1872,69 @@ def test_startup_telegram_sync_discards_stale_commands_without_processing(tmp_pa
     assert sent_messages == []
 
 
+def test_startup_telegram_sync_discards_stale_commands_even_with_saved_offset(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    runtime._last_telegram_update = 40
+    runtime._telegram_command_started_after_ts = 2_000.0
+    calls: list[dict[str, object]] = []
+
+    def fake_updates(**kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("offset") == -1:
+            return [{"update_id": 77, "message": {"chat": {"id": "1"}, "text": "/status", "date": 1_000}}]
+        return []
+
+    runtime.telegram.get_updates = fake_updates
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._sync_telegram_update_offset_on_startup()
+
+    assert runtime._last_telegram_update == 77
+    assert calls[-1]["offset"] == 78
+    assert sent_messages == []
+
+
+def test_handle_telegram_commands_skips_stale_status_resume_pause_backlog(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    runtime._paused = True
+    runtime._telegram_command_started_after_ts = 2_000.0
+    runtime.telegram.get_updates = lambda **kwargs: [
+        {"update_id": 30, "message": {"chat": {"id": "1"}, "text": "/status", "date": 1_000}},
+        {"update_id": 31, "message": {"chat": {"id": "1"}, "text": "/resume", "date": 1_001}},
+        {"update_id": 32, "message": {"chat": {"id": "1"}, "text": "/pause", "date": 1_002}},
+    ]
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._handle_telegram_commands()
+
+    assert sent_messages == []
+    assert runtime._paused is True
+    assert runtime._last_telegram_update == 32
+
+
+def test_heartbeat_waits_for_interval_and_persists_timestamp(tmp_path, monkeypatch):
+    config = replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1", heartbeat_seconds=21_600)
+    runtime = FuturesRuntime(config, StubClient())
+    runtime._last_heartbeat_at = 100.0
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    monkeypatch.setattr("futuresbot.runtime.time.time", lambda: 21_699.0)
+    runtime._send_heartbeat(price=91_000.0, signal=None)
+
+    assert sent_messages == []
+
+    monkeypatch.setattr("futuresbot.runtime.time.time", lambda: 21_700.0)
+    runtime._send_heartbeat(price=91_000.0, signal=None)
+
+    assert len(sent_messages) == 1
+    assert "💓 <b>Heartbeat</b>" in sent_messages[0]
+    reloaded = FuturesRuntime(config, StubClient())
+    assert reloaded._last_heartbeat_at == 21_700.0
+
+
 # ---------------------------------------------------------------------------
 # Multi-position / portfolio / session / funding coverage (Stages 2+3)
 # ---------------------------------------------------------------------------

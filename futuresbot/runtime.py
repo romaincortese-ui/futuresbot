@@ -106,6 +106,8 @@ log = logging.getLogger(__name__)
 TELEGRAM_ALERT_COOLDOWN_SECONDS = 600
 RECENT_ACTIVITY_LIMIT = 12
 TELEGRAM_COMMAND_UPDATE_LIMIT = 25
+TELEGRAM_COMMAND_MAX_BATCHES = 20
+TELEGRAM_STALE_COMMAND_GRACE_SECONDS = 90
 PROFIT_LOCK_PEAK_PCT_KEY = "profit_lock_peak_pnl_pct"
 PROFIT_LOCK_PEAK_GROSS_PCT_KEY = "profit_lock_peak_gross_pnl_pct"
 PROFIT_LOCK_PEAK_USDT_KEY = "profit_lock_peak_pnl_usdt"
@@ -131,7 +133,9 @@ class FuturesRuntime:
         self.daily_review: dict[str, Any] | None = None
         self._last_calibration_refresh_at = 0.0
         self._last_review_refresh_at = 0.0
-        self._last_heartbeat_at = 0.0
+        self._started_at_ts = time.time()
+        self._telegram_command_started_after_ts = self._started_at_ts - TELEGRAM_STALE_COMMAND_GRACE_SECONDS
+        self._last_heartbeat_at = self._started_at_ts
         self._last_telegram_update = 0
         self._telegram_alert_timestamps: dict[str, float] = {}
         self._btc_trend_cache: dict[str, float] = {"1h": 0.0, "24h": 0.0}
@@ -1336,6 +1340,7 @@ class FuturesRuntime:
             return
         self._last_heartbeat_at = now_ts
         self._notify(self._build_status_message(price=price, signal=signal, heartbeat=True))
+        self._save_state()
 
     def _commands_hint(self) -> str:
         return "/status /pnl /logs /pause /resume /close [SYMBOL|all] /help"
@@ -1448,77 +1453,116 @@ class FuturesRuntime:
     def _handle_telegram_commands(self) -> None:
         if not self.telegram.configured:
             return
-        updates = self.telegram.get_updates(
-            offset=self._last_telegram_update + 1 if self._last_telegram_update else None,
-            limit=TELEGRAM_COMMAND_UPDATE_LIMIT,
-            timeout=0,
-        )
-        if not updates:
-            return
         saw_update = False
-        for update in updates:
+        skipped_stale = 0
+        hit_batch_cap = False
+        offset = self._last_telegram_update + 1 if self._last_telegram_update else None
+        for batch_index in range(TELEGRAM_COMMAND_MAX_BATCHES):
+            updates = self.telegram.get_updates(
+                offset=offset,
+                limit=TELEGRAM_COMMAND_UPDATE_LIMIT,
+                timeout=0,
+            )
+            if not updates:
+                break
             saw_update = True
-            self._last_telegram_update = max(self._last_telegram_update, int(update.get("update_id", 0) or 0))
-            message = update.get("message", {}) if isinstance(update, dict) else {}
-            chat_id = str(message.get("chat", {}).get("id", ""))
-            if self.config.telegram_chat_id and chat_id != self.config.telegram_chat_id:
-                continue
-            raw_text = str(message.get("text", "") or "").strip()
-            command_token, _separator, command_arg = raw_text.partition(" ")
-            command = command_token.split("@", 1)[0].lower()
-            arg = command_arg.strip()
-            if command == "/status":
-                self._notify(self._build_status_message(price=self._get_reference_price()))
-                self._record_activity("Telegram: /status")
-            elif command == "/pnl":
-                self._notify(self._build_pnl_message())
-                self._record_activity("Telegram: /pnl")
-            elif command in {"/logs", "/log"}:
-                self._notify(self._build_logs_message())
-                self._record_activity("Telegram: /logs")
-            elif command == "/pause":
-                if not self._paused:
-                    self._paused = True
-                    self._record_activity("Telegram: entries paused")
-                    self._notify_once("entries_paused", "⏸️ <b>Futures entries paused.</b> Open position management stays active.", cooldown_seconds=3600)
-            elif command == "/resume":
-                if self._paused:
-                    self._paused = False
-                    self._record_activity("Telegram: entries resumed")
-                    self._notify_once("entries_resumed", "▶️ <b>Futures entries resumed.</b>", cooldown_seconds=3600)
-            elif command == "/close":
-                # Parse optional argument: /close, /close SYMBOL, /close all
-                if arg.lower() == "all":
-                    if not self.open_positions:
-                        self._notify("⚠️ <b>Futures Close</b>\n━━━━━━━━━━━━━━━\nNo open positions to close.")
-                        self._record_activity("Telegram: /close all (noop)")
+            for update in updates:
+                update_id = int(update.get("update_id", 0) or 0) if isinstance(update, dict) else 0
+                if update_id > 0:
+                    self._last_telegram_update = max(self._last_telegram_update, update_id)
+                message = update.get("message", {}) if isinstance(update, dict) else {}
+                if self._telegram_update_is_stale(update):
+                    skipped_stale += 1
+                    continue
+                chat_id = str(message.get("chat", {}).get("id", "")) if isinstance(message, dict) else ""
+                if self.config.telegram_chat_id and chat_id != self.config.telegram_chat_id:
+                    continue
+                raw_text = str(message.get("text", "") or "").strip() if isinstance(message, dict) else ""
+                command_token, _separator, command_arg = raw_text.partition(" ")
+                command = command_token.split("@", 1)[0].lower()
+                arg = command_arg.strip()
+                if command == "/status":
+                    self._notify(self._build_status_message(price=self._get_reference_price()))
+                    self._record_activity("Telegram: /status")
+                elif command == "/pnl":
+                    self._notify(self._build_pnl_message())
+                    self._record_activity("Telegram: /pnl")
+                elif command in {"/logs", "/log"}:
+                    self._notify(self._build_logs_message())
+                    self._record_activity("Telegram: /logs")
+                elif command == "/pause":
+                    if not self._paused:
+                        self._paused = True
+                        self._record_activity("Telegram: entries paused")
+                        self._notify_once("entries_paused", "⏸️ <b>Futures entries paused.</b> Open position management stays active.", cooldown_seconds=3600)
+                elif command == "/resume":
+                    if self._paused:
+                        self._paused = False
+                        self._record_activity("Telegram: entries resumed")
+                        self._notify_once("entries_resumed", "▶️ <b>Futures entries resumed.</b>", cooldown_seconds=3600)
+                elif command == "/close":
+                    # Parse optional argument: /close, /close SYMBOL, /close all
+                    if arg.lower() == "all":
+                        if not self.open_positions:
+                            self._notify("⚠️ <b>Futures Close</b>\n━━━━━━━━━━━━━━━\nNo open positions to close.")
+                            self._record_activity("Telegram: /close all (noop)")
+                        else:
+                            results: list[str] = []
+                            for sym in list(self.open_positions.keys()):
+                                ok, msg = self._force_close_position(reason="MANUAL_CLOSE", symbol=sym)
+                                results.append(f"{'✅' if ok else '⚠️'} {html.escape(msg)}")
+                            self._notify("🚨 <b>Futures Close (all)</b>\n━━━━━━━━━━━━━━━\n" + "\n".join(results))
+                            self._record_activity(f"Telegram: /close all ({len(self.open_positions)} remaining)")
                     else:
-                        results: list[str] = []
-                        for sym in list(self.open_positions.keys()):
-                            ok, msg = self._force_close_position(reason="MANUAL_CLOSE", symbol=sym)
-                            results.append(f"{'✅' if ok else '⚠️'} {html.escape(msg)}")
-                        self._notify("🚨 <b>Futures Close (all)</b>\n━━━━━━━━━━━━━━━\n" + "\n".join(results))
-                        self._record_activity(f"Telegram: /close all ({len(self.open_positions)} remaining)")
-                else:
-                    target = arg.upper() if arg else None
-                    ok, message_text = self._force_close_position(reason="MANUAL_CLOSE", symbol=target)
-                    prefix = "🚨" if ok else "⚠️"
-                    self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
-                    self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
-            elif command in {"/help", "/start"}:
-                self._notify(self._build_help_message())
-                self._record_activity("Telegram: /help")
+                        target = arg.upper() if arg else None
+                        ok, message_text = self._force_close_position(reason="MANUAL_CLOSE", symbol=target)
+                        prefix = "🚨" if ok else "⚠️"
+                        self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
+                        self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
+                elif command in {"/help", "/start"}:
+                    self._notify(self._build_help_message())
+                    self._record_activity("Telegram: /help")
+            offset = self._last_telegram_update + 1 if self._last_telegram_update else None
+            if len(updates) < TELEGRAM_COMMAND_UPDATE_LIMIT:
+                break
+        else:
+            hit_batch_cap = True
+        if skipped_stale:
+            log.info("Skipped %d stale Telegram command update(s)", skipped_stale)
+        if saw_update and hit_batch_cap:
+            log.warning("Telegram command backlog exceeded %d batches; remaining updates will be drained next cycle", TELEGRAM_COMMAND_MAX_BATCHES)
         if saw_update:
             self._save_state()
 
+    def _telegram_update_timestamp(self, update: dict[str, Any]) -> float | None:
+        message = update.get("message", {}) if isinstance(update, dict) else {}
+        if not isinstance(message, dict):
+            return None
+        try:
+            timestamp = float(message.get("date") or 0.0)
+        except (TypeError, ValueError):
+            return None
+        return timestamp if timestamp > 0 else None
+
+    def _telegram_update_is_stale(self, update: dict[str, Any]) -> bool:
+        timestamp = self._telegram_update_timestamp(update)
+        return timestamp is not None and timestamp < self._telegram_command_started_after_ts
+
     def _sync_telegram_update_offset_on_startup(self) -> None:
-        if not self.telegram.configured or self._last_telegram_update > 0:
+        if not self.telegram.configured:
             return
         updates = self.telegram.get_updates(offset=-1, limit=1, timeout=0)
         if not updates:
             return
-        latest = max(int(update.get("update_id", 0) or 0) for update in updates)
+        latest_update = max(updates, key=lambda update: int(update.get("update_id", 0) or 0))
+        latest = int(latest_update.get("update_id", 0) or 0)
         if latest <= 0:
+            return
+        if latest <= self._last_telegram_update:
+            return
+        latest_ts = self._telegram_update_timestamp(latest_update)
+        if latest_ts is not None and latest_ts >= self._telegram_command_started_after_ts:
+            log.info("Telegram startup found fresh pending update %s; leaving it for command handler", latest)
             return
         # Acknowledge all pending updates with Telegram so they are not
         # re-delivered on the next getUpdates call (prevents stale /pause,
@@ -1693,6 +1737,10 @@ class FuturesRuntime:
             self._last_telegram_update = int(payload.get("last_telegram_update", 0) or 0)
         except (TypeError, ValueError):
             self._last_telegram_update = 0
+        try:
+            self._last_heartbeat_at = float(payload.get("last_heartbeat_at", self._last_heartbeat_at) or self._last_heartbeat_at)
+        except (TypeError, ValueError):
+            pass
         log.info("Loaded futures runtime state from %s", self._state_path)
 
     def _save_state(self) -> None:
@@ -1710,6 +1758,7 @@ class FuturesRuntime:
             "recent_activity": list(self._recent_activity),
             "last_exit_by_symbol": self._last_exit_by_symbol,
             "last_telegram_update": self._last_telegram_update,
+            "last_heartbeat_at": self._last_heartbeat_at,
         }
         self._state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
