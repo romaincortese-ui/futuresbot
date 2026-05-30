@@ -1935,6 +1935,28 @@ def test_startup_telegram_sync_confirms_saved_offset(tmp_path):
     assert calls[-1]["limit"] == 1
 
 
+def test_startup_telegram_sync_discards_fresh_preboot_command(tmp_path):
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    runtime._telegram_command_started_after_ts = 2_000.0
+    calls: list[dict[str, object]] = []
+
+    def fake_updates(**kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("offset") == -1:
+            return [{"update_id": 78, "message": {"chat": {"id": "1"}, "text": "/status", "date": 2_001}}]
+        return []
+
+    runtime.telegram.get_updates = fake_updates
+    sent_messages: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent_messages.append(message)
+
+    runtime._sync_telegram_update_offset_on_startup()
+
+    assert runtime._last_telegram_update == 78
+    assert calls[-1]["offset"] == 79
+    assert sent_messages == []
+
+
 def test_handle_telegram_commands_skips_stale_status_resume_pause_backlog(tmp_path):
     runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
     runtime._paused = True

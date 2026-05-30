@@ -1578,13 +1578,11 @@ class FuturesRuntime:
         if latest <= self._last_telegram_update:
             self._acknowledge_telegram_updates(self._last_telegram_update)
             return
-        latest_ts = self._telegram_update_timestamp(latest_update)
-        if latest_ts is not None and latest_ts >= self._telegram_command_started_after_ts:
-            log.info("Telegram startup found fresh pending update %s; leaving it for command handler", latest)
-            return
         # Acknowledge all pending updates with Telegram so they are not
         # re-delivered on the next getUpdates call (prevents stale /pause,
         # /resume, /status commands from replaying after a container restart).
+        # Telegram commands are on-demand controls, so pre-boot commands are
+        # intentionally dropped instead of replayed after a deployment.
         self._acknowledge_telegram_updates(latest)
         self._last_telegram_update = latest
         self._record_activity("Telegram backlog synced on startup")
