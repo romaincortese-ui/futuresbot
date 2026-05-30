@@ -2001,6 +2001,33 @@ def test_handle_telegram_commands_drains_short_stale_batches(tmp_path):
     assert calls[-1]["offset"] == 42
 
 
+def test_handle_telegram_commands_force_syncs_when_stale_backlog_hits_cap(tmp_path, monkeypatch):
+    import futuresbot.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "TELEGRAM_COMMAND_MAX_BATCHES", 1)
+    runtime = FuturesRuntime(replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1"), StubClient())
+    runtime._telegram_command_started_after_ts = 2_000.0
+    calls: list[dict[str, object]] = []
+
+    def fake_updates(**kwargs):
+        calls.append(dict(kwargs))
+        offset = kwargs.get("offset")
+        if offset is None:
+            return [{"update_id": 40, "message": {"chat": {"id": "1"}, "text": "/status", "date": 1_000}}]
+        if offset == -1:
+            return [{"update_id": 99, "message": {"chat": {"id": "1"}, "text": "/pause", "date": 1_001}}]
+        return []
+
+    runtime.telegram.get_updates = fake_updates
+    runtime._notify = lambda message, parse_mode="HTML": None
+
+    runtime._handle_telegram_commands()
+
+    assert runtime._last_telegram_update == 99
+    assert any(call.get("offset") == -1 for call in calls)
+    assert calls[-1]["offset"] == 100
+
+
 def test_heartbeat_waits_for_interval_and_persists_timestamp(tmp_path, monkeypatch):
     config = replace(_config(tmp_path), telegram_token="token", telegram_chat_id="1", heartbeat_seconds=21_600)
     runtime = FuturesRuntime(config, StubClient())

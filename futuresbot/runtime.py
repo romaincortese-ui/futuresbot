@@ -1538,7 +1538,10 @@ class FuturesRuntime:
         if skipped_stale:
             log.info("Skipped %d stale Telegram command update(s)", skipped_stale)
         if saw_update and hit_batch_cap:
-            log.warning("Telegram command backlog exceeded %d batches; remaining updates will be drained next cycle", TELEGRAM_COMMAND_MAX_BATCHES)
+            if skipped_stale and self._force_sync_telegram_backlog():
+                log.warning("Telegram stale command backlog exceeded %d batches and was force-synced", TELEGRAM_COMMAND_MAX_BATCHES)
+            else:
+                log.warning("Telegram command backlog exceeded %d batches; remaining updates will be drained next cycle", TELEGRAM_COMMAND_MAX_BATCHES)
         if saw_update:
             self._acknowledge_telegram_updates(self._last_telegram_update)
             self._save_state()
@@ -1550,6 +1553,21 @@ class FuturesRuntime:
         # an offset greater than the update id. Do this in the same cycle so
         # command replies cannot replay after a quick restart.
         self.telegram.get_updates(offset=int(latest_update_id) + 1, limit=1, timeout=0)
+
+    def _force_sync_telegram_backlog(self) -> bool:
+        if not self.telegram.configured:
+            return False
+        updates = self.telegram.get_updates(offset=-1, limit=1, timeout=0)
+        if not updates:
+            return False
+        latest_update = max(updates, key=lambda update: int(update.get("update_id", 0) or 0))
+        latest = int(latest_update.get("update_id", 0) or 0)
+        if latest <= 0:
+            return False
+        self._acknowledge_telegram_updates(latest)
+        self._last_telegram_update = max(self._last_telegram_update, latest)
+        self._record_activity("Telegram backlog force-synced")
+        return True
 
     def _telegram_update_timestamp(self, update: dict[str, Any]) -> float | None:
         message = update.get("message", {}) if isinstance(update, dict) else {}
