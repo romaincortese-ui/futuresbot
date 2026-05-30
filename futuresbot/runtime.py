@@ -1163,6 +1163,38 @@ class FuturesRuntime:
         certainty = float(signal.get("certainty") or 0.0) * 100.0
         return f"Signal: <b>{side}</b> {entry_signal} | x{leverage} | score {score:.1f} | cert {certainty:.0f}%"
 
+    def _prediction_overlay_status_line(self) -> str:
+        if not getattr(self.config, "prediction_overlay_enabled", False):
+            return "Prediction overlay: disabled"
+        sources: list[str] = []
+        if self.config.redis_url and self.config.prediction_overlay_redis_key:
+            sources.append("Redis")
+        if self.config.prediction_overlay_primary_url or self.config.prediction_overlay_secondary_urls:
+            sources.append("API")
+        source_text = "/".join(sources) if sources else "source missing"
+        state_text = "state loaded" if isinstance(self._prediction_overlay_state, dict) else "no state loaded"
+        return f"Prediction overlay: enabled | {state_text} | {source_text} | fallback {self.config.prediction_overlay_fallback_mode}"
+
+    def _prediction_overlay_impact_line(self, metadata: dict[str, Any] | None) -> str:
+        metadata = metadata if isinstance(metadata, dict) else {}
+        if not metadata.get("prediction_overlay"):
+            return "Prediction overlay: no impact"
+        reason = html.escape(str(metadata.get("prediction_reason") or "applied"))
+        event = str(metadata.get("prediction_event_title") or metadata.get("prediction_event_id") or "").strip()
+        probability = self._metadata_float(metadata, "prediction_favourable_probability")
+        posterior = self._metadata_float(metadata, "prediction_bayesian_success_probability")
+        size_multiplier = self._metadata_float(metadata, "prediction_size_multiplier")
+        parts = [f"Prediction overlay: impacted | {reason}"]
+        if probability is not None:
+            parts.append(f"p {probability * 100.0:.0f}%")
+        if posterior is not None:
+            parts.append(f"posterior {posterior * 100.0:.0f}%")
+        if size_multiplier is not None:
+            parts.append(f"size {size_multiplier:.2f}x")
+        if event:
+            parts.append(f"event {html.escape(event[:80])}")
+        return " | ".join(parts)
+
     def _build_status_message(self, *, price: float | None = None, signal: dict[str, Any] | None = None, heartbeat: bool = False) -> str:
         title = "💓 <b>Heartbeat</b>" if heartbeat else "📋 <b>Status</b>"
         current_price = price if price and price > 0 else None
@@ -1174,6 +1206,7 @@ class FuturesRuntime:
             f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}): {html.escape(', '.join(active_syms))}",
             self._btc_trend_line(),
             f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
+            self._prediction_overlay_status_line(),
             f"Entries: {'⏸️ paused' if self._paused else '▶️ active'}",
             f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
             f"Open positions: <b>{len(self.open_positions)}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
@@ -1277,6 +1310,7 @@ class FuturesRuntime:
             f"Entry <b>${self._format_price(position.entry_price)}</b> | x{position.leverage} | margin <b>${position.margin_usdt:.2f}</b>\n"
             f"TP <b>${self._format_price(position.tp_price)}</b> | SL <b>${self._format_price(position.sl_price)}</b>\n"
             f"Risk at SL <b>{stop_risk_text}</b>{stop_risk_pct_text}\n"
+            f"{self._prediction_overlay_impact_line(position.metadata)}\n"
             f"Score {position.score:.1f} | Cert {position.certainty * 100:.0f}%"
         )
 
@@ -1999,6 +2033,7 @@ class FuturesRuntime:
             "profit_factor": self._profit_factor(),
             "open_positions": [position.to_dict() for position in self.open_positions.values()],
             "last_signal": signal,
+            "prediction_overlay_status": self._prediction_overlay_status_line(),
             "missed_opportunities": self.missed_opportunities,
         }
 
