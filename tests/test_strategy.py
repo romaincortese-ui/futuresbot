@@ -181,6 +181,7 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     assert _entry_signal_disabled(cfg, "BTC_ROUND_LEVEL_LONG")
     assert _entry_signal_disabled(cfg, "BREAKOUT_HOLD_LONG")
     assert _entry_signal_disabled(cfg, "MOMENTUM_BREAKAWAY_LONG")
+    assert _entry_signal_disabled(cfg, "DOWNTREND_MOMENTUM_SHORT")
 
     monkeypatch.setenv("FUTURES_BTCUSDT_DISABLED_ENTRY_SIGNALS", "PRESSURE_BREAK_LONG")
     assert _entry_signal_disabled(cfg, "PRESSURE_BREAK_LONG")
@@ -193,11 +194,14 @@ def test_symbol_entry_signal_denylist_has_overridable_defaults(monkeypatch):
     assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "TREND_CONTINUATION_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "MAJOR_THRESHOLD_LONG")
+    assert _entry_signal_disabled(replace(_config(), symbol="SOL_USDT"), "DOWNTREND_MOMENTUM_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "COIL_BREAKOUT_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "LEVEL_BREAK_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_LONG")
     assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
+    assert _entry_signal_disabled(replace(_config(), symbol="BNB_USDT"), "DOWNTREND_MOMENTUM_SHORT")
+    assert _entry_signal_disabled(replace(_config(), symbol="SEI_USDT"), "DOWNTREND_MOMENTUM_SHORT")
     assert _entry_signal_disabled(replace(_config(), symbol="ZEC_USDT"), "IMPULSE_EVENT_CONTINUATION_SHORT")
 
 

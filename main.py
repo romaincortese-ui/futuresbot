@@ -24,6 +24,9 @@ os.environ.setdefault("FUTURES_DYNAMIC_LEVERAGE_MIN", "5")
 os.environ.setdefault("FUTURES_DYNAMIC_LEVERAGE_MAX", "20")
 os.environ.setdefault("FUTURES_DYNAMIC_LEVERAGE_MAX_MARGIN_LOSS_PCT", "0.25")
 os.environ.setdefault("FUTURES_OPPORTUNITY_MAX_LEVERAGE", "20")
+os.environ.setdefault("FUTURES_DOWNTREND_MOMENTUM_PRIORITY_ENABLED", "1")
+os.environ.setdefault("FUTURES_DOWNTREND_MOMENTUM_PRIORITY_SYMBOLS", "ZEC_USDT")
+os.environ.setdefault("FUTURES_DOWNTREND_MOMENTUM_TREND_4H_MIN", "0.008")
 os.environ.setdefault("USE_DRAWDOWN_KILL", "1")            # §2.7 30d/90d drawdown kill
 os.environ.setdefault("USE_SESSION_LEVERAGE", "1")         # §2.8 session-aligned leverage
 os.environ.setdefault("USE_FUTURES_PROFIT_LOCK", "1")      # live peak-profit + breakeven protection

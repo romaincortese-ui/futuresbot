@@ -21,6 +21,7 @@ _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
         "BTC_ROUND_LEVEL_LONG",
         "BREAKOUT_HOLD_LONG",
         "LEVEL_BREAK_SHORT",
+        "DOWNTREND_MOMENTUM_SHORT",
     ),
     "ETH_USDT": ("COIL_BREAKOUT_LONG", "MOMENTUM_BREAKAWAY_SHORT", "MOMENTUM_BREAKAWAY_LONG", "DOWNTREND_MOMENTUM_SHORT", "IMPULSE_EVENT_CONTINUATION_SHORT"),
     "SOL_USDT": (
@@ -30,6 +31,7 @@ _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
         "IMPULSE_EVENT_CONTINUATION_LONG",
         "IMPULSE_EVENT_CONTINUATION_SHORT",
         "MAJOR_THRESHOLD_LONG",
+        "DOWNTREND_MOMENTUM_SHORT",
     ),
     "BNB_USDT": (
         "COIL_BREAKOUT_LONG",
@@ -39,6 +41,7 @@ _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
         "IMPULSE_EVENT_CONTINUATION_SHORT",
         "PRESSURE_BREAK_LONG",
         "TREND_CONTINUATION_LONG",
+        "DOWNTREND_MOMENTUM_SHORT",
     ),
     "TAO_USDT": (
         "COIL_BREAKOUT_LONG",
@@ -52,6 +55,7 @@ _DEFAULT_SYMBOL_DISABLED_ENTRY_SIGNALS: dict[str, tuple[str, ...]] = {
         "IMPULSE_EVENT_CONTINUATION_LONG",
         "MOMENTUM_BREAKAWAY_LONG",
         "MOMENTUM_BREAKAWAY_SHORT",
+        "DOWNTREND_MOMENTUM_SHORT",
     ),
     "ZEC_USDT": ("IMPULSE_EVENT_CONTINUATION_SHORT",),
 }
@@ -1829,12 +1833,22 @@ def score_btc_futures_setup(
     _dtm_rsi_long_min = _env_float("FUTURES_DOWNTREND_MOMENTUM_RSI_15_LONG_MIN", 48.0)
     _dtm_rsi_long_max = _env_float("FUTURES_DOWNTREND_MOMENTUM_RSI_15_LONG_MAX", 82.0)
     _dtm_max_ext_atr = _env_float("FUTURES_DOWNTREND_MOMENTUM_MAX_EMA_EXTENSION_ATR", 4.0)
-    # Stronger signals take priority — this only fires when nothing else qualifies.
+    # Stronger reversal/level/coil signals keep priority.  When explicitly enabled,
+    # downtrend momentum can outrank slower continuation/impulse paths so shorts can
+    # join a fresh selloff before the 1h EMA stack fully catches up.
+    _dtm_priority_enabled = _env_bool(
+        "FUTURES_DOWNTREND_MOMENTUM_PRIORITY_ENABLED",
+        False,
+    ) and _symbol_enabled("FUTURES_DOWNTREND_MOMENTUM_PRIORITY_SYMBOLS", symbol_name, "*")
     _dtm_no_existing_short = not (
         major_threshold_short_ok or btc_reversal_short_ok or short_ok or continuation_short_ok
         or level_break_short_ok or impulse_short_ok or breakaway_short_ok
         or range_expansion_short_ok or event_catalyst_short_ok
     )
+    if _dtm_priority_enabled:
+        _dtm_no_existing_short = not (
+            major_threshold_short_ok or btc_reversal_short_ok or short_ok or level_break_short_ok
+        )
     _dtm_no_existing_long = not (
         major_threshold_long_ok or btc_round_level_long_ok or long_ok or continuation_long_ok
         or level_break_long_ok or impulse_long_ok or breakout_hold_long_ok
@@ -2013,14 +2027,14 @@ def score_btc_futures_setup(
         short_score += min(8.0, max(0.0, (volume_ratio - config.volume_ratio_floor) * 12.0))
         short_score += 7.0 if breakout_short else 3.5
         short_score += min(6.0, max(0.0, (consolidation_cap - consolidation_range_pct) / max(consolidation_cap, 1e-9) * 6.0))
-    elif continuation_short_ok:
+    elif continuation_short_ok and not downtrend_momentum_short_ok:
         short_score += min(16.0, max(0.0, (current_adx - config.adx_floor) * 1.1))
         short_score += min(14.0, max(0.0, abs(trend_24h) * 220.0))
         short_score += min(10.0, max(0.0, abs(trend_6h) * 380.0))
         short_score += min(10.0, max(0.0, abs(ema_gap) * 850.0))
         short_score += min(6.0, max(0.0, (volume_ratio - volume_floor_cfg) * 10.0))
         short_score -= 6.0
-    elif impulse_short_ok:
+    elif impulse_short_ok and not downtrend_momentum_short_ok:
         short_score += min(14.0, max(0.0, abs(impulse_move_pct) * 900.0))
         short_score += min(10.0, max(0.0, impulse_move_atr * 2.5))
         short_score += min(8.0, max(0.0, (volume_ratio - impulse_volume_floor) * 8.0))
@@ -2039,7 +2053,7 @@ def score_btc_futures_setup(
         short_score += min(5.0, max(0.0, level_break_short_close_ratio * 5.0))
         short_score += 3.0 if current_price < current_ema20 or ema_slope < 0 else 0.0
         short_score += _level_break_float(symbol_name, "SHORT_SCORE_BONUS", _level_break_float(symbol_name, "SCORE_BONUS", 4.0) - 2.0)
-    elif breakaway_short_ok:
+    elif breakaway_short_ok and not downtrend_momentum_short_ok:
         short_score += min(16.0, max(0.0, abs(impulse_move_pct) * 950.0))
         short_score += min(12.0, max(0.0, impulse_move_atr * 2.8))
         short_score += min(7.0, max(0.0, (max(volume_ratio, impulse_window_volume_ratio) - breakaway_window_volume_floor) * 7.0))
@@ -2048,14 +2062,14 @@ def score_btc_futures_setup(
         short_score += 3.0 if trend_6h < 0 or ema_slope < 0 else 0.0
         if trend_24h > 0:
             short_score -= min(5.0, trend_24h * 220.0)
-    elif range_expansion_short_ok:
+    elif range_expansion_short_ok and not downtrend_momentum_short_ok:
         short_score += min(16.0, max(0.0, abs(trend_24h) * 230.0))
         short_score += min(10.0, max(0.0, impulse_move_atr * 2.0))
         short_score += min(8.0, max(0.0, (volume_ratio - range_volume_floor) * 9.0))
         short_score += min(7.0, max(0.0, (current_adx - range_adx_min) * 0.7))
         short_score += min(6.0, max(0.0, consolidation_range_pct * 130.0))
         short_score += 3.0 if ema_slope < 0 else 0.0
-    elif event_catalyst_short_ok:
+    elif event_catalyst_short_ok and not downtrend_momentum_short_ok:
         event_penalty = directional_market_penalty("SHORT")
         short_score += min(15.0, max(0.0, event_abs_bias * 12.0 + float(event_max_severity or 0.0) * 4.0))
         short_score += min(10.0, max(0.0, impulse_move_atr * 2.0))
@@ -2352,13 +2366,13 @@ def score_btc_futures_setup(
 
         major_threshold_path = major_threshold_short_ok
         btc_reversal_path = btc_reversal_short_ok and not major_threshold_path
-        impulse_path = impulse_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok)
-        level_break_path = level_break_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok)
-        breakaway_path = breakaway_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path)
-        range_expansion_path = range_expansion_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok)
-        event_path = event_catalyst_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_short_ok or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok)
-        # downtrend_momentum fires only when none of the above qualify (already enforced in flag).
-        downtrend_momentum_path = downtrend_momentum_short_ok
+        downtrend_momentum_path = downtrend_momentum_short_ok and not (major_threshold_path or btc_reversal_path or short_ok)
+        continuation_path = continuation_short_ok and not downtrend_momentum_path
+        impulse_path = impulse_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_path or downtrend_momentum_path)
+        level_break_path = level_break_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_path or impulse_path or downtrend_momentum_path)
+        breakaway_path = breakaway_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_path or impulse_short_ok or level_break_path or downtrend_momentum_path)
+        range_expansion_path = range_expansion_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_path or impulse_short_ok or level_break_path or breakaway_short_ok or downtrend_momentum_path)
+        event_path = event_catalyst_short_ok and not (major_threshold_path or btc_reversal_path or short_ok or continuation_path or impulse_short_ok or level_break_path or breakaway_short_ok or range_expansion_short_ok or downtrend_momentum_path)
         if major_threshold_path:
             configured_cap = _major_threshold_float(symbol_name, "LEVERAGE_MAX", 8.0)
             hard_cap = _major_threshold_float(symbol_name, "HARD_LEVERAGE_MAX", configured_cap)
@@ -2492,7 +2506,7 @@ def score_btc_futures_setup(
             else "BTC_REVERSAL_BREAKDOWN_SHORT" if btc_reversal_path
             else "COIL_BREAKDOWN_SHORT" if short_ok and breakout_short
             else "PRESSURE_BREAK_SHORT" if short_ok and pressure_short
-            else "TREND_CONTINUATION_SHORT" if continuation_short_ok
+            else "TREND_CONTINUATION_SHORT" if continuation_path
             else "LEVEL_BREAK_SHORT" if level_break_path
             else "IMPULSE_EVENT_CONTINUATION_SHORT" if impulse_path
             else "MOMENTUM_BREAKAWAY_SHORT" if breakaway_path
