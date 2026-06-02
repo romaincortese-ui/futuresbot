@@ -5323,33 +5323,66 @@ class FuturesRuntime:
         if maker_result is not None:
             order_id, detail, maker_filled = maker_result
         else:
-            if not self._allow_taker_fallback_after_maker(
-                symbol=symbol,
-                side_name=side_name,
-                signal_payload=signal_payload,
-            ):
-                self._record_activity(f"Skipped taker fallback: {side_name} {symbol}")
-                self._save_state()
-                return False
-            guarded_order = self._place_live_entry_order_with_balance_guard(
-                symbol=symbol,
-                side=side,
-                side_name=side_name,
-                leverage=leverage,
-                contracts=contracts,
-                take_profit_price=None if scoped.trailing_exit_drawdown_pct > 0 else float(signal_payload["tp_price"]),
-                stop_loss_price=float(signal_payload["sl_price"]),
-                min_vol=min_vol,
-                signal_metadata=signal_metadata,
-            )
-            if guarded_order is None:
-                self._save_state()
-                return False
-            order, contracts = guarded_order
-            projected_margin = contracts * contract_size * entry_price / leverage
-            order_id = self._extract_order_id(order)
-            detail = {}
-            maker_filled = False
+            # Before any taker fallback, verify no silent maker fill happened
+            # (e.g. post-only filled between polls, or a cancel raced a fill).
+            # If a same-side live position already exists, adopt it instead of
+            # stacking a duplicate taker fill on top. Only relevant when the
+            # maker ladder is enabled — otherwise no order was ever posted.
+            adopted_row = None
+            if self._flag("USE_MAKER_LADDER"):
+                try:
+                    existing_rows = self.client.get_open_positions(symbol) or []
+                except Exception as adopt_exc:
+                    log.debug("Maker-orphan check failed for %s: %s", symbol, adopt_exc)
+                    existing_rows = []
+                for row in existing_rows:
+                    pos_type = int(row.get("positionType", 0) or 0)
+                    side_match = (side_name == "LONG" and pos_type == 1) or (side_name == "SHORT" and pos_type == 2)
+                    if side_match and self._open_position_volume(row) > 0:
+                        adopted_row = row
+                        break
+            if adopted_row is not None:
+                adopted_vol = int(self._open_position_volume(adopted_row))
+                log.warning(
+                    "Adopting orphan maker fill for %s %s: %d contracts (maker ladder returned no fill but exchange has a position)",
+                    symbol,
+                    side_name,
+                    adopted_vol,
+                )
+                self._record_activity(
+                    f"Adopted orphan {side_name} {symbol} ({adopted_vol})"
+                )
+                order_id = str(adopted_row.get("positionId") or "MAKER_ADOPTED")
+                detail = dict(adopted_row)
+                maker_filled = True
+            else:
+                if not self._allow_taker_fallback_after_maker(
+                    symbol=symbol,
+                    side_name=side_name,
+                    signal_payload=signal_payload,
+                ):
+                    self._record_activity(f"Skipped taker fallback: {side_name} {symbol}")
+                    self._save_state()
+                    return False
+                guarded_order = self._place_live_entry_order_with_balance_guard(
+                    symbol=symbol,
+                    side=side,
+                    side_name=side_name,
+                    leverage=leverage,
+                    contracts=contracts,
+                    take_profit_price=None if scoped.trailing_exit_drawdown_pct > 0 else float(signal_payload["tp_price"]),
+                    stop_loss_price=float(signal_payload["sl_price"]),
+                    min_vol=min_vol,
+                    signal_metadata=signal_metadata,
+                )
+                if guarded_order is None:
+                    self._save_state()
+                    return False
+                order, contracts = guarded_order
+                projected_margin = contracts * contract_size * entry_price / leverage
+                order_id = self._extract_order_id(order)
+                detail = {}
+                maker_filled = False
         detail, position_row = self._confirm_live_entry(
             symbol=symbol,
             side_name=side_name,
