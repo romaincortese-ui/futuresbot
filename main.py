@@ -29,6 +29,13 @@ os.environ.setdefault("FUTURES_OPPORTUNITY_MAX_LEVERAGE", "20")
 os.environ.setdefault("FUTURES_DOWNTREND_MOMENTUM_PRIORITY_ENABLED", "1")
 os.environ.setdefault("FUTURES_DOWNTREND_MOMENTUM_PRIORITY_SYMBOLS", "ZEC_USDT")
 os.environ.setdefault("FUTURES_DOWNTREND_MOMENTUM_TREND_4H_MIN", "0.008")
+# SIMPLE_TREND lane: trend-following short-circuit that ignores volume/impulse
+# gates when ADX is strong and the EMA stack is aligned. Catches slow-bleed /
+# slow-rally regimes the impulse and sharp-event lanes miss. Validated 30d
+# backtest 2026-05-02..2026-06-01 beats baseline on PnL and drawdown.
+os.environ.setdefault("FUTURES_SIMPLE_TREND_ENABLED", "1")
+os.environ.setdefault("FUTURES_SIMPLE_TREND_ADX_MIN", "35")
+os.environ.setdefault("FUTURES_SIMPLE_TREND_6H_MIN", "0.015")
 os.environ.setdefault("USE_DRAWDOWN_KILL", "1")            # §2.7 30d/90d drawdown kill
 os.environ.setdefault("USE_SESSION_LEVERAGE", "1")         # §2.8 session-aligned leverage
 os.environ.setdefault("USE_FUTURES_PROFIT_LOCK", "1")      # live peak-profit + breakeven protection

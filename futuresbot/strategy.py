@@ -862,6 +862,80 @@ def score_btc_futures_setup(
     ema50_15m = _safe_float(_ema50_15m_series.iloc[-1]) if len(_ema50_15m_series) > 0 else float("nan")
     breakout_buffer = current_atr_15 * config.breakout_buffer_atr
 
+    # ── SIMPLE_TREND lane (opt-in short-circuit) ────────────────────────────
+    # Trade with the dominant trend when ADX is strong and the EMA stack is
+    # aligned, without requiring a single-bar impulse, volume spike, or
+    # breakout. Catches sustained slow bleeds / rallies that the impulse and
+    # sharp-event lanes miss. Gated on FUTURES_SIMPLE_TREND_ENABLED.
+    if _env_bool("FUTURES_SIMPLE_TREND_ENABLED", False):
+        _st_adx_min = _env_float("FUTURES_SIMPLE_TREND_ADX_MIN", 30.0)
+        _st_trend_6h_min = _env_float("FUTURES_SIMPLE_TREND_6H_MIN", 0.012)
+        _st_rsi_short_max = _env_float("FUTURES_SIMPLE_TREND_RSI_MAX_SHORT", 60.0)
+        _st_rsi_short_min = _env_float("FUTURES_SIMPLE_TREND_RSI_MIN_SHORT", 15.0)
+        _st_rsi_long_min = _env_float("FUTURES_SIMPLE_TREND_RSI_MIN_LONG", 40.0)
+        _st_rsi_long_max = _env_float("FUTURES_SIMPLE_TREND_RSI_MAX_LONG", 85.0)
+        _st_sl_atr = _env_float("FUTURES_SIMPLE_TREND_SL_ATR", 1.2)
+        _st_tp_atr = _env_float("FUTURES_SIMPLE_TREND_TP_ATR", 2.8)
+        _st_score = _env_float("FUTURES_SIMPLE_TREND_SCORE", 92.0)
+        _st_ema_ready = (
+            math.isfinite(ema9_15m) and math.isfinite(ema21_15m)
+            and ema9_15m > 0 and ema21_15m > 0
+        )
+        _st_short_ok = (
+            _st_ema_ready
+            and current_adx >= _st_adx_min
+            and trend_6h <= -_st_trend_6h_min
+            and current_ema20 < current_ema50
+            and ema9_15m < ema21_15m
+            and current_price < current_ema20
+            and _st_rsi_short_min <= current_rsi_15 <= _st_rsi_short_max
+        )
+        _st_long_ok = (
+            _st_ema_ready
+            and current_adx >= _st_adx_min
+            and trend_6h >= _st_trend_6h_min
+            and current_ema20 > current_ema50
+            and ema9_15m > ema21_15m
+            and current_price > current_ema20
+            and _st_rsi_long_min <= current_rsi_15 <= _st_rsi_long_max
+        )
+        if _st_short_ok or _st_long_ok:
+            if _st_short_ok and _st_long_ok:
+                _st_side = "SHORT" if trend_6h < 0 else "LONG"
+            else:
+                _st_side = "SHORT" if _st_short_ok else "LONG"
+            if _st_side == "SHORT":
+                _st_sl = current_price + _st_sl_atr * current_atr_1h
+                _st_tp = current_price - _st_tp_atr * current_atr_1h
+            else:
+                _st_sl = current_price - _st_sl_atr * current_atr_1h
+                _st_tp = current_price + _st_tp_atr * current_atr_1h
+            _st_entry_signal = f"SIMPLE_TREND_{_st_side}"
+            if not _entry_signal_disabled(config, _st_entry_signal):
+                _st_metadata: dict[str, float | str] = {
+                    "trend_24h": round(trend_24h, 6),
+                    "trend_6h": round(trend_6h, 6),
+                    "adx_1h": round(current_adx, 4),
+                    "atr_15m_pct": round(current_atr_15 / current_price if current_price > 0 else 0.0, 6),
+                    "atr_1h_pct": round(current_atr_1h / current_price if current_price > 0 else 0.0, 6),
+                    "rsi_1h": round(current_rsi_1h, 2),
+                    "rsi_15m": round(current_rsi_15, 2),
+                    "simple_trend": 1.0,
+                    "macro_tilt": macro_tilt,
+                }
+                _st_signal = _build_signal(
+                    side=_st_side,
+                    score=_st_score,
+                    entry_price=current_price,
+                    tp_price=_st_tp,
+                    sl_price=_st_sl,
+                    entry_signal=_st_entry_signal,
+                    config=config,
+                    metadata=_st_metadata,
+                )
+                if _st_signal is not None:
+                    return _st_signal
+
     breakout_long = current_price > consolidation_high + breakout_buffer
     pressure_long = current_price > consolidation_high - breakout_buffer * 0.35
     breakout_short = current_price < consolidation_low - breakout_buffer
