@@ -2392,8 +2392,21 @@ class FuturesRuntime:
         seconds = max(0.0, float(seconds or 0.0))
         if seconds <= 0:
             return
+        telegram_poll_interval = max(2.0, self._env_float("FUTURES_OPEN_POSITION_TELEGRAM_POLL_SECONDS", 5.0))
         if not self._open_position_guard_enabled() or not self.open_positions:
-            time.sleep(seconds)
+            # No open-position guard: still poll Telegram commands so /status,
+            # /pause, /close, etc. respond within ~poll seconds instead of
+            # being delayed up to a full cycle (default 300s).
+            deadline = time.monotonic() + seconds
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                time.sleep(min(telegram_poll_interval, remaining))
+                try:
+                    self._handle_telegram_commands()
+                except Exception:
+                    log.exception("Telegram poll during idle sleep failed")
             return
         deadline = time.monotonic() + seconds
         interval = self._open_position_monitor_interval_seconds()
