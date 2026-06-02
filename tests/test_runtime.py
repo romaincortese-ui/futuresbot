@@ -511,6 +511,7 @@ def test_hourly_exit_arms_and_closes_trailing_take_profit(tmp_path):
 
 def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_MID_PROFIT_LOCK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "20")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
@@ -549,6 +550,7 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
 
 def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_MID_PROFIT_LOCK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "BTC_USDT:COIL_BREAKOUT_LONG")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "5")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
@@ -897,6 +899,7 @@ def test_no_progress_exit_loss_limit_tightens_with_age():
 
 def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_MID_PROFIT_LOCK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "50")
     monkeypatch.setenv("FUTURES_BREAKEVEN_ARM_PCT", "10")
@@ -962,6 +965,7 @@ def test_breakeven_profit_lock_exits_when_gap_erases_floor(tmp_path, monkeypatch
 
 def test_peak_protection_gap_exit_is_not_labeled_profit_lock(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_MID_PROFIT_LOCK_ENABLED", "0")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_ALLOWED_LANES", "SOL_USDT:IMPULSE_EVENT_CONTINUATION_LONG")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "4")
     monkeypatch.setenv("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
@@ -2732,6 +2736,84 @@ def test_live_enter_trade_caps_order_to_available_balance(tmp_path, monkeypatch)
     position = runtime.open_positions["BTC_USDT"]
     assert position.contracts == order["vol"]
     assert position.metadata["live_margin_budget_capped"] is True
+
+
+def test_live_enter_trade_full_balance_uses_all_available_margin(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("FUTURES_FULL_BALANCE_SIZING_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_FULL_BALANCE_RISK_PCT", "1.0")
+    monkeypatch.setenv("FUTURES_ENTRY_LEVERAGE_MIN", "12")
+    monkeypatch.setenv("FUTURES_ENTRY_LEVERAGE_HIGH", "20")
+    monkeypatch.setenv("FUTURES_ENTRY_HIGH_SCORE", "95")
+    monkeypatch.setenv("FUTURES_MAX_MARGIN_FRACTION", "0.20")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "1")
+    monkeypatch.setenv("USE_SESSION_LEVERAGE", "1")
+    monkeypatch.setenv("SESSION_ASIA_LEVERAGE_CAP", "5")
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "0")
+    monkeypatch.setenv("USE_PORTFOLIO_VAR", "0")
+
+    class FullBalanceEntryClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.orders: list[dict[str, object]] = []
+
+        def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
+            return {"availableBalance": "50.0", "equity": "50.0"}
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            return {"orderId": "entry-full-balance"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            volume = str(self.orders[-1]["vol"])
+            return {"orderId": order_id, "dealAvgPrice": "100.0", "dealVol": volume, "positionId": "pos-full-balance"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            volume = str(self.orders[-1]["vol"])
+            margin = float(self.orders[-1]["vol"]) * 100.0 / float(self.orders[-1]["leverage"])
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "positionType": 1,
+                    "holdVol": volume,
+                    "holdAvgPrice": "100.0",
+                    "im": str(margin),
+                    "leverage": str(self.orders[-1]["leverage"]),
+                    "positionId": "pos-full-balance",
+                }
+            ]
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, leverage_min=1, leverage_max=20, max_total_margin_usdt=10.0), FullBalanceEntryClient())
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "LONG",
+        "entry_price": 100.0,
+        "leverage": 10,
+        "symbol": "BTC_USDT",
+        "tp_price": 104.0,
+        "sl_price": 98.0,
+        "score": 96.0,
+        "certainty": 0.75,
+        "entry_signal": "EVENT_CATALYST_LONG",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    order = runtime.client.orders[-1]
+    assert order["vol"] == 10
+    assert order["vol"] * 100.0 / order["leverage"] == 50.0
+    assert order["leverage"] == 20
+    assert "live_margin_budget_capped" not in runtime.open_positions["BTC_USDT"].metadata
 
 
 def test_live_enter_trade_retries_lower_contracts_on_balance_insufficient(tmp_path, monkeypatch):

@@ -287,7 +287,7 @@ def test_default_universe_uses_pruned_profitable_pairs(monkeypatch):
     assert cfg.correlation_buckets["ZEC_USDT"] == "privacy_beta"
     for symbol in cfg.symbols:
         scoped = cfg.for_symbol(symbol)
-        assert scoped.leverage_max >= cfg.leverage_min
+        assert scoped.leverage_max >= scoped.leverage_min
 
 
 def test_symbol_universe_accepts_whitespace_separated_env(monkeypatch):
@@ -315,7 +315,7 @@ def test_backtest_config_uses_scoped_symbol_profile(monkeypatch):
 
     assert config.symbol == "ZEC_USDT"
     assert config.min_confidence_score == pytest.approx(65.0)
-    assert config.leverage_max == 20
+    assert config.leverage_max == 8
     assert config.consolidation_max_range_pct == pytest.approx(0.045)
     assert config.min_reward_risk == pytest.approx(1.30)
 

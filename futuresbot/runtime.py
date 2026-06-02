@@ -2404,6 +2404,8 @@ class FuturesRuntime:
             seconds,
         )
         self._sync_open_position_price_subscriptions()
+        telegram_poll_interval = max(2.0, self._env_float("FUTURES_OPEN_POSITION_TELEGRAM_POLL_SECONDS", 5.0))
+        next_telegram_poll = time.monotonic() + telegram_poll_interval
         while self.open_positions:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -2412,6 +2414,16 @@ class FuturesRuntime:
             if self._monitor_open_positions_once():
                 self._record_activity("Open-position guard triggered exit")
                 return
+            # Poll Telegram commands during the guard window so /status, /pause,
+            # /close, etc. stay responsive while a position is open (the main
+            # loop's command handler only runs once per ~300s cycle).
+            now_mono = time.monotonic()
+            if now_mono >= next_telegram_poll:
+                try:
+                    self._handle_telegram_commands()
+                except Exception:
+                    log.exception("Telegram poll inside open-position guard failed")
+                next_telegram_poll = now_mono + telegram_poll_interval
 
     def _fixed_take_profit_exit(self, position: FuturesPosition, *, current_price: float, scoped: FuturesConfig) -> bool:
         if position.side == "LONG":
