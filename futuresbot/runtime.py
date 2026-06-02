@@ -26,6 +26,7 @@ def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
         "EXCHANGE_CLOSE": "Exchange close",
         "LIQ_BUFFER": "Liquidation buffer close",
         "LIQUIDATED": "Liquidated",
+        "MARGIN_LOSS_EXIT": "Margin loss exit",
     }
     return labels.get(raw, raw.replace("_", " ").title())
 
@@ -89,7 +90,7 @@ from futuresbot.marketdata import MexcApiError, MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
 from futuresbot.prediction_overlay import apply_prediction_overlay, evaluate_prediction_overlay, merge_prediction_states
-from futuresbot.strategy import score_btc_futures_setup, score_round_level_signal
+from futuresbot.strategy import enforce_sl_fee_floor, score_btc_futures_setup, score_round_level_signal
 from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
@@ -1530,48 +1531,63 @@ class FuturesRuntime:
                 command_token, _separator, command_arg = raw_text.partition(" ")
                 command = command_token.split("@", 1)[0].lower()
                 arg = command_arg.strip()
-                if command == "/status":
-                    self._notify(self._build_status_message(price=self._get_reference_price()))
-                    self._last_heartbeat_at = time.time()
-                    self._record_activity("Telegram: /status")
-                elif command == "/pnl":
-                    self._notify(self._build_pnl_message())
-                    self._record_activity("Telegram: /pnl")
-                elif command in {"/logs", "/log"}:
-                    self._notify(self._build_logs_message())
-                    self._record_activity("Telegram: /logs")
-                elif command == "/pause":
-                    if not self._paused:
-                        self._paused = True
-                        self._record_activity("Telegram: entries paused")
-                        self._notify_once("entries_paused", "⏸️ <b>Futures entries paused.</b> Open position management stays active.", cooldown_seconds=3600)
-                elif command == "/resume":
-                    if self._paused:
-                        self._paused = False
-                        self._record_activity("Telegram: entries resumed")
-                        self._notify_once("entries_resumed", "▶️ <b>Futures entries resumed.</b>", cooldown_seconds=3600)
-                elif command == "/close":
-                    # Parse optional argument: /close, /close SYMBOL, /close all
-                    if arg.lower() == "all":
-                        if not self.open_positions:
-                            self._notify("⚠️ <b>Futures Close</b>\n━━━━━━━━━━━━━━━\nNo open positions to close.")
-                            self._record_activity("Telegram: /close all (noop)")
+                if command:
+                    log.info(
+                        "Telegram command received: %s (chat=%s update=%s arg=%r)",
+                        command,
+                        chat_id or "?",
+                        update_id,
+                        arg or "",
+                    )
+                try:
+                    if command == "/status":
+                        self._notify(self._build_status_message(price=self._get_reference_price()))
+                        self._last_heartbeat_at = time.time()
+                        self._record_activity("Telegram: /status")
+                    elif command == "/pnl":
+                        self._notify(self._build_pnl_message())
+                        self._record_activity("Telegram: /pnl")
+                    elif command in {"/logs", "/log"}:
+                        self._notify(self._build_logs_message())
+                        self._record_activity("Telegram: /logs")
+                    elif command == "/pause":
+                        if not self._paused:
+                            self._paused = True
+                            self._record_activity("Telegram: entries paused")
+                            self._notify_once("entries_paused", "⏸️ <b>Futures entries paused.</b> Open position management stays active.", cooldown_seconds=3600)
+                    elif command == "/resume":
+                        if self._paused:
+                            self._paused = False
+                            self._record_activity("Telegram: entries resumed")
+                            self._notify_once("entries_resumed", "▶️ <b>Futures entries resumed.</b>", cooldown_seconds=3600)
+                    elif command == "/close":
+                        # Parse optional argument: /close, /close SYMBOL, /close all
+                        if arg.lower() == "all":
+                            if not self.open_positions:
+                                self._notify("⚠️ <b>Futures Close</b>\n━━━━━━━━━━━━━━━\nNo open positions to close.")
+                                self._record_activity("Telegram: /close all (noop)")
+                            else:
+                                results: list[str] = []
+                                for sym in list(self.open_positions.keys()):
+                                    ok, msg = self._force_close_position(reason="MANUAL_CLOSE", symbol=sym)
+                                    results.append(f"{'✅' if ok else '⚠️'} {html.escape(msg)}")
+                                self._notify("🚨 <b>Futures Close (all)</b>\n━━━━━━━━━━━━━━━\n" + "\n".join(results))
+                                self._record_activity(f"Telegram: /close all ({len(self.open_positions)} remaining)")
                         else:
-                            results: list[str] = []
-                            for sym in list(self.open_positions.keys()):
-                                ok, msg = self._force_close_position(reason="MANUAL_CLOSE", symbol=sym)
-                                results.append(f"{'✅' if ok else '⚠️'} {html.escape(msg)}")
-                            self._notify("🚨 <b>Futures Close (all)</b>\n━━━━━━━━━━━━━━━\n" + "\n".join(results))
-                            self._record_activity(f"Telegram: /close all ({len(self.open_positions)} remaining)")
-                    else:
-                        target = arg.upper() if arg else None
-                        ok, message_text = self._force_close_position(reason="MANUAL_CLOSE", symbol=target)
-                        prefix = "🚨" if ok else "⚠️"
-                        self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
-                        self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
-                elif command in {"/help", "/start"}:
-                    self._notify(self._build_help_message())
-                    self._record_activity("Telegram: /help")
+                            target = arg.upper() if arg else None
+                            ok, message_text = self._force_close_position(reason="MANUAL_CLOSE", symbol=target)
+                            prefix = "🚨" if ok else "⚠️"
+                            self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
+                            self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
+                    elif command in {"/help", "/start"}:
+                        self._notify(self._build_help_message())
+                        self._record_activity("Telegram: /help")
+                except Exception:
+                    log.exception("Telegram command handler failed for %s", command)
+                    try:
+                        self._notify(f"⚠️ <b>Telegram command failed:</b> <code>{html.escape(command)}</code>. Check logs.")
+                    except Exception:
+                        log.exception("Telegram failure notification also failed")
             offset = self._last_telegram_update + 1 if self._last_telegram_update else None
             if len(updates) < TELEGRAM_COMMAND_UPDATE_LIMIT and not batch_had_stale:
                 break
@@ -2255,6 +2271,17 @@ class FuturesRuntime:
     def _hourly_exit(self, position: FuturesPosition, current_price: float, now: datetime | None = None) -> bool:
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
+        if self._flag("FUTURES_MARGIN_LOSS_EXIT_ENABLED"):
+            net_pnl_pct = self._position_net_pnl_pct(position, current_price)
+            if net_pnl_pct is not None and net_pnl_pct <= 0.0:
+                log.warning(
+                    "[MARGIN_LOSS_EXIT] symbol=%s side=%s net_pnl_pct=%+.2f price=%s",
+                    position.symbol,
+                    position.side,
+                    net_pnl_pct,
+                    self._format_price(current_price),
+                )
+                return self._close_position_for_exit(position, current_price=current_price, reason="MARGIN_LOSS_EXIT")
         if self._profit_lock_exit(position, current_price):
             return True
         if self._micro_lock_exit(position, current_price):
@@ -2790,10 +2817,10 @@ class FuturesRuntime:
                     raw_signal = mr_signal
             # Round-level fallback — fires when the primary scorer returned nothing
             # and price has just crossed a major round number (e.g. $500, $530…).
-            # BTC is excluded: it has its own round-level logic inside
-            # score_btc_futures_setup (btc_round_level_path).  Gated by the same
-            # FUTURES_ROUND_LEVEL_ENABLED env flag as the backtest path.
-            if self._flag("FUTURES_ROUND_LEVEL_ENABLED") and raw_signal is None and sym != "BTC_USDT":
+            # Gated by FUTURES_ROUND_LEVEL_ENABLED plus FUTURES_ROUND_LEVEL_SYMBOLS;
+            # if a candidate survives, the same crypto/prediction/calibration path
+            # below will evaluate it before entry.
+            if self._flag("FUTURES_ROUND_LEVEL_ENABLED") and raw_signal is None:
                 try:
                     rl_signal = score_round_level_signal(frame, scoring_config)
                     if rl_signal is not None:
@@ -4797,13 +4824,31 @@ class FuturesRuntime:
         side = 1 if side_name == "LONG" else 3
         entry_price = float(signal_payload["entry_price"])
         leverage = int(signal_payload["leverage"])
+        score = float(signal_payload.get("score") or 0.0)
         symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
-        leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         if symbol in self.open_positions:
             return False
         if self._same_signal_reentry_blocked(signal_payload):
             return False
+        min_entry_score = max(0.0, self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0))
+        if score <= min_entry_score:
+            log.info(
+                "Futures signal skipped for %s: score %.2f must be above FUTURES_ENTRY_MIN_SCORE %.2f",
+                symbol,
+                score,
+                min_entry_score,
+            )
+            return False
         scoped = self._config_for_symbol(symbol)
+        leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
+        leverage_floor = max(0, int(self._env_float("FUTURES_ENTRY_LEVERAGE_MIN", 0.0)))
+        leverage_high = max(0, int(self._env_float("FUTURES_ENTRY_LEVERAGE_HIGH", 20.0)))
+        high_score_threshold = max(0.0, self._env_float("FUTURES_ENTRY_HIGH_SCORE", 95.0))
+        if leverage_floor > 0:
+            leverage = max(leverage, leverage_floor)
+        if leverage_high > 0 and score >= high_score_threshold:
+            leverage = max(leverage, leverage_high)
+        leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         # Sprint 2 §2.3 — pre-funding-settlement gate.
         if not self._funding_entry_ok(scoped, side_name):
             return False
@@ -4811,9 +4856,13 @@ class FuturesRuntime:
         # payload so the order submitted to the exchange reflects the new SL.
         original_sl = float(signal_payload.get("sl_price") or 0.0)
         signal_metadata = dict(signal_payload.get("metadata", {}) or {})
-        signal_metadata = opportunity_metadata(signal_metadata, float(signal_payload.get("score") or 0.0))
+        signal_metadata = opportunity_metadata(signal_metadata, score)
         signal_payload["metadata"] = signal_metadata
         signal_metadata.setdefault("setup_regime", setup_regime_for_signal(str(signal_payload.get("entry_signal") or ""), side_name))
+        signal_metadata["entry_score_gate"] = min_entry_score
+        signal_metadata["entry_leverage_floor"] = float(leverage_floor)
+        signal_metadata["entry_leverage_high"] = float(leverage_high)
+        signal_metadata["entry_leverage_high_score"] = float(high_score_threshold)
         adjusted_sl = self._adjust_sl_for_funding(
             scoped=scoped,
             side=side_name,
@@ -4822,6 +4871,28 @@ class FuturesRuntime:
         )
         if adjusted_sl != original_sl:
             signal_payload["sl_price"] = adjusted_sl
+        # Defensive: re-apply the SL fee floor at the entry boundary in case the
+        # signal arrived from a path that bypassed _build_signal (e.g. direct
+        # round-level calls). This widens an over-tight stop so taker fees alone
+        # cannot push us below break-even before the SL has a chance to fire.
+        pre_floor_sl = float(signal_payload.get("sl_price") or 0.0)
+        floored_sl, sl_floor_pct, sl_floor_widened = enforce_sl_fee_floor(
+            side=side_name,
+            entry_price=entry_price,
+            sl_price=pre_floor_sl,
+            symbol=symbol,
+        )
+        if sl_floor_widened:
+            signal_payload["sl_price"] = floored_sl
+            log.info(
+                "SL fee floor widened entry SL for %s: %.6f -> %.6f (min %.4f%% of entry)",
+                symbol,
+                pre_floor_sl,
+                floored_sl,
+                sl_floor_pct * 100.0,
+            )
+        signal_metadata["sl_fee_floor_pct"] = float(sl_floor_pct)
+        signal_metadata["sl_fee_floor_widened"] = 1.0 if sl_floor_widened else 0.0
         contract = self.client.get_contract_detail(symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         capital_multiplier, capital_scaling = self._capital_scaling_multiplier()
@@ -4830,7 +4901,16 @@ class FuturesRuntime:
         available_balance = float(account_snapshot.get("available_usdt", 0.0) or 0.0)
         if available_balance <= 0:
             available_balance = max(0.0, scoped.margin_budget_usdt - self._total_open_margin())
-        if self._opportunity_bucket_sizing_enabled():
+        full_balance_sizing = self._flag("FUTURES_FULL_BALANCE_SIZING_ENABLED")
+        full_balance_pct = 0.0
+        if full_balance_sizing:
+            full_balance_pct = max(0.0, min(1.0, self._env_float("FUTURES_FULL_BALANCE_RISK_PCT", 1.00)))
+            margin_budget = available_balance * full_balance_pct
+            signal_metadata["full_balance_sizing_enabled"] = True
+            signal_metadata["full_balance_risk_pct"] = round(full_balance_pct, 6)
+            signal_metadata["full_balance_available_balance_usdt"] = round(available_balance, 4)
+            signal_metadata["full_balance_margin_budget_usdt"] = round(margin_budget, 4)
+        elif self._opportunity_bucket_sizing_enabled():
             opportunity_fraction = opportunity_balance_fraction(float(signal_payload.get("score") or 0.0))
             if opportunity_fraction <= 0:
                 log.info(
@@ -4853,7 +4933,7 @@ class FuturesRuntime:
         else:
             margin_budget = scoped.margin_budget_usdt * capital_multiplier * event_margin_multiplier
         if not self.config.paper_trade:
-            live_margin_fraction = max(0.0, min(1.0, float(getattr(scoped, "max_margin_fraction", self.config.max_margin_fraction) or 0.0)))
+            live_margin_fraction = full_balance_pct if full_balance_sizing else max(0.0, min(1.0, float(getattr(scoped, "max_margin_fraction", self.config.max_margin_fraction) or 0.0)))
             live_margin_cap = available_balance * live_margin_fraction if available_balance > 0 else 0.0
             if live_margin_cap <= 0:
                 log.info("Futures signal skipped for %s: no live available margin", symbol)
@@ -4892,6 +4972,11 @@ class FuturesRuntime:
             )
         # Sprint 1 §2.8 — session-aligned leverage cap (no-op when flag off).
         leverage = self._apply_session_leverage_cap(leverage, symbol=symbol)
+        if leverage_floor > 0:
+            leverage = max(leverage, leverage_floor)
+        if leverage_high > 0 and score >= high_score_threshold:
+            leverage = max(leverage, leverage_high)
+        leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         # Sprint 1 §2.7 — portfolio drawdown kill (returns size_multiplier in [0,1]).
         size_multiplier = self._drawdown_size_multiplier()
         if size_multiplier <= 0:
@@ -4953,26 +5038,28 @@ class FuturesRuntime:
                 default=self._env_float("NAV_RISK_PCT", 0.04),
             )
             signal_metadata["opportunity_nav_risk_pct"] = round(risk_pct, 6)
-        nav_sized = self._apply_nav_risk_sizing(
-            entry_price=entry_price,
-            sl_price=sl_price_for_sizing,
-            contract_size=contract_size,
-            available_margin=margin_budget,
-            size_multiplier=size_multiplier * event_margin_multiplier,
-            symbol=symbol,
-            score=float(signal_payload.get("score") or 0.0),
-            score_threshold=float(scoped.min_confidence_score),
-            nav_usdt=nav_usdt,
-            risk_pct=risk_pct,
-            leverage_min_override=leverage if dynamic_leverage_enabled() else None,
-            leverage_max_override=leverage if dynamic_leverage_enabled() else None,
-        )
+        nav_sized = None
+        if not full_balance_sizing:
+            nav_sized = self._apply_nav_risk_sizing(
+                entry_price=entry_price,
+                sl_price=sl_price_for_sizing,
+                contract_size=contract_size,
+                available_margin=margin_budget,
+                size_multiplier=size_multiplier * event_margin_multiplier,
+                symbol=symbol,
+                score=float(signal_payload.get("score") or 0.0),
+                score_threshold=float(scoped.min_confidence_score),
+                nav_usdt=nav_usdt,
+                risk_pct=risk_pct,
+                leverage_min_override=leverage if dynamic_leverage_enabled() else None,
+                leverage_max_override=leverage if dynamic_leverage_enabled() else None,
+            )
         if nav_sized is not None:
             contracts, leverage = nav_sized
             leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         else:
             contracts = int((margin_budget * leverage / entry_price) / contract_size)
-            if size_multiplier < 1.0:
+            if size_multiplier < 1.0 and not full_balance_sizing:
                 contracts = max(0, int(contracts * size_multiplier))
         min_vol = int(float(contract.get("minVol", 1) or 1))
         if contracts < min_vol:
@@ -4982,7 +5069,7 @@ class FuturesRuntime:
         if not self.config.paper_trade:
             latest_snapshot = self._account_snapshot(entry_price)
             latest_available = float(latest_snapshot.get("available_usdt", 0.0) or 0.0) or available_balance
-            live_margin_fraction = max(0.0, min(1.0, float(getattr(scoped, "max_margin_fraction", self.config.max_margin_fraction) or 0.0)))
+            live_margin_fraction = full_balance_pct if full_balance_sizing else max(0.0, min(1.0, float(getattr(scoped, "max_margin_fraction", self.config.max_margin_fraction) or 0.0)))
             live_margin_cap = latest_available * live_margin_fraction if latest_available > 0 else 0.0
             if live_margin_cap <= 0:
                 log.info("Futures signal skipped for %s: no live available margin before order", symbol)
@@ -5017,8 +5104,15 @@ class FuturesRuntime:
                 projected_margin = contracts * contract_size * entry_price / leverage
         # Portfolio margin cap. Default 0 means: cap = max_concurrent_positions * margin_budget.
         cap = self.config.max_total_margin_usdt
-        if cap <= 0:
-            if self._opportunity_bucket_sizing_enabled():
+        if full_balance_sizing:
+            cap = max(
+                cap,
+                margin_budget,
+                float(account_snapshot.get("equity_usdt", 0.0) or 0.0),
+                available_balance,
+            )
+        elif cap <= 0:
+            if full_balance_sizing or self._opportunity_bucket_sizing_enabled():
                 cap = max(
                     margin_budget,
                     float(account_snapshot.get("equity_usdt", 0.0) or 0.0),

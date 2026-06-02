@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 import requests
 
+
+log = logging.getLogger(__name__)
 
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 
@@ -63,7 +66,8 @@ class TelegramClient:
             )
             response.raise_for_status()
             payload = response.json()
-        except Exception:
+        except Exception as exc:
+            log.debug("Telegram getUpdates failed (offset=%s limit=%s): %s", offset, limit, exc)
             return []
         result = payload.get("result", []) if isinstance(payload, dict) else []
         return [item for item in result if isinstance(item, dict)]

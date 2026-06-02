@@ -141,6 +141,67 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _sl_fee_floor_taker_fee_for(symbol: str | None) -> float:
+    taker_fee = _env_float("FUTURES_SL_FEE_FLOOR_TAKER_FEE_RATE", _env_float("COST_BUDGET_TAKER_FEE_RATE", 0.0006))
+    if symbol:
+        normalized = "".join(ch if ch.isalnum() else "_" for ch in symbol.upper())
+        override = os.environ.get(f"FUTURES_SL_FEE_FLOOR_TAKER_FEE_RATE_{normalized}")
+        if override is None:
+            override = os.environ.get(f"COST_BUDGET_TAKER_FEE_RATE_{normalized}")
+        if override is not None:
+            try:
+                taker_fee = float(override)
+            except (TypeError, ValueError):
+                pass
+    return max(0.0, taker_fee)
+
+
+def enforce_sl_fee_floor(
+    *,
+    side: str,
+    entry_price: float,
+    sl_price: float,
+    symbol: str | None = None,
+) -> tuple[float, float, bool]:
+    """Widen ``sl_price`` so the stop sits beyond round-trip taker fees + slippage.
+
+    Returns ``(sl_price, min_distance_pct, widened)``. When the floor is disabled
+    or the input prices are invalid the input ``sl_price`` is returned unchanged.
+
+    The floor is the larger of:
+        * ``FUTURES_SL_FEE_FLOOR_PCT`` (absolute floor, default 0.0060 = 0.60%).
+        * ``FUTURES_SL_FEE_FLOOR_MULT`` * (2 * taker_fee + slippage_bps/10000)
+          (cost-anchored floor, default 4.0 multiplier with 5 bps slippage).
+    """
+    if not _env_bool("FUTURES_SL_FEE_FLOOR_ENABLED", True):
+        return sl_price, 0.0, False
+    if entry_price <= 0 or sl_price <= 0:
+        return sl_price, 0.0, False
+    side_upper = (side or "").upper()
+    if side_upper in {"BUY"}:
+        side_upper = "LONG"
+    elif side_upper in {"SELL"}:
+        side_upper = "SHORT"
+    if side_upper not in {"LONG", "SHORT"}:
+        return sl_price, 0.0, False
+    taker_fee = _sl_fee_floor_taker_fee_for(symbol)
+    slippage_bps = max(0.0, _env_float("FUTURES_SL_FEE_FLOOR_SLIPPAGE_BPS", 5.0))
+    multiplier = max(1.0, _env_float("FUTURES_SL_FEE_FLOOR_MULT", 4.0))
+    abs_floor_pct = max(0.0, _env_float("FUTURES_SL_FEE_FLOOR_PCT", 0.0060))
+    cost_pct = 2.0 * taker_fee + slippage_bps / 10_000.0
+    min_distance_pct = max(abs_floor_pct, multiplier * cost_pct)
+    if min_distance_pct <= 0:
+        return sl_price, 0.0, False
+    current_distance_pct = abs(entry_price - sl_price) / entry_price
+    if current_distance_pct >= min_distance_pct:
+        return sl_price, min_distance_pct, False
+    if side_upper == "LONG":
+        widened = entry_price * (1.0 - min_distance_pct)
+    else:
+        widened = entry_price * (1.0 + min_distance_pct)
+    return widened, min_distance_pct, True
+
+
 def _symbol_enabled(name: str, symbol: str, default: str = "") -> bool:
     raw = os.environ.get(name, default)
     normalized_raw = raw.replace(";", " ").replace(",", " ").replace("\n", " ")
@@ -601,6 +662,12 @@ def _build_signal(
     leverage_max_override: int | None = None,
     leverage_hard_floor: int | None = None,
 ) -> FuturesSignal | None:
+    sl_price, _sl_floor_pct, _sl_floor_widened = enforce_sl_fee_floor(
+        side=side,
+        entry_price=entry_price,
+        sl_price=sl_price,
+        symbol=getattr(config, "symbol", None),
+    )
     sl_distance_pct = abs(entry_price - sl_price) / entry_price if entry_price > 0 else 0.0
     certainty = _confidence(score, config.min_confidence_score)
     leverage_min_bound = leverage_min_override if leverage_min_override is not None else config.leverage_min
@@ -657,6 +724,8 @@ def _build_signal(
     signal_metadata = {
         **metadata,
         "sl_distance_pct": round(sl_distance_pct, 6),
+        "sl_fee_floor_pct": round(_sl_floor_pct, 6),
+        "sl_fee_floor_widened": 1.0 if _sl_floor_widened else 0.0,
         "tp_distance_pct": round(abs(tp_price - entry_price) / entry_price if entry_price > 0 else 0.0, 6),
         "leverage_min_bound": float(leverage_decision.min_leverage),
         "leverage_max_bound": float(max(leverage_decision.final_cap if leverage_decision.enabled else leverage_max_bound, leverage)),
@@ -2943,6 +3012,9 @@ def score_round_level_signal(
         tp = short_level * (1.0 - short_tp_pct)
         sl = short_level * (1.0 + short_sl_pct)
         entry = curr
+        sl, _sl_floor_pct_short, _sl_floor_widened_short = enforce_sl_fee_floor(
+            side="SHORT", entry_price=entry, sl_price=sl, symbol=symbol,
+        )
         if tp < entry < sl:
             return FuturesSignal(
                 symbol=symbol,
@@ -2959,6 +3031,8 @@ def score_round_level_signal(
                     "round_level_step": float(step),
                     "ema_gap_pct": round(ema_gap_pct * 100, 4),
                     "leverage_max_bound": float(short_leverage),
+                    "sl_fee_floor_pct": round(_sl_floor_pct_short, 6),
+                    "sl_fee_floor_widened": 1.0 if _sl_floor_widened_short else 0.0,
                     # Tight APT: arms on any micro-wick in our favour, giving
                     # a quick exit when price bounces back (limits loss to ~0.02%
                     # of margin before the wider SL can fire).
@@ -2979,6 +3053,9 @@ def score_round_level_signal(
         entry = curr
         tp = long_level * (1.0 + long_tp_pct)
         sl = long_level * (1.0 - long_sl_pct)
+        sl, _sl_floor_pct_long, _sl_floor_widened_long = enforce_sl_fee_floor(
+            side="LONG", entry_price=entry, sl_price=sl, symbol=symbol,
+        )
         if sl < entry < tp:
             return FuturesSignal(
                 symbol=symbol,
@@ -2994,6 +3071,8 @@ def score_round_level_signal(
                     "round_level": float(long_level),
                     "round_level_step": float(step),
                     "leverage_max_bound": float(base_leverage),
+                    "sl_fee_floor_pct": round(_sl_floor_pct_long, 6),
+                    "sl_fee_floor_widened": 1.0 if _sl_floor_widened_long else 0.0,
                     "adverse_peak_trail_trigger_pct_override": 0.0,
                     "adverse_peak_trail_giveback_pct_override": 0.0,
                     "adverse_peak_trail_pullback_fraction_override": 0.0,

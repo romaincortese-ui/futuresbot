@@ -73,6 +73,27 @@ os.environ.setdefault("USE_PORTFOLIO_VAR", "1")            # §3.6 cross-symbol 
 os.environ.setdefault("USE_WALK_FORWARD_GATE", "1")        # §3.4 walk-forward calibration gate
 os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "1")     # §3.9 weekly slippage report
 
+# ---------------------------------------------------------------------------
+# P0 trend-conviction defaults (post 24h directional-correct-but-undersized
+# review). These widen sizing, raise leverage on high-score entries, anchor SL
+# beyond round-trip fees, and enable round-level signals on every symbol.
+# Operators can disable any of these by setting them to "0" / empty in Railway.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("FUTURES_FULL_BALANCE_SIZING_ENABLED", "1")
+os.environ.setdefault("FUTURES_FULL_BALANCE_RISK_PCT", "0.85")
+os.environ.setdefault("FUTURES_ENTRY_MIN_SCORE", "70")
+os.environ.setdefault("FUTURES_ENTRY_HIGH_SCORE", "85")
+os.environ.setdefault("FUTURES_ENTRY_LEVERAGE_MIN", "12")
+os.environ.setdefault("FUTURES_ENTRY_LEVERAGE_HIGH", "20")
+os.environ.setdefault("FUTURES_SL_FEE_FLOOR_ENABLED", "1")
+os.environ.setdefault("FUTURES_SL_FEE_FLOOR_PCT", "0.0060")
+os.environ.setdefault("FUTURES_SL_FEE_FLOOR_MULT", "4.0")
+os.environ.setdefault("FUTURES_SL_FEE_FLOOR_SLIPPAGE_BPS", "5.0")
+os.environ.setdefault("FUTURES_ROUND_LEVEL_ENABLED", "1")
+os.environ.setdefault("FUTURES_ROUND_LEVEL_SYMBOLS", "*")
+# Keep MARGIN_LOSS_EXIT OFF — prior 30d backtest was catastrophic (-297 vs +27).
+os.environ.setdefault("FUTURES_MARGIN_LOSS_EXIT_ENABLED", "0")
+
 # Legacy Quarter 2 monitor-only probes. Funding observations are now published
 # to Redis for the spot bot, so the old in-bot Telegram carry/basis alerts stay
 # off unless an operator explicitly opts back in.
