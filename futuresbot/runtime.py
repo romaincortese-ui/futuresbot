@@ -4425,6 +4425,30 @@ class FuturesRuntime:
                     signal_metadata["live_balance_guard_available_usdt"] = round(available, 4)
                     self._record_activity(f"Skipped {side_name} {symbol}: live balance too low")
                     return None
+                # Floor: don't bother entering a tiny capped trade that can't
+                # earn enough to cover fees + slippage. Skip if projected margin
+                # falls under FUTURES_MIN_ENTRY_MARGIN_USDT (default $5).
+                min_entry_margin = max(0.0, self._env_float("FUTURES_MIN_ENTRY_MARGIN_USDT", 5.0))
+                if min_entry_margin > 0 and current_contracts > 0:
+                    projected_margin_usdt = cost * (capped_contracts / current_contracts)
+                    if projected_margin_usdt < min_entry_margin:
+                        log.warning(
+                            "Futures signal skipped for %s: capped margin $%.2f below floor $%.2f (contracts=%s capped=%s available=%.2f)",
+                            symbol,
+                            projected_margin_usdt,
+                            min_entry_margin,
+                            current_contracts,
+                            capped_contracts,
+                            available,
+                        )
+                        signal_metadata["live_balance_guard_skipped"] = True
+                        signal_metadata["live_balance_guard_min_margin_floor_usdt"] = round(min_entry_margin, 4)
+                        signal_metadata["live_balance_guard_projected_margin_usdt"] = round(projected_margin_usdt, 4)
+                        signal_metadata["live_balance_guard_available_usdt"] = round(available, 4)
+                        self._record_activity(
+                            f"Skipped {side_name} {symbol}: capped margin ${projected_margin_usdt:.2f}<${min_entry_margin:.2f}"
+                        )
+                        return None
                 if attempt >= max_attempts - 1:
                     log.warning(
                         "Futures signal skipped for %s: live balance guard exhausted retries (contracts=%s cost=%.4f available=%.4f)",
