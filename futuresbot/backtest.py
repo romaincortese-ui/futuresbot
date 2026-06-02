@@ -422,8 +422,20 @@ class FuturesBacktestEngine:
 			* _crypto_event_margin_multiplier(signal.metadata)
 			* _prediction_margin_multiplier(signal.metadata)
 		)
+		# Stop-distance cap: tighten SL so margin-loss-at-SL <= FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN.
+		# Leverage is preserved; only the SL distance shrinks.
+		sl_price_capped = float(signal.sl_price)
+		max_stop_risk_pct = max(0.0, _env_float("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
+		if max_stop_risk_pct > 0 and entry_price > 0 and signal.leverage > 0 and sl_price_capped > 0:
+			max_sl_dist_pct = max_stop_risk_pct / float(signal.leverage)
+			current_dist_pct = abs(entry_price - sl_price_capped) / entry_price
+			if current_dist_pct > max_sl_dist_pct:
+				if signal.side == "LONG":
+					sl_price_capped = entry_price * (1.0 - max_sl_dist_pct)
+				else:
+					sl_price_capped = entry_price * (1.0 + max_sl_dist_pct)
 		contracts, used_margin, applied_leverage = self._contracts_for_entry(
-			entry_price, signal.leverage, balance, sl_price=float(signal.sl_price), margin_multiplier=margin_multiplier, score=float(signal.score),
+			entry_price, signal.leverage, balance, sl_price=sl_price_capped, margin_multiplier=margin_multiplier, score=float(signal.score),
 		)
 		if contracts <= 0:
 			return None
@@ -437,7 +449,7 @@ class FuturesBacktestEngine:
 			leverage=int(applied_leverage),
 			margin_usdt=round(used_margin, 8),
 			tp_price=float(signal.tp_price),
-			sl_price=float(signal.sl_price),
+			sl_price=float(sl_price_capped),
 			position_id="BACKTEST",
 			order_id="BACKTEST",
 			opened_at=entry_time.to_pydatetime(),

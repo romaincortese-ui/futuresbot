@@ -4985,6 +4985,31 @@ class FuturesRuntime:
             )
         signal_metadata["sl_fee_floor_pct"] = float(sl_floor_pct)
         signal_metadata["sl_fee_floor_widened"] = 1.0 if sl_floor_widened else 0.0
+        # Stop-distance cap: keep margin-loss-at-SL <= FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN
+        # by tightening (never widening) the SL toward entry. Leverage is preserved.
+        max_stop_risk_pct = max(0.0, self._env_float("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
+        if max_stop_risk_pct > 0 and entry_price > 0 and leverage > 0:
+            max_sl_dist_pct = max_stop_risk_pct / float(leverage)
+            current_sl = float(signal_payload.get("sl_price") or 0.0)
+            if current_sl > 0:
+                current_dist_pct = abs(entry_price - current_sl) / entry_price
+                if current_dist_pct > max_sl_dist_pct:
+                    if side_name == "LONG":
+                        new_sl = entry_price * (1.0 - max_sl_dist_pct)
+                    else:
+                        new_sl = entry_price * (1.0 + max_sl_dist_pct)
+                    log.info(
+                        "SL distance cap tightened entry SL for %s: %.6f -> %.6f (was %.3f%% of entry, cap %.3f%% @ x%d)",
+                        symbol,
+                        current_sl,
+                        new_sl,
+                        current_dist_pct * 100.0,
+                        max_sl_dist_pct * 100.0,
+                        leverage,
+                    )
+                    signal_payload["sl_price"] = new_sl
+                    signal_metadata["sl_distance_cap_applied"] = 1.0
+                    signal_metadata["sl_distance_cap_pct"] = float(max_sl_dist_pct)
         contract = self.client.get_contract_detail(symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         capital_multiplier, capital_scaling = self._capital_scaling_multiplier()
