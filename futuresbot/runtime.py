@@ -2405,6 +2405,11 @@ class FuturesRuntime:
         )
         self._sync_open_position_price_subscriptions()
         telegram_poll_interval = max(2.0, self._env_float("FUTURES_OPEN_POSITION_TELEGRAM_POLL_SECONDS", 5.0))
+        log.info(
+            "Open-position guard will poll Telegram commands every %.2fs (configured=%s)",
+            telegram_poll_interval,
+            getattr(self.telegram, "configured", False),
+        )
         next_telegram_poll = time.monotonic() + telegram_poll_interval
         while self.open_positions:
             remaining = deadline - time.monotonic()
