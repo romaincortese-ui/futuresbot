@@ -62,12 +62,66 @@ class TelegramClient:
             response = self.session.get(
                 f"https://api.telegram.org/bot{self.token}/getUpdates",
                 params=params,
-                timeout=5,
+                timeout=max(5, timeout + 5),
             )
-            response.raise_for_status()
+        except Exception as exc:
+            log.warning("Telegram getUpdates request failed (offset=%s limit=%s): %s", offset, limit, exc)
+            return []
+        if not response.ok:
+            try:
+                body = response.json() if response.content else {}
+            except Exception:
+                body = {}
+            log.warning(
+                "Telegram getUpdates HTTP %s (offset=%s limit=%s): %s",
+                response.status_code,
+                offset,
+                limit,
+                body.get("description") if isinstance(body, dict) else "",
+            )
+            return []
+        try:
             payload = response.json()
         except Exception as exc:
-            log.debug("Telegram getUpdates failed (offset=%s limit=%s): %s", offset, limit, exc)
+            log.warning("Telegram getUpdates JSON decode failed: %s", exc)
             return []
         result = payload.get("result", []) if isinstance(payload, dict) else []
         return [item for item in result if isinstance(item, dict)]
+
+    def delete_webhook(self, *, drop_pending_updates: bool = False) -> dict[str, Any]:
+        """Force long-polling mode: remove any leftover webhook (a webhook makes
+        getUpdates return 409 Conflict, so /status etc. silently never arrive).
+        """
+
+        if not self.configured:
+            return {"ok": False, "description": "telegram not configured"}
+        try:
+            response = self.session.post(
+                f"https://api.telegram.org/bot{self.token}/deleteWebhook",
+                json={"drop_pending_updates": bool(drop_pending_updates)},
+                timeout=8,
+            )
+            payload = response.json() if response.content else {}
+        except Exception as exc:
+            log.warning("Telegram deleteWebhook failed: %s", exc)
+            return {"ok": False, "description": str(exc)}
+        if not isinstance(payload, dict):
+            return {"ok": False, "description": "non-dict response"}
+        return payload
+
+    def get_webhook_info(self) -> dict[str, Any]:
+        if not self.configured:
+            return {}
+        try:
+            response = self.session.get(
+                f"https://api.telegram.org/bot{self.token}/getWebhookInfo",
+                timeout=8,
+            )
+            payload = response.json() if response.content else {}
+        except Exception as exc:
+            log.warning("Telegram getWebhookInfo failed: %s", exc)
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        result = payload.get("result")
+        return result if isinstance(result, dict) else {}

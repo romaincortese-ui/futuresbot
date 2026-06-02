@@ -139,6 +139,7 @@ class FuturesRuntime:
         self._telegram_command_started_after_ts = self._started_at_ts - TELEGRAM_STALE_COMMAND_GRACE_SECONDS
         self._last_heartbeat_at = self._started_at_ts
         self._last_telegram_update = 0
+        self._last_telegram_poll_log_ts = 0.0
         self._telegram_alert_timestamps: dict[str, float] = {}
         self._btc_trend_cache: dict[str, float] = {"1h": 0.0, "24h": 0.0}
         self._paused = False
@@ -1506,12 +1507,15 @@ class FuturesRuntime:
         skipped_stale = 0
         hit_batch_cap = False
         offset = self._last_telegram_update + 1 if self._last_telegram_update else None
+        first_batch_update_count = 0
         for batch_index in range(TELEGRAM_COMMAND_MAX_BATCHES):
             updates = self.telegram.get_updates(
                 offset=offset,
                 limit=TELEGRAM_COMMAND_UPDATE_LIMIT,
                 timeout=0,
             )
+            if batch_index == 0:
+                first_batch_update_count = len(updates)
             if not updates:
                 break
             saw_update = True
@@ -1606,6 +1610,23 @@ class FuturesRuntime:
         if saw_update:
             self._acknowledge_telegram_updates(self._last_telegram_update)
             self._save_state()
+        # Debounced heartbeat so an operator can confirm /status polling is
+        # actually firing even when no commands come in. Default 300s; tune
+        # via FUTURES_TELEGRAM_POLL_HEARTBEAT_SECONDS, 0 disables.
+        heartbeat_interval = self._env_float("FUTURES_TELEGRAM_POLL_HEARTBEAT_SECONDS", 300.0)
+        if heartbeat_interval > 0:
+            now_mono = time.monotonic()
+            last = getattr(self, "_last_telegram_poll_log_ts", 0.0)
+            if now_mono - last >= heartbeat_interval:
+                log.info(
+                    "[TELEGRAM_POLL] offset=%s first_batch_updates=%d saw=%s skipped_stale=%d last_known=%d",
+                    offset,
+                    first_batch_update_count,
+                    saw_update,
+                    skipped_stale,
+                    self._last_telegram_update,
+                )
+                self._last_telegram_poll_log_ts = now_mono
 
     def _acknowledge_telegram_updates(self, latest_update_id: int) -> None:
         if not self.telegram.configured or latest_update_id <= 0:
@@ -1647,8 +1668,32 @@ class FuturesRuntime:
     def _sync_telegram_update_offset_on_startup(self) -> None:
         if not self.telegram.configured:
             return
+        # A lingering webhook (set manually or by a prior bot deploy) makes
+        # getUpdates return 409 Conflict and the bot silently never sees
+        # /status, /pause, /close, etc. Clear it on every boot — we always
+        # want long-polling mode. Keep pending updates so commands the user
+        # sent during the brief restart still get processed (the per-update
+        # stale filter drops anything older than start - grace seconds).
+        wh_info = self.telegram.get_webhook_info()
+        wh_url = str(wh_info.get("url") or "") if isinstance(wh_info, dict) else ""
+        if wh_url:
+            log.warning(
+                "Telegram webhook was configured (url=%s pending=%s); clearing for long-poll mode",
+                wh_url,
+                wh_info.get("pending_update_count"),
+            )
+        clear_resp = self.telegram.delete_webhook(drop_pending_updates=False)
+        if not (isinstance(clear_resp, dict) and clear_resp.get("ok")):
+            log.warning(
+                "Telegram deleteWebhook returned %s; /status may not respond",
+                clear_resp,
+            )
         updates = self.telegram.get_updates(offset=-1, limit=1, timeout=0)
         if not updates:
+            log.info(
+                "Telegram startup sync: no pending updates (last_known=%s)",
+                self._last_telegram_update,
+            )
             return
         latest_update = max(updates, key=lambda update: int(update.get("update_id", 0) or 0))
         latest = int(latest_update.get("update_id", 0) or 0)
