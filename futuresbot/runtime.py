@@ -934,7 +934,10 @@ class FuturesRuntime:
         # Gate: FUTURES_MID_PROFIT_LOCK_ENABLED (default 1).
         if os.environ.get("FUTURES_MID_PROFIT_LOCK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
             mid_trigger_pct = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_TRIGGER_PCT", 3.0))
-            if 0.0 < mid_trigger_pct < trigger_pct and gross_peak_pct >= mid_trigger_pct:
+            mid_min_tp_progress = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_MIN_TP_PROGRESS", 0.30))
+            mid_progress = self._tp_progress(position, current_price)
+            mid_progress_ok = mid_min_tp_progress <= 0.0 or (mid_progress is not None and mid_progress >= mid_min_tp_progress)
+            if 0.0 < mid_trigger_pct < trigger_pct and gross_peak_pct >= mid_trigger_pct and mid_progress_ok:
                 mid_floor_pct  = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_FLOOR_PCT", 1.5))
                 mid_pullback   = min(0.95, max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_PULLBACK_FRACTION", 0.35)))
                 mid_stop_pct   = max(mid_floor_pct, gross_peak_pct * (1.0 - mid_pullback))

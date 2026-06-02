@@ -91,6 +91,15 @@ os.environ.setdefault("FUTURES_SL_FEE_FLOOR_MULT", "4.0")
 os.environ.setdefault("FUTURES_SL_FEE_FLOOR_SLIPPAGE_BPS", "5.0")
 os.environ.setdefault("FUTURES_ROUND_LEVEL_ENABLED", "1")
 os.environ.setdefault("FUTURES_ROUND_LEVEL_SYMBOLS", "*")
+# Mid-profit-lock tuning (2026-06-02): the previous defaults (trigger 3.0,
+# pullback 0.35) chopped out a high-conviction ETH SHORT after a 5-min, +3.05%
+# wiggle that immediately came back. Raise the trigger to 4.5% and loosen the
+# pullback to 0.50, and require tp_progress >= 30% so it can't fire on a trade
+# that has barely begun working.
+os.environ.setdefault("FUTURES_MID_PROFIT_LOCK_TRIGGER_PCT", "4.5")
+os.environ.setdefault("FUTURES_MID_PROFIT_LOCK_PULLBACK_FRACTION", "0.50")
+os.environ.setdefault("FUTURES_MID_PROFIT_LOCK_FLOOR_PCT", "1.5")
+os.environ.setdefault("FUTURES_MID_PROFIT_LOCK_MIN_TP_PROGRESS", "0.30")
 # Keep MARGIN_LOSS_EXIT OFF — prior 30d backtest was catastrophic (-297 vs +27).
 os.environ.setdefault("FUTURES_MARGIN_LOSS_EXIT_ENABLED", "0")
 
