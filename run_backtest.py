@@ -114,6 +114,7 @@ def _run_portfolio_backtest(
         indexes[symbol] = {timestamp: idx for idx, timestamp in enumerate(frame.index)}
 
     all_times = sorted({timestamp for frame in frames.values() for timestamp in frame.index[220:]})
+    progress_every = max(0, int(os.environ.get("FUTURES_BACKTEST_PROGRESS_EVERY", "0") or 0))
     balance = float(base_config.initial_balance)
     trades: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
@@ -124,7 +125,24 @@ def _run_portfolio_backtest(
     pending_symbol = ""
     pending_entry_time = None
 
-    for timestamp in all_times:
+    for step_index, timestamp in enumerate(all_times, start=1):
+        if progress_every > 0 and (step_index == 1 or step_index % progress_every == 0 or step_index == len(all_times)):
+            print(
+                json.dumps(
+                    {
+                        "portfolio_backtest_progress": {
+                            "step": step_index,
+                            "total_steps": len(all_times),
+                            "pct": round(step_index / max(1, len(all_times)) * 100.0, 2),
+                            "timestamp": timestamp.isoformat(),
+                            "open_position": bool(open_position is not None),
+                            "trades": len(trades),
+                            "balance": round(balance, 6),
+                        }
+                    }
+                ),
+                flush=True,
+            )
         if pending_signal is not None and pending_entry_time == timestamp and open_position is None:
             frame = frames.get(pending_symbol)
             engine = engines.get(pending_symbol)
@@ -144,6 +162,7 @@ def _run_portfolio_backtest(
             idx = indexes.get(open_position.symbol, {}).get(timestamp)
             if frame is not None and idx is not None:
                 bar = frame.iloc[idx]
+                open_engine._latest_regime_frame = frame.iloc[: idx + 1]
                 bar_exit = open_engine._bar_exit(open_position, bar)
                 if bar_exit is not None:
                     exit_price, reason = bar_exit

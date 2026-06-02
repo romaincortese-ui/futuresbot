@@ -20,6 +20,7 @@ from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClie
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.prediction_overlay import apply_prediction_overlay, select_point_in_time_prediction_state
+from futuresbot.spot_regime import spot_regime_label
 from futuresbot.sharp_opportunity import (
 	annotate_sharp_event_signal,
 	build_sharp_event_signal,
@@ -725,7 +726,13 @@ class FuturesBacktestEngine:
 			)
 			if micro_lock_exit is not None:
 				return micro_lock_exit
-		if _env_bool("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", True):
+		adverse_trail_allowed = True
+		if _env_bool("FUTURES_ADVERSE_TRAIL_SIDEWAYS_ONLY", True):
+			regime_frame = getattr(self, "_latest_regime_frame", None)
+			if regime_frame is not None and len(regime_frame) >= 50:
+				regime_label = spot_regime_label(regime_frame)
+				adverse_trail_allowed = regime_label == "SIDEWAYS"
+		if adverse_trail_allowed and _env_bool("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", True):
 			adverse_peak_trail_exit, _changed = evaluate_adverse_peak_trail_bar(
 				position,
 				high=high,
@@ -836,6 +843,7 @@ class FuturesBacktestEngine:
 					state.open_position = position
 
 			if state.open_position is not None:
+				self._latest_regime_frame = frame_15m.iloc[: index + 1]
 				bar_exit = self._bar_exit(state.open_position, bar)
 				if bar_exit is not None:
 					exit_price, reason = bar_exit

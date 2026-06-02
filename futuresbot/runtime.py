@@ -89,6 +89,7 @@ from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lo
 from futuresbot.marketdata import MexcApiError, MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
+from futuresbot.spot_regime import spot_regime_label
 from futuresbot.prediction_overlay import apply_prediction_overlay, evaluate_prediction_overlay, merge_prediction_states
 from futuresbot.strategy import enforce_sl_fee_floor, score_btc_futures_setup, score_round_level_signal
 from futuresbot.calibration import apply_signal_calibration
@@ -1069,9 +1070,38 @@ class FuturesRuntime:
             self._save_state()
         return False
 
+    def _spot_regime_label_for(self, symbol: str) -> str | None:
+        cache = getattr(self, "_spot_regime_label_cache", None)
+        if cache is None:
+            cache = {}
+            self._spot_regime_label_cache = cache
+        ttl = max(1.0, self._env_float("FUTURES_SPOT_REGIME_TTL_SECONDS", 300.0))
+        now = time.time()
+        cached = cache.get(symbol)
+        if cached is not None and (now - cached[1]) < ttl:
+            return cached[0]
+        try:
+            end = int(now * 1000)
+            start = end - 900_000 * 720
+            frame = self.client.get_klines(symbol, interval="Min15", start=start, end=end)
+        except Exception as exc:
+            log.warning("Spot regime klines fetch failed for %s: %s", symbol, exc)
+            return cached[0] if cached is not None else None
+        try:
+            label = spot_regime_label(frame)
+        except Exception as exc:
+            log.warning("Spot regime classification failed for %s: %s", symbol, exc)
+            return cached[0] if cached is not None else None
+        cache[symbol] = (label, now)
+        return label
+
     def _adverse_peak_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if os.environ.get("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
             return False
+        if os.environ.get("FUTURES_ADVERSE_TRAIL_SIDEWAYS_ONLY", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
+            label = self._spot_regime_label_for(position.symbol)
+            if label is not None and label != "SIDEWAYS":
+                return False
         adverse_exit, changed = evaluate_adverse_peak_trail_tick(
             position,
             current_price,
