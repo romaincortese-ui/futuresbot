@@ -1699,6 +1699,20 @@ class FuturesRuntime:
         latest = int(latest_update.get("update_id", 0) or 0)
         if latest <= 0:
             return
+        if latest < self._last_telegram_update:
+            # Persisted offset is ahead of anything Telegram still has — almost
+            # certainly stale state from a different bot token or a corrupted
+            # state file. Without a reset, every incoming command is silently
+            # dropped by the `update_id <= last_known` guard. Adopt (latest-1)
+            # so the next command is accepted; the per-update timestamp filter
+            # still drops anything older than start - grace.
+            log.warning(
+                "Telegram persisted last_update=%s exceeds latest Telegram update=%s; resetting (likely state corruption or bot-token change)",
+                self._last_telegram_update,
+                latest,
+            )
+            self._last_telegram_update = max(0, latest - 1)
+            self._save_state()
         if latest <= self._last_telegram_update:
             self._acknowledge_telegram_updates(self._last_telegram_update)
             return
