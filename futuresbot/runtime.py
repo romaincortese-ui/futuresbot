@@ -1975,8 +1975,11 @@ class FuturesRuntime:
         self.trade_history = list(payload.get("trade_history", []) or [])
         raw_missed = payload.get("missed_opportunities", {})
         self.missed_opportunities = raw_missed if isinstance(raw_missed, dict) else {}
-        self._paused = bool(payload.get("paused", False))
         self._recent_activity = deque((str(item) for item in payload.get("recent_activity", [])), maxlen=RECENT_ACTIVITY_LIMIT)
+        self._paused = bool(payload.get("paused", False))
+        if self._paused and os.environ.get("FUTURES_RESUME_ON_BOOT", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
+            self._paused = False
+            self._record_activity("Boot: entries resumed by FUTURES_RESUME_ON_BOOT")
         raw_last_exit = payload.get("last_exit_by_symbol", {})
         if isinstance(raw_last_exit, dict):
             self._last_exit_by_symbol = {str(sym).upper(): row for sym, row in raw_last_exit.items() if isinstance(row, dict)}

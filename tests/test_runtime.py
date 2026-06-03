@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_ENTRY_MIN_SCORE",
         "FUTURES_ENTRY_LEVERAGE_MIN",
         "FUTURES_ENTRY_LEVERAGE_HIGH",
+        "FUTURES_RESUME_ON_BOOT",
         "USE_NAV_RISK_SIZING",
         "USE_FUTURES_PROFIT_LOCK",
         "FUTURES_PROFIT_LOCK_TRIGGER_PCT",
@@ -114,6 +116,16 @@ def _config(tmp_path) -> FuturesConfig:
         telegram_token="",
         telegram_chat_id="",
     )
+
+
+def test_resume_on_boot_env_clears_persisted_pause(tmp_path, monkeypatch):
+    (tmp_path / "futures_state.json").write_text(json.dumps({"paused": True}), encoding="utf-8")
+    monkeypatch.setenv("FUTURES_RESUME_ON_BOOT", "1")
+
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+
+    assert runtime._paused is False
+    assert any("Boot: entries resumed by FUTURES_RESUME_ON_BOOT" in item for item in runtime._recent_activity)
 
 
 def test_crypto_event_policy_reduces_live_signal_size_and_leverage(tmp_path):
