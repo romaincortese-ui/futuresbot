@@ -136,6 +136,22 @@ def test_pmt_scan_symbols_ignore_overlay_candidates(tmp_path, monkeypatch):
     assert runtime._scan_symbols_for_cycle() == tuple(runtime._active_symbols)
 
 
+def test_pmt_validation_keeps_eligible_symbol_on_detail_rate_limit(tmp_path, monkeypatch):
+    class RateLimitedDetailClient(StubClient):
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            if symbol == "BNB_USDT":
+                raise RuntimeError("rate limit")
+            return {"maxLeverage": "100"}
+
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    config = replace(_config(tmp_path), symbols=("BTC_USDT", "BNB_USDT"))
+    runtime = FuturesRuntime(config, RateLimitedDetailClient())
+
+    runtime._validate_symbols()
+
+    assert runtime._active_symbols == ("BTC_USDT", "BNB_USDT")
+
+
 def test_crypto_event_policy_reduces_live_signal_size_and_leverage(tmp_path):
     config = replace(_config(tmp_path), leverage_min=1, leverage_max=20)
     runtime = FuturesRuntime(config, StubClient())

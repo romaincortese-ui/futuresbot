@@ -97,7 +97,7 @@ from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
-from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_strategy_enabled, score_pmt_threshold_signal
+from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_strategy_enabled, pmt_symbol_allowed, score_pmt_threshold_signal
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -1864,6 +1864,16 @@ class FuturesRuntime:
             try:
                 contract = self.client.get_contract_detail(sym)
             except Exception as exc:
+                if pmt_strategy_enabled() and pmt_symbol_allowed(sym):
+                    log.warning(
+                        "Futures symbol %s contract detail fetch failed in PMT mode; keeping configured eligible symbol with defaults (%s)",
+                        sym,
+                        exc,
+                    )
+                    self._record_activity(f"Symbol {sym} kept for PMT after contract detail fetch failure")
+                    self._symbol_configs[sym] = self.config.for_symbol(sym)
+                    active.append(sym)
+                    continue
                 log.warning("Futures symbol %s rejected: contract detail fetch failed (%s)", sym, exc)
                 self._record_activity(f"Symbol {sym} unavailable: {type(exc).__name__}")
                 continue
