@@ -1257,7 +1257,7 @@ class FuturesRuntime:
             self._btc_trend_line(),
             f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
             self._prediction_overlay_status_line(),
-            f"Entries: {'⏸️ paused' if self._paused else '▶️ active'}",
+            f"Entries: {'🧊 retired' if self._strategies_retired() else ('⏸️ paused' if self._paused else '▶️ active')}",
             f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
             f"Open positions: <b>{len(self.open_positions)}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
             "━━━━━━━━━━━━━━━",
@@ -2376,6 +2376,8 @@ class FuturesRuntime:
                 self._save_state()
 
     def _hourly_exit(self, position: FuturesPosition, current_price: float, now: datetime | None = None) -> bool:
+        if self._strategies_retired():
+            return False
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
         if self._flag("FUTURES_MARGIN_LOSS_EXIT_ENABLED"):
@@ -2850,6 +2852,13 @@ class FuturesRuntime:
             log.debug("Missed opportunity record skipped for %s: %s", symbol, exc)
 
     def _fetch_signal(self) -> dict[str, Any] | None:
+        if self._strategies_retired():
+            # Keep scan/status plumbing alive while explicitly retiring strategies.
+            self._cycle_counter += 1
+            self._last_cycle_gate_blocks = {}
+            self._last_cycle_symbol_count = len(self._scan_symbols_for_cycle())
+            log.info("Futures scan skipped: FUTURES_STRATEGIES_RETIRED is enabled")
+            return None
         if self._available_slots() <= 0:
             return None
         # P1 §8 — reset the per-cycle aggregator at the start of every scan.
@@ -3409,6 +3418,9 @@ class FuturesRuntime:
         import os
 
         return os.environ.get(name, "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _strategies_retired(self) -> bool:
+        return self._flag("FUTURES_STRATEGIES_RETIRED")
 
     @staticmethod
     def _opportunity_bucket_sizing_enabled() -> bool:
@@ -4997,6 +5009,9 @@ class FuturesRuntime:
         }
 
     def _enter_trade(self, signal_payload: dict[str, Any]) -> bool:
+        if self._strategies_retired():
+            log.info("Futures signal ignored: strategies retired mode is enabled")
+            return False
         side_name = str(signal_payload["side"])
         side = 1 if side_name == "LONG" else 3
         entry_price = float(signal_payload["entry_price"])
@@ -5736,6 +5751,7 @@ class FuturesRuntime:
                 "USE_FUNDING_CARRY_MONITOR",
                 "USE_BASIS_TRADE_MONITOR",
                 "USE_LIQUIDATION_CASCADE_MONITOR",
+                "FUTURES_STRATEGIES_RETIRED",
             )
             if str(_os.environ.get(name, "0")).lower() in {"1", "true", "yes", "on"}
         ]

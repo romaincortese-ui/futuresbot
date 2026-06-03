@@ -93,6 +93,8 @@ os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "1")     # §3.9 weekly slippa
 # ---------------------------------------------------------------------------
 os.environ.setdefault("FUTURES_FULL_BALANCE_SIZING_ENABLED", "1")
 os.environ.setdefault("FUTURES_FULL_BALANCE_RISK_PCT", "0.85")
+# Retire legacy strategy engine while preserving runtime/MEXC connectivity.
+os.environ.setdefault("FUTURES_STRATEGIES_RETIRED", "1")
 os.environ.setdefault("FUTURES_ENTRY_MIN_SCORE", "70")
 os.environ.setdefault("FUTURES_ENTRY_HIGH_SCORE", "85")
 os.environ.setdefault("FUTURES_ENTRY_LEVERAGE_MIN", "12")

@@ -2305,6 +2305,14 @@ def test_fetch_signal_passes_fresh_event_context_to_strategy(tmp_path, monkeypat
     assert captured["event_count"] >= 1
 
 
+def test_fetch_signal_returns_none_when_strategies_retired(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGIES_RETIRED", "1")
+    runtime = FuturesRuntime(replace(_config(tmp_path), symbols=("BTC_USDT",), redis_url=""), StubClient())
+    runtime._active_symbols = ("BTC_USDT",)
+
+    assert runtime._fetch_signal() is None
+
+
 def test_missed_opportunity_report_records_and_persists_blocked_move(tmp_path, caplog):
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
 
@@ -2436,6 +2444,34 @@ def test_enter_trade_blocks_recent_same_signal_reentry(tmp_path, monkeypatch):
 
     assert runtime._enter_trade(signal) is False
     assert "ZEC_USDT" not in runtime.open_positions
+
+
+def test_enter_trade_returns_false_when_strategies_retired(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGIES_RETIRED", "1")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+
+    signal = {
+        "side": "LONG",
+        "entry_price": 91000.0,
+        "leverage": 20,
+        "symbol": "BTC_USDT",
+        "tp_price": 93000.0,
+        "sl_price": 88000.0,
+        "score": 95.0,
+        "certainty": 0.9,
+        "entry_signal": "COIL_BREAKOUT_LONG",
+    }
+
+    assert runtime._enter_trade(signal) is False
+
+
+def test_hourly_exit_skips_strategy_exits_when_strategies_retired(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGIES_RETIRED", "1")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = _make_position("BTC_USDT")
+
+    # Without retirement mode this would hit fixed TP for a LONG.
+    assert runtime._hourly_exit(position, current_price=93100.0) is False
 
 
 def test_enter_trade_respects_portfolio_margin_cap(tmp_path):
