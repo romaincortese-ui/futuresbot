@@ -97,6 +97,7 @@ os.environ.setdefault("FUTURES_FULL_BALANCE_RISK_PCT", "1.00")
 # whole strategy layer retired with an explicit FUTURES_STRATEGIES_RETIRED=1.
 os.environ.setdefault("FUTURES_STRATEGY_MODE", "pmt_threshold")
 os.environ.setdefault("FUTURES_STRATEGIES_RETIRED", "0")
+os.environ.setdefault("FUTURES_RESUME_ON_BOOT", "1")
 os.environ.setdefault("FUTURES_PMT_SYMBOLS", "BTC_USDT,ETH_USDT,SOL_USDT,BNB_USDT,SEI_USDT,ZEC_USDT")
 os.environ.setdefault("FUTURES_PMT_MIN_SCORE", "95")
 os.environ.setdefault("FUTURES_PMT_MIN_LEVERAGE", "15")
