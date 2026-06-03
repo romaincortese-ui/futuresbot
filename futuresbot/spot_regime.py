@@ -17,6 +17,8 @@ its stop-loss (any trending regime).
 
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 
 # mexc-bot-v2 LiveConfig defaults — see mexcbot/runtime.py
@@ -28,6 +30,52 @@ _LOOSEN_MULT = 0.85
 _STRONG_UPTREND_GAP = 0.05
 _STRONG_DOWNTREND_GAP = -0.05
 _TREND_MULT = 0.90
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _ema_gap(frame: pd.DataFrame | None) -> float | None:
+    if frame is None or len(frame) < 50 or "close" not in frame.columns:
+        return None
+    try:
+        close = frame["close"].astype(float)
+        ema50 = close.ewm(span=50, adjust=False).mean()
+        ema_value = float(ema50.iloc[-1])
+        return float(close.iloc[-1]) / ema_value - 1.0 if ema_value > 0 else None
+    except Exception:
+        return None
+
+
+def _ema_gap_delta(frame: pd.DataFrame | None, lookback_bars: int) -> float | None:
+    if lookback_bars <= 0:
+        return None
+    if frame is None or len(frame) <= lookback_bars or "close" not in frame.columns:
+        return None
+    try:
+        close = frame["close"].astype(float)
+        ema50 = close.ewm(span=50, adjust=False).mean()
+        gaps = close / ema50 - 1.0
+        return float(gaps.iloc[-1] - gaps.iloc[-1 - lookback_bars])
+    except Exception:
+        return None
 
 
 def compute_market_regime_multiplier(frame: pd.DataFrame | None) -> float:
@@ -82,7 +130,19 @@ def classify_regime_label(mult: float) -> str:
 
 
 def spot_regime_label(frame: pd.DataFrame | None) -> str:
-    return classify_regime_label(compute_market_regime_multiplier(frame))
+    label = classify_regime_label(compute_market_regime_multiplier(frame))
+    trend_gap = max(0.0, _env_float("FUTURES_REGIME_TREND_GAP", 0.015))
+    lookback_bars = max(0, _env_int("FUTURES_REGIME_TREND_GAP_LOOKBACK_BARS", 1))
+    gap = _ema_gap(frame)
+    gap_delta = _ema_gap_delta(frame, lookback_bars)
+    if label == "SIDEWAYS" and trend_gap > 0 and gap is not None:
+        bullish_persistent = lookback_bars == 0 or (gap_delta is not None and gap_delta > 0)
+        bearish_persistent = lookback_bars == 0 or (gap_delta is not None and gap_delta < 0)
+        if gap >= trend_gap and bullish_persistent:
+            return "BULL"
+        if gap <= -trend_gap and bearish_persistent:
+            return "BEAR"
+    return label
 
 
 def is_sideways(frame: pd.DataFrame | None) -> bool:
