@@ -829,6 +829,8 @@ def evaluate_profit_lock_bar(
     floor_pct: float,
     min_exit_net_pct: float = 0.0,
     exit_slippage_buffer_pct: float = 0.0,
+    giveback_pct: float = 0.0,
+    min_tp_progress: float = 0.0,
 ) -> tuple[tuple[float, str] | None, bool]:
     if trigger_pct <= 0 or high <= 0 or low <= 0:
         return None, False
@@ -839,6 +841,8 @@ def evaluate_profit_lock_bar(
     pullback_fraction = _metadata_float(metadata, "profit_lock_pullback_fraction_override") or pullback_fraction
     floor_pct = _metadata_float(metadata, "profit_lock_floor_pct_override") or floor_pct
     min_exit_net_pct = _metadata_float(metadata, "profit_lock_exit_min_net_pct_override") or min_exit_net_pct
+    giveback_pct = _metadata_float(metadata, "profit_lock_giveback_pct_override") or giveback_pct
+    min_tp_progress = _metadata_float(metadata, "profit_lock_min_tp_progress_override") or min_tp_progress
     armed_before_bar = (_metadata_float(metadata, PROFIT_LOCK_STOP_GROSS_PCT_KEY) or 0.0) > 0.0
     favorable_price = high if position.side == "LONG" else low
     adverse_price = low if position.side == "LONG" else high
@@ -850,10 +854,17 @@ def evaluate_profit_lock_bar(
     )
     if gross_peak_pct < trigger_pct:
         return None, changed
+    progress = tp_progress(position, favorable_price)
+    if min_tp_progress > 0 and (progress is None or progress < min_tp_progress):
+        return None, changed
 
-    bounded_pullback = min(0.95, max(0.0, pullback_fraction))
-    stop_pct = max(0.0, floor_pct, gross_peak_pct * (1.0 - bounded_pullback))
-    net_stop_pct = max(0.0, net_peak_pct * (1.0 - bounded_pullback))
+    if giveback_pct > 0:
+        stop_pct = max(0.0, floor_pct, gross_peak_pct - giveback_pct)
+        net_stop_pct = max(0.0, net_peak_pct - giveback_pct)
+    else:
+        bounded_pullback = min(0.95, max(0.0, pullback_fraction))
+        stop_pct = max(0.0, floor_pct, gross_peak_pct * (1.0 - bounded_pullback))
+        net_stop_pct = max(0.0, net_peak_pct * (1.0 - bounded_pullback))
     if metadata.get(PROFIT_LOCK_STOP_GROSS_PCT_KEY) != stop_pct:
         metadata[PROFIT_LOCK_STOP_GROSS_PCT_KEY] = float(stop_pct)
         changed = True

@@ -15,6 +15,7 @@ from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesBacktestConfig, Fu
 from futuresbot.gate_b_readiness import SymbolResult, evaluate_gate_b_readiness
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
+from futuresbot.pmt_strategy import pmt_strategy_enabled
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -22,6 +23,16 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def _calibration_output_file() -> str:
@@ -124,6 +135,7 @@ def _run_portfolio_backtest(
     pending_signal: FuturesSignal | None = None
     pending_symbol = ""
     pending_entry_time = None
+    pmt_cooldown_until = None
 
     for step_index, timestamp in enumerate(all_times, start=1):
         if progress_every > 0 and (step_index == 1 or step_index % progress_every == 0 or step_index == len(all_times)):
@@ -177,6 +189,9 @@ def _run_portfolio_backtest(
                     )
                     balance += float(trade["pnl_usdt"])
                     trades.append(trade)
+                    if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+                        cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
+                        pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
                     open_position = None
                     open_engine = None
 
@@ -190,10 +205,14 @@ def _run_portfolio_backtest(
                     trade = open_engine._close_position(open_position, close_time, exit_price, reason)
                     balance += float(trade["pnl_usdt"])
                     trades.append(trade)
+                    if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+                        cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
+                        pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
                     open_position = None
                     open_engine = None
 
-        if open_position is None and pending_signal is None and close_time.minute == 0:
+        pmt_cooldown_active = pmt_strategy_enabled() and pmt_cooldown_until is not None and close_time < pmt_cooldown_until
+        if open_position is None and pending_signal is None and not pmt_cooldown_active and (pmt_strategy_enabled() or close_time.minute == 0):
             candidates: list[tuple[int, float, float, str, FuturesSignal]] = []
             for symbol, frame in frames.items():
                 idx = indexes[symbol].get(timestamp)

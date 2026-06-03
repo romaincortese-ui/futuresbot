@@ -6,12 +6,49 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
 from futuresbot.marketdata import MexcApiError
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.runtime import FuturesRuntime
+
+
+@pytest.fixture(autouse=True)
+def _clear_pmt_strategy_env(monkeypatch):
+    for name in (
+        "FUTURES_STRATEGY_MODE",
+        "FUTURES_PMT_STRATEGY_ENABLED",
+        "FUTURES_PMT_SYMBOLS",
+        "FUTURES_PMT_MIN_SCORE",
+        "FUTURES_PMT_MIN_LEVERAGE",
+        "FUTURES_PMT_MAX_LEVERAGE",
+        "FUTURES_PMT_MENTAL_THRESHOLD_STEPS",
+        "FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS",
+        "FUTURES_PMT_TP_COOLDOWN_HOURS",
+        "FUTURES_SYMBOLS",
+        "FUTURES_BACKTEST_SYMBOLS",
+        "FUTURES_FULL_BALANCE_SIZING_ENABLED",
+        "FUTURES_FULL_BALANCE_RISK_PCT",
+        "FUTURES_LEVERAGE_MIN",
+        "FUTURES_LEVERAGE_MAX",
+        "FUTURES_ENTRY_MIN_SCORE",
+        "FUTURES_ENTRY_LEVERAGE_MIN",
+        "FUTURES_ENTRY_LEVERAGE_HIGH",
+        "USE_NAV_RISK_SIZING",
+        "USE_FUTURES_PROFIT_LOCK",
+        "FUTURES_PROFIT_LOCK_TRIGGER_PCT",
+        "FUTURES_PROFIT_LOCK_GIVEBACK_PCT",
+        "FUTURES_PROFIT_LOCK_FLOOR_PCT",
+        "FUTURES_PROFIT_LOCK_MIN_TP_PROGRESS",
+        "FUTURES_MICRO_LOCK_ENABLED",
+        "FUTURES_ADVERSE_PEAK_TRAIL_ENABLED",
+        "FUTURES_NO_PROGRESS_EXIT_ENABLED",
+        "FUTURES_STAGNATION_EXIT_ENABLED",
+        "FUTURES_TRAILING_EXIT_DRAWDOWN_PCT",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 class StubClient:
@@ -275,7 +312,7 @@ def test_build_status_message_includes_signal_context_and_btc_trends(tmp_path):
     )
 
     assert "BTC: 1h" in message
-    assert "Scanning <b>5</b> futures pairs (production pruned universe)" in message
+    assert "Scanning <b>6</b> futures pairs (production pruned universe)" in message
     assert "Signal: <b>LONG</b> COIL_BREAKOUT_LONG | x32 | score 63.5 | cert 78%" in message
     assert "Avail: <b>$123.45</b> | Equity: <b>$150.50</b> | Trades: <b>0</b>" in message
 
@@ -289,7 +326,7 @@ def test_status_message_flags_custom_symbol_override(tmp_path):
 
     message = runtime._build_status_message(price=91000.0)
 
-    assert "Scanning <b>2</b> futures pairs (custom override; production default is 5 pairs)" in message
+    assert "Scanning <b>2</b> futures pairs (custom override; production default is 6 pairs)" in message
 
 
 def test_build_status_message_includes_open_position_pnl_and_last_trade(tmp_path):
@@ -1764,7 +1801,7 @@ def test_send_startup_message_uses_live_account_snapshot(tmp_path):
     runtime._send_startup_message()
 
     assert len(sent_messages) == 1
-    assert "Scanning <b>5</b> futures pairs (production pruned universe):" in sent_messages[0]
+    assert "Scanning <b>6</b> futures pairs (production pruned universe):" in sent_messages[0]
     assert "Active symbols differ" not in sent_messages[0]
     assert "Avail: <b>$123.45</b> | Equity: <b>$150.50</b>" in sent_messages[0]
     assert "Budget:" not in sent_messages[0]
@@ -1788,7 +1825,7 @@ def test_send_startup_message_warns_on_custom_symbol_override(tmp_path):
     runtime._send_startup_message()
 
     assert len(sent_messages) == 1
-    assert "custom override; production default is 5 pairs" in sent_messages[0]
+    assert "custom override; production default is 6 pairs" in sent_messages[0]
     assert "Active symbols differ from the production pruned default" in sent_messages[0]
     assert ", ".join(DEFAULT_FUTURES_SYMBOLS) in sent_messages[0]
 

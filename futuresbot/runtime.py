@@ -97,6 +97,7 @@ from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
+from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_strategy_enabled, score_pmt_threshold_signal
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -268,6 +269,32 @@ class FuturesRuntime:
             last_exit.get("exit_reason") or "unknown",
         )
         return True
+
+    def _pmt_tp_cooldown_active(self) -> bool:
+        cooldown_hours = max(0.0, self._env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
+        if cooldown_hours <= 0:
+            return False
+        now = datetime.now(timezone.utc)
+        cooldown_seconds = cooldown_hours * 3600.0
+        for trade in reversed(self.trade_history[-50:]):
+            if not isinstance(trade, dict):
+                continue
+            if str(trade.get("exit_reason") or "").upper() != "TAKE_PROFIT":
+                continue
+            if str(trade.get("entry_signal") or "").upper().startswith("PMT_THRESHOLD_") is False:
+                continue
+            raw_exit = str(trade.get("exit_time") or trade.get("closed_at") or "")
+            try:
+                exit_time = datetime.fromisoformat(raw_exit.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            elapsed = (now - exit_time.astimezone(timezone.utc)).total_seconds()
+            if elapsed < cooldown_seconds:
+                remaining = cooldown_seconds - elapsed
+                log.info("PMT scan skipped: post-TP cooldown active remaining=%.0fs", remaining)
+                return True
+            return False
+        return False
 
     def _total_open_margin(self) -> float:
         return float(sum(pos.margin_usdt for pos in self.open_positions.values()))
@@ -902,11 +929,15 @@ class FuturesRuntime:
         pullback_fraction = configured_pullback if configured_pullback > 0 else _dynamic_pullback_fraction(gross_peak_pct, volatility)
         pullback_fraction = min(0.95, max(0.0, pullback_fraction))
         floor_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0))
+        giveback_pct = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_GIVEBACK_PCT", 0.0))
+        min_tp_progress = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0))
         breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
         breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
         trigger_pct = self._metadata_float(metadata, "profit_lock_trigger_pct_override") or trigger_pct
         pullback_fraction = self._metadata_float(metadata, "profit_lock_pullback_fraction_override") or pullback_fraction
         floor_pct = self._metadata_float(metadata, "profit_lock_floor_pct_override") or floor_pct
+        giveback_pct = self._metadata_float(metadata, "profit_lock_giveback_pct_override") or giveback_pct
+        min_tp_progress = self._metadata_float(metadata, "profit_lock_min_tp_progress_override") or min_tp_progress
         breakeven_arm_pct = self._metadata_float(metadata, "breakeven_arm_pct_override") or breakeven_arm_pct
         breakeven_floor_pct = self._metadata_float(metadata, "breakeven_floor_pct_override") or breakeven_floor_pct
         if changed and gross_peak_pct > 0.0 and gross_peak_pct < trigger_pct:
@@ -935,7 +966,7 @@ class FuturesRuntime:
         # protected even when the micro lock doesn't apply.
         # Only active while the main peak lock has not yet armed (peak < 4%).
         # Gate: FUTURES_MID_PROFIT_LOCK_ENABLED (default 1).
-        if os.environ.get("FUTURES_MID_PROFIT_LOCK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
+        if not pmt_strategy_enabled() and os.environ.get("FUTURES_MID_PROFIT_LOCK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
             mid_trigger_pct = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_TRIGGER_PCT", 3.0))
             mid_min_tp_progress = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_MIN_TP_PROGRESS", 0.30))
             mid_progress = self._tp_progress(position, current_price)
@@ -967,8 +998,17 @@ class FuturesRuntime:
                     return self._close_position_for_exit(position, current_price=current_price, reason="MID_PROFIT_LOCK")
         # ── Main peak-profit lock ────────────────────────────────────────────
         if gross_peak_pct >= trigger_pct:
-            stop_pct = max(floor_pct, gross_peak_pct * (1.0 - pullback_fraction))
-            net_stop_pct = max(0.0, peak_pct * (1.0 - pullback_fraction))
+            progress = self._tp_progress(position, current_price)
+            if min_tp_progress > 0 and (progress is None or progress < min_tp_progress):
+                if changed:
+                    self._save_state()
+                return False
+            if giveback_pct > 0:
+                stop_pct = max(floor_pct, gross_peak_pct - giveback_pct)
+                net_stop_pct = max(0.0, peak_pct - giveback_pct)
+            else:
+                stop_pct = max(floor_pct, gross_peak_pct * (1.0 - pullback_fraction))
+                net_stop_pct = max(0.0, peak_pct * (1.0 - pullback_fraction))
             if metadata.get(PROFIT_LOCK_STOP_GROSS_PCT_KEY) != stop_pct:
                 metadata[PROFIT_LOCK_STOP_GROSS_PCT_KEY] = float(stop_pct)
                 changed = True
@@ -1006,6 +1046,11 @@ class FuturesRuntime:
                 )
                 self._notify(msg)
                 return self._close_position_for_exit(position, current_price=current_price, reason=exit_reason)
+
+        if pmt_strategy_enabled():
+            if changed:
+                self._save_state()
+            return False
 
         if net_pnl_pct >= breakeven_arm_pct and not metadata.get(BREAKEVEN_PROFIT_LOCK_ARMED_KEY):
             metadata[BREAKEVEN_PROFIT_LOCK_ARMED_KEY] = True
@@ -1250,6 +1295,9 @@ class FuturesRuntime:
         current_price = price if price and price > 0 else None
         snapshot = self._account_snapshot(current_price)
         active_syms = list(self._active_symbols) or [self.config.symbol]
+        entries_state = "🧊 retired" if self._strategies_retired() else ("⏸️ paused" if self._paused else "▶️ active")
+        if pmt_strategy_enabled() and not self._strategies_retired():
+            entries_state = f"{entries_state} | PMT threshold"
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
@@ -1257,7 +1305,7 @@ class FuturesRuntime:
             self._btc_trend_line(),
             f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
             self._prediction_overlay_status_line(),
-            f"Entries: {'🧊 retired' if self._strategies_retired() else ('⏸️ paused' if self._paused else '▶️ active')}",
+            f"Entries: {entries_state}",
             f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
             f"Open positions: <b>{len(self.open_positions)}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
             "━━━━━━━━━━━━━━━",
@@ -2380,6 +2428,10 @@ class FuturesRuntime:
             return False
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
+        if pmt_strategy_enabled():
+            if self._profit_lock_exit(position, current_price):
+                return True
+            return self._pmt_hard_exit(position, current_price=current_price)
         if self._flag("FUTURES_MARGIN_LOSS_EXIT_ENABLED"):
             net_pnl_pct = self._position_net_pnl_pct(position, current_price)
             if net_pnl_pct is not None and net_pnl_pct <= 0.0:
@@ -2566,6 +2618,19 @@ class FuturesRuntime:
         if progress < scoped.early_exit_tp_progress or raw_profit_pct < scoped.early_exit_min_profit_pct:
             return False
         return self._close_position_for_exit(position, current_price=current_price, reason="HOURLY_TAKE_PROFIT")
+
+    def _pmt_hard_exit(self, position: FuturesPosition, *, current_price: float) -> bool:
+        if position.side == "LONG":
+            if current_price <= position.sl_price:
+                return self._close_position_for_exit(position, current_price=position.sl_price, reason="STOP_LOSS")
+            if current_price >= position.tp_price:
+                return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
+            return False
+        if current_price >= position.sl_price:
+            return self._close_position_for_exit(position, current_price=position.sl_price, reason="STOP_LOSS")
+        if current_price <= position.tp_price:
+            return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
+        return False
 
     def _close_position_for_exit(self, position: FuturesPosition, *, current_price: float, reason: str) -> bool:
         if self.config.paper_trade:
@@ -2859,6 +2924,8 @@ class FuturesRuntime:
             self._last_cycle_symbol_count = len(self._scan_symbols_for_cycle())
             log.info("Futures scan skipped: FUTURES_STRATEGIES_RETIRED is enabled")
             return None
+        if pmt_strategy_enabled():
+            return self._fetch_pmt_signal()
         if self._available_slots() <= 0:
             return None
         # P1 §8 — reset the per-cycle aggregator at the start of every scan.
@@ -3125,6 +3192,72 @@ class FuturesRuntime:
         if self._missed_opportunities_dirty:
             self._save_state()
             self._missed_opportunities_dirty = False
+        if best is None:
+            return None
+        return best[1].to_dict()
+
+    def _fetch_pmt_signal(self) -> dict[str, Any] | None:
+        if self._available_slots() <= 0:
+            return None
+        if self._pmt_tp_cooldown_active():
+            return None
+        self._cycle_counter += 1
+        self._last_cycle_gate_blocks = {}
+        end = int(time.time())
+        start = end - 900 * 160
+        best: tuple[float, Any] | None = None
+        scan_symbols = self._scan_symbols_for_cycle()
+        self._last_cycle_symbol_count = len(scan_symbols)
+        for sym in scan_symbols:
+            if sym in self.open_positions:
+                continue
+            bucket = self._symbol_bucket(sym)
+            if self._bucket_open_count(bucket) >= self.config.max_per_bucket:
+                log.info("Skipping %s: bucket %s already at cap (%d)", sym, bucket, self.config.max_per_bucket)
+                continue
+            scoped = self._config_for_symbol(sym)
+            if not self._is_in_session(scoped):
+                log.info("Skipping %s: outside trading session %s", sym, scoped.session_hours_utc)
+                continue
+            if not self._funding_gate_ok(scoped):
+                continue
+            try:
+                frame = self.client.get_klines(sym, interval="Min15", start=start, end=end)
+            except Exception as exc:
+                log.warning("Futures klines fetch failed for %s: %s", sym, exc)
+                continue
+            frame = self._drop_incomplete_klines(frame, interval_seconds=900, now_ts=end)
+            signal = score_pmt_threshold_signal(frame, scoped)
+            if signal is None:
+                reason = diagnose_pmt_threshold_rejection(frame, scoped)
+                self._last_cycle_gate_blocks[sym] = reason
+                log.info("[PMT_GATE_BLOCK] symbol=%s reason=%s", sym, reason)
+                continue
+            leverage = self._enforce_live_leverage_bounds(int(signal.leverage), symbol=sym)
+            if leverage != int(signal.leverage):
+                signal = dataclasses.replace(
+                    signal,
+                    leverage=leverage,
+                    metadata={
+                        **(signal.metadata or {}),
+                        "runtime_leverage_original": float(signal.leverage),
+                        "runtime_leverage_enforced": float(leverage),
+                    },
+                )
+            log.info(
+                "PMT signal accepted for %s: side=%s pmt=%s level=%s leverage=x%s score=%.1f tp_margin=%.1f%% sl_margin=%.1f%%",
+                sym,
+                signal.side,
+                (signal.metadata or {}).get("pmt_label"),
+                (signal.metadata or {}).get("mental_threshold_level"),
+                signal.leverage,
+                signal.score,
+                float((signal.metadata or {}).get("tp_margin_pct") or 0.0),
+                float((signal.metadata or {}).get("sl_margin_pct") or 0.0),
+            )
+            score = float(signal.score)
+            if best is None or score > best[0]:
+                best = (score, signal)
         if best is None:
             return None
         return best[1].to_dict()
@@ -5012,6 +5145,7 @@ class FuturesRuntime:
         if self._strategies_retired():
             log.info("Futures signal ignored: strategies retired mode is enabled")
             return False
+        pmt_mode = pmt_strategy_enabled()
         side_name = str(signal_payload["side"])
         side = 1 if side_name == "LONG" else 3
         entry_price = float(signal_payload["entry_price"])
@@ -5055,7 +5189,7 @@ class FuturesRuntime:
         signal_metadata["entry_leverage_floor"] = float(leverage_floor)
         signal_metadata["entry_leverage_high"] = float(leverage_high)
         signal_metadata["entry_leverage_high_score"] = float(high_score_threshold)
-        adjusted_sl = self._adjust_sl_for_funding(
+        adjusted_sl = original_sl if pmt_mode else self._adjust_sl_for_funding(
             scoped=scoped,
             side=side_name,
             entry_price=entry_price,
@@ -5068,26 +5202,30 @@ class FuturesRuntime:
         # round-level calls). This widens an over-tight stop so taker fees alone
         # cannot push us below break-even before the SL has a chance to fire.
         pre_floor_sl = float(signal_payload.get("sl_price") or 0.0)
-        floored_sl, sl_floor_pct, sl_floor_widened = enforce_sl_fee_floor(
-            side=side_name,
-            entry_price=entry_price,
-            sl_price=pre_floor_sl,
-            symbol=symbol,
-        )
-        if sl_floor_widened:
-            signal_payload["sl_price"] = floored_sl
-            log.info(
-                "SL fee floor widened entry SL for %s: %.6f -> %.6f (min %.4f%% of entry)",
-                symbol,
-                pre_floor_sl,
-                floored_sl,
-                sl_floor_pct * 100.0,
+        if pmt_mode:
+            sl_floor_pct = 0.0
+            sl_floor_widened = False
+        else:
+            floored_sl, sl_floor_pct, sl_floor_widened = enforce_sl_fee_floor(
+                side=side_name,
+                entry_price=entry_price,
+                sl_price=pre_floor_sl,
+                symbol=symbol,
             )
+            if sl_floor_widened:
+                signal_payload["sl_price"] = floored_sl
+                log.info(
+                    "SL fee floor widened entry SL for %s: %.6f -> %.6f (min %.4f%% of entry)",
+                    symbol,
+                    pre_floor_sl,
+                    floored_sl,
+                    sl_floor_pct * 100.0,
+                )
         signal_metadata["sl_fee_floor_pct"] = float(sl_floor_pct)
         signal_metadata["sl_fee_floor_widened"] = 1.0 if sl_floor_widened else 0.0
         # Stop-distance cap: keep margin-loss-at-SL <= FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN
         # by tightening (never widening) the SL toward entry. Leverage is preserved.
-        max_stop_risk_pct = max(0.0, self._env_margin_fraction("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
+        max_stop_risk_pct = max(0.0, self._env_margin_fraction("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.20 if pmt_mode else 0.0))
         if max_stop_risk_pct > 0 and entry_price > 0 and leverage > 0:
             max_sl_dist_pct = max_stop_risk_pct / float(leverage)
             current_sl = float(signal_payload.get("sl_price") or 0.0)
@@ -5118,10 +5256,10 @@ class FuturesRuntime:
         available_balance = float(account_snapshot.get("available_usdt", 0.0) or 0.0)
         if available_balance <= 0:
             available_balance = max(0.0, scoped.margin_budget_usdt - self._total_open_margin())
-        full_balance_sizing = self._flag("FUTURES_FULL_BALANCE_SIZING_ENABLED")
+        full_balance_sizing = pmt_mode or self._flag("FUTURES_FULL_BALANCE_SIZING_ENABLED")
         full_balance_pct = 0.0
         if full_balance_sizing:
-            full_balance_pct = max(0.0, min(1.0, self._env_float("FUTURES_FULL_BALANCE_RISK_PCT", 1.00)))
+            full_balance_pct = 1.0 if pmt_mode else max(0.0, min(1.0, self._env_float("FUTURES_FULL_BALANCE_RISK_PCT", 1.00)))
             margin_budget = available_balance * full_balance_pct
             signal_metadata["full_balance_sizing_enabled"] = True
             signal_metadata["full_balance_risk_pct"] = round(full_balance_pct, 6)
@@ -5188,7 +5326,7 @@ class FuturesRuntime:
                 capital_scaling.get("win_rate"),
             )
         # Sprint 1 §2.8 — session-aligned leverage cap (no-op when flag off).
-        leverage = self._apply_session_leverage_cap(leverage, symbol=symbol)
+        leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol) if pmt_mode else self._apply_session_leverage_cap(leverage, symbol=symbol)
         if leverage_floor > 0:
             leverage = max(leverage, leverage_floor)
         if leverage_high > 0 and score >= high_score_threshold:
@@ -5751,10 +5889,13 @@ class FuturesRuntime:
                 "USE_FUNDING_CARRY_MONITOR",
                 "USE_BASIS_TRADE_MONITOR",
                 "USE_LIQUIDATION_CASCADE_MONITOR",
+                "FUTURES_PMT_STRATEGY_ENABLED",
                 "FUTURES_STRATEGIES_RETIRED",
             )
             if str(_os.environ.get(name, "0")).lower() in {"1", "true", "yes", "on"}
         ]
+        if str(_os.environ.get("FUTURES_STRATEGY_MODE", "")).strip().lower() == "pmt_threshold":
+            sprint_flags.append("FUTURES_STRATEGY_MODE=pmt_threshold")
         universe_label = self._universe_label(cfg.symbols)
 
         log.info(

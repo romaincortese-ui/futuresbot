@@ -92,19 +92,32 @@ os.environ.setdefault("USE_SLIPPAGE_ATTRIBUTION", "1")     # §3.9 weekly slippa
 # Operators can disable any of these by setting them to "0" / empty in Railway.
 # ---------------------------------------------------------------------------
 os.environ.setdefault("FUTURES_FULL_BALANCE_SIZING_ENABLED", "1")
-os.environ.setdefault("FUTURES_FULL_BALANCE_RISK_PCT", "0.85")
-# Retire legacy strategy engine while preserving runtime/MEXC connectivity.
-os.environ.setdefault("FUTURES_STRATEGIES_RETIRED", "1")
+os.environ.setdefault("FUTURES_FULL_BALANCE_RISK_PCT", "1.00")
+# Fresh PMT + mental-threshold strategy profile. Railway can still keep the
+# whole strategy layer retired with an explicit FUTURES_STRATEGIES_RETIRED=1.
+os.environ.setdefault("FUTURES_STRATEGY_MODE", "pmt_threshold")
+os.environ.setdefault("FUTURES_STRATEGIES_RETIRED", "0")
+os.environ.setdefault("FUTURES_PMT_SYMBOLS", "BTC_USDT,ETH_USDT,SOL_USDT,BNB_USDT,SEI_USDT,ZEC_USDT")
+os.environ.setdefault("FUTURES_PMT_MIN_SCORE", "95")
+os.environ.setdefault("FUTURES_PMT_MIN_LEVERAGE", "15")
+os.environ.setdefault("FUTURES_PMT_MAX_LEVERAGE", "50")
+os.environ.setdefault("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", "0.95")
+os.environ.setdefault("FUTURES_PMT_TP_COOLDOWN_HOURS", "24")
+os.environ.setdefault("FUTURES_LEVERAGE_MIN", "15")
+os.environ.setdefault("FUTURES_LEVERAGE_MAX", "50")
 os.environ.setdefault("FUTURES_ENTRY_MIN_SCORE", "70")
 os.environ.setdefault("FUTURES_ENTRY_HIGH_SCORE", "85")
-os.environ.setdefault("FUTURES_ENTRY_LEVERAGE_MIN", "12")
-os.environ.setdefault("FUTURES_ENTRY_LEVERAGE_HIGH", "20")
+os.environ.setdefault("FUTURES_ENTRY_LEVERAGE_MIN", "15")
+os.environ.setdefault("FUTURES_ENTRY_LEVERAGE_HIGH", "50")
 os.environ.setdefault("FUTURES_SL_FEE_FLOOR_ENABLED", "1")
 os.environ.setdefault("FUTURES_SL_FEE_FLOOR_PCT", "0.0060")
 os.environ.setdefault("FUTURES_SL_FEE_FLOOR_MULT", "4.0")
 os.environ.setdefault("FUTURES_SL_FEE_FLOOR_SLIPPAGE_BPS", "5.0")
 os.environ.setdefault("FUTURES_ROUND_LEVEL_ENABLED", "1")
 os.environ.setdefault("FUTURES_ROUND_LEVEL_SYMBOLS", "*")
+os.environ.setdefault("FUTURES_PROFIT_LOCK_TRIGGER_PCT", "10.0")
+os.environ.setdefault("FUTURES_PROFIT_LOCK_GIVEBACK_PCT", "1.0")
+os.environ.setdefault("FUTURES_PROFIT_LOCK_FLOOR_PCT", "0.0")
 # Mid-profit-lock tuning (2026-06-02): the previous defaults (trigger 3.0,
 # pullback 0.35) chopped out a high-conviction ETH SHORT after a 5-min, +3.05%
 # wiggle that immediately came back. Raise the trigger to 4.5% and loosen the

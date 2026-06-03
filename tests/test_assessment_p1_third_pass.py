@@ -280,8 +280,8 @@ def test_default_universe_uses_pruned_profitable_pairs(monkeypatch):
     cfg = FuturesConfig.from_env()
 
     assert cfg.symbols == DEFAULT_FUTURES_SYMBOLS
-    assert cfg.symbols == ("BTC_USDT", "SOL_USDT", "BNB_USDT", "SEI_USDT", "ZEC_USDT")
-    assert len(cfg.symbols) == 5
+    assert cfg.symbols == ("BTC_USDT", "ETH_USDT", "SOL_USDT", "BNB_USDT", "SEI_USDT", "ZEC_USDT")
+    assert len(cfg.symbols) == 6
     assert cfg.correlation_buckets["BNB_USDT"] == "exchange_token"
     assert cfg.correlation_buckets["SEI_USDT"] == "l1_beta"
     assert cfg.correlation_buckets["ZEC_USDT"] == "privacy_beta"
@@ -291,7 +291,7 @@ def test_default_universe_uses_pruned_profitable_pairs(monkeypatch):
 
 
 def test_symbol_universe_accepts_whitespace_separated_env(monkeypatch):
-    monkeypatch.setenv("FUTURES_SYMBOLS", "BTC_USDT SOL_USDT BNB_USDT SEI_USDT ZEC_USDT")
+    monkeypatch.setenv("FUTURES_SYMBOLS", "BTC_USDT ETH_USDT SOL_USDT BNB_USDT SEI_USDT ZEC_USDT")
 
     cfg = FuturesConfig.from_env()
 

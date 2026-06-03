@@ -15,11 +15,12 @@ from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
-from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar
+from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_stagnation_exit, evaluate_trailing_bar, position_net_pnl_pct
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.prediction_overlay import apply_prediction_overlay, select_point_in_time_prediction_state
+from futuresbot.pmt_strategy import pmt_strategy_enabled, score_pmt_threshold_signal
 from futuresbot.spot_regime import spot_regime_label
 from futuresbot.sharp_opportunity import (
 	annotate_sharp_event_signal,
@@ -364,7 +365,9 @@ class FuturesBacktestEngine:
 		)
 
 	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0, score: float | None = None) -> tuple[int, float, int]:
-		if _opportunity_bucket_sizing_enabled():
+		if pmt_strategy_enabled() or _env_bool("FUTURES_FULL_BALANCE_SIZING_ENABLED", False):
+			margin = max(0.0, balance)
+		elif _opportunity_bucket_sizing_enabled():
 			fraction = opportunity_balance_fraction(score)
 			margin = min(max(0.0, balance) * fraction * max(0.0, min(1.0, float(margin_multiplier or 0.0))), balance)
 		else:
@@ -377,7 +380,7 @@ class FuturesBacktestEngine:
 		# This closes the sub-cent-coin blowup hole where the legacy
 		# (margin * leverage / entry_price) path sized PEPE to catastrophic
 		# notionals because its stop-distance is tiny in absolute terms.
-		if sl_price is not None and sl_price > 0 and os.environ.get("USE_NAV_RISK_SIZING", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
+		if not pmt_strategy_enabled() and sl_price is not None and sl_price > 0 and os.environ.get("USE_NAV_RISK_SIZING", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
 			try:
 				from futuresbot.nav_risk_sizing import compute_nav_risk_sizing
 
@@ -432,11 +435,14 @@ class FuturesBacktestEngine:
 		return position.base_qty * (price - position.entry_price) * direction
 
 	def _open_position(self, signal: FuturesSignal, entry_time: pd.Timestamp, entry_price: float, balance: float) -> FuturesPosition | None:
-		margin_multiplier = (
-			sharp_event_margin_multiplier(signal.metadata, 1.0)
-			* _crypto_event_margin_multiplier(signal.metadata)
-			* _prediction_margin_multiplier(signal.metadata)
-		)
+		if pmt_strategy_enabled():
+			margin_multiplier = 1.0
+		else:
+			margin_multiplier = (
+				sharp_event_margin_multiplier(signal.metadata, 1.0)
+				* _crypto_event_margin_multiplier(signal.metadata)
+				* _prediction_margin_multiplier(signal.metadata)
+			)
 		# Stop-distance cap: tighten SL so margin-loss-at-SL <= FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN.
 		# Leverage is preserved; only the SL distance shrinks.
 		sl_price_capped = float(signal.sl_price)
@@ -602,6 +608,8 @@ class FuturesBacktestEngine:
 		return self.calibration
 
 	def _candidate_signal_for_frame(self, frame_slice: pd.DataFrame, event_now: datetime, remaining_bars: int | None = None) -> FuturesSignal | None:
+		if pmt_strategy_enabled():
+			return score_pmt_threshold_signal(frame_slice, self.config)
 		crypto_event_state = self._crypto_event_state_for(event_now)
 		prediction_overlay_state = self._prediction_overlay_state_for(event_now)
 		event_scan_decision = evaluate_crypto_event_overlay(
@@ -673,6 +681,27 @@ class FuturesBacktestEngine:
 		)
 		if calibrated is None:
 			return None
+		entry_min_score = max(0.0, _env_float("FUTURES_ENTRY_MIN_SCORE", 0.0))
+		if entry_min_score > 0 and float(calibrated.score) <= entry_min_score:
+			return None
+		leverage = int(calibrated.leverage)
+		leverage_floor = max(0, int(_env_float("FUTURES_ENTRY_LEVERAGE_MIN", 0.0)))
+		leverage_high = max(0, int(_env_float("FUTURES_ENTRY_LEVERAGE_HIGH", 0.0)))
+		high_score_threshold = max(0.0, _env_float("FUTURES_ENTRY_HIGH_SCORE", 95.0))
+		if leverage_floor > 0:
+			leverage = max(leverage, leverage_floor)
+		if leverage_high > 0 and float(calibrated.score) >= high_score_threshold:
+			leverage = max(leverage, leverage_high)
+		if leverage != int(calibrated.leverage):
+			calibrated = replace(
+				calibrated,
+				leverage=leverage,
+				metadata={
+					**(calibrated.metadata or {}),
+					"backtest_entry_leverage_original": float(calibrated.leverage),
+					"backtest_entry_leverage_enforced": float(leverage),
+				},
+			)
 		metadata = opportunity_metadata(calibrated.metadata, calibrated.score)
 		if _opportunity_bucket_sizing_enabled() and float(metadata.get("opportunity_balance_fraction") or 0.0) <= 0:
 			return None
@@ -718,9 +747,28 @@ class FuturesBacktestEngine:
 				pullback_fraction=_env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.20),
 				floor_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0)),
 				min_exit_net_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0)),
+				giveback_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
 			)
 			if profit_lock_exit is not None:
 				return profit_lock_exit
+		if _env_bool("FUTURES_MARGIN_LOSS_EXIT_ENABLED", False):
+			close_price = float(bar.get("close", 0.0) or 0.0)
+			if close_price > 0:
+				net_pnl_pct = position_net_pnl_pct(position, close_price, self.config.taker_fee_rate)
+				if net_pnl_pct is not None and net_pnl_pct <= 0.0:
+					return close_price, "MARGIN_LOSS_EXIT"
+		if pmt_strategy_enabled():
+			if position.side == "LONG":
+				if low <= position.sl_price:
+					return position.sl_price, "STOP_LOSS"
+				if high >= position.tp_price:
+					return position.tp_price, "TAKE_PROFIT"
+				return None
+			if high >= position.sl_price:
+				return position.sl_price, "STOP_LOSS"
+			if low <= position.tp_price:
+				return position.tp_price, "TAKE_PROFIT"
+			return None
 		if _env_bool("FUTURES_MICRO_LOCK_ENABLED", True):
 			micro_lock_exit, _changed = evaluate_micro_lock_bar(
 				position,
@@ -791,6 +839,8 @@ class FuturesBacktestEngine:
 		return None
 
 	def _hourly_exit(self, position: FuturesPosition, close_price: float, now: datetime | None = None) -> tuple[float, str] | None:
+		if pmt_strategy_enabled():
+			return None
 		if _env_bool("FUTURES_NO_PROGRESS_EXIT_ENABLED", True):
 			no_progress_exit, _changed = evaluate_no_progress_loss_exit(
 				position,
@@ -844,6 +894,7 @@ class FuturesBacktestEngine:
 		trades: list[dict[str, Any]] = []
 		equity_curve: list[dict[str, Any]] = []
 		step = pd.Timedelta(minutes=15)
+		pmt_cooldown_until: pd.Timestamp | None = None
 
 		for index in range(220, len(frame_15m)):
 			timestamp = frame_15m.index[index]
@@ -872,6 +923,9 @@ class FuturesBacktestEngine:
 					)
 					state.balance += float(trade["pnl_usdt"])
 					trades.append(trade)
+					if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+						cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
+						pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
 					state.open_position = None
 
 			close_time = timestamp + step
@@ -882,9 +936,13 @@ class FuturesBacktestEngine:
 					trade = self._close_position(state.open_position, close_time, exit_price, reason)
 					state.balance += float(trade["pnl_usdt"])
 					trades.append(trade)
+					if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+						cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
+						pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
 					state.open_position = None
 
-			if state.open_position is None and close_time.minute == 0 and index + 1 < len(frame_15m):
+			pmt_cooldown_active = pmt_strategy_enabled() and pmt_cooldown_until is not None and close_time < pmt_cooldown_until
+			if state.open_position is None and not pmt_cooldown_active and (pmt_strategy_enabled() or close_time.minute == 0) and index + 1 < len(frame_15m):
 				calibrated = self._candidate_signal_for_frame(frame_15m.iloc[: index + 1], close_time.to_pydatetime(), len(frame_15m) - index - 1)
 				if calibrated is not None:
 					state.pending_signal = calibrated
@@ -892,7 +950,7 @@ class FuturesBacktestEngine:
 
 			# Round-number level crossing: fires on any 15m candle (both SHORT and LONG).
 			# Only checked when no position is open and no signal is already pending.
-			if state.open_position is None and state.pending_signal is None and index + 1 < len(frame_15m):
+			if not pmt_strategy_enabled() and state.open_position is None and state.pending_signal is None and index + 1 < len(frame_15m):
 				rl_signal = score_round_level_signal(frame_15m.iloc[: index + 1], self.config)
 				if rl_signal is not None:
 					state.pending_signal = rl_signal

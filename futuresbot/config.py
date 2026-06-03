@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_FUTURES_SYMBOLS: tuple[str, ...] = (
     "BTC_USDT",
+    "ETH_USDT",
     "SOL_USDT",
     "BNB_USDT",
     "SEI_USDT",
