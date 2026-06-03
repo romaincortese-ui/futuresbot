@@ -128,6 +128,14 @@ def test_resume_on_boot_env_clears_persisted_pause(tmp_path, monkeypatch):
     assert any("Boot: entries resumed by FUTURES_RESUME_ON_BOOT" in item for item in runtime._recent_activity)
 
 
+def test_pmt_scan_symbols_ignore_overlay_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    runtime._sharp_event_overlay_symbols_for_cycle = lambda: ("XRP_USDT", "DOGE_USDT")
+
+    assert runtime._scan_symbols_for_cycle() == tuple(runtime._active_symbols)
+
+
 def test_crypto_event_policy_reduces_live_signal_size_and_leverage(tmp_path):
     config = replace(_config(tmp_path), leverage_min=1, leverage_max=20)
     runtime = FuturesRuntime(config, StubClient())

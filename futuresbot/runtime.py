@@ -1940,6 +1940,9 @@ class FuturesRuntime:
 
     def _scan_symbols_for_cycle(self) -> tuple[str, ...]:
         symbols: list[str] = list(self._active_symbols)
+        if pmt_strategy_enabled():
+            self._last_cycle_symbol_count = len(symbols)
+            return tuple(symbols)
         for sym in self._sharp_event_overlay_symbols_for_cycle():
             if sym not in symbols:
                 symbols.append(sym)
