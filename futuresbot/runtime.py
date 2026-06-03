@@ -27,6 +27,7 @@ def _exit_reason_label(reason, pnl_usdt=None, pnl_pct=None):
         "LIQ_BUFFER": "Liquidation buffer close",
         "LIQUIDATED": "Liquidated",
         "MARGIN_LOSS_EXIT": "Margin loss exit",
+        "STOP_RISK_CAP_EXIT": "Stop risk cap exit",
     }
     return labels.get(raw, raw.replace("_", " ").title())
 
@@ -1133,6 +1134,20 @@ class FuturesRuntime:
     def _no_progress_loss_exit(self, position: FuturesPosition, current_price: float, now: datetime | None = None) -> bool:
         if os.environ.get("FUTURES_NO_PROGRESS_EXIT_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
             return False
+        max_stop_risk_pct = max(0.0, self._env_margin_fraction("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
+        if max_stop_risk_pct > 0:
+            net_pnl_pct = self._position_net_pnl_pct(position, current_price)
+            hard_loss_pct = -max_stop_risk_pct * 100.0
+            if net_pnl_pct is not None and net_pnl_pct <= hard_loss_pct:
+                log.warning(
+                    "[STOP_RISK_CAP_EXIT] symbol=%s side=%s net_pnl_pct=%+.2f hard_loss_pct=%+.2f price=%s",
+                    position.symbol,
+                    position.side,
+                    net_pnl_pct,
+                    hard_loss_pct,
+                    self._format_price(current_price),
+                )
+                return self._close_position_for_exit(position, current_price=current_price, reason="STOP_RISK_CAP_EXIT")
         no_progress_exit, changed = evaluate_no_progress_loss_exit(
             position,
             current_price,
@@ -3413,6 +3428,22 @@ class FuturesRuntime:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _env_margin_fraction(name: str, default: float) -> float:
+        import os
+
+        try:
+            raw = os.environ.get(name)
+            if raw is None or raw.strip() == "":
+                return default
+            text = raw.strip()
+            if text.endswith("%"):
+                return float(text[:-1].strip()) / 100.0
+            value = float(text)
+            return value / 100.0 if value > 1.0 else value
+        except (TypeError, ValueError):
+            return default
+
     def _live_leverage_bounds(self, symbol: str | None = None) -> tuple[int, int]:
         min_bound = max(1, int(self.config.leverage_min))
         max_bound = max(min_bound, int(self.config.leverage_max))
@@ -5041,7 +5072,7 @@ class FuturesRuntime:
         signal_metadata["sl_fee_floor_widened"] = 1.0 if sl_floor_widened else 0.0
         # Stop-distance cap: keep margin-loss-at-SL <= FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN
         # by tightening (never widening) the SL toward entry. Leverage is preserved.
-        max_stop_risk_pct = max(0.0, self._env_float("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
+        max_stop_risk_pct = max(0.0, self._env_margin_fraction("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
         if max_stop_risk_pct > 0 and entry_price > 0 and leverage > 0:
             max_sl_dist_pct = max_stop_risk_pct / float(leverage)
             current_sl = float(signal_payload.get("sl_price") or 0.0)

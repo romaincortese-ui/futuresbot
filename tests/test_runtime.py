@@ -897,6 +897,33 @@ def test_no_progress_exit_loss_limit_tightens_with_age():
     assert round(position.metadata["no_progress_exit_loss_limit_gross_pnl_pct"], 3) == -0.75
 
 
+def test_no_progress_exit_uses_stop_risk_cap_reason_for_oversized_loss(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", "20")
+    monkeypatch.setenv("FUTURES_NO_PROGRESS_EXIT_ENABLED", "1")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="BNB_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=1,
+        contract_size=1.0,
+        leverage=20,
+        margin_usdt=100.0,
+        tp_price=110.0,
+        sl_price=80.0,
+        position_id="paper-stop-risk-cap",
+        order_id="entry-stop-risk-cap",
+        opened_at=datetime(2026, 5, 24, 14, 0, tzinfo=timezone.utc),
+        score=95.9,
+        certainty=0.99,
+        entry_signal="SIMPLE_TREND_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._no_progress_loss_exit(position, current_price=73.0, now=datetime(2026, 5, 24, 15, 5, tzinfo=timezone.utc)) is True
+    assert runtime.trade_history[-1]["exit_reason"] == "STOP_RISK_CAP_EXIT"
+
+
 def test_breakeven_profit_lock_blocks_winner_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
     monkeypatch.setenv("FUTURES_MID_PROFIT_LOCK_ENABLED", "0")
@@ -2814,6 +2841,47 @@ def test_live_enter_trade_full_balance_uses_all_available_margin(tmp_path, monke
     assert order["vol"] * 100.0 / order["leverage"] == 50.0
     assert order["leverage"] == 20
     assert "live_margin_budget_capped" not in runtime.open_positions["BTC_USDT"].metadata
+
+
+def test_enter_trade_normalizes_margin_risk_cap_percent_value(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", "20")
+    monkeypatch.setenv("FUTURES_ENTRY_LEVERAGE_HIGH", "20")
+    monkeypatch.setenv("FUTURES_ENTRY_HIGH_SCORE", "95")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "0")
+    monkeypatch.setenv("FUTURES_OPPORTUNITY_BUCKET_SIZING_ENABLED", "0")
+    monkeypatch.setenv("USE_SESSION_LEVERAGE", "0")
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "0")
+    monkeypatch.setenv("USE_FUNDING_AWARE_ENTRY", "0")
+    monkeypatch.setenv("USE_PORTFOLIO_VAR", "0")
+
+    class ContractClient(StubClient):
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 0.01, "minVol": 1}
+
+    runtime = FuturesRuntime(
+        replace(_config(tmp_path), paper_trade=True, leverage_min=1, leverage_max=20, margin_budget_usdt=10.0),
+        ContractClient(),
+    )
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "SHORT",
+        "entry_price": 635.0,
+        "leverage": 12,
+        "symbol": "BNB_USDT",
+        "tp_price": 611.64,
+        "sl_price": 643.77,
+        "score": 95.9,
+        "certainty": 0.99,
+        "entry_signal": "SIMPLE_TREND_SHORT",
+        "metadata": {},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    position = runtime.open_positions["BNB_USDT"]
+    assert position.leverage == 20
+    assert round(position.sl_price, 2) == 641.35
+    assert position.metadata["sl_distance_cap_applied"] == 1.0
+    assert round(runtime._position_stop_risk_pct_of_margin(position), 2) == 20.0
 
 
 def test_live_enter_trade_retries_lower_contracts_on_balance_insufficient(tmp_path, monkeypatch):

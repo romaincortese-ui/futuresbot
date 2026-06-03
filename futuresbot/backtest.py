@@ -41,6 +41,20 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_margin_fraction(name: str, default: float) -> float:
+	try:
+		raw = os.environ.get(name)
+		if raw is None or raw.strip() == "":
+			return default
+		text = raw.strip()
+		if text.endswith("%"):
+			return float(text[:-1].strip()) / 100.0
+		value = float(text)
+		return value / 100.0 if value > 1.0 else value
+	except (TypeError, ValueError):
+		return default
+
+
 def _env_bool(name: str, default: bool) -> bool:
 	raw = os.environ.get(name)
 	if raw is None:
@@ -426,7 +440,7 @@ class FuturesBacktestEngine:
 		# Stop-distance cap: tighten SL so margin-loss-at-SL <= FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN.
 		# Leverage is preserved; only the SL distance shrinks.
 		sl_price_capped = float(signal.sl_price)
-		max_stop_risk_pct = max(0.0, _env_float("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
+		max_stop_risk_pct = max(0.0, _env_margin_fraction("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
 		if max_stop_risk_pct > 0 and entry_price > 0 and signal.leverage > 0 and sl_price_capped > 0:
 			max_sl_dist_pct = max_stop_risk_pct / float(signal.leverage)
 			current_dist_pct = abs(entry_price - sl_price_capped) / entry_price
