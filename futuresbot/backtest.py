@@ -20,7 +20,7 @@ from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClie
 from futuresbot.models import FuturesPosition, FuturesSignal
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.prediction_overlay import apply_prediction_overlay, select_point_in_time_prediction_state
-from futuresbot.pmt_strategy import pmt_strategy_enabled, score_pmt_threshold_signal
+from futuresbot.pmt_strategy import pmt_balance_fraction_for_score, pmt_strategy_enabled, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.spot_regime import spot_regime_label
 from futuresbot.sharp_opportunity import (
 	annotate_sharp_event_signal,
@@ -365,7 +365,12 @@ class FuturesBacktestEngine:
 		)
 
 	def _contracts_for_entry(self, entry_price: float, leverage: int, balance: float, sl_price: float | None = None, margin_multiplier: float = 1.0, score: float | None = None) -> tuple[int, float, int]:
-		if pmt_strategy_enabled() or _env_bool("FUTURES_FULL_BALANCE_SIZING_ENABLED", False):
+		if pmt_strategy_enabled():
+			if _env_bool("FUTURES_PMT_SCORE_BAND_SIZING_ENABLED", True):
+				margin = max(0.0, balance) * pmt_balance_fraction_for_score(score)
+			else:
+				margin = max(0.0, balance)
+		elif _env_bool("FUTURES_FULL_BALANCE_SIZING_ENABLED", False):
 			margin = max(0.0, balance)
 		elif _opportunity_bucket_sizing_enabled():
 			fraction = opportunity_balance_fraction(score)
@@ -707,6 +712,18 @@ class FuturesBacktestEngine:
 			return None
 		return replace(calibrated, metadata=metadata)
 
+	def _realistic_exit_slippage_buffer_pct(self, position: FuturesPosition, *, high: float, low: float) -> float:
+		if os.environ.get("USE_REALISTIC_BACKTEST", "0").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+			return 0.0
+		if position.margin_usdt <= 0:
+			return 0.0
+		quoted_price = high if position.side == "SHORT" else low
+		if quoted_price <= 0:
+			return 0.0
+		slip_bps = max(0.0, _env_float("REALISTIC_SLIPPAGE_BPS_PER_LEV", 0.5)) * max(1, position.leverage) * max(0.0, _env_float("REALISTIC_EXIT_SLIP_MULT", 1.5))
+		buffer_usdt = position.base_qty * quoted_price * slip_bps / 10_000.0
+		return buffer_usdt / position.margin_usdt * 100.0
+
 	def _bar_exit(self, position: FuturesPosition, bar: pd.Series) -> tuple[float, str] | None:
 		high = float(bar["high"])
 		low = float(bar["low"])
@@ -747,6 +764,7 @@ class FuturesBacktestEngine:
 				pullback_fraction=_env_float("FUTURES_PROFIT_LOCK_PULLBACK_FRACTION", 0.20),
 				floor_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_FLOOR_PCT", 2.0)),
 				min_exit_net_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0)),
+				exit_slippage_buffer_pct=self._realistic_exit_slippage_buffer_pct(position, high=high, low=low),
 				giveback_pct=max(0.0, _env_float("FUTURES_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
 			)
 			if profit_lock_exit is not None:
@@ -923,7 +941,7 @@ class FuturesBacktestEngine:
 					)
 					state.balance += float(trade["pnl_usdt"])
 					trades.append(trade)
-					if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+					if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
 						cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
 						pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
 					state.open_position = None
@@ -936,7 +954,7 @@ class FuturesBacktestEngine:
 					trade = self._close_position(state.open_position, close_time, exit_price, reason)
 					state.balance += float(trade["pnl_usdt"])
 					trades.append(trade)
-					if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+					if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
 						cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
 						pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
 					state.open_position = None

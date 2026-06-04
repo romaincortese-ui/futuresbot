@@ -412,6 +412,130 @@ def _pmt_safety_rejection(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Ment
     return None
 
 
+def pmt_balance_fraction_for_score(score: float | int | None) -> float:
+    try:
+        value = float(score or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(value) or value < 85.0:
+        return 0.0
+    if value < 92.0:
+        return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_85_91", 0.25)))
+    if value < 97.0:
+        return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_92_96", 0.50)))
+    return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_97_100", 1.00)))
+
+
+def _score_cap(caps: dict[str, float], reason: str, cap: float) -> None:
+    cap = max(0.0, min(100.0, float(cap)))
+    current = caps.get(reason)
+    caps[reason] = cap if current is None else min(current, cap)
+
+
+def _trend_ratio(value: float, threshold: float) -> float:
+    if threshold <= 0:
+        return 0.0
+    return max(0.0, value / threshold)
+
+
+def _edge_score_threshold_cross(
+    pmt: PairMarketTrend,
+    cross: MentalThresholdCross,
+    aligned: bool | None,
+    *,
+    signed_1bar: float,
+    signed_1h: float,
+    signed_6h: float,
+    volume_ratio: float,
+    penalties: dict[str, float],
+) -> tuple[float, dict[str, float], dict[str, float]]:
+    profile = pair_pmt_profile(pmt.symbol)
+    signed_12h = _signed_for_side(pmt.move_12h_pct, cross.side)
+    signed_24h = _signed_for_side(pmt.move_24h_pct, cross.side)
+    level_distance = max(0.0, float(cross.distance_beyond_level_pct or 0.0))
+
+    score = 58.0
+    if aligned is True:
+        score += {
+            "BEARISH": 6.0,
+            "BULLISH": 6.0,
+            "FLASH_BEARISH": 10.0,
+            "FLASH_BULLISH": 10.0,
+            "MEGA_BEARISH": 14.0,
+            "MEGA_BULLISH": 14.0,
+        }.get(pmt.label, 0.0)
+    elif aligned is False:
+        score -= 20.0
+    else:
+        score += 5.0
+
+    if profile is not None:
+        score += min(10.0, _trend_ratio(signed_24h, profile.flat_24h_pct) * 3.0)
+        score += min(9.0, _trend_ratio(signed_12h, profile.mega_12h_pct) * 9.0)
+        score += min(8.0, _trend_ratio(signed_6h, profile.flash_6h_pct) * 5.0)
+    else:
+        score += min(10.0, max(0.0, signed_24h * 100.0 * 1.2))
+        score += min(9.0, max(0.0, signed_12h * 100.0 * 1.0))
+        score += min(8.0, max(0.0, signed_6h * 100.0 * 1.0))
+
+    score += min(4.0, max(0.0, signed_1h * 100.0 * 1.5))
+    score += min(4.0, max(0.0, signed_1bar * 100.0 * 2.0))
+
+    if 0.0005 <= level_distance <= 0.0080:
+        score += 5.0
+    elif level_distance < 0.0005:
+        score -= 4.0
+    else:
+        score -= min(10.0, (level_distance - 0.0080) * 100.0 * 8.0)
+
+    if 1.05 <= volume_ratio <= 2.25:
+        score += min(4.0, (volume_ratio - 1.0) * 3.0)
+    elif volume_ratio > 2.25:
+        score -= min(8.0, (volume_ratio - 2.25) * 5.0)
+    elif volume_ratio < 0.80:
+        score -= 4.0
+
+    caps: dict[str, float] = {}
+    late_distance = max(0.0, _env_pct_fraction("FUTURES_PMT_LATE_ENTRY_DISTANCE_PCT", 0.0100))
+    extreme_late_distance = max(late_distance, _env_pct_fraction("FUTURES_PMT_EXTREME_LATE_ENTRY_DISTANCE_PCT", 0.0180))
+    if late_distance > 0 and level_distance >= late_distance:
+        _score_cap(caps, "late_entry_distance", _env_float("FUTURES_PMT_LATE_ENTRY_SCORE_CAP", 82.0))
+    if extreme_late_distance > 0 and level_distance >= extreme_late_distance:
+        _score_cap(caps, "extreme_late_entry_distance", _env_float("FUTURES_PMT_EXTREME_LATE_ENTRY_SCORE_CAP", 72.0))
+
+    volume_climax = max(0.0, _env_float("FUTURES_PMT_VOLUME_CLIMAX_RATIO", 1.50))
+    exhausted = "one_bar_exhaustion" in penalties or "one_hour_exhaustion" in penalties
+    if exhausted and volume_climax > 0 and volume_ratio >= volume_climax:
+        _score_cap(caps, "exhausted_volume_climax", _env_float("FUTURES_PMT_EXHAUSTED_CLIMAX_SCORE_CAP", 75.0))
+    elif "one_hour_exhaustion" in penalties:
+        _score_cap(caps, "one_hour_exhaustion", _env_float("FUTURES_PMT_ONE_HOUR_EXHAUSTION_SCORE_CAP", 94.0))
+    elif len(penalties) >= 2:
+        _score_cap(caps, "stacked_exhaustion", _env_float("FUTURES_PMT_STACKED_EXHAUSTION_SCORE_CAP", 82.0))
+
+    if pmt.label.startswith("FLASH_"):
+        _score_cap(caps, "flash_trend_unproven", _env_float("FUTURES_PMT_FLASH_SCORE_CAP", 94.0))
+
+    if profile is not None and signed_24h < profile.flat_24h_pct:
+        _score_cap(caps, "weak_broader_trend", _env_float("FUTURES_PMT_WEAK_BROADER_TREND_SCORE_CAP", 90.0))
+
+    weak_followthrough = max(0.0, _env_pct_fraction("FUTURES_PMT_WEAK_FOLLOWTHROUGH_1BAR_PCT", 0.0020))
+    if not pmt.label.startswith("MEGA_") and weak_followthrough > 0 and signed_1bar < weak_followthrough and volume_ratio >= 1.50:
+        _score_cap(caps, "weak_followthrough_on_volume", _env_float("FUTURES_PMT_WEAK_FOLLOWTHROUGH_SCORE_CAP", 90.0))
+
+    raw_edge_score = max(0.0, score)
+    capped_edge_score = min(raw_edge_score, min(caps.values()) if caps else 100.0)
+    features = {
+        "pmt_edge_raw_score": round(raw_edge_score, 4),
+        "pmt_edge_score_cap": round(min(caps.values()) if caps else 100.0, 4),
+        "signed_1bar_pct": round(signed_1bar, 6),
+        "signed_1h_pct": round(signed_1h, 6),
+        "signed_6h_pct": round(signed_6h, 6),
+        "signed_12h_pct": round(signed_12h, 6),
+        "signed_24h_pct": round(signed_24h, 6),
+    }
+    return max(0.0, min(100.0, capped_edge_score)), caps, features
+
+
 def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: MentalThresholdCross) -> tuple[float, dict[str, Any]]:
     profile = pair_pmt_profile(pmt.symbol)
     aligned = _aligned_with_pmt(cross.side, pmt.label)
@@ -457,9 +581,22 @@ def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Men
     if volume_climax > 0 and volume_ratio >= volume_climax and signed_1bar >= max(0.0, exhaustion_1bar * 0.75):
         penalties["volume_climax"] = max(0.0, _env_float("FUTURES_PMT_VOLUME_CLIMAX_PENALTY", 6.0))
     score -= sum(penalties.values())
+    setup_score = max(0.0, min(100.0, score))
+    edge_score, caps, edge_features = _edge_score_threshold_cross(
+        pmt,
+        cross,
+        aligned,
+        signed_1bar=signed_1bar,
+        signed_1h=signed_1h,
+        signed_6h=signed_6h,
+        volume_ratio=volume_ratio,
+        penalties=penalties,
+    )
+    final_score = min(setup_score, edge_score) if _env_bool("FUTURES_PMT_EDGE_SCORING_ENABLED", True) else setup_score
 
     metadata = {
         "strategy": PMT_STRATEGY_MODE,
+        "pmt_score_model": "setup_edge_v1" if _env_bool("FUTURES_PMT_EDGE_SCORING_ENABLED", True) else "setup_only_v1",
         "pmt_label": pmt.label,
         "pmt_move_24h_pct": round(pmt.move_24h_pct, 6),
         "pmt_move_12h_pct": round(pmt.move_12h_pct, 6),
@@ -481,21 +618,35 @@ def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Men
         "volume_ratio_20": round(volume_ratio, 4),
         "pmt_aligned": aligned if aligned is not None else "flat",
         "pmt_raw_score": round(raw_score, 4),
+        "pmt_setup_score": round(setup_score, 4),
+        "pmt_edge_score": round(edge_score, 4),
+        "pmt_score_caps": {key: round(value, 4) for key, value in caps.items()},
         "pmt_score_penalty": round(sum(penalties.values()), 4),
         "pmt_score_penalties": {key: round(value, 4) for key, value in penalties.items()},
+        **edge_features,
     }
-    return max(0.0, min(100.0, score)), metadata
+    return max(0.0, min(100.0, final_score)), metadata
 
 
 def _leverage_for_score(score: float, pmt_label: str) -> int:
     min_lev = max(1, int(_env_float("FUTURES_PMT_MIN_LEVERAGE", _env_float("FUTURES_LEVERAGE_MIN", 15.0))))
     max_lev = max(min_lev, int(_env_float("FUTURES_PMT_MAX_LEVERAGE", _env_float("FUTURES_LEVERAGE_MAX", 25.0))))
-    if score >= 92.0 or pmt_label.startswith("MEGA_"):
+    if not _env_bool("FUTURES_PMT_EDGE_SCORING_ENABLED", True):
+        if score >= 92.0 or pmt_label.startswith("MEGA_"):
+            target = max_lev
+        elif score >= 84.0:
+            target = min(max_lev, 35)
+        else:
+            target = min(max_lev, 25)
+        return max(min_lev, min(max_lev, int(target)))
+    if score >= 97.0:
         target = max_lev
-    elif score >= 84.0:
-        target = min(max_lev, 35)
+    elif score >= 92.0:
+        target = min(max_lev, min_lev + round((max_lev - min_lev) * 0.70))
+    elif score >= 85.0:
+        target = min(max_lev, min_lev + round((max_lev - min_lev) * 0.40))
     else:
-        target = min(max_lev, 25)
+        target = min_lev
     return max(min_lev, min(max_lev, int(target)))
 
 
@@ -556,7 +707,8 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
             "tp_price_move_pct": round(abs(tp_price - entry_price) / entry_price, 6),
             "sl_price_move_pct": round(abs(entry_price - sl_price) / entry_price, 6),
             "opportunity_score_10": int(max(1, min(10, round(score / 10.0)))),
-            "opportunity_balance_fraction": 1.0,
+            "opportunity_balance_fraction": pmt_balance_fraction_for_score(score),
+            "pmt_balance_fraction": pmt_balance_fraction_for_score(score),
             "opportunity_nav_risk_pct": 1.0,
             "profit_lock_trigger_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 20.0)),
             "profit_lock_giveback_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
@@ -602,5 +754,5 @@ def diagnose_pmt_threshold_rejection(frame: pd.DataFrame, config: Any) -> str:
     score, metadata = _score_threshold_cross(frame, pmt, cross)
     min_score = max(0.0, _env_float("FUTURES_PMT_MIN_SCORE", float(getattr(config, "min_confidence_score", 70.0) or 70.0)))
     if score < min_score:
-        return f"score_below_threshold score={score:.2f} min={min_score:.2f} side={cross.side} pmt={pmt.label} level={cross.level:g} penalties={metadata.get('pmt_score_penalties') or {}}"
+        return f"score_below_threshold score={score:.2f} min={min_score:.2f} side={cross.side} pmt={pmt.label} level={cross.level:g} penalties={metadata.get('pmt_score_penalties') or {}} caps={metadata.get('pmt_score_caps') or {}}"
     return "accepted"

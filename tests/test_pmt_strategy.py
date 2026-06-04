@@ -65,6 +65,22 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_EXHAUSTION_1H_PENALTY",
         "FUTURES_PMT_VOLUME_CLIMAX_RATIO",
         "FUTURES_PMT_VOLUME_CLIMAX_PENALTY",
+        "FUTURES_PMT_EDGE_SCORING_ENABLED",
+        "FUTURES_PMT_LATE_ENTRY_DISTANCE_PCT",
+        "FUTURES_PMT_EXTREME_LATE_ENTRY_DISTANCE_PCT",
+        "FUTURES_PMT_LATE_ENTRY_SCORE_CAP",
+        "FUTURES_PMT_EXTREME_LATE_ENTRY_SCORE_CAP",
+        "FUTURES_PMT_EXHAUSTED_CLIMAX_SCORE_CAP",
+        "FUTURES_PMT_ONE_HOUR_EXHAUSTION_SCORE_CAP",
+        "FUTURES_PMT_STACKED_EXHAUSTION_SCORE_CAP",
+        "FUTURES_PMT_FLASH_SCORE_CAP",
+        "FUTURES_PMT_WEAK_BROADER_TREND_SCORE_CAP",
+        "FUTURES_PMT_WEAK_FOLLOWTHROUGH_1BAR_PCT",
+        "FUTURES_PMT_WEAK_FOLLOWTHROUGH_SCORE_CAP",
+        "FUTURES_PMT_SCORE_BAND_SIZING_ENABLED",
+        "FUTURES_PMT_SCORE_BAND_SIZE_85_91",
+        "FUTURES_PMT_SCORE_BAND_SIZE_92_96",
+        "FUTURES_PMT_SCORE_BAND_SIZE_97_100",
         "MEXC_PERP_DEFAULT_TAKER_FEE_RATE",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -167,14 +183,19 @@ def test_pmt_mega_bearish_blocks_countertrend_long(monkeypatch):
 
 def test_pmt_mega_bearish_breakdown_targets_200pct_margin(monkeypatch):
     _enable_pmt(monkeypatch)
-    frame = _frame([78000.0] * 105 + [75080.0, 74940.0, 74890.0])
+    frame = _frame([78000.0] * 103 + [75220.0, 75160.0, 75080.0, 74940.0, 74890.0])
 
     signal = score_pmt_threshold_signal(frame, _config())
 
     assert signal is not None
     assert signal.side == "SHORT"
     assert signal.leverage == 25
+    assert signal.score >= 97.0
     assert signal.metadata["pmt_label"] == "MEGA_BEARISH"
+    assert signal.metadata["pmt_score_model"] == "setup_edge_v1"
+    assert signal.metadata["pmt_setup_score"] >= signal.score - 0.01
+    assert signal.metadata["pmt_edge_score"] >= signal.score - 0.01
+    assert signal.metadata["pmt_balance_fraction"] == 1.0
     assert signal.metadata["tp_margin_pct"] == 200.0
     assert signal.metadata["sl_margin_pct"] <= 16.0
     assert signal.metadata["profit_lock_trigger_pct_override"] == 20.0
@@ -236,8 +257,50 @@ def test_pmt_exhaustion_penalty_can_drop_score_below_threshold(monkeypatch):
     assert "one_bar_exhaustion" in rejection
 
 
-def test_pmt_backtest_contract_sizing_uses_full_balance(monkeypatch):
+def test_pmt_edge_scoring_rejects_exhausted_volume_chase(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="95")
+    frame = _frame([76000.0] * 100 + [81000.0] * 5 + [81900.0, 82150.0, 82400.0])
+    frame.loc[frame.index[-1], "volume"] = 3200.0
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold")
+    assert "exhausted_volume_climax" in rejection
+
+
+def test_pmt_edge_scoring_rejects_one_hour_exhaustion(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="95")
+    frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0, 74000.0])
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold")
+    assert "one_hour_exhaustion" in rejection
+
+
+def test_pmt_backtest_contract_sizing_uses_score_band_fraction(monkeypatch):
     _enable_pmt(monkeypatch)
+    engine = object.__new__(FuturesBacktestEngine)
+    engine.config = SimpleNamespace(margin_budget_usdt=75.0, leverage_min=15, leverage_max=50, min_confidence_score=70.0)
+    engine.contract_size = 0.0001
+    engine.min_vol = 1
+
+    contracts, used_margin, leverage = engine._contracts_for_entry(
+        entry_price=100.0,
+        leverage=50,
+        balance=123.45,
+        sl_price=100.4,
+        score=95.0,
+    )
+
+    assert contracts == 308625
+    assert used_margin == 61.725
+    assert leverage == 50
+
+
+def test_pmt_backtest_contract_sizing_can_keep_full_balance(monkeypatch):
+    _enable_pmt(monkeypatch)
+    monkeypatch.setenv("FUTURES_PMT_SCORE_BAND_SIZING_ENABLED", "0")
     engine = object.__new__(FuturesBacktestEngine)
     engine.config = SimpleNamespace(margin_budget_usdt=75.0, leverage_min=15, leverage_max=50, min_confidence_score=70.0)
     engine.contract_size = 0.0001

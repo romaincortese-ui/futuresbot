@@ -97,7 +97,7 @@ from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
-from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
+from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -5215,7 +5215,7 @@ class FuturesRuntime:
         high_score_threshold = max(0.0, self._env_float("FUTURES_ENTRY_HIGH_SCORE", 95.0))
         if leverage_floor > 0:
             leverage = max(leverage, leverage_floor)
-        if leverage_high > 0 and score >= high_score_threshold:
+        if leverage_high > 0 and score >= high_score_threshold and not (pmt_mode and self._flag("FUTURES_PMT_SCORE_BAND_SIZING_ENABLED", True)):
             leverage = max(leverage, leverage_high)
         leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         # Sprint 2 §2.3 — pre-funding-settlement gate.
@@ -5302,7 +5302,13 @@ class FuturesRuntime:
         full_balance_sizing = pmt_mode or self._flag("FUTURES_FULL_BALANCE_SIZING_ENABLED")
         full_balance_pct = 0.0
         if full_balance_sizing:
-            full_balance_pct = 1.0 if pmt_mode else max(0.0, min(1.0, self._env_float("FUTURES_FULL_BALANCE_RISK_PCT", 1.00)))
+            if pmt_mode and self._flag("FUTURES_PMT_SCORE_BAND_SIZING_ENABLED", True):
+                full_balance_pct = pmt_balance_fraction_for_score(score)
+            else:
+                full_balance_pct = 1.0 if pmt_mode else max(0.0, min(1.0, self._env_float("FUTURES_FULL_BALANCE_RISK_PCT", 1.00)))
+            if full_balance_pct <= 0:
+                log.info("Futures signal skipped for %s: PMT score %.2f below score-band sizing floor", symbol, score)
+                return False
             margin_budget = available_balance * full_balance_pct
             signal_metadata["full_balance_sizing_enabled"] = True
             signal_metadata["full_balance_risk_pct"] = round(full_balance_pct, 6)
@@ -5372,7 +5378,7 @@ class FuturesRuntime:
         leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol) if pmt_mode else self._apply_session_leverage_cap(leverage, symbol=symbol)
         if leverage_floor > 0:
             leverage = max(leverage, leverage_floor)
-        if leverage_high > 0 and score >= high_score_threshold:
+        if leverage_high > 0 and score >= high_score_threshold and not (pmt_mode and self._flag("FUTURES_PMT_SCORE_BAND_SIZING_ENABLED", True)):
             leverage = max(leverage, leverage_high)
         leverage = self._enforce_live_leverage_bounds(leverage, symbol=symbol)
         # Sprint 1 §2.7 — portfolio drawdown kill (returns size_multiplier in [0,1]).
