@@ -40,11 +40,11 @@ class PairPMTProfile:
 
 DEFAULT_PMT_PROFILES: dict[str, PairPMTProfile] = {
     "BTC_USDT": PairPMTProfile("BTC_USDT", 1000.0, 0.008, 0.010, 0.030, 0.050),
-    "ETH_USDT": PairPMTProfile("ETH_USDT", 50.0, 0.010, 0.013, 0.040, 0.060),
-    "SOL_USDT": PairPMTProfile("SOL_USDT", 10.0, 0.012, 0.016, 0.050, 0.075),
-    "BNB_USDT": PairPMTProfile("BNB_USDT", 75.0, 0.011, 0.015, 0.048, 0.080),
+    "ETH_USDT": PairPMTProfile("ETH_USDT", 50.0, 0.010, 0.018, 0.040, 0.052),
+    "SOL_USDT": PairPMTProfile("SOL_USDT", 2.5, 0.012, 0.020, 0.042, 0.062),
+    "BNB_USDT": PairPMTProfile("BNB_USDT", 20.0, 0.011, 0.016, 0.032, 0.050),
     "SEI_USDT": PairPMTProfile("SEI_USDT", 0.01, 0.020, 0.030, 0.080, 0.120),
-    "ZEC_USDT": PairPMTProfile("ZEC_USDT", 100.0, 0.030, 0.045, 0.110, 0.170),
+    "ZEC_USDT": PairPMTProfile("ZEC_USDT", 25.0, 0.030, 0.050, 0.100, 0.160),
 }
 
 

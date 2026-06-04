@@ -128,13 +128,33 @@ def test_each_eligible_pair_has_unique_pmt_and_mental_thresholds():
     assert len(set(pmt_thresholds)) == len(ELIGIBLE_PMT_SYMBOLS)
 
 
+def test_non_btc_pmt_profiles_match_researched_candidate():
+    expected = {
+        "ETH_USDT": (50.0, 0.010, 0.018, 0.040, 0.052),
+        "SOL_USDT": (2.5, 0.012, 0.020, 0.042, 0.062),
+        "BNB_USDT": (20.0, 0.011, 0.016, 0.032, 0.050),
+        "SEI_USDT": (0.01, 0.020, 0.030, 0.080, 0.120),
+        "ZEC_USDT": (25.0, 0.030, 0.050, 0.100, 0.160),
+    }
+
+    for symbol, values in expected.items():
+        profile = DEFAULT_PMT_PROFILES[symbol]
+        assert (
+            profile.threshold_step,
+            profile.flat_24h_pct,
+            profile.flash_6h_pct,
+            profile.mega_12h_pct,
+            profile.mega_24h_pct,
+        ) == values
+
+
 def test_pmt_mega_bullish_breakout_scores_long_for_each_eligible_pair(monkeypatch):
     _enable_pmt(monkeypatch)
     levels = {
         "BTC_USDT": 75000.0,
         "ETH_USDT": 1850.0,
         "SOL_USDT": 80.0,
-        "BNB_USDT": 675.0,
+        "BNB_USDT": 680.0,
         "SEI_USDT": 0.07,
         "ZEC_USDT": 600.0,
     }
