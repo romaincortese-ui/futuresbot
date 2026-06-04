@@ -78,9 +78,16 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_WEAK_FOLLOWTHROUGH_1BAR_PCT",
         "FUTURES_PMT_WEAK_FOLLOWTHROUGH_SCORE_CAP",
         "FUTURES_PMT_SCORE_BAND_SIZING_ENABLED",
+        "FUTURES_PMT_REDUCED_SCORE_ENTRIES_ENABLED",
+        "FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE",
+        "FUTURES_PMT_REDUCED_ENTRY_MIN_EDGE_SCORE",
+        "FUTURES_PMT_FULL_BALANCE_MIN_SCORE",
         "FUTURES_PMT_SCORE_BAND_SIZE_85_91",
+        "FUTURES_PMT_SCORE_BAND_SIZE_90_91",
         "FUTURES_PMT_SCORE_BAND_SIZE_92_96",
+        "FUTURES_PMT_SCORE_BAND_SIZE_92_94",
         "FUTURES_PMT_SCORE_BAND_SIZE_97_100",
+        "FUTURES_PMT_SCORE_BAND_SIZE_95_100",
         "MEXC_PERP_DEFAULT_TAKER_FEE_RATE",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -278,7 +285,57 @@ def test_pmt_edge_scoring_rejects_one_hour_exhaustion(monkeypatch):
     assert "one_hour_exhaustion" in rejection
 
 
+def test_pmt_reduced_score_entry_accepts_clean_edge_at_smaller_size(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="95")
+    monkeypatch.setenv("FUTURES_PMT_CONFIRMATION_BARS", "0")
+    monkeypatch.setenv("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", "90")
+    monkeypatch.setenv("FUTURES_PMT_EXHAUSTION_1BAR_PENALTY", "30")
+    monkeypatch.setenv("FUTURES_PMT_EXHAUSTION_1H_PENALTY", "30")
+    frame = _frame([77000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0])
+
+    signal = score_pmt_threshold_signal(frame, _config())
+
+    assert signal is not None
+    assert 90.0 <= signal.score < 95.0
+    assert signal.metadata["pmt_reduced_score_entry"] is True
+    assert signal.metadata["pmt_reduced_score_reason"] == "clean_reduced_score"
+    assert signal.metadata["pmt_balance_fraction"] == 0.25
+
+
+def test_pmt_reduced_score_entry_blocks_exhausted_edge(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="95")
+    monkeypatch.setenv("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", "90")
+    monkeypatch.setenv("FUTURES_PMT_LATE_ENTRY_DISTANCE_PCT", "0")
+    monkeypatch.setenv("FUTURES_PMT_EXTREME_LATE_ENTRY_DISTANCE_PCT", "0")
+    frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0, 74000.0])
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("reduced_score_blocked")
+    assert "one_hour_exhaustion" in rejection
+
+
 def test_pmt_backtest_contract_sizing_uses_score_band_fraction(monkeypatch):
+    _enable_pmt(monkeypatch)
+    engine = object.__new__(FuturesBacktestEngine)
+    engine.config = SimpleNamespace(margin_budget_usdt=75.0, leverage_min=15, leverage_max=50, min_confidence_score=70.0)
+    engine.contract_size = 0.0001
+    engine.min_vol = 1
+
+    contracts, used_margin, leverage = engine._contracts_for_entry(
+        entry_price=100.0,
+        leverage=50,
+        balance=123.45,
+        sl_price=100.4,
+        score=94.0,
+    )
+
+    assert contracts == 308625
+    assert used_margin == 61.725
+    assert leverage == 50
+
+
+def test_pmt_backtest_contract_sizing_uses_full_balance_for_high_score(monkeypatch):
     _enable_pmt(monkeypatch)
     engine = object.__new__(FuturesBacktestEngine)
     engine.config = SimpleNamespace(margin_budget_usdt=75.0, leverage_min=15, leverage_max=50, min_confidence_score=70.0)
@@ -293,8 +350,8 @@ def test_pmt_backtest_contract_sizing_uses_score_band_fraction(monkeypatch):
         score=95.0,
     )
 
-    assert contracts == 308625
-    assert used_margin == 61.725
+    assert contracts == 617250
+    assert used_margin == 123.45
     assert leverage == 50
 
 

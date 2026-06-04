@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -412,18 +412,86 @@ def _pmt_safety_rejection(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Ment
     return None
 
 
+_REDUCED_ENTRY_BLOCKING_CAPS = {
+    "late_entry_distance",
+    "extreme_late_entry_distance",
+    "exhausted_volume_climax",
+    "one_hour_exhaustion",
+    "stacked_exhaustion",
+    "weak_followthrough_on_volume",
+}
+_REDUCED_ENTRY_BLOCKING_PENALTIES = {
+    "one_bar_exhaustion",
+    "one_hour_exhaustion",
+    "volume_climax",
+}
+
+
+def _pmt_full_score_min(config: Any) -> float:
+    return max(0.0, _env_float("FUTURES_PMT_MIN_SCORE", float(getattr(config, "min_confidence_score", 70.0) or 70.0)))
+
+
+def _pmt_reduced_entry_min_score(full_score_min: float) -> float:
+    if not _env_bool("FUTURES_PMT_REDUCED_SCORE_ENTRIES_ENABLED", True):
+        return full_score_min
+    default = min(full_score_min, 90.0) if full_score_min > 90.0 else full_score_min
+    return max(0.0, min(full_score_min, _env_float("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", default)))
+
+
+def _pmt_full_balance_min_score() -> float:
+    return max(0.0, _env_float("FUTURES_PMT_FULL_BALANCE_MIN_SCORE", 95.0))
+
+
+def _pmt_reduced_entry_blockers(metadata: Mapping[str, Any]) -> list[str]:
+    pmt_label = str(metadata.get("pmt_label") or "")
+    allowed_prefixes = tuple(
+        item.strip()
+        for item in os.environ.get("FUTURES_PMT_REDUCED_ENTRY_LABEL_PREFIXES", "FLASH_,MEGA_").split(",")
+        if item.strip()
+    )
+    if allowed_prefixes and not pmt_label.startswith(allowed_prefixes):
+        return [f"pmt_label={pmt_label or 'UNKNOWN'}"]
+    raw_caps = metadata.get("pmt_score_caps") or {}
+    caps = raw_caps if isinstance(raw_caps, Mapping) else {}
+    raw_penalties = metadata.get("pmt_score_penalties") or {}
+    penalties = raw_penalties if isinstance(raw_penalties, Mapping) else {}
+    blockers = set(caps).intersection(_REDUCED_ENTRY_BLOCKING_CAPS)
+    blockers.update(set(penalties).intersection(_REDUCED_ENTRY_BLOCKING_PENALTIES))
+    return sorted(blockers)
+
+
+def _pmt_reduced_score_entry_allowed(score: float, metadata: Mapping[str, Any]) -> tuple[bool, str]:
+    blockers = _pmt_reduced_entry_blockers(metadata)
+    if blockers:
+        return False, "blockers=" + ";".join(blockers)
+    min_edge_score = max(0.0, _env_float("FUTURES_PMT_REDUCED_ENTRY_MIN_EDGE_SCORE", 90.0))
+    try:
+        edge_score = float(metadata.get("pmt_edge_score") or 0.0)
+    except (TypeError, ValueError):
+        edge_score = 0.0
+    if edge_score < min_edge_score:
+        return False, f"edge_score={edge_score:.2f}<min={min_edge_score:.2f}"
+    return True, "clean_reduced_score"
+
+
 def pmt_balance_fraction_for_score(score: float | int | None) -> float:
     try:
         value = float(score or 0.0)
     except (TypeError, ValueError):
         return 0.0
-    if not math.isfinite(value) or value < 85.0:
+    full_balance_min = _pmt_full_balance_min_score()
+    if _env_bool("FUTURES_PMT_REDUCED_SCORE_ENTRIES_ENABLED", True):
+        default_entry_min = min(full_balance_min, 90.0) if full_balance_min > 90.0 else full_balance_min
+        entry_min = max(0.0, min(full_balance_min, _env_float("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", default_entry_min)))
+    else:
+        entry_min = full_balance_min
+    if not math.isfinite(value) or value < entry_min:
         return 0.0
-    if value < 92.0:
-        return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_85_91", 0.25)))
-    if value < 97.0:
-        return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_92_96", 0.50)))
-    return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_97_100", 1.00)))
+    if value < min(92.0, full_balance_min):
+        return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_90_91", _env_float("FUTURES_PMT_SCORE_BAND_SIZE_85_91", 0.25))))
+    if value < full_balance_min:
+        return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_92_94", _env_float("FUTURES_PMT_SCORE_BAND_SIZE_92_96", 0.50))))
+    return max(0.0, min(1.0, _env_float("FUTURES_PMT_SCORE_BAND_SIZE_95_100", _env_float("FUTURES_PMT_SCORE_BAND_SIZE_97_100", 1.00))))
 
 
 def _score_cap(caps: dict[str, float], reason: str, cap: float) -> None:
@@ -689,10 +757,20 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
         return None
 
     score, metadata = _score_threshold_cross(frame, pmt, cross)
-    min_score = max(0.0, _env_float("FUTURES_PMT_MIN_SCORE", float(getattr(config, "min_confidence_score", 70.0) or 70.0)))
-    metadata["pmt_min_score"] = round(min_score, 4)
-    if score < min_score:
+    full_score_min = _pmt_full_score_min(config)
+    entry_score_min = _pmt_reduced_entry_min_score(full_score_min)
+    metadata["pmt_min_score"] = round(full_score_min, 4)
+    metadata["pmt_entry_min_score"] = round(entry_score_min, 4)
+    if score < entry_score_min:
         return None
+    if score < full_score_min:
+        allowed, reason = _pmt_reduced_score_entry_allowed(score, metadata)
+        metadata["pmt_reduced_score_entry"] = bool(allowed)
+        metadata["pmt_reduced_score_reason"] = reason
+        if not allowed:
+            return None
+    else:
+        metadata["pmt_reduced_score_entry"] = False
 
     leverage = _leverage_for_score(score, pmt.label)
     entry_price = cross.current_close
@@ -752,7 +830,12 @@ def diagnose_pmt_threshold_rejection(frame: pd.DataFrame, config: Any) -> str:
     if safety_rejection is not None:
         return f"{safety_rejection} side={cross.side} pmt={pmt.label} level={cross.level:g}"
     score, metadata = _score_threshold_cross(frame, pmt, cross)
-    min_score = max(0.0, _env_float("FUTURES_PMT_MIN_SCORE", float(getattr(config, "min_confidence_score", 70.0) or 70.0)))
-    if score < min_score:
-        return f"score_below_threshold score={score:.2f} min={min_score:.2f} side={cross.side} pmt={pmt.label} level={cross.level:g} penalties={metadata.get('pmt_score_penalties') or {}} caps={metadata.get('pmt_score_caps') or {}}"
+    full_score_min = _pmt_full_score_min(config)
+    entry_score_min = _pmt_reduced_entry_min_score(full_score_min)
+    if score < entry_score_min:
+        return f"score_below_threshold score={score:.2f} min={entry_score_min:.2f} full_min={full_score_min:.2f} side={cross.side} pmt={pmt.label} level={cross.level:g} penalties={metadata.get('pmt_score_penalties') or {}} caps={metadata.get('pmt_score_caps') or {}}"
+    if score < full_score_min:
+        allowed, reason = _pmt_reduced_score_entry_allowed(score, metadata)
+        if not allowed:
+            return f"reduced_score_blocked score={score:.2f} min={entry_score_min:.2f} full_min={full_score_min:.2f} reason={reason} side={cross.side} pmt={pmt.label} level={cross.level:g} penalties={metadata.get('pmt_score_penalties') or {}} caps={metadata.get('pmt_score_caps') or {}}"
     return "accepted"

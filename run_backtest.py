@@ -15,7 +15,7 @@ from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesBacktestConfig, Fu
 from futuresbot.gate_b_readiness import SymbolResult, evaluate_gate_b_readiness
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
-from futuresbot.pmt_strategy import pmt_strategy_enabled
+from futuresbot.pmt_strategy import pmt_strategy_enabled, pmt_win_cooldown_exit_reason
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -189,7 +189,7 @@ def _run_portfolio_backtest(
                     )
                     balance += float(trade["pnl_usdt"])
                     trades.append(trade)
-                    if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+                    if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
                         cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
                         pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
                     open_position = None
@@ -205,13 +205,64 @@ def _run_portfolio_backtest(
                     trade = open_engine._close_position(open_position, close_time, exit_price, reason)
                     balance += float(trade["pnl_usdt"])
                     trades.append(trade)
-                    if pmt_strategy_enabled() and reason == "TAKE_PROFIT":
+                    if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
                         cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
                         pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
                     open_position = None
                     open_engine = None
 
         pmt_cooldown_active = pmt_strategy_enabled() and pmt_cooldown_until is not None and close_time < pmt_cooldown_until
+        if (
+            open_position is not None
+            and open_engine is not None
+            and pending_signal is None
+            and not pmt_cooldown_active
+            and pmt_strategy_enabled()
+            and _env_bool("FUTURES_PMT_PREEMPT_LOWER_SCORE_ENABLED", False)
+        ):
+            candidates: list[tuple[int, float, float, str, FuturesSignal]] = []
+            for symbol, frame in frames.items():
+                idx = indexes[symbol].get(timestamp)
+                if idx is None or idx < 220 or idx + 1 >= len(frame):
+                    continue
+                signal = engines[symbol]._candidate_signal_for_frame(frame.iloc[: idx + 1], close_time.to_pydatetime(), len(frame) - idx - 1)
+                if signal is None:
+                    continue
+                metadata = signal.metadata or {}
+                candidates.append(
+                    (
+                        int(metadata.get("opportunity_score_10") or 0),
+                        float(signal.score),
+                        float(signal.certainty),
+                        symbol,
+                        signal,
+                    )
+                )
+            candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+            if candidates:
+                _score10, score, _certainty, symbol, signal = candidates[0]
+                current_score = float(open_position.score or 0.0)
+                min_preempt_score = max(0.0, _env_float("FUTURES_PMT_PREEMPT_MIN_SCORE", 97.0))
+                min_preempt_delta = max(0.0, _env_float("FUTURES_PMT_PREEMPT_MIN_SCORE_DELTA", 3.0))
+                different_exposure = signal.symbol != open_position.symbol or signal.side != open_position.side
+                if different_exposure and score >= min_preempt_score and score >= current_score + min_preempt_delta:
+                    frame = frames.get(open_position.symbol)
+                    idx = indexes.get(open_position.symbol, {}).get(timestamp)
+                    if frame is not None and idx is not None:
+                        trade = open_engine._close_position(
+                            open_position,
+                            close_time,
+                            float(frame.iloc[idx]["close"]),
+                            "PMT_PREEMPTED_BY_SUPERIOR_SIGNAL",
+                        )
+                        balance += float(trade["pnl_usdt"])
+                        trades.append(trade)
+                        open_position = None
+                        open_engine = None
+                        pending_signal = signal
+                        pending_symbol = symbol
+                        pending_entry_time = frames[symbol].index[indexes[symbol][timestamp] + 1]
+
         if open_position is None and pending_signal is None and not pmt_cooldown_active and (pmt_strategy_enabled() or close_time.minute == 0):
             candidates: list[tuple[int, float, float, str, FuturesSignal]] = []
             for symbol, frame in frames.items():
