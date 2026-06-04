@@ -12,6 +12,7 @@ from futuresbot.pmt_strategy import (
     DEFAULT_PMT_PROFILES,
     ELIGIBLE_PMT_SYMBOLS,
     classify_pair_market_trend,
+    diagnose_pmt_threshold_rejection,
     mental_threshold_step,
     pmt_win_cooldown_exit_reason,
     pmt_symbol_allowed,
@@ -53,6 +54,17 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT",
         "FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION",
         "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
+        "FUTURES_PMT_CONFIRMATION_BARS",
+        "FUTURES_PMT_CONFIRMATION_MIN_FOLLOWTHROUGH_PCT",
+        "FUTURES_PMT_BLOCK_RECENT_FAILED_RECLAIM",
+        "FUTURES_PMT_RECENT_RECLAIM_LOOKBACK_BARS",
+        "FUTURES_PMT_BLOCK_BROADER_TREND_CONFLICT",
+        "FUTURES_PMT_EXHAUSTION_1BAR_PCT",
+        "FUTURES_PMT_EXHAUSTION_1BAR_PENALTY",
+        "FUTURES_PMT_EXHAUSTION_1H_PCT",
+        "FUTURES_PMT_EXHAUSTION_1H_PENALTY",
+        "FUTURES_PMT_VOLUME_CLIMAX_RATIO",
+        "FUTURES_PMT_VOLUME_CLIMAX_PENALTY",
         "MEXC_PERP_DEFAULT_TAKER_FEE_RATE",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -108,10 +120,11 @@ def test_pmt_mega_bullish_breakout_scores_long_for_each_eligible_pair(monkeypatc
         profile = DEFAULT_PMT_PROFILES[symbol]
         level = levels[symbol]
         step = mental_threshold_step(symbol)
-        current = level + step * 0.12
+        crossed = level + step * 0.12
+        current = level + step * 0.18
         previous = level - step * 0.10
         start = current / (1.0 + profile.mega_12h_pct * 1.2)
-        frame = _frame([start] * 105 + [previous, current])
+        frame = _frame([start] * 105 + [previous, crossed, current])
 
         pmt = classify_pair_market_trend(frame, symbol)
         signal = score_pmt_threshold_signal(frame, _config(symbol))
@@ -127,7 +140,7 @@ def test_pmt_mega_bullish_breakout_scores_long_for_each_eligible_pair(monkeypatc
 
 def test_pmt_flat_threshold_breakdown_scores_short(monkeypatch):
     _enable_pmt(monkeypatch)
-    frame = _frame([75100.0] * 110 + [75100.0, 74940.0])
+    frame = _frame([75100.0] * 110 + [75100.0, 74940.0, 74890.0])
 
     pmt = classify_pair_market_trend(frame, "BTC_USDT")
     signal = score_pmt_threshold_signal(frame, _config())
@@ -154,7 +167,7 @@ def test_pmt_mega_bearish_blocks_countertrend_long(monkeypatch):
 
 def test_pmt_mega_bearish_breakdown_targets_200pct_margin(monkeypatch):
     _enable_pmt(monkeypatch)
-    frame = _frame([78000.0] * 105 + [75080.0, 74940.0])
+    frame = _frame([78000.0] * 105 + [75080.0, 74940.0, 74890.0])
 
     signal = score_pmt_threshold_signal(frame, _config())
 
@@ -171,6 +184,56 @@ def test_pmt_mega_bearish_breakdown_targets_200pct_margin(monkeypatch):
     assert signal.metadata["profit_lock_exit_min_net_pct_override"] == 20.0
     assert signal.tp_price == signal.entry_price * (1.0 - 2.0 / signal.leverage)
     assert signal.sl_price <= signal.entry_price * (1.0 + 0.16 / signal.leverage)
+
+
+def test_pmt_requires_confirmation_after_threshold_cross(monkeypatch):
+    _enable_pmt(monkeypatch)
+    pending = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0])
+    confirmed = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0, 74880.0])
+
+    assert score_pmt_threshold_signal(pending, _config()) is None
+    assert diagnose_pmt_threshold_rejection(pending, _config()).startswith("confirmation_pending")
+    assert score_pmt_threshold_signal(confirmed, _config()) is not None
+
+
+def test_pmt_blocks_confirmation_without_followthrough(monkeypatch):
+    _enable_pmt(monkeypatch)
+    frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0, 74930.0])
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    assert diagnose_pmt_threshold_rejection(frame, _config()).startswith("confirmation_no_followthrough")
+
+
+def test_pmt_blocks_recent_failed_reclaim(monkeypatch):
+    _enable_pmt(monkeypatch)
+    frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0, 75120.0, 75080.0, 74920.0, 74860.0])
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    assert diagnose_pmt_threshold_rejection(frame, _config()).startswith("recent_failed_reclaim")
+
+
+def test_pmt_blocks_broader_trend_conflict(monkeypatch):
+    _enable_pmt(monkeypatch)
+    frame = _frame([66000.0] * 60 + [62000.0] * 48 + [63750.0, 64200.0, 64340.0])
+
+    pmt = classify_pair_market_trend(frame, "BTC_USDT")
+    assert pmt is not None
+    assert pmt.label == "MEGA_BULLISH"
+    assert pmt.move_24h_pct < -0.008
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    assert diagnose_pmt_threshold_rejection(frame, _config()).startswith("broader_trend_conflict")
+
+
+def test_pmt_exhaustion_penalty_can_drop_score_below_threshold(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="95")
+    monkeypatch.setenv("FUTURES_PMT_CONFIRMATION_BARS", "0")
+    monkeypatch.setenv("FUTURES_PMT_EXHAUSTION_1BAR_PENALTY", "30")
+    frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74400.0])
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold")
+    assert "one_bar_exhaustion" in rejection
 
 
 def test_pmt_backtest_contract_sizing_uses_full_balance(monkeypatch):

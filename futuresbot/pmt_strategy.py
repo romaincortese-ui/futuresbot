@@ -65,6 +65,9 @@ class MentalThresholdCross:
     current_close: float
     move_1bar_pct: float
     distance_beyond_level_pct: float
+    cross_previous_close: float | None = None
+    cross_close: float | None = None
+    confirmation_bars: int = 0
 
 
 def pmt_strategy_enabled() -> bool:
@@ -98,9 +101,30 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _env_pct_fraction(name: str, default: float) -> float:
     value = _env_float(name, default)
     return value / 100.0 if value > 1.0 else value
+
+
+def _signed_for_side(value: float, side: str) -> float:
+    return value if side.upper() == "LONG" else -value
 
 
 def _symbol_env_prefix(symbol: str) -> str:
@@ -211,12 +235,7 @@ def classify_pair_market_trend(frame: pd.DataFrame, symbol: str) -> PairMarketTr
     )
 
 
-def detect_mental_threshold_cross(frame: pd.DataFrame, symbol: str) -> MentalThresholdCross | None:
-    if frame is None or len(frame) < 2 or "close" not in frame:
-        return None
-    closes = frame["close"].astype(float)
-    previous = float(closes.iloc[-2])
-    current = float(closes.iloc[-1])
+def _detect_threshold_cross(previous: float, current: float, symbol: str) -> MentalThresholdCross | None:
     step = mental_threshold_step(symbol)
     if previous <= 0 or current <= 0 or step <= 0:
         return None
@@ -230,6 +249,8 @@ def detect_mental_threshold_cross(frame: pd.DataFrame, symbol: str) -> MentalThr
             current_close=current,
             move_1bar_pct=current / previous - 1.0,
             distance_beyond_level_pct=abs(current - down_level) / current,
+            cross_previous_close=previous,
+            cross_close=current,
         )
 
     up_level = math.ceil(previous / step) * step
@@ -241,8 +262,47 @@ def detect_mental_threshold_cross(frame: pd.DataFrame, symbol: str) -> MentalThr
             current_close=current,
             move_1bar_pct=current / previous - 1.0,
             distance_beyond_level_pct=abs(current - up_level) / current,
+            cross_previous_close=previous,
+            cross_close=current,
         )
     return None
+
+
+def _pmt_confirmation_bars() -> int:
+    return max(0, _env_int("FUTURES_PMT_CONFIRMATION_BARS", 1))
+
+
+def detect_mental_threshold_cross(frame: pd.DataFrame, symbol: str) -> MentalThresholdCross | None:
+    if frame is None or len(frame) < 2 or "close" not in frame:
+        return None
+    closes = frame["close"].astype(float)
+    confirmation_bars = _pmt_confirmation_bars()
+    if confirmation_bars <= 0:
+        return _detect_threshold_cross(float(closes.iloc[-2]), float(closes.iloc[-1]), symbol)
+    if len(closes) < confirmation_bars + 2:
+        return None
+    cross_position = len(closes) - 1 - confirmation_bars
+    cross = _detect_threshold_cross(float(closes.iloc[cross_position - 1]), float(closes.iloc[cross_position]), symbol)
+    if cross is None:
+        return None
+    confirmation = closes.iloc[cross_position + 1 :].astype(float)
+    if cross.side == "SHORT" and any(float(close) >= cross.level for close in confirmation):
+        return None
+    if cross.side == "LONG" and any(float(close) <= cross.level for close in confirmation):
+        return None
+    previous = float(closes.iloc[-2])
+    current = float(closes.iloc[-1])
+    return MentalThresholdCross(
+        side=cross.side,
+        level=cross.level,
+        previous_close=previous,
+        current_close=current,
+        move_1bar_pct=current / previous - 1.0 if previous > 0 else 0.0,
+        distance_beyond_level_pct=abs(current - cross.level) / current if current > 0 else 0.0,
+        cross_previous_close=cross.previous_close,
+        cross_close=cross.current_close,
+        confirmation_bars=confirmation_bars,
+    )
 
 
 def _aligned_with_pmt(side: str, label: str) -> bool | None:
@@ -290,6 +350,68 @@ def _recent_move_pct(frame: pd.DataFrame, bars: int) -> float:
     return float(close.iloc[-1]) / float(close.iloc[-bars - 1]) - 1.0
 
 
+def _recent_failed_level_reclaim(frame: pd.DataFrame, cross: MentalThresholdCross) -> bool:
+    lookback = max(0, _env_int("FUTURES_PMT_RECENT_RECLAIM_LOOKBACK_BARS", 16))
+    if lookback <= 0 or "close" not in frame:
+        return False
+    closes = frame["close"].astype(float).tolist()
+    cross_position = len(closes) - 1 - max(0, int(cross.confirmation_bars or 0))
+    start = max(1, cross_position - lookback)
+    prior = closes[start:cross_position]
+    if len(prior) < 2:
+        return False
+    failed_break_seen = False
+    if cross.side == "SHORT":
+        for close in prior:
+            if close < cross.level:
+                failed_break_seen = True
+            elif failed_break_seen and close >= cross.level:
+                return True
+    else:
+        for close in prior:
+            if close > cross.level:
+                failed_break_seen = True
+            elif failed_break_seen and close <= cross.level:
+                return True
+    return False
+
+
+def _broader_trend_conflict(pmt: PairMarketTrend, side: str) -> bool:
+    if not _env_bool("FUTURES_PMT_BLOCK_BROADER_TREND_CONFLICT", True):
+        return False
+    profile = pair_pmt_profile(pmt.symbol)
+    if profile is None:
+        return False
+    side = side.upper()
+    if side == "LONG" and pmt.move_24h_pct <= -profile.flat_24h_pct:
+        return True
+    if side == "SHORT" and pmt.move_24h_pct >= profile.flat_24h_pct:
+        return True
+    return False
+
+
+def _confirmation_followthrough_failed(cross: MentalThresholdCross) -> bool:
+    min_followthrough = max(0.0, _env_pct_fraction("FUTURES_PMT_CONFIRMATION_MIN_FOLLOWTHROUGH_PCT", 0.0005))
+    if min_followthrough <= 0 or int(cross.confirmation_bars or 0) <= 0:
+        return False
+    cross_close = float(cross.cross_close if cross.cross_close is not None else cross.current_close)
+    if cross_close <= 0:
+        return False
+    if cross.side == "SHORT":
+        return cross.current_close > cross_close * (1.0 - min_followthrough)
+    return cross.current_close < cross_close * (1.0 + min_followthrough)
+
+
+def _pmt_safety_rejection(frame: pd.DataFrame, pmt: PairMarketTrend, cross: MentalThresholdCross) -> str | None:
+    if _confirmation_followthrough_failed(cross):
+        return "confirmation_no_followthrough"
+    if _env_bool("FUTURES_PMT_BLOCK_RECENT_FAILED_RECLAIM", True) and _recent_failed_level_reclaim(frame, cross):
+        return "recent_failed_reclaim"
+    if _broader_trend_conflict(pmt, cross.side):
+        return "broader_trend_conflict"
+    return None
+
+
 def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: MentalThresholdCross) -> tuple[float, dict[str, Any]]:
     profile = pair_pmt_profile(pmt.symbol)
     aligned = _aligned_with_pmt(cross.side, pmt.label)
@@ -308,10 +430,10 @@ def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Men
     else:
         score += 8.0
 
-    signed_1bar = cross.move_1bar_pct if cross.side == "LONG" else -cross.move_1bar_pct
+    signed_1bar = _signed_for_side(cross.move_1bar_pct, cross.side)
     signed_1h = _recent_move_pct(frame, 4)
-    signed_1h = signed_1h if cross.side == "LONG" else -signed_1h
-    signed_6h = pmt.move_6h_pct if cross.side == "LONG" else -pmt.move_6h_pct
+    signed_1h = _signed_for_side(signed_1h, cross.side)
+    signed_6h = _signed_for_side(pmt.move_6h_pct, cross.side)
     volume_ratio = _volume_ratio(frame)
 
     score += min(10.0, max(0.0, signed_1bar * 100.0 * 18.0))
@@ -322,6 +444,19 @@ def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Men
         score += min(8.0, (volume_ratio - 1.0) * 10.0)
     elif volume_ratio < 0.75:
         score -= 4.0
+
+    raw_score = score
+    penalties: dict[str, float] = {}
+    exhaustion_1bar = max(0.0, _env_pct_fraction("FUTURES_PMT_EXHAUSTION_1BAR_PCT", 0.0060))
+    if exhaustion_1bar > 0 and signed_1bar >= exhaustion_1bar:
+        penalties["one_bar_exhaustion"] = max(0.0, _env_float("FUTURES_PMT_EXHAUSTION_1BAR_PENALTY", 10.0))
+    exhaustion_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_EXHAUSTION_1H_PCT", 0.0120))
+    if exhaustion_1h > 0 and signed_1h >= exhaustion_1h:
+        penalties["one_hour_exhaustion"] = max(0.0, _env_float("FUTURES_PMT_EXHAUSTION_1H_PENALTY", 8.0))
+    volume_climax = max(0.0, _env_float("FUTURES_PMT_VOLUME_CLIMAX_RATIO", 1.50))
+    if volume_climax > 0 and volume_ratio >= volume_climax and signed_1bar >= max(0.0, exhaustion_1bar * 0.75):
+        penalties["volume_climax"] = max(0.0, _env_float("FUTURES_PMT_VOLUME_CLIMAX_PENALTY", 6.0))
+    score -= sum(penalties.values())
 
     metadata = {
         "strategy": PMT_STRATEGY_MODE,
@@ -337,11 +472,17 @@ def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Men
         "pmt_mega_24h_pct_threshold": round(profile.mega_24h_pct, 6) if profile else None,
         "mental_threshold_previous_close": round(cross.previous_close, 10),
         "mental_threshold_current_close": round(cross.current_close, 10),
+        "mental_threshold_cross_previous_close": round(cross.cross_previous_close if cross.cross_previous_close is not None else cross.previous_close, 10),
+        "mental_threshold_cross_close": round(cross.cross_close if cross.cross_close is not None else cross.current_close, 10),
+        "mental_threshold_confirmation_bars": int(cross.confirmation_bars or 0),
         "mental_threshold_distance_beyond_pct": round(cross.distance_beyond_level_pct, 6),
         "move_1bar_pct": round(cross.move_1bar_pct, 6),
         "move_1h_pct": round(_recent_move_pct(frame, 4), 6),
         "volume_ratio_20": round(volume_ratio, 4),
         "pmt_aligned": aligned if aligned is not None else "flat",
+        "pmt_raw_score": round(raw_score, 4),
+        "pmt_score_penalty": round(sum(penalties.values()), 4),
+        "pmt_score_penalties": {key: round(value, 4) for key, value in penalties.items()},
     }
     return max(0.0, min(100.0, score)), metadata
 
@@ -392,6 +533,8 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
     if pmt is None or cross is None:
         return None
     if _pmt_blocks_side(cross.side, pmt.label):
+        return None
+    if _pmt_safety_rejection(frame, pmt, cross) is not None:
         return None
 
     score, metadata = _score_threshold_cross(frame, pmt, cross)
@@ -446,11 +589,18 @@ def diagnose_pmt_threshold_rejection(frame: pd.DataFrame, config: Any) -> str:
         return "pmt_unavailable"
     cross = detect_mental_threshold_cross(frame, symbol)
     if cross is None:
+        if _pmt_confirmation_bars() > 0 and len(frame) >= 2:
+            immediate = _detect_threshold_cross(float(frame["close"].astype(float).iloc[-2]), float(frame["close"].astype(float).iloc[-1]), symbol)
+            if immediate is not None:
+                return f"confirmation_pending side={immediate.side} pmt={pmt.label} level={immediate.level:g}"
         return f"no_mental_threshold_cross pmt={pmt.label} move_24h={pmt.move_24h_pct:+.4f} move_12h={pmt.move_12h_pct:+.4f} move_6h={pmt.move_6h_pct:+.4f}"
     if _pmt_blocks_side(cross.side, pmt.label):
         return f"countertrend_block side={cross.side} pmt={pmt.label} level={cross.level:g}"
-    score, _metadata = _score_threshold_cross(frame, pmt, cross)
+    safety_rejection = _pmt_safety_rejection(frame, pmt, cross)
+    if safety_rejection is not None:
+        return f"{safety_rejection} side={cross.side} pmt={pmt.label} level={cross.level:g}"
+    score, metadata = _score_threshold_cross(frame, pmt, cross)
     min_score = max(0.0, _env_float("FUTURES_PMT_MIN_SCORE", float(getattr(config, "min_confidence_score", 70.0) or 70.0)))
     if score < min_score:
-        return f"score_below_threshold score={score:.2f} min={min_score:.2f} side={cross.side} pmt={pmt.label} level={cross.level:g}"
+        return f"score_below_threshold score={score:.2f} min={min_score:.2f} side={cross.side} pmt={pmt.label} level={cross.level:g} penalties={metadata.get('pmt_score_penalties') or {}}"
     return "accepted"
