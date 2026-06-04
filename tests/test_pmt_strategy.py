@@ -13,6 +13,7 @@ from futuresbot.pmt_strategy import (
     ELIGIBLE_PMT_SYMBOLS,
     classify_pair_market_trend,
     mental_threshold_step,
+    pmt_win_cooldown_exit_reason,
     pmt_symbol_allowed,
     score_pmt_threshold_signal,
 )
@@ -33,7 +34,7 @@ def _frame(closes: list[float]) -> pd.DataFrame:
 
 
 def _config(symbol: str = "BTC_USDT") -> SimpleNamespace:
-    return SimpleNamespace(symbol=symbol, min_confidence_score=70.0, leverage_min=15, leverage_max=50)
+    return SimpleNamespace(symbol=symbol, min_confidence_score=70.0, leverage_min=15, leverage_max=25)
 
 
 def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
@@ -44,12 +45,21 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_BNBUSDT_PMT_THRESHOLD_STEP",
         "FUTURES_SEIUSDT_PMT_THRESHOLD_STEP",
         "FUTURES_ZECUSDT_PMT_THRESHOLD_STEP",
+        "FUTURES_PMT_MIN_LEVERAGE",
+        "FUTURES_PMT_MAX_LEVERAGE",
+        "FUTURES_LEVERAGE_MIN",
+        "FUTURES_LEVERAGE_MAX",
+        "FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT",
+        "FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT",
+        "FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION",
+        "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
+        "MEXC_PERP_DEFAULT_TAKER_FEE_RATE",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
     monkeypatch.setenv("FUTURES_PMT_SYMBOLS", ",".join(ELIGIBLE_PMT_SYMBOLS))
     monkeypatch.setenv("FUTURES_PMT_MIN_SCORE", min_score)
-    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", "0.50")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", "0.0")
 
 
 def test_pmt_defaults_allow_only_six_eligible_pairs(monkeypatch):
@@ -62,6 +72,12 @@ def test_pmt_defaults_allow_only_six_eligible_pairs(monkeypatch):
     monkeypatch.setenv("FUTURES_PMT_SYMBOLS", "*")
     assert all(pmt_symbol_allowed(symbol) for symbol in ELIGIBLE_PMT_SYMBOLS)
     assert pmt_symbol_allowed("DOGE_USDT") is False
+
+
+def test_pmt_win_cooldown_includes_peak_profit_lock():
+    assert pmt_win_cooldown_exit_reason("TAKE_PROFIT") is True
+    assert pmt_win_cooldown_exit_reason("PEAK_PROFIT_LOCK") is True
+    assert pmt_win_cooldown_exit_reason("STOP_LOSS") is False
 
 
 def test_each_eligible_pair_has_unique_pmt_and_mental_thresholds():
@@ -144,13 +160,17 @@ def test_pmt_mega_bearish_breakdown_targets_200pct_margin(monkeypatch):
 
     assert signal is not None
     assert signal.side == "SHORT"
-    assert signal.leverage == 50
+    assert signal.leverage == 25
     assert signal.metadata["pmt_label"] == "MEGA_BEARISH"
     assert signal.metadata["tp_margin_pct"] == 200.0
-    assert signal.metadata["sl_margin_pct"] <= 14.0
-    assert signal.metadata["profit_lock_min_tp_progress_override"] == 0.5
+    assert signal.metadata["sl_margin_pct"] <= 16.0
+    assert signal.metadata["profit_lock_trigger_pct_override"] == 20.0
+    assert signal.metadata["profit_lock_giveback_pct_override"] == 0.0
+    assert signal.metadata["profit_lock_pullback_fraction_override"] == 0.70
+    assert signal.metadata["profit_lock_min_tp_progress_override"] == 0.0
+    assert signal.metadata["profit_lock_exit_min_net_pct_override"] == 20.0
     assert signal.tp_price == signal.entry_price * (1.0 - 2.0 / signal.leverage)
-    assert signal.sl_price <= signal.entry_price * (1.0 + 0.14 / signal.leverage)
+    assert signal.sl_price <= signal.entry_price * (1.0 + 0.16 / signal.leverage)
 
 
 def test_pmt_backtest_contract_sizing_uses_full_balance(monkeypatch):
@@ -217,3 +237,86 @@ def test_profit_lock_fixed_giveback_exits_one_point_from_peak():
     assert first_exit is None
     assert changed
     assert second_exit == (100.2, "PEAK_PROFIT_LOCK")
+
+
+def test_pmt_profit_lock_arms_above_20pct_without_tp_progress():
+    position = FuturesPosition(
+        symbol="ETH_USDT",
+        side="SHORT",
+        entry_price=100.0,
+        contracts=50,
+        contract_size=1.0,
+        leverage=50,
+        margin_usdt=100.0,
+        tp_price=96.0,
+        sl_price=100.28,
+        position_id="pmt-eth-lock-test",
+        order_id="pmt-eth-lock-test",
+        opened_at=datetime(2026, 6, 3, 20, 49, tzinfo=timezone.utc),
+        score=100.0,
+        certainty=0.99,
+        entry_signal="PMT_THRESHOLD_SHORT",
+        metadata={
+            "profit_lock_trigger_pct_override": 20.0,
+            "profit_lock_giveback_pct_override": 0.0,
+            "profit_lock_pullback_fraction_override": 0.70,
+            "profit_lock_min_tp_progress_override": 0.0,
+            "profit_lock_exit_min_net_pct_override": 20.0,
+            "profit_lock_floor_pct_override": 0.0,
+        },
+    )
+
+    early_peak_exit, changed = evaluate_profit_lock_bar(
+        position,
+        high=99.7,
+        low=99.56,
+        taker_fee_rate=0.0,
+        trigger_pct=10.0,
+        pullback_fraction=0.20,
+        floor_pct=0.0,
+        giveback_pct=1.0,
+        min_tp_progress=0.95,
+    )
+    assert early_peak_exit is None
+    assert changed
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 6.6
+
+    below_min_net_exit, _changed = evaluate_profit_lock_bar(
+        position,
+        high=99.7,
+        low=99.56,
+        taker_fee_rate=0.0,
+        trigger_pct=10.0,
+        pullback_fraction=0.20,
+        floor_pct=0.0,
+        giveback_pct=1.0,
+        min_tp_progress=0.95,
+    )
+    runner_peak_exit, _changed = evaluate_profit_lock_bar(
+        position,
+        high=98.7,
+        low=98.616,
+        taker_fee_rate=0.0,
+        trigger_pct=10.0,
+        pullback_fraction=0.20,
+        floor_pct=0.0,
+        giveback_pct=1.0,
+        min_tp_progress=0.95,
+    )
+    final_exit, _changed = evaluate_profit_lock_bar(
+        position,
+        high=99.6,
+        low=98.616,
+        taker_fee_rate=0.0,
+        trigger_pct=10.0,
+        pullback_fraction=0.20,
+        floor_pct=0.0,
+        giveback_pct=1.0,
+        min_tp_progress=0.95,
+    )
+
+    assert below_min_net_exit is None
+    assert runner_peak_exit is None
+    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 69.2
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 20.76
+    assert final_exit == (99.5848, "PEAK_PROFIT_LOCK")

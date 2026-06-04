@@ -97,7 +97,7 @@ from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
-from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_strategy_enabled, pmt_symbol_allowed, score_pmt_threshold_signal
+from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -279,7 +279,7 @@ class FuturesRuntime:
         for trade in reversed(self.trade_history[-50:]):
             if not isinstance(trade, dict):
                 continue
-            if str(trade.get("exit_reason") or "").upper() != "TAKE_PROFIT":
+            if not pmt_win_cooldown_exit_reason(trade.get("exit_reason")):
                 continue
             if str(trade.get("entry_signal") or "").upper().startswith("PMT_THRESHOLD_") is False:
                 continue
@@ -291,7 +291,7 @@ class FuturesRuntime:
             elapsed = (now - exit_time.astimezone(timezone.utc)).total_seconds()
             if elapsed < cooldown_seconds:
                 remaining = cooldown_seconds - elapsed
-                log.info("PMT scan skipped: post-TP cooldown active remaining=%.0fs", remaining)
+                log.info("PMT scan skipped: post-win cooldown active remaining=%.0fs", remaining)
                 return True
             return False
         return False
@@ -490,13 +490,13 @@ class FuturesRuntime:
     # others (XAUT, PEPE, TAO, SILVER). When the API value is missing,
     # implausibly low, or below the conservative live floor without explicit
     # account-tier verification, we fall back to
-    # ``MEXC_PERP_DEFAULT_TAKER_FEE_RATE`` (default 0.0006 = 6 bp, matching
-    # observed live taker fills). Source is logged explicitly
+    # ``MEXC_PERP_DEFAULT_TAKER_FEE_RATE`` (default 0.0008 = 8 bp, matching
+    # observed live PMT stop/market fills). Source is logged explicitly
     # (``src=api`` / ``src=default`` / ``src=default_low_api``) so operators
     # can audit fee assumptions without reading the source.
     # ------------------------------------------------------------------
-    _DEFAULT_TAKER_FEE_RATE = float(os.environ.get("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", "0.0006") or "0.0006")
-    _STANDARD_TAKER_FEE_RATE = 0.0006
+    _DEFAULT_TAKER_FEE_RATE = float(os.environ.get("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", "0.0008") or "0.0008")
+    _STANDARD_TAKER_FEE_RATE = 0.0008
     # Below this threshold we treat the API value as "implausibly low"
     # (almost certainly a maker rate mis-mapped or a tier promo that won't
     # survive a stop-out) and fall back to the venue default. MEXC's
@@ -882,6 +882,25 @@ class FuturesRuntime:
             return None
         return value if value != 0.0 else None
 
+    @staticmethod
+    def _metadata_override_float(metadata: dict[str, Any], key: str) -> float | None:
+        if key not in metadata:
+            return None
+        raw_value = metadata.get(key)
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, str) and raw_value.strip() == "":
+            return None
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _metadata_override_or(cls, metadata: dict[str, Any], key: str, default: float) -> float:
+        override = cls._metadata_override_float(metadata, key)
+        return default if override is None else override
+
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if not self._flag("USE_FUTURES_PROFIT_LOCK"):
             return False
@@ -933,11 +952,11 @@ class FuturesRuntime:
         min_tp_progress = max(0.0, self._env_float("FUTURES_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0))
         breakeven_arm_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_ARM_PCT", 10.0))
         breakeven_floor_pct = max(0.0, self._env_float("FUTURES_BREAKEVEN_FLOOR_PCT", 2.0))
-        trigger_pct = self._metadata_float(metadata, "profit_lock_trigger_pct_override") or trigger_pct
-        pullback_fraction = self._metadata_float(metadata, "profit_lock_pullback_fraction_override") or pullback_fraction
-        floor_pct = self._metadata_float(metadata, "profit_lock_floor_pct_override") or floor_pct
-        giveback_pct = self._metadata_float(metadata, "profit_lock_giveback_pct_override") or giveback_pct
-        min_tp_progress = self._metadata_float(metadata, "profit_lock_min_tp_progress_override") or min_tp_progress
+        trigger_pct = self._metadata_override_or(metadata, "profit_lock_trigger_pct_override", trigger_pct)
+        pullback_fraction = self._metadata_override_or(metadata, "profit_lock_pullback_fraction_override", pullback_fraction)
+        floor_pct = self._metadata_override_or(metadata, "profit_lock_floor_pct_override", floor_pct)
+        giveback_pct = self._metadata_override_or(metadata, "profit_lock_giveback_pct_override", giveback_pct)
+        min_tp_progress = self._metadata_override_or(metadata, "profit_lock_min_tp_progress_override", min_tp_progress)
         breakeven_arm_pct = self._metadata_float(metadata, "breakeven_arm_pct_override") or breakeven_arm_pct
         breakeven_floor_pct = self._metadata_float(metadata, "breakeven_floor_pct_override") or breakeven_floor_pct
         if changed and gross_peak_pct > 0.0 and gross_peak_pct < trigger_pct:
@@ -1016,8 +1035,16 @@ class FuturesRuntime:
                 metadata[PROFIT_LOCK_STOP_PCT_KEY] = float(net_stop_pct)
                 changed = True
             if gross_pnl_pct <= stop_pct:
-                min_exit_net_pct = self._metadata_float(metadata, "profit_lock_exit_min_net_pct_override") or max(0.0, self._env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0))
+                min_exit_net_pct = self._metadata_override_or(
+                    metadata,
+                    "profit_lock_exit_min_net_pct_override",
+                    max(0.0, self._env_float("FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0)),
+                )
                 required_net_pct = min_exit_net_pct + self._exit_slippage_buffer_pct(position, current_price)
+                if min_exit_net_pct > 0.0 and net_pnl_pct < required_net_pct:
+                    if changed:
+                        self._save_state()
+                    return False
                 log.warning(
                     "[PROFIT_LOCK_EXIT] symbol=%s side=%s gross_pnl_pct=%.2f net_pnl_pct=%.2f "
                     "gross_peak_pct=%.2f net_peak_pct=%.2f stop_pct=%.2f required_net_pct=%.2f "

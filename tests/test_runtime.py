@@ -26,7 +26,11 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_PMT_MIN_LEVERAGE",
         "FUTURES_PMT_MAX_LEVERAGE",
         "FUTURES_PMT_MENTAL_THRESHOLD_STEPS",
+        "FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT",
+        "FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT",
+        "FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION",
         "FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS",
+        "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
         "FUTURES_PMT_TP_COOLDOWN_HOURS",
         "FUTURES_SYMBOLS",
         "FUTURES_BACKTEST_SYMBOLS",
@@ -44,11 +48,19 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_PROFIT_LOCK_GIVEBACK_PCT",
         "FUTURES_PROFIT_LOCK_FLOOR_PCT",
         "FUTURES_PROFIT_LOCK_MIN_TP_PROGRESS",
+        "FUTURES_PROFIT_LOCK_EXIT_MIN_NET_PCT",
         "FUTURES_MICRO_LOCK_ENABLED",
         "FUTURES_ADVERSE_PEAK_TRAIL_ENABLED",
         "FUTURES_NO_PROGRESS_EXIT_ENABLED",
         "FUTURES_STAGNATION_EXIT_ENABLED",
         "FUTURES_TRAILING_EXIT_DRAWDOWN_PCT",
+        "MEXC_PERP_DEFAULT_TAKER_FEE_RATE",
+        "MEXC_PERP_FEE_TIER_VERIFIED",
+        "USE_DRAWDOWN_KILL",
+        "IGNORE_HALT",
+        "FUTURES_ALLOW_LIVE_HALT_OVERRIDE",
+        "DRAWDOWN_SOFT_PCT",
+        "DRAWDOWN_HALT_PCT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -611,9 +623,9 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
 
     assert runtime._hourly_exit(position, current_price=104.0) is False
     assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 40.000
-    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 38.776
+    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 38.368
     assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 26.000
-    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 25.204
+    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 24.939
 
     assert runtime._hourly_exit(position, current_price=102.5) is True
     assert runtime.open_position is None
@@ -650,9 +662,9 @@ def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monke
 
     assert runtime._hourly_exit(position, current_price=99.5) is False
     assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 6.000
-    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 4.564
+    assert round(position.metadata["profit_lock_peak_pnl_pct"], 3) == 4.085
     assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 3.900
-    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 2.966
+    assert round(position.metadata["profit_lock_stop_pnl_pct"], 3) == 2.655
 
     assert runtime._hourly_exit(position, current_price=99.68) is True
     assert runtime.open_position is None

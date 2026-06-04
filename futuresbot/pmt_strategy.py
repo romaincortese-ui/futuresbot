@@ -21,6 +21,12 @@ ELIGIBLE_PMT_SYMBOLS: tuple[str, ...] = (
     "ZEC_USDT",
 )
 
+PMT_WIN_COOLDOWN_EXIT_REASONS = frozenset({"TAKE_PROFIT", "PEAK_PROFIT_LOCK"})
+
+
+def pmt_win_cooldown_exit_reason(reason: object) -> bool:
+    return str(reason or "").upper() in PMT_WIN_COOLDOWN_EXIT_REASONS
+
 
 @dataclass(frozen=True, slots=True)
 class PairPMTProfile:
@@ -342,7 +348,7 @@ def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Men
 
 def _leverage_for_score(score: float, pmt_label: str) -> int:
     min_lev = max(1, int(_env_float("FUTURES_PMT_MIN_LEVERAGE", _env_float("FUTURES_LEVERAGE_MIN", 15.0))))
-    max_lev = max(min_lev, int(_env_float("FUTURES_PMT_MAX_LEVERAGE", _env_float("FUTURES_LEVERAGE_MAX", 50.0))))
+    max_lev = max(min_lev, int(_env_float("FUTURES_PMT_MAX_LEVERAGE", _env_float("FUTURES_LEVERAGE_MAX", 25.0))))
     if score >= 92.0 or pmt_label.startswith("MEGA_"):
         target = max_lev
     elif score >= 84.0:
@@ -397,7 +403,7 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
     leverage = _leverage_for_score(score, pmt.label)
     entry_price = cross.current_close
     tp_margin_pct = _tp_margin_pct(score)
-    taker_fee_rate = float(getattr(config, "taker_fee_rate", _env_float("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", 0.0006)) or 0.0006)
+    taker_fee_rate = float(getattr(config, "taker_fee_rate", _env_float("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", 0.0008)) or 0.0008)
     sl_margin_pct = _sl_margin_pct(score, leverage=leverage, taker_fee_rate=taker_fee_rate)
     tp_price, sl_price = _target_prices(entry_price, cross.side, leverage, tp_margin_pct, sl_margin_pct)
     metadata.update(
@@ -409,11 +415,12 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
             "opportunity_score_10": int(max(1, min(10, round(score / 10.0)))),
             "opportunity_balance_fraction": 1.0,
             "opportunity_nav_risk_pct": 1.0,
-            "profit_lock_trigger_pct_override": 10.0,
-            "profit_lock_giveback_pct_override": 1.0,
-            "profit_lock_min_tp_progress_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", 0.50)),
+            "profit_lock_trigger_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 20.0)),
+            "profit_lock_giveback_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
+            "profit_lock_pullback_fraction_override": min(0.95, max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.70))),
+            "profit_lock_min_tp_progress_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0)),
             "profit_lock_floor_pct_override": 0.0,
-            "profit_lock_exit_min_net_pct_override": 0.0,
+            "profit_lock_exit_min_net_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", 20.0)),
         }
     )
     return FuturesSignal(
