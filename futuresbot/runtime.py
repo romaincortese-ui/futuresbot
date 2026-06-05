@@ -2829,11 +2829,11 @@ class FuturesRuntime:
         return True
 
     def _pmt_funding_hard_block_enabled(self) -> bool:
-        return self._env_bool("FUTURES_PMT_FUNDING_HARD_BLOCK_ENABLED", False)
+        return self._flag("FUTURES_PMT_FUNDING_HARD_BLOCK_ENABLED", False)
 
     def _pmt_funding_context(self, scoped: FuturesConfig) -> tuple[float | None, float]:
         cap = float(scoped.funding_rate_abs_max or 0.0)
-        if not self._env_bool("FUTURES_PMT_FUNDING_SCORE_ENABLED", True):
+        if not self._flag("FUTURES_PMT_FUNDING_SCORE_ENABLED", True):
             return None, cap
         return self._funding_rate_for_symbol(scoped), cap
 
@@ -3688,10 +3688,11 @@ class FuturesRuntime:
     # Sprint 1 helpers — all no-ops unless the matching env flag is set.
     # ------------------------------------------------------------------
     @staticmethod
-    def _flag(name: str) -> bool:
+    def _flag(name: str, default: bool = False) -> bool:
         import os
 
-        return os.environ.get(name, "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+        default_value = "1" if default else "0"
+        return os.environ.get(name, default_value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
     def _strategies_retired(self) -> bool:
         return self._flag("FUTURES_STRATEGIES_RETIRED")
