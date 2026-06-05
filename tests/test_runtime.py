@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+import futuresbot.runtime as runtime_module
 from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.exits import evaluate_adverse_peak_trail_bar, evaluate_micro_lock_bar, evaluate_no_progress_loss_exit, evaluate_profit_lock_bar, evaluate_trailing_bar, trailing_stop_price
 from futuresbot.marketdata import MexcApiError
@@ -32,10 +34,15 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS",
         "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
         "FUTURES_PMT_TP_COOLDOWN_HOURS",
+        "FUTURES_PMT_PARALLEL_SCAN_ENABLED",
+        "FUTURES_PMT_SCAN_WORKERS",
+        "FUTURES_PMT_USE_MAKER_LADDER",
         "FUTURES_SYMBOLS",
         "FUTURES_BACKTEST_SYMBOLS",
         "FUTURES_FULL_BALANCE_SIZING_ENABLED",
         "FUTURES_FULL_BALANCE_RISK_PCT",
+        "FUTURES_LIVE_SETUP_CACHE_ENABLED",
+        "FUTURES_LIVE_SETUP_CACHE_SECONDS",
         "FUTURES_LEVERAGE_MIN",
         "FUTURES_LEVERAGE_MAX",
         "FUTURES_ENTRY_MIN_SCORE",
@@ -146,6 +153,60 @@ def test_pmt_scan_symbols_ignore_overlay_candidates(tmp_path, monkeypatch):
     runtime._sharp_event_overlay_symbols_for_cycle = lambda: ("XRP_USDT", "DOGE_USDT")
 
     assert runtime._scan_symbols_for_cycle() == tuple(runtime._active_symbols)
+
+
+def test_pmt_fetch_signal_parallelizes_symbol_klines(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("FUTURES_PMT_PARALLEL_SCAN_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_PMT_SCAN_WORKERS", "3")
+    symbols = ("BTC_USDT", "ETH_USDT", "SOL_USDT")
+
+    class ParallelKlinesClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self._lock = threading.Lock()
+            self._overlap = threading.Event()
+            self._active_calls = 0
+            self.max_active_calls = 0
+
+        def get_klines(self, symbol: str, *, interval: str = "Min15", start: int | None = None, end: int | None = None) -> pd.DataFrame:
+            with self._lock:
+                self._active_calls += 1
+                self.max_active_calls = max(self.max_active_calls, self._active_calls)
+                if self._active_calls > 1:
+                    self._overlap.set()
+            try:
+                self._overlap.wait(timeout=0.25)
+                return self.frame.copy()
+            finally:
+                with self._lock:
+                    self._active_calls -= 1
+
+    def fake_pmt_score(frame, scoped, *, funding_rate=None, funding_cap=0.0):
+        scores = {"BTC_USDT": 91.0, "ETH_USDT": 96.0, "SOL_USDT": 93.0}
+        score = scores[scoped.symbol]
+        return FuturesSignal(
+            symbol=scoped.symbol,
+            side="LONG",
+            score=score,
+            certainty=score / 100.0,
+            entry_price=100.0,
+            tp_price=110.0,
+            sl_price=96.0,
+            leverage=5,
+            entry_signal="PMT_THRESHOLD_LONG",
+            metadata={"tp_margin_pct": 50.0, "sl_margin_pct": 20.0},
+        )
+
+    client = ParallelKlinesClient()
+    monkeypatch.setattr(runtime_module, "score_pmt_threshold_signal", fake_pmt_score)
+    runtime = FuturesRuntime(replace(_config(tmp_path), symbols=symbols), client)
+
+    signal = runtime._fetch_pmt_signal()
+
+    assert signal is not None
+    assert signal["symbol"] == "ETH_USDT"
+    assert client.max_active_calls > 1
 
 
 def test_pmt_validation_keeps_eligible_symbol_on_detail_rate_limit(tmp_path, monkeypatch):
@@ -2826,6 +2887,85 @@ def test_pmt_live_enter_trade_bypasses_maker_ladder_by_default(tmp_path, monkeyp
     assert runtime._enter_trade(signal) is True
     assert [order["order_type"] for order in client.orders] == [5]
     assert runtime.open_positions["BTC_USDT"].position_id == "pos-pmt-fast"
+
+
+def test_live_enter_trade_caches_successful_position_setup(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("FUTURES_LIVE_SETUP_CACHE_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_LIVE_SETUP_CACHE_SECONDS", "3600")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "0")
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "0")
+    monkeypatch.setenv("USE_FUNDING_AWARE_ENTRY", "0")
+    monkeypatch.setenv("USE_PORTFOLIO_VAR", "0")
+
+    class SetupCacheClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.orders: list[dict[str, object]] = []
+            self.position_mode_calls = 0
+            self.leverage_calls = 0
+
+        def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
+            return {"availableBalance": "100.0", "equity": "100.0"}
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            self.position_mode_calls += 1
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            self.leverage_calls += 1
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            return {"orderId": f"entry-{len(self.orders)}"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            volume = str(self.orders[-1]["vol"])
+            return {"orderId": order_id, "dealAvgPrice": "100.0", "dealVol": volume, "positionId": f"pos-{len(self.orders)}"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            volume = str(self.orders[-1]["vol"])
+            margin = float(self.orders[-1]["vol"]) * 100.0 / float(self.orders[-1]["leverage"])
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "positionType": 2,
+                    "holdVol": volume,
+                    "holdAvgPrice": "100.0",
+                    "im": str(margin),
+                    "leverage": str(self.orders[-1]["leverage"]),
+                    "positionId": f"pos-{len(self.orders)}",
+                }
+            ]
+
+    client = SetupCacheClient()
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=50.0), client)
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "SHORT",
+        "entry_price": 100.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 95.0,
+        "sl_price": 102.0,
+        "score": 92.0,
+        "certainty": 0.92,
+        "entry_signal": "PMT_THRESHOLD_SHORT",
+        "metadata": {"tp_margin_pct": 25.0, "sl_margin_pct": 10.0},
+    }
+
+    assert runtime._enter_trade(dict(signal)) is True
+    runtime.open_positions.clear()
+    assert runtime._enter_trade(dict(signal)) is True
+    assert len(client.orders) == 2
+    assert client.position_mode_calls == 1
+    assert client.leverage_calls == 1
 
 
 def test_live_enter_trade_registers_only_confirmed_exchange_position(tmp_path, monkeypatch):

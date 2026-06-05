@@ -66,6 +66,7 @@ def _dynamic_pullback_fraction(peak_pct, volatility):
     return min(0.5, max(0.15, base + adj))
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import html
 import json
@@ -184,6 +185,8 @@ class FuturesRuntime:
         self._last_pmt_core_weight_refresh_at = 0.0
         self._last_pmt_core_weight_log_at = 0.0
         self._last_pmt_core_weight_reason = ""
+        self._live_position_mode_cache: tuple[int, float] | None = None
+        self._live_leverage_setup_cache: dict[tuple[str, int, int, int], float] = {}
         self._sharp_event_symbols: tuple[str, ...] = ()
         self._last_sharp_event_symbol_refresh_at = 0.0
         self.missed_opportunities: dict[str, dict[str, Any]] = {}
@@ -3335,6 +3338,7 @@ class FuturesRuntime:
         best: tuple[float, Any] | None = None
         scan_symbols = self._scan_symbols_for_cycle()
         self._last_cycle_symbol_count = len(scan_symbols)
+        candidates: list[tuple[str, FuturesConfig, float | None, float]] = []
         for sym in scan_symbols:
             if sym in self.open_positions:
                 continue
@@ -3349,30 +3353,18 @@ class FuturesRuntime:
             if self._pmt_funding_hard_block_enabled() and not self._funding_gate_ok(scoped):
                 continue
             funding_rate, funding_cap = self._pmt_funding_context(scoped)
-            try:
-                frame = self.client.get_klines(sym, interval="Min15", start=start, end=end)
-            except Exception as exc:
-                log.warning("Futures klines fetch failed for %s: %s", sym, exc)
+            candidates.append((sym, scoped, funding_rate, funding_cap))
+        if not candidates:
+            return None
+        results = self._score_pmt_candidates(candidates, start=start, end=end)
+        for sym, signal, reason, error in results:
+            if error is not None:
+                log.warning("Futures klines/scoring failed for %s: %s", sym, error)
                 continue
-            frame = self._drop_incomplete_klines(frame, interval_seconds=900, now_ts=end)
-            signal = score_pmt_threshold_signal(
-                frame,
-                scoped,
-                funding_rate=funding_rate,
-                funding_cap=funding_cap,
-            )
             if signal is None:
-                reason = diagnose_pmt_threshold_rejection(
-                    frame,
-                    scoped,
-                    funding_rate=funding_rate,
-                    funding_cap=funding_cap,
-                )
+                reason = reason or "no_signal"
                 self._last_cycle_gate_blocks[sym] = reason
                 log.info("[PMT_GATE_BLOCK] symbol=%s reason=%s", sym, reason)
-                continue
-            if self._pmt_stop_chase_blocked(signal.to_dict()):
-                self._last_cycle_gate_blocks[sym] = "pmt_stop_chase_cooldown"
                 continue
             leverage = self._enforce_live_leverage_bounds(int(signal.leverage), symbol=sym)
             if leverage != int(signal.leverage):
@@ -3402,6 +3394,88 @@ class FuturesRuntime:
         if best is None:
             return None
         return best[1].to_dict()
+
+    def _score_pmt_candidates(
+        self,
+        candidates: list[tuple[str, FuturesConfig, float | None, float]],
+        *,
+        start: int,
+        end: int,
+    ) -> list[tuple[str, Any | None, str | None, BaseException | None]]:
+        worker_count = min(
+            len(candidates),
+            max(1, int(self._env_float("FUTURES_PMT_SCAN_WORKERS", float(len(candidates))))),
+            8,
+        )
+        parallel = worker_count > 1 and self._flag("FUTURES_PMT_PARALLEL_SCAN_ENABLED", True)
+        if not parallel:
+            return [self._score_pmt_candidate(candidate, start=start, end=end) for candidate in candidates]
+        log.info("PMT parallel scan active: symbols=%d workers=%d", len(candidates), worker_count)
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="pmt-scan") as executor:
+            return list(executor.map(lambda candidate: self._score_pmt_candidate(candidate, start=start, end=end), candidates))
+
+    def _score_pmt_candidate(
+        self,
+        candidate: tuple[str, FuturesConfig, float | None, float],
+        *,
+        start: int,
+        end: int,
+    ) -> tuple[str, Any | None, str | None, BaseException | None]:
+        sym, scoped, funding_rate, funding_cap = candidate
+        try:
+            frame = self.client.get_klines(sym, interval="Min15", start=start, end=end)
+            frame = self._drop_incomplete_klines(frame, interval_seconds=900, now_ts=end)
+            signal = score_pmt_threshold_signal(
+                frame,
+                scoped,
+                funding_rate=funding_rate,
+                funding_cap=funding_cap,
+            )
+            if signal is None:
+                reason = diagnose_pmt_threshold_rejection(
+                    frame,
+                    scoped,
+                    funding_rate=funding_rate,
+                    funding_cap=funding_cap,
+                )
+                return sym, None, reason, None
+            if self._pmt_stop_chase_blocked(signal.to_dict()):
+                return sym, None, "pmt_stop_chase_cooldown", None
+            return sym, signal, None, None
+        except Exception as exc:
+            return sym, None, None, exc
+
+    def _ensure_live_position_setup(self, *, symbol: str, side_name: str, leverage: int) -> None:
+        cache_seconds = 0.0
+        if self._flag("FUTURES_LIVE_SETUP_CACHE_ENABLED", True):
+            cache_seconds = max(0.0, self._env_float("FUTURES_LIVE_SETUP_CACHE_SECONDS", 21600.0))
+        cache_enabled = cache_seconds > 0.0
+        now = time.monotonic()
+        position_mode = int(self.config.position_mode)
+        cached_mode = self._live_position_mode_cache
+        mode_cached = bool(cached_mode is not None and cached_mode[0] == position_mode and now - cached_mode[1] < cache_seconds)
+        if not cache_enabled or not mode_cached:
+            try:
+                self.client.change_position_mode(position_mode)
+                if cache_enabled:
+                    self._live_position_mode_cache = (position_mode, time.monotonic())
+                    self._live_leverage_setup_cache.clear()
+            except Exception:
+                pass
+        position_type = 1 if side_name == "LONG" else 2
+        setup_key = (symbol.upper(), int(position_type), int(leverage), int(self.config.open_type))
+        cached_at = self._live_leverage_setup_cache.get(setup_key, 0.0)
+        leverage_cached = cache_enabled and now - cached_at < cache_seconds
+        if leverage_cached:
+            return
+        self.client.change_leverage(
+            symbol=symbol,
+            leverage=leverage,
+            position_type=position_type,
+            open_type=self.config.open_type,
+        )
+        if cache_enabled:
+            self._live_leverage_setup_cache[setup_key] = time.monotonic()
 
     def _refresh_crypto_event_state(self) -> dict[str, Any] | None:
         if not getattr(self.config, "crypto_event_overlay_enabled", True):
@@ -5769,11 +5843,7 @@ class FuturesRuntime:
             self._record_activity(f"Opened {side_name} {symbol} x{leverage} (paper)")
             self._save_state()
             return True
-        try:
-            self.client.change_position_mode(self.config.position_mode)
-        except Exception:
-            pass
-        self.client.change_leverage(symbol=symbol, leverage=leverage, position_type=1 if side_name == "LONG" else 2, open_type=self.config.open_type)
+        self._ensure_live_position_setup(symbol=symbol, side_name=side_name, leverage=leverage)
         # Sprint 3 §3.5 — try maker-ladder first; on timeout/failure, fall back
         # to taker market order (original behaviour). No-op unless flag on.
         maker_result = self._attempt_maker_ladder(
