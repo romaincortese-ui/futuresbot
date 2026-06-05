@@ -2327,6 +2327,29 @@ def test_register_and_clear_positions_track_total_margin(tmp_path):
     assert runtime._total_open_margin() == 60.0
 
 
+def test_register_and_clear_positions_sync_fair_price_websocket_symbols(tmp_path):
+    class RecordingFairPriceMonitor:
+        def __init__(self) -> None:
+            self.calls: list[set[str]] = []
+
+        def set_symbols(self, symbols: set[str]) -> None:
+            self.calls.append(set(symbols))
+
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    monitor = RecordingFairPriceMonitor()
+    runtime._fair_price_monitor = monitor
+
+    runtime._register_position(_make_position("BTC_USDT", margin=40.0))
+    runtime._register_position(_make_position("ETH_USDT", margin=60.0))
+    runtime._clear_position("BTC_USDT")
+
+    assert monitor.calls == [
+        {"BTC_USDT"},
+        {"BTC_USDT", "ETH_USDT"},
+        {"ETH_USDT"},
+    ]
+
+
 def test_bucket_open_count_and_available_slots(tmp_path):
     cfg = replace(
         _config(tmp_path),

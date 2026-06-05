@@ -225,14 +225,17 @@ class FuturesRuntime:
 
         if value is None:
             self.open_positions.clear()
+            self._sync_open_position_price_subscriptions()
             return
-        self.open_positions[value.symbol] = value
+        self._register_position(value)
 
     def _register_position(self, position: FuturesPosition) -> None:
         self.open_positions[position.symbol] = position
+        self._sync_open_position_price_subscriptions()
 
     def _clear_position(self, symbol: str) -> None:
         self.open_positions.pop(symbol, None)
+        self._sync_open_position_price_subscriptions()
 
     def _record_position_exit(self, position: FuturesPosition, trade: dict[str, Any]) -> None:
         self._last_exit_by_symbol[position.symbol.upper()] = {
@@ -2628,7 +2631,10 @@ class FuturesRuntime:
     def _sync_open_position_price_subscriptions(self) -> None:
         if not self._futures_fair_price_ws_enabled():
             return
-        self._fair_price_monitor.set_symbols({position.symbol for position in self.open_positions.values()})
+        try:
+            self._fair_price_monitor.set_symbols({position.symbol for position in self.open_positions.values()})
+        except Exception as exc:
+            log.warning("Futures fair-price WS subscription sync failed: %s", exc)
 
     def _open_position_guard_price(self, symbol: str) -> float:
         if self._futures_fair_price_ws_enabled():
