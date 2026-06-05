@@ -15,6 +15,7 @@ from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesBacktestConfig, Fu
 from futuresbot.gate_b_readiness import SymbolResult, evaluate_gate_b_readiness
 from futuresbot.marketdata import FuturesHistoricalDataProvider, MexcFuturesClient
 from futuresbot.models import FuturesPosition, FuturesSignal
+from futuresbot.pmt_core_weight import SymbolMarketInput, build_core_weight_payload
 from futuresbot.pmt_strategy import pmt_strategy_enabled, pmt_win_cooldown_exit_reason
 
 
@@ -35,12 +36,101 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
 def _calibration_output_file() -> str:
     raw = os.getenv("FUTURES_CALIBRATION_OUTPUT_FILE", "backtest_output/calibration.json")
     path = Path(raw)
     if path.is_absolute():
         return str(path)
     return str((Path(__file__).resolve().parent / path).resolve())
+
+
+def _historical_replay_ticker(symbol: str, frame_slice: pd.DataFrame) -> dict[str, Any]:
+    close = pd.to_numeric(frame_slice.get("close", pd.Series(dtype="float64")), errors="coerce").dropna()
+    volume = pd.to_numeric(frame_slice.get("volume", pd.Series(dtype="float64")), errors="coerce").dropna()
+    if close.empty:
+        return {"symbol": symbol}
+    last_price = float(close.iloc[-1])
+    quote_amount = 0.0
+    base_volume = 0.0
+    if not volume.empty:
+        recent_close = close.tail(96)
+        recent_volume = volume.reindex(recent_close.index).fillna(0.0)
+        quote_amount = float((recent_close * recent_volume).sum())
+        base_volume = float(recent_volume.sum())
+    return {
+        "symbol": symbol,
+        "lastPrice": last_price,
+        "fairPrice": last_price,
+        "indexPrice": last_price,
+        "amount24": quote_amount,
+        "volume24": base_volume,
+    }
+
+
+def _historical_core_weight_inputs(
+    frames: dict[str, pd.DataFrame],
+    indexes: dict[str, dict[Any, int]],
+    timestamp: Any,
+    *,
+    lookback_bars: int,
+) -> list[SymbolMarketInput]:
+    inputs: list[SymbolMarketInput] = []
+    for symbol, frame in frames.items():
+        idx = indexes.get(symbol, {}).get(timestamp)
+        if idx is None:
+            continue
+        start = max(0, idx + 1 - lookback_bars)
+        frame_slice = frame.iloc[start : idx + 1]
+        if len(frame_slice) < 96:
+            continue
+        inputs.append(
+            SymbolMarketInput(
+                symbol=symbol,
+                frame=frame_slice,
+                ticker=_historical_replay_ticker(symbol, frame_slice),
+                funding_rate=0.0,
+            )
+        )
+    return inputs
+
+
+def _core_weight_replay_record(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "generated_at": payload.get("generated_at"),
+        "recommended_core_weight": payload.get("recommended_core_weight"),
+        "calculated_core_weight": payload.get("calculated_core_weight"),
+        "previous_core_weight": payload.get("previous_core_weight"),
+        "portfolio": payload.get("portfolio"),
+        "symbols": payload.get("symbols"),
+    }
+
+
+def _pmt_stop_chase_exit_reason(reason: object) -> bool:
+    raw = str(reason or "").upper()
+    configured = os.environ.get("FUTURES_PMT_STOP_CHASE_EXIT_REASONS", "STOP_LOSS,PEAK_PROTECTION_GAP_EXIT")
+    allowed = {part.strip().upper() for part in configured.replace(";", ",").split(",") if part.strip()}
+    return raw in (allowed or {"STOP_LOSS"})
+
+
+def _pmt_stop_chase_blocked(signal: FuturesSignal, now: pd.Timestamp, cooldowns: dict[tuple[str, str], pd.Timestamp]) -> bool:
+    if not pmt_strategy_enabled():
+        return False
+    cooldown_hours = max(0.0, _env_float("FUTURES_PMT_STOP_CHASE_COOLDOWN_HOURS", 0.0))
+    if cooldown_hours <= 0.0:
+        return False
+    key = (signal.symbol.upper(), signal.side.upper())
+    until = cooldowns.get(key)
+    return until is not None and now < until
 
 
 DEFAULT_LIVE_SYMBOLS = DEFAULT_FUTURES_SYMBOLS
@@ -136,6 +226,24 @@ def _run_portfolio_backtest(
     pending_symbol = ""
     pending_entry_time = None
     pmt_cooldown_until = None
+    core_weight_replay_enabled = _env_bool("FUTURES_PMT_CORE_WEIGHT_REPLAY_ENABLED", False)
+    core_weight_replay_interval_seconds = int(max(900.0, _env_float("FUTURES_PMT_CORE_WEIGHT_REPLAY_INTERVAL_HOURS", 6.0) * 3600.0))
+    core_weight_replay_lookback_bars = max(96, _env_int("FUTURES_PMT_CORE_WEIGHT_REPLAY_LOOKBACK_BARS", 192))
+    core_weight_replay_slot: int | None = None
+    core_weight_replay_payload: dict[str, Any] | None = None
+    core_weight_replay_rows: list[dict[str, Any]] = []
+    pmt_stop_chase_cooldowns: dict[tuple[str, str], pd.Timestamp] = {}
+    pmt_stop_chase_blocks = 0
+
+    def register_pmt_exit(position: FuturesPosition, reason: str, closed_at: pd.Timestamp) -> None:
+        if not pmt_strategy_enabled() or not str(position.entry_signal or "").upper().startswith("PMT_THRESHOLD_"):
+            return
+        if not _pmt_stop_chase_exit_reason(reason):
+            return
+        cooldown_hours = max(0.0, _env_float("FUTURES_PMT_STOP_CHASE_COOLDOWN_HOURS", 0.0))
+        if cooldown_hours <= 0.0:
+            return
+        pmt_stop_chase_cooldowns[(position.symbol.upper(), position.side.upper())] = closed_at + pd.Timedelta(hours=cooldown_hours)
 
     for step_index, timestamp in enumerate(all_times, start=1):
         if progress_every > 0 and (step_index == 1 or step_index % progress_every == 0 or step_index == len(all_times)):
@@ -189,6 +297,7 @@ def _run_portfolio_backtest(
                     )
                     balance += float(trade["pnl_usdt"])
                     trades.append(trade)
+                    register_pmt_exit(open_position, reason, close_time)
                     if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
                         cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
                         pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
@@ -205,6 +314,7 @@ def _run_portfolio_backtest(
                     trade = open_engine._close_position(open_position, close_time, exit_price, reason)
                     balance += float(trade["pnl_usdt"])
                     trades.append(trade)
+                    register_pmt_exit(open_position, reason, close_time)
                     if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
                         cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
                         pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
@@ -212,6 +322,26 @@ def _run_portfolio_backtest(
                     open_engine = None
 
         pmt_cooldown_active = pmt_strategy_enabled() and pmt_cooldown_until is not None and close_time < pmt_cooldown_until
+        if core_weight_replay_enabled and pmt_strategy_enabled():
+            replay_slot = int(close_time.timestamp()) // core_weight_replay_interval_seconds
+            if replay_slot != core_weight_replay_slot:
+                replay_inputs = _historical_core_weight_inputs(
+                    frames,
+                    indexes,
+                    timestamp,
+                    lookback_bars=core_weight_replay_lookback_bars,
+                )
+                if replay_inputs:
+                    core_weight_replay_payload = build_core_weight_payload(
+                        replay_inputs,
+                        previous_payload=core_weight_replay_payload,
+                        now_unix=close_time.timestamp(),
+                    )
+                    replay_weight = float(core_weight_replay_payload["recommended_core_weight"])
+                    os.environ["FUTURES_PMT_SIMPLE_CORE_WEIGHT"] = f"{replay_weight:.2f}"
+                    os.environ["FUTURES_PMT_SIMPLE_CORE_WEIGHT_SOURCE"] = "historical_replay"
+                    core_weight_replay_rows.append(_core_weight_replay_record(core_weight_replay_payload))
+                    core_weight_replay_slot = replay_slot
         if (
             open_position is not None
             and open_engine is not None
@@ -227,6 +357,9 @@ def _run_portfolio_backtest(
                     continue
                 signal = engines[symbol]._candidate_signal_for_frame(frame.iloc[: idx + 1], close_time.to_pydatetime(), len(frame) - idx - 1)
                 if signal is None:
+                    continue
+                if _pmt_stop_chase_blocked(signal, close_time, pmt_stop_chase_cooldowns):
+                    pmt_stop_chase_blocks += 1
                     continue
                 metadata = signal.metadata or {}
                 candidates.append(
@@ -272,6 +405,9 @@ def _run_portfolio_backtest(
                 signal = engines[symbol]._candidate_signal_for_frame(frame.iloc[: idx + 1], close_time.to_pydatetime(), len(frame) - idx - 1)
                 if signal is None:
                     continue
+                if _pmt_stop_chase_blocked(signal, close_time, pmt_stop_chase_cooldowns):
+                    pmt_stop_chase_blocks += 1
+                    continue
                 metadata = signal.metadata or {}
                 candidates.append(
                     (
@@ -311,6 +447,7 @@ def _run_portfolio_backtest(
         trade = open_engine._close_position(open_position, final_timestamp, final_close, "END_OF_TEST")
         balance += float(trade["pnl_usdt"])
         trades.append(trade)
+        register_pmt_exit(open_position, "END_OF_TEST", final_timestamp)
         equity_curve.append({"timestamp": final_timestamp.isoformat(), "equity": round(balance, 8), "cash_balance": round(balance, 8), "open_positions": 0})
 
     report = build_report(equity_curve, trades, base_config.initial_balance)
@@ -318,7 +455,30 @@ def _run_portfolio_backtest(
     report["symbols"] = list(frames.keys())
     report["usable_symbols"] = len(frames)
     report["max_open_positions"] = 1
+    cooldown_hours = max(0.0, _env_float("FUTURES_PMT_STOP_CHASE_COOLDOWN_HOURS", 0.0))
+    if cooldown_hours > 0.0:
+        report["pmt_stop_chase_cooldown"] = {
+            "enabled": True,
+            "cooldown_hours": cooldown_hours,
+            "blocks": pmt_stop_chase_blocks,
+            "exit_reasons": sorted({part.strip().upper() for part in os.environ.get("FUTURES_PMT_STOP_CHASE_EXIT_REASONS", "STOP_LOSS,PEAK_PROTECTION_GAP_EXIT").replace(";", ",").split(",") if part.strip()}),
+        }
+    if core_weight_replay_enabled:
+        weights: dict[str, int] = {}
+        for row in core_weight_replay_rows:
+            weight = str(row.get("recommended_core_weight"))
+            weights[weight] = weights.get(weight, 0) + 1
+        report["pmt_core_weight_replay"] = {
+            "enabled": True,
+            "interval_hours": round(core_weight_replay_interval_seconds / 3600.0, 4),
+            "lookback_bars": core_weight_replay_lookback_bars,
+            "updates": len(core_weight_replay_rows),
+            "weight_counts": weights,
+        }
     export_artifacts(base_config.output_dir, equity_curve, trades, report)
+    if core_weight_replay_enabled:
+        replay_path = Path(base_config.output_dir) / "pmt_core_weight_replay.json"
+        replay_path.write_text(json.dumps(core_weight_replay_rows, indent=2), encoding="utf-8")
     return equity_curve, trades, report
 
 

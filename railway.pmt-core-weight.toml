@@ -1,0 +1,9 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python run_pmt_core_weight_calibration.py"
+cronSchedule = "0 */6 * * *"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+watchPatterns = ["**/*"]

@@ -54,6 +54,70 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT",
         "FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION",
         "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
+        "FUTURES_PMT_SIMPLE_SCORING_ENABLED",
+        "FUTURES_PMT_SIMPLE_BLOCK_CONFIRMATION_NO_FOLLOWTHROUGH",
+        "FUTURES_PMT_SIMPLE_BLOCK_RECENT_FAILED_RECLAIM",
+        "FUTURES_PMT_SIMPLE_COUNTERTREND_SCORE",
+        "FUTURES_PMT_SIMPLE_CORE_WEIGHT",
+        "FUTURES_PMT_SIMPLE_MEGA_SCORE",
+        "FUTURES_PMT_SIMPLE_FLASH_SCORE",
+        "FUTURES_PMT_SIMPLE_TREND_SCORE",
+        "FUTURES_PMT_SIMPLE_FLAT_SCORE",
+        "FUTURES_PMT_SIMPLE_CONTEXT_BONUS_CAP",
+        "FUTURES_PMT_SIMPLE_LATE_ENTRY_DISTANCE_PCT",
+        "FUTURES_PMT_SIMPLE_EXTREME_LATE_ENTRY_DISTANCE_PCT",
+        "FUTURES_PMT_SIMPLE_LATE_ENTRY_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_EXTREME_LATE_ENTRY_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_BLOCK_WEAK_FOLLOWTHROUGH",
+        "FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_1BAR_PCT",
+        "FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_1H_PCT",
+        "FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_MIN_VOLUME_RATIO",
+        "FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_PENALTY",
+        "FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_EXHAUSTED_CLIMAX_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_EXHAUSTION_1BAR_PENALTY",
+        "FUTURES_PMT_SIMPLE_EXHAUSTION_1H_PENALTY",
+        "FUTURES_PMT_SIMPLE_VOLUME_CLIMAX_PENALTY",
+        "FUTURES_PMT_SIMPLE_STACKED_EXHAUSTION_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_ONE_HOUR_EXHAUSTION_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_EXHAUSTION_MIN_SCORE",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_EXHAUSTION_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_SEVERE_EXHAUSTION_1BAR_PCT",
+        "FUTURES_PMT_SIMPLE_SEVERE_EXHAUSTION_1H_PCT",
+        "FUTURES_PMT_SIMPLE_SEVERE_HIGH_SCORE_EXHAUSTION_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_STRETCHED_6H_PCT",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_STRETCHED_12H_PCT",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_TREND_STRETCH_PENALTY",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_TREND_STRETCH_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_RATIO",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_1H_PCT",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_PENALTY",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_BLOCK_SCORE9_FATIGUE",
+        "FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_6H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_12H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_LATE_STRETCH_12H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_LATE_STRETCH_24H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_LATE_STRETCH_DISTANCE_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_PENALTY",
+        "FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_SCORE9_OVERSTRETCHED_24H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_BROADER_OVERSTRETCH_PENALTY",
+        "FUTURES_PMT_SIMPLE_SCORE9_BROADER_OVERSTRETCH_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_SCORE9_CONFLICT_6H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_CONFLICT_MAX_1H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_LATE_FLAT_DISTANCE_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_LATE_FLAT_6H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_LATE_FLAT_12H_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_LOW_VOLUME_PULLBACK_RATIO",
+        "FUTURES_PMT_SIMPLE_SCORE9_WEAK_QUALITY_PENALTY",
+        "FUTURES_PMT_SIMPLE_SCORE9_WEAK_QUALITY_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_RATIO",
+        "FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_MAX_DISTANCE_PCT",
+        "FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_PENALTY",
+        "FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_BLOCK_FAILED_RECLAIM_BY_CAP",
+        "FUTURES_PMT_SIMPLE_FAILED_RECLAIM_SCORE_CAP",
         "FUTURES_PMT_CONFIRMATION_BARS",
         "FUTURES_PMT_CONFIRMATION_MIN_FOLLOWTHROUGH_PCT",
         "FUTURES_PMT_BLOCK_RECENT_FAILED_RECLAIM",
@@ -333,6 +397,89 @@ def test_pmt_reduced_score_entry_blocks_exhausted_edge(monkeypatch):
     rejection = diagnose_pmt_threshold_rejection(frame, _config())
     assert rejection.startswith("reduced_score_blocked")
     assert "one_hour_exhaustion" in rejection
+
+
+def test_pmt_simple_scoring_uses_trend_and_threshold_as_core(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    frame = _frame([75600.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0])
+
+    signal = score_pmt_threshold_signal(frame, _config())
+
+    assert signal is not None
+    assert signal.side == "SHORT"
+    assert signal.score >= 90.0
+    assert signal.metadata["pmt_score_model"] == "simple_trend_threshold_v1"
+    assert signal.metadata["pmt_simple_core_weight"] == 0.90
+    assert signal.metadata["mental_threshold_confirmation_bars"] == 0
+
+
+def test_pmt_simple_core_weight_scales_context_bonus(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="80")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    frame = _frame([75600.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0])
+
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_CORE_WEIGHT", "0.95")
+    defensive_signal = score_pmt_threshold_signal(frame, _config())
+
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_CORE_WEIGHT", "0.75")
+    aggressive_signal = score_pmt_threshold_signal(frame, _config())
+
+    assert defensive_signal is not None
+    assert aggressive_signal is not None
+    assert defensive_signal.metadata["pmt_simple_core_weight"] == 0.95
+    assert aggressive_signal.metadata["pmt_simple_core_weight"] == 0.75
+    assert aggressive_signal.metadata["pmt_simple_context_bonus"] > defensive_signal.metadata["pmt_simple_context_bonus"]
+    assert aggressive_signal.score > defensive_signal.score
+
+
+def test_pmt_simple_scoring_only_caps_exhausted_volume_chase(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    frame = _frame([76000.0] * 100 + [81000.0] * 5 + [81900.0, 82450.0])
+    frame.loc[frame.index[-1], "volume"] = 3200.0
+
+    signal = score_pmt_threshold_signal(frame, _config())
+
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+
+    assert signal is None
+    assert rejection.startswith("score_below_threshold")
+    assert "simple_exhausted_volume_climax" in rejection
+
+
+def test_pmt_simple_scoring_rejects_weak_followthrough(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    frame = _frame([76000.0] * 100 + [75010.0] * 5 + [75020.0, 74980.0])
+    frame.loc[frame.index[-1], "volume"] = 2200.0
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold")
+    assert "simple_weak_followthrough" in rejection
+
+
+def test_pmt_simple_scoring_rejects_severe_high_score_exhaustion(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74000.0])
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold")
+    assert "simple_severe_high_score_exhaustion" in rejection
+
+
+def test_pmt_simple_scoring_rejects_high_score_trend_stretch(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    frame = _frame([80000.0] * 80 + [77000.0] * 20 + [75100.0] * 4 + [75080.0, 74940.0])
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold")
+    assert "simple_high_score_trend_stretch" in rejection
 
 
 def test_pmt_backtest_contract_sizing_uses_score_band_fraction(monkeypatch):

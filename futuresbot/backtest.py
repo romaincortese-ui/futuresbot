@@ -754,7 +754,9 @@ class FuturesBacktestEngine:
 					return liq.price, "LIQUIDATED"
 			except Exception:
 				pass
-		if os.environ.get("USE_FUTURES_PROFIT_LOCK", "0").strip().lower() in {"1", "true", "yes", "y", "on"}:
+		profit_lock_enabled = os.environ.get("USE_FUTURES_PROFIT_LOCK", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+		pmt_quick_profit_enabled = pmt_strategy_enabled() and _env_bool("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED", False)
+		if profit_lock_enabled or pmt_quick_profit_enabled:
 			profit_lock_exit, _changed = evaluate_profit_lock_bar(
 				position,
 				high=high,

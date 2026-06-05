@@ -206,6 +206,25 @@ def _metadata_float(metadata: dict, key: str) -> float | None:
     return value if value != 0.0 else None
 
 
+def _metadata_override_float(metadata: dict, key: str) -> float | None:
+    if key not in metadata:
+        return None
+    raw_value = metadata.get(key)
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str) and raw_value.strip() == "":
+        return None
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_override_or(metadata: dict, key: str, default: float) -> float:
+    override = _metadata_override_float(metadata, key)
+    return default if override is None else override
+
+
 def _symbol_tokens(value: object) -> set[str]:
     if value is None:
         return set()
@@ -837,12 +856,12 @@ def evaluate_profit_lock_bar(
     metadata = position.metadata if isinstance(position.metadata, dict) else {}
     if metadata is not position.metadata:
         position.metadata = metadata
-    trigger_pct = _metadata_float(metadata, "profit_lock_trigger_pct_override") or trigger_pct
-    pullback_fraction = _metadata_float(metadata, "profit_lock_pullback_fraction_override") or pullback_fraction
-    floor_pct = _metadata_float(metadata, "profit_lock_floor_pct_override") or floor_pct
-    min_exit_net_pct = _metadata_float(metadata, "profit_lock_exit_min_net_pct_override") or min_exit_net_pct
-    giveback_pct = _metadata_float(metadata, "profit_lock_giveback_pct_override") or giveback_pct
-    min_tp_progress = _metadata_float(metadata, "profit_lock_min_tp_progress_override") or min_tp_progress
+    trigger_pct = _metadata_override_or(metadata, "profit_lock_trigger_pct_override", trigger_pct)
+    pullback_fraction = _metadata_override_or(metadata, "profit_lock_pullback_fraction_override", pullback_fraction)
+    floor_pct = _metadata_override_or(metadata, "profit_lock_floor_pct_override", floor_pct)
+    min_exit_net_pct = _metadata_override_or(metadata, "profit_lock_exit_min_net_pct_override", min_exit_net_pct)
+    giveback_pct = _metadata_override_or(metadata, "profit_lock_giveback_pct_override", giveback_pct)
+    min_tp_progress = _metadata_override_or(metadata, "profit_lock_min_tp_progress_override", min_tp_progress)
     armed_before_bar = (_metadata_float(metadata, PROFIT_LOCK_STOP_GROSS_PCT_KEY) or 0.0) > 0.0
     favorable_price = high if position.side == "LONG" else low
     adverse_price = low if position.side == "LONG" else high
@@ -884,5 +903,7 @@ def evaluate_profit_lock_bar(
         return None, changed
     net_exit_pct = position_net_pnl_pct(position, exit_price, taker_fee_rate)
     required_net_pct = max(0.0, min_exit_net_pct) + max(0.0, exit_slippage_buffer_pct)
+    if net_exit_pct is not None and net_exit_pct < required_net_pct:
+        return None, changed
     reason = "PEAK_PROFIT_LOCK" if net_exit_pct is None or net_exit_pct > 0.0 else "PEAK_PROTECTION_GAP_EXIT"
     return (exit_price, reason), changed

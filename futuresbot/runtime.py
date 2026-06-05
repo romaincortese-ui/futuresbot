@@ -97,6 +97,7 @@ from futuresbot.calibration import apply_signal_calibration
 from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_crypto_event_overlay
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
+from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
@@ -180,6 +181,9 @@ class FuturesRuntime:
         self._last_prediction_overlay_error_at = 0.0
         self._last_prophet_archive_at = 0.0
         self._last_prophet_archive_error_at = 0.0
+        self._last_pmt_core_weight_refresh_at = 0.0
+        self._last_pmt_core_weight_log_at = 0.0
+        self._last_pmt_core_weight_reason = ""
         self._sharp_event_symbols: tuple[str, ...] = ()
         self._last_sharp_event_symbol_refresh_at = 0.0
         self.missed_opportunities: dict[str, dict[str, Any]] = {}
@@ -264,6 +268,45 @@ class FuturesRuntime:
             symbol,
             side,
             entry_signal,
+            elapsed,
+            cooldown_seconds,
+            last_exit.get("exit_reason") or "unknown",
+        )
+        return True
+
+    def _pmt_stop_chase_blocked(self, signal_payload: dict[str, Any]) -> bool:
+        cooldown_hours = max(0.0, self._env_float("FUTURES_PMT_STOP_CHASE_COOLDOWN_HOURS", 0.0))
+        if cooldown_hours <= 0.0:
+            return False
+        symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
+        last_exit = self._last_exit_by_symbol.get(symbol)
+        if not isinstance(last_exit, dict):
+            return False
+        side = str(signal_payload.get("side") or "").upper()
+        if str(last_exit.get("side") or "").upper() != side:
+            return False
+        if not str(last_exit.get("entry_signal") or "").upper().startswith("PMT_THRESHOLD_"):
+            return False
+        allowed = {
+            part.strip().upper()
+            for part in os.environ.get("FUTURES_PMT_STOP_CHASE_EXIT_REASONS", "STOP_LOSS,PEAK_PROTECTION_GAP_EXIT").replace(";", ",").split(",")
+            if part.strip()
+        } or {"STOP_LOSS"}
+        if str(last_exit.get("exit_reason") or "").upper() not in allowed:
+            return False
+        closed_at_raw = str(last_exit.get("closed_at") or "")
+        try:
+            closed_at = datetime.fromisoformat(closed_at_raw.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        elapsed = (datetime.now(timezone.utc) - closed_at.astimezone(timezone.utc)).total_seconds()
+        cooldown_seconds = cooldown_hours * 3600.0
+        if elapsed >= cooldown_seconds:
+            return False
+        log.info(
+            "PMT signal skipped for %s: stop-chase cooldown active side=%s elapsed=%.0fs cooldown=%.0fs last_exit_reason=%s",
+            symbol,
+            side,
             elapsed,
             cooldown_seconds,
             last_exit.get("exit_reason") or "unknown",
@@ -902,7 +945,7 @@ class FuturesRuntime:
         return default if override is None else override
 
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
-        if not self._flag("USE_FUTURES_PROFIT_LOCK"):
+        if not self._flag("USE_FUTURES_PROFIT_LOCK") and not (pmt_strategy_enabled() and self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED")):
             return False
         gross_pnl_pct = self._position_pnl_pct(position, current_price)
         net_pnl_pct = self._position_net_pnl_pct(position, current_price)
@@ -3239,11 +3282,39 @@ class FuturesRuntime:
             return None
         return best[1].to_dict()
 
+    def _refresh_pmt_core_weight(self) -> None:
+        if not self._flag("FUTURES_PMT_DYNAMIC_CORE_WEIGHT_ENABLED"):
+            return
+        now = time.monotonic()
+        refresh_seconds = max(
+            30.0,
+            self._env_float("FUTURES_PMT_SIMPLE_CORE_WEIGHT_REFRESH_SECONDS", float(DEFAULT_REFRESH_SECONDS)),
+        )
+        if now - self._last_pmt_core_weight_refresh_at < refresh_seconds:
+            return
+        self._last_pmt_core_weight_refresh_at = now
+        if not self.config.redis_url:
+            if now - self._last_pmt_core_weight_log_at >= 900.0:
+                log.info("PMT core weight refresh skipped: missing Redis URL")
+                self._last_pmt_core_weight_log_at = now
+            return
+        result = refresh_env_from_redis(self.config.redis_url)
+        if result.applied and result.weight is not None:
+            log.info("PMT core weight refreshed from Redis: %.2f", result.weight)
+            self._last_pmt_core_weight_reason = result.reason
+            self._last_pmt_core_weight_log_at = now
+            return
+        if result.reason != self._last_pmt_core_weight_reason or now - self._last_pmt_core_weight_log_at >= 900.0:
+            log.info("PMT core weight refresh skipped: %s", result.reason or "unknown")
+            self._last_pmt_core_weight_reason = result.reason
+            self._last_pmt_core_weight_log_at = now
+
     def _fetch_pmt_signal(self) -> dict[str, Any] | None:
         if self._available_slots() <= 0:
             return None
         if self._pmt_tp_cooldown_active():
             return None
+        self._refresh_pmt_core_weight()
         self._cycle_counter += 1
         self._last_cycle_gate_blocks = {}
         end = int(time.time())
@@ -3275,6 +3346,9 @@ class FuturesRuntime:
                 reason = diagnose_pmt_threshold_rejection(frame, scoped)
                 self._last_cycle_gate_blocks[sym] = reason
                 log.info("[PMT_GATE_BLOCK] symbol=%s reason=%s", sym, reason)
+                continue
+            if self._pmt_stop_chase_blocked(signal.to_dict()):
+                self._last_cycle_gate_blocks[sym] = "pmt_stop_chase_cooldown"
                 continue
             leverage = self._enforce_live_leverage_bounds(int(signal.leverage), symbol=sym)
             if leverage != int(signal.leverage):
@@ -5198,6 +5272,8 @@ class FuturesRuntime:
         if symbol in self.open_positions:
             return False
         if self._same_signal_reentry_blocked(signal_payload):
+            return False
+        if pmt_mode and self._pmt_stop_chase_blocked(signal_payload):
             return False
         min_entry_score = max(0.0, self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0))
         if score <= min_entry_score:

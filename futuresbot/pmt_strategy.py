@@ -118,6 +118,14 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _pmt_simple_scoring_enabled() -> bool:
+    return _env_bool("FUTURES_PMT_SIMPLE_SCORING_ENABLED", False)
+
+
+def _pmt_simple_core_weight() -> float:
+    return max(0.0, min(1.0, _env_float("FUTURES_PMT_SIMPLE_CORE_WEIGHT", 0.90)))
+
+
 def _env_pct_fraction(name: str, default: float) -> float:
     value = _env_float(name, default)
     return value / 100.0 if value > 1.0 else value
@@ -269,7 +277,8 @@ def _detect_threshold_cross(previous: float, current: float, symbol: str) -> Men
 
 
 def _pmt_confirmation_bars() -> int:
-    return max(0, _env_int("FUTURES_PMT_CONFIRMATION_BARS", 1))
+    default = 0 if _pmt_simple_scoring_enabled() else 1
+    return max(0, _env_int("FUTURES_PMT_CONFIRMATION_BARS", default))
 
 
 def detect_mental_threshold_cross(frame: pd.DataFrame, symbol: str) -> MentalThresholdCross | None:
@@ -403,6 +412,14 @@ def _confirmation_followthrough_failed(cross: MentalThresholdCross) -> bool:
 
 
 def _pmt_safety_rejection(frame: pd.DataFrame, pmt: PairMarketTrend, cross: MentalThresholdCross) -> str | None:
+    if _pmt_simple_scoring_enabled():
+        if _env_bool("FUTURES_PMT_SIMPLE_BLOCK_CONFIRMATION_NO_FOLLOWTHROUGH", False) and _confirmation_followthrough_failed(cross):
+            return "confirmation_no_followthrough"
+        if _env_bool("FUTURES_PMT_SIMPLE_BLOCK_RECENT_FAILED_RECLAIM", False) and _recent_failed_level_reclaim(frame, cross):
+            return "recent_failed_reclaim"
+        if _broader_trend_conflict(pmt, cross.side):
+            return "broader_trend_conflict"
+        return None
     if _confirmation_followthrough_failed(cross):
         return "confirmation_no_followthrough"
     if _env_bool("FUTURES_PMT_BLOCK_RECENT_FAILED_RECLAIM", True) and _recent_failed_level_reclaim(frame, cross):
@@ -605,6 +622,9 @@ def _edge_score_threshold_cross(
 
 
 def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: MentalThresholdCross) -> tuple[float, dict[str, Any]]:
+    if _pmt_simple_scoring_enabled():
+        return _score_simple_threshold_cross(frame, pmt, cross)
+
     profile = pair_pmt_profile(pmt.symbol)
     aligned = _aligned_with_pmt(cross.side, pmt.label)
     score = 58.0
@@ -696,6 +716,189 @@ def _score_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: Men
     return max(0.0, min(100.0, final_score)), metadata
 
 
+def _simple_core_score(label: str, aligned: bool | None) -> float:
+    if aligned is False:
+        return _env_float("FUTURES_PMT_SIMPLE_COUNTERTREND_SCORE", 0.0)
+    label = label.upper()
+    if label.startswith("MEGA_"):
+        return _env_float("FUTURES_PMT_SIMPLE_MEGA_SCORE", 96.0)
+    if label.startswith("FLASH_"):
+        return _env_float("FUTURES_PMT_SIMPLE_FLASH_SCORE", 93.0)
+    if label in {"BULLISH", "BEARISH"}:
+        return _env_float("FUTURES_PMT_SIMPLE_TREND_SCORE", 90.0)
+    return _env_float("FUTURES_PMT_SIMPLE_FLAT_SCORE", 86.0)
+
+
+def _score_simple_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: MentalThresholdCross) -> tuple[float, dict[str, Any]]:
+    profile = pair_pmt_profile(pmt.symbol)
+    aligned = _aligned_with_pmt(cross.side, pmt.label)
+    signed_1bar = _signed_for_side(cross.move_1bar_pct, cross.side)
+    signed_1h = _signed_for_side(_recent_move_pct(frame, 4), cross.side)
+    signed_6h = _signed_for_side(pmt.move_6h_pct, cross.side)
+    signed_12h = _signed_for_side(pmt.move_12h_pct, cross.side)
+    signed_24h = _signed_for_side(pmt.move_24h_pct, cross.side)
+    volume_ratio = _volume_ratio(frame)
+    level_distance = max(0.0, float(cross.distance_beyond_level_pct or 0.0))
+
+    core_score = _simple_core_score(pmt.label, aligned)
+    core_weight = _pmt_simple_core_weight()
+    bonus_cap = max(0.0, _env_float("FUTURES_PMT_SIMPLE_CONTEXT_BONUS_CAP", 4.0))
+    bonus = 0.0
+    bonus += min(1.5, max(0.0, signed_1bar * 100.0 * 4.0))
+    bonus += min(1.0, max(0.0, signed_1h * 100.0 * 1.5))
+    bonus += min(1.0, max(0.0, signed_6h * 100.0 * 0.4))
+    if volume_ratio >= 1.05:
+        bonus += min(0.5, (volume_ratio - 1.0) * 0.5)
+    context_scale = max(0.0, (1.0 - core_weight) / 0.10)
+    context_bonus = min(bonus_cap * context_scale, bonus * context_scale)
+    score = max(0.0, min(100.0, core_score + context_bonus))
+
+    caps: dict[str, float] = {}
+    penalties: dict[str, float] = {}
+    late_distance = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_LATE_ENTRY_DISTANCE_PCT", 0.0250))
+    extreme_late_distance = max(late_distance, _env_pct_fraction("FUTURES_PMT_SIMPLE_EXTREME_LATE_ENTRY_DISTANCE_PCT", 0.0400))
+    if late_distance > 0 and cross.distance_beyond_level_pct >= late_distance:
+        _score_cap(caps, "simple_late_entry_distance", _env_float("FUTURES_PMT_SIMPLE_LATE_ENTRY_SCORE_CAP", 88.0))
+    if extreme_late_distance > 0 and cross.distance_beyond_level_pct >= extreme_late_distance:
+        _score_cap(caps, "simple_extreme_late_entry_distance", _env_float("FUTURES_PMT_SIMPLE_EXTREME_LATE_ENTRY_SCORE_CAP", 82.0))
+
+    weak_followthrough_1bar = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_1BAR_PCT", 0.0010))
+    weak_followthrough_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_1H_PCT", 0.0020))
+    weak_followthrough_volume = max(0.0, _env_float("FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_MIN_VOLUME_RATIO", 1.50))
+    weak_followthrough_enabled = _env_bool("FUTURES_PMT_SIMPLE_BLOCK_WEAK_FOLLOWTHROUGH", True)
+    if (
+        weak_followthrough_enabled
+        and not pmt.label.upper().startswith("MEGA_")
+        and weak_followthrough_1bar > 0.0
+        and weak_followthrough_1h > 0.0
+        and volume_ratio >= weak_followthrough_volume
+        and signed_1bar < weak_followthrough_1bar
+        and signed_1h < weak_followthrough_1h
+    ):
+        penalties["simple_weak_followthrough"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_PENALTY", 6.0))
+        _score_cap(caps, "simple_weak_followthrough", _env_float("FUTURES_PMT_SIMPLE_WEAK_FOLLOWTHROUGH_SCORE_CAP", 89.0))
+
+    exhaustion_1bar = max(0.0, _env_pct_fraction("FUTURES_PMT_EXHAUSTION_1BAR_PCT", 0.0060))
+    exhaustion_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_EXHAUSTION_1H_PCT", 0.0120))
+    volume_climax = max(0.0, _env_float("FUTURES_PMT_VOLUME_CLIMAX_RATIO", 1.50))
+    one_bar_exhausted = exhaustion_1bar > 0 and signed_1bar >= exhaustion_1bar
+    one_hour_exhausted = exhaustion_1h > 0 and signed_1h >= exhaustion_1h
+    if one_bar_exhausted:
+        penalties["one_bar_exhaustion"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_EXHAUSTION_1BAR_PENALTY", 6.0))
+    if one_hour_exhausted:
+        penalties["one_hour_exhaustion"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_EXHAUSTION_1H_PENALTY", 6.0))
+    if volume_climax > 0 and volume_ratio >= volume_climax and (one_bar_exhausted or one_hour_exhausted):
+        penalties["volume_climax"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_VOLUME_CLIMAX_PENALTY", 6.0))
+        _score_cap(caps, "simple_exhausted_volume_climax", _env_float("FUTURES_PMT_SIMPLE_EXHAUSTED_CLIMAX_SCORE_CAP", 88.0))
+    if one_bar_exhausted and one_hour_exhausted:
+        _score_cap(caps, "simple_stacked_exhaustion", _env_float("FUTURES_PMT_SIMPLE_STACKED_EXHAUSTION_SCORE_CAP", 89.0))
+    elif one_hour_exhausted:
+        _score_cap(caps, "simple_one_hour_exhaustion", _env_float("FUTURES_PMT_SIMPLE_ONE_HOUR_EXHAUSTION_SCORE_CAP", 94.0))
+
+    high_score_exhaustion_min = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_EXHAUSTION_MIN_SCORE", 94.5))
+    severe_1bar = max(exhaustion_1bar, _env_pct_fraction("FUTURES_PMT_SIMPLE_SEVERE_EXHAUSTION_1BAR_PCT", 0.0090))
+    severe_1h = max(exhaustion_1h, _env_pct_fraction("FUTURES_PMT_SIMPLE_SEVERE_EXHAUSTION_1H_PCT", 0.0180))
+    if score >= high_score_exhaustion_min and (one_bar_exhausted or one_hour_exhausted):
+        _score_cap(caps, "simple_high_score_exhaustion", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_EXHAUSTION_SCORE_CAP", 94.0))
+        if signed_1bar >= severe_1bar or signed_1h >= severe_1h:
+            _score_cap(caps, "simple_severe_high_score_exhaustion", _env_float("FUTURES_PMT_SIMPLE_SEVERE_HIGH_SCORE_EXHAUSTION_SCORE_CAP", 89.0))
+    if score >= high_score_exhaustion_min:
+        stretch_6h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_STRETCHED_6H_PCT", 0.0180))
+        stretch_12h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_STRETCHED_12H_PCT", 0.0240))
+        volume_chase_ratio = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_RATIO", 1.75))
+        volume_chase_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_1H_PCT", 0.0040))
+        if (stretch_6h > 0.0 and signed_6h >= stretch_6h) or (stretch_12h > 0.0 and signed_12h >= stretch_12h):
+            penalties["simple_high_score_trend_stretch"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_TREND_STRETCH_PENALTY", 8.0))
+            _score_cap(caps, "simple_high_score_trend_stretch", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_TREND_STRETCH_SCORE_CAP", 89.0))
+        if volume_chase_ratio > 0.0 and volume_ratio >= volume_chase_ratio and signed_1h >= volume_chase_1h:
+            penalties["simple_high_score_volume_chase"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_PENALTY", 8.0))
+            _score_cap(caps, "simple_high_score_volume_chase", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_SCORE_CAP", 89.0))
+    elif _env_bool("FUTURES_PMT_SIMPLE_BLOCK_SCORE9_FATIGUE", True):
+        fatigue_6h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_6H_PCT", 0.0150))
+        fatigue_12h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_12H_PCT", 0.0200))
+        late_stretch_12h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_LATE_STRETCH_12H_PCT", 0.0250))
+        late_stretch_24h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_LATE_STRETCH_24H_PCT", 0.0500))
+        late_distance = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_LATE_STRETCH_DISTANCE_PCT", 0.0045))
+        fatigue_sequence = fatigue_6h > 0.0 and fatigue_12h > 0.0 and signed_6h >= fatigue_6h and signed_12h >= fatigue_12h
+        late_stretch = level_distance >= late_distance and (
+            (late_stretch_12h > 0.0 and signed_12h >= late_stretch_12h)
+            or (late_stretch_24h > 0.0 and signed_24h >= late_stretch_24h and signed_12h > 0.0)
+        )
+        if fatigue_sequence or late_stretch:
+            penalties["simple_score9_trend_fatigue"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_PENALTY", 7.0))
+            _score_cap(caps, "simple_score9_trend_fatigue", _env_float("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_SCORE_CAP", 89.0))
+        overstretch_24h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_OVERSTRETCHED_24H_PCT", 0.0800))
+        if overstretch_24h > 0.0 and signed_24h >= overstretch_24h and signed_1bar <= 0.0:
+            penalties["simple_score9_broader_overstretch"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_BROADER_OVERSTRETCH_PENALTY", 7.0))
+            _score_cap(caps, "simple_score9_broader_overstretch", _env_float("FUTURES_PMT_SIMPLE_SCORE9_BROADER_OVERSTRETCH_SCORE_CAP", 89.0))
+        conflict_6h = _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_CONFLICT_6H_PCT", 0.0)
+        conflict_max_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_CONFLICT_MAX_1H_PCT", 0.0030))
+        late_flat_distance = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_LATE_FLAT_DISTANCE_PCT", 0.0045))
+        late_flat_6h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_LATE_FLAT_6H_PCT", 0.0050))
+        late_flat_12h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_LATE_FLAT_12H_PCT", 0.0050))
+        low_volume_pullback = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_LOW_VOLUME_PULLBACK_RATIO", 0.50))
+        weak_trend_conflict = signed_6h < conflict_6h and signed_1h < conflict_max_1h
+        weak_late_flat = level_distance >= late_flat_distance and signed_6h < late_flat_6h and signed_12h < late_flat_12h
+        weak_low_volume_pullback = low_volume_pullback > 0.0 and volume_ratio <= low_volume_pullback and signed_1h < 0.0
+        if weak_trend_conflict or weak_late_flat or weak_low_volume_pullback:
+            penalties["simple_score9_weak_followthrough_quality"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_WEAK_QUALITY_PENALTY", 7.0))
+            _score_cap(caps, "simple_score9_weak_followthrough_quality", _env_float("FUTURES_PMT_SIMPLE_SCORE9_WEAK_QUALITY_SCORE_CAP", 89.0))
+        failed_volume_ratio = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_RATIO", 2.0))
+        failed_volume_distance = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_MAX_DISTANCE_PCT", 0.0010))
+        if failed_volume_ratio > 0.0 and volume_ratio >= failed_volume_ratio and signed_1bar <= 0.0 and level_distance <= failed_volume_distance:
+            penalties["simple_score9_failed_volume_cross"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_PENALTY", 7.0))
+            _score_cap(caps, "simple_score9_failed_volume_cross", _env_float("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_SCORE_CAP", 89.0))
+
+    if _env_bool("FUTURES_PMT_SIMPLE_BLOCK_FAILED_RECLAIM_BY_CAP", False) and _recent_failed_level_reclaim(frame, cross):
+        _score_cap(caps, "simple_recent_failed_reclaim", _env_float("FUTURES_PMT_SIMPLE_FAILED_RECLAIM_SCORE_CAP", 88.0))
+
+    final_score = min(score, min(caps.values()) if caps else 100.0)
+    edge_cap = min(caps.values()) if caps else 100.0
+    metadata = {
+        "strategy": PMT_STRATEGY_MODE,
+        "pmt_score_model": "simple_trend_threshold_v1",
+        "pmt_simple_core_score": round(core_score, 4),
+        "pmt_simple_context_bonus": round(max(0.0, score - core_score), 4),
+        "pmt_simple_context_raw_bonus": round(min(bonus_cap, bonus), 4),
+        "pmt_simple_context_bonus_scale": round(context_scale, 4),
+        "pmt_simple_core_weight": round(core_weight, 4),
+        "pmt_label": pmt.label,
+        "pmt_move_24h_pct": round(pmt.move_24h_pct, 6),
+        "pmt_move_12h_pct": round(pmt.move_12h_pct, 6),
+        "pmt_move_6h_pct": round(pmt.move_6h_pct, 6),
+        "mental_threshold_level": round(cross.level, 10),
+        "mental_threshold_step": mental_threshold_step(pmt.symbol),
+        "pmt_flat_24h_pct_threshold": round(profile.flat_24h_pct, 6) if profile else None,
+        "pmt_flash_6h_pct_threshold": round(profile.flash_6h_pct, 6) if profile else None,
+        "pmt_mega_12h_pct_threshold": round(profile.mega_12h_pct, 6) if profile else None,
+        "pmt_mega_24h_pct_threshold": round(profile.mega_24h_pct, 6) if profile else None,
+        "mental_threshold_previous_close": round(cross.previous_close, 10),
+        "mental_threshold_current_close": round(cross.current_close, 10),
+        "mental_threshold_cross_previous_close": round(cross.cross_previous_close if cross.cross_previous_close is not None else cross.previous_close, 10),
+        "mental_threshold_cross_close": round(cross.cross_close if cross.cross_close is not None else cross.current_close, 10),
+        "mental_threshold_confirmation_bars": int(cross.confirmation_bars or 0),
+        "mental_threshold_distance_beyond_pct": round(cross.distance_beyond_level_pct, 6),
+        "move_1bar_pct": round(cross.move_1bar_pct, 6),
+        "move_1h_pct": round(_recent_move_pct(frame, 4), 6),
+        "volume_ratio_20": round(volume_ratio, 4),
+        "pmt_aligned": aligned if aligned is not None else "flat",
+        "pmt_raw_score": round(core_score, 4),
+        "pmt_setup_score": round(score, 4),
+        "pmt_edge_score": round(final_score, 4),
+        "pmt_score_caps": {key: round(value, 4) for key, value in caps.items()},
+        "pmt_score_penalty": round(sum(penalties.values()), 4),
+        "pmt_score_penalties": {key: round(value, 4) for key, value in penalties.items()},
+        "pmt_edge_raw_score": round(score, 4),
+        "pmt_edge_score_cap": round(edge_cap, 4),
+        "signed_1bar_pct": round(signed_1bar, 6),
+        "signed_1h_pct": round(signed_1h, 6),
+        "signed_6h_pct": round(signed_6h, 6),
+        "signed_12h_pct": round(signed_12h, 6),
+        "signed_24h_pct": round(signed_24h, 6),
+    }
+    return max(0.0, min(100.0, final_score)), metadata
+
+
 def _leverage_for_score(score: float, pmt_label: str) -> int:
     min_lev = max(1, int(_env_float("FUTURES_PMT_MIN_LEVERAGE", _env_float("FUTURES_LEVERAGE_MIN", 15.0))))
     max_lev = max(min_lev, int(_env_float("FUTURES_PMT_MAX_LEVERAGE", _env_float("FUTURES_LEVERAGE_MAX", 25.0))))
@@ -778,6 +981,20 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
     taker_fee_rate = float(getattr(config, "taker_fee_rate", _env_float("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", 0.0008)) or 0.0008)
     sl_margin_pct = _sl_margin_pct(score, leverage=leverage, taker_fee_rate=taker_fee_rate)
     tp_price, sl_price = _target_prices(entry_price, cross.side, leverage, tp_margin_pct, sl_margin_pct)
+    if _env_bool("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED", False):
+        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_TRIGGER_PCT", 18.0))
+        profit_lock_giveback_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_GIVEBACK_PCT", 0.0))
+        profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_PULLBACK_FRACTION", 0.95)))
+        profit_lock_min_tp_progress = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_MIN_TP_PROGRESS", 0.0))
+        profit_lock_floor_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_FLOOR_PCT", 5.0))
+        profit_lock_exit_min_net_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_EXIT_MIN_NET_PCT", 0.0))
+    else:
+        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 20.0))
+        profit_lock_giveback_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT", 0.0))
+        profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.70)))
+        profit_lock_min_tp_progress = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0))
+        profit_lock_floor_pct = 0.0
+        profit_lock_exit_min_net_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", 20.0))
     metadata.update(
         {
             "tp_margin_pct": round(tp_margin_pct, 4),
@@ -788,12 +1005,13 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
             "opportunity_balance_fraction": pmt_balance_fraction_for_score(score),
             "pmt_balance_fraction": pmt_balance_fraction_for_score(score),
             "opportunity_nav_risk_pct": 1.0,
-            "profit_lock_trigger_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 20.0)),
-            "profit_lock_giveback_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
-            "profit_lock_pullback_fraction_override": min(0.95, max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.70))),
-            "profit_lock_min_tp_progress_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0)),
-            "profit_lock_floor_pct_override": 0.0,
-            "profit_lock_exit_min_net_pct_override": max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", 20.0)),
+            "pmt_quick_profit_protection_enabled": _env_bool("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED", False),
+            "profit_lock_trigger_pct_override": profit_lock_trigger_pct,
+            "profit_lock_giveback_pct_override": profit_lock_giveback_pct,
+            "profit_lock_pullback_fraction_override": profit_lock_pullback_fraction,
+            "profit_lock_min_tp_progress_override": profit_lock_min_tp_progress,
+            "profit_lock_floor_pct_override": profit_lock_floor_pct,
+            "profit_lock_exit_min_net_pct_override": profit_lock_exit_min_net_pct,
         }
     )
     return FuturesSignal(
