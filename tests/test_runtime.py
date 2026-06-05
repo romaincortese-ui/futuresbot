@@ -53,6 +53,9 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_RESUME_ON_BOOT",
         "USE_NAV_RISK_SIZING",
         "USE_FUTURES_PROFIT_LOCK",
+        "USE_FUTURES_FAIR_PRICE_WS",
+        "FUTURES_OPEN_POSITION_MONITOR_SECONDS",
+        "FUTURES_OPEN_POSITION_RECONCILE_SECONDS",
         "FUTURES_PROFIT_LOCK_TRIGGER_PCT",
         "FUTURES_PROFIT_LOCK_GIVEBACK_PCT",
         "FUTURES_PROFIT_LOCK_FLOOR_PCT",
@@ -2348,6 +2351,69 @@ def test_register_and_clear_positions_sync_fair_price_websocket_symbols(tmp_path
         {"BTC_USDT", "ETH_USDT"},
         {"ETH_USDT"},
     ]
+
+
+def test_live_register_position_starts_fair_price_websocket_monitor(tmp_path):
+    class RecordingFairPriceMonitor:
+        def __init__(self) -> None:
+            self.calls: list[set[str]] = []
+            self.start_calls = 0
+
+        def set_symbols(self, symbols: set[str]) -> None:
+            self.calls.append(set(symbols))
+
+        def start(self) -> None:
+            self.start_calls += 1
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), StubClient())
+    monitor = RecordingFairPriceMonitor()
+    runtime._fair_price_monitor = monitor
+
+    runtime._register_position(_make_position("BTC_USDT", margin=40.0))
+
+    assert monitor.calls == [{"BTC_USDT"}]
+    assert monitor.start_calls == 1
+
+
+def test_open_position_guard_reconciles_exchange_closed_position_during_sleep(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_FUTURES_FAIR_PRICE_WS", "0")
+    monkeypatch.setenv("FUTURES_OPEN_POSITION_MONITOR_SECONDS", "0.25")
+    monkeypatch.setenv("FUTURES_OPEN_POSITION_RECONCILE_SECONDS", "0.25")
+
+    class ExchangeClosedClient(StubClient):
+        def get_open_positions(self, symbol: str | None = None):
+            return []
+
+        def get_historical_positions(self, symbol: str, *, page_num: int = 1, page_size: int = 20):
+            return [
+                {
+                    "positionId": "1406728192",
+                    "closeAvgPrice": "61125.0",
+                }
+            ]
+
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), ExchangeClosedClient())
+    runtime._notify = lambda message, parse_mode="HTML": None
+    position = replace(
+        _make_position("BTC_USDT", margin=11.54114049),
+        side="SHORT",
+        entry_price=60819.7,
+        contracts=41,
+        contract_size=0.0001,
+        leverage=22,
+        tp_price=55290.64,
+        sl_price=61275.29,
+        position_id="1406728192",
+        order_id="entry-btc",
+        entry_signal="PMT_THRESHOLD_SHORT",
+    )
+    runtime._register_position(position)
+
+    runtime._sleep_until_next_cycle(0.35)
+
+    assert runtime.open_positions == {}
+    assert runtime.trade_history[-1]["exit_reason"] == "EXCHANGE_CLOSE"
+    assert runtime.trade_history[-1]["exit_price"] == 61125.0
 
 
 def test_bucket_open_count_and_available_slots(tmp_path):

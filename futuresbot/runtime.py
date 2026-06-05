@@ -2633,6 +2633,10 @@ class FuturesRuntime:
             return
         try:
             self._fair_price_monitor.set_symbols({position.symbol for position in self.open_positions.values()})
+            if self.open_positions and not self.config.paper_trade:
+                start = getattr(self._fair_price_monitor, "start", None)
+                if callable(start):
+                    start()
         except Exception as exc:
             log.warning("Futures fair-price WS subscription sync failed: %s", exc)
 
@@ -2645,6 +2649,9 @@ class FuturesRuntime:
 
     def _open_position_monitor_interval_seconds(self) -> float:
         return max(0.25, self._env_float("FUTURES_OPEN_POSITION_MONITOR_SECONDS", 1.0))
+
+    def _open_position_reconcile_interval_seconds(self) -> float:
+        return max(0.0, self._env_float("FUTURES_OPEN_POSITION_RECONCILE_SECONDS", 2.0))
 
     def _monitor_open_positions_once(self) -> bool:
         if not self.open_positions:
@@ -2699,17 +2706,33 @@ class FuturesRuntime:
         )
         self._sync_open_position_price_subscriptions()
         telegram_poll_interval = max(2.0, self._env_float("FUTURES_OPEN_POSITION_TELEGRAM_POLL_SECONDS", 5.0))
+        reconcile_interval = self._open_position_reconcile_interval_seconds()
         log.info(
             "Open-position guard will poll Telegram commands every %.2fs (configured=%s)",
             telegram_poll_interval,
             getattr(self.telegram, "configured", False),
         )
+        if reconcile_interval > 0:
+            log.info("Open-position guard will reconcile exchange positions every %.2fs", reconcile_interval)
         next_telegram_poll = time.monotonic() + telegram_poll_interval
+        next_reconcile = time.monotonic() + reconcile_interval if reconcile_interval > 0 else float("inf")
         while self.open_positions:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
             time.sleep(min(interval, remaining))
+            now = time.monotonic()
+            if reconcile_interval > 0 and now >= next_reconcile:
+                before_symbols = set(self.open_positions)
+                try:
+                    self._reconcile_closed_position()
+                except Exception as exc:
+                    log.debug("Open-position guard reconcile failed: %s", exc)
+                if set(self.open_positions) != before_symbols:
+                    self._record_activity("Open-position guard reconciled exchange close")
+                    if not self.open_positions:
+                        return
+                next_reconcile = now + reconcile_interval
             if self._monitor_open_positions_once():
                 self._record_activity("Open-position guard triggered exit")
                 return
