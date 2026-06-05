@@ -729,6 +729,89 @@ def _simple_core_score(label: str, aligned: bool | None) -> float:
     return _env_float("FUTURES_PMT_SIMPLE_FLAT_SCORE", 86.0)
 
 
+def _side_receives_funding(side: str, funding_rate: float) -> bool:
+    side = side.upper()
+    if side == "LONG":
+        return funding_rate < 0.0
+    if side == "SHORT":
+        return funding_rate > 0.0
+    return False
+
+
+def _apply_funding_score_adjustment(
+    score: float,
+    metadata: dict[str, Any],
+    *,
+    side: str,
+    funding_rate: float | None = None,
+    funding_cap: float | None = None,
+) -> tuple[float, dict[str, Any]]:
+    if not _env_bool("FUTURES_PMT_FUNDING_SCORE_ENABLED", True) or funding_rate is None:
+        return score, metadata
+    try:
+        rate = float(funding_rate)
+    except (TypeError, ValueError):
+        return score, metadata
+    try:
+        cap = abs(float(funding_cap or 0.0))
+    except (TypeError, ValueError):
+        cap = 0.0
+
+    receives = _side_receives_funding(side, rate)
+    adverse = abs(rate) > 0.0 and not receives
+    penalty = 0.0
+    bonus = 0.0
+    if adverse:
+        if cap > 0.0:
+            excess_ratio = max(0.0, abs(rate) / cap - 1.0)
+        else:
+            fallback_cap = max(0.000001, _env_float("FUTURES_PMT_FUNDING_SCORE_FALLBACK_CAP", 0.0002))
+            excess_ratio = abs(rate) / fallback_cap
+        penalty = min(
+            max(0.0, _env_float("FUTURES_PMT_FUNDING_ADVERSE_MAX_PENALTY", 2.0)),
+            excess_ratio * max(0.0, _env_float("FUTURES_PMT_FUNDING_ADVERSE_EXCESS_PENALTY_PER_CAP", 1.0)),
+        )
+    elif receives:
+        if cap > 0.0:
+            favorable_ratio = abs(rate) / cap
+        else:
+            favorable_ratio = 0.0
+        bonus = min(
+            max(0.0, _env_float("FUTURES_PMT_FUNDING_FAVORABLE_MAX_BONUS", 0.5)),
+            favorable_ratio * max(0.0, _env_float("FUTURES_PMT_FUNDING_FAVORABLE_BONUS_PER_CAP", 0.25)),
+        )
+
+    adjusted = max(0.0, min(100.0, score - penalty + bonus))
+    funding_score_cap: float | None = None
+    if adverse and _env_bool("FUTURES_PMT_FUNDING_ADVERSE_REDUCED_SIZE_CAP_ENABLED", True):
+        funding_score_cap = max(0.0, min(100.0, _env_float("FUTURES_PMT_FUNDING_ADVERSE_SCORE_CAP", 91.99)))
+        adjusted = min(adjusted, funding_score_cap)
+    out = dict(metadata)
+    out["pmt_funding_score_enabled"] = True
+    out["pmt_funding_rate_8h"] = round(rate, 8)
+    out["pmt_funding_abs_cap"] = round(cap, 8)
+    out["pmt_funding_receives"] = bool(receives)
+    out["pmt_funding_adverse"] = bool(adverse)
+    out["pmt_score_before_funding"] = round(score, 4)
+    out["pmt_funding_score_penalty"] = round(penalty, 4)
+    out["pmt_funding_score_bonus"] = round(bonus, 4)
+    if funding_score_cap is not None:
+        caps = dict(out.get("pmt_score_caps") or {})
+        caps["funding_adverse_reduced_size"] = round(funding_score_cap, 4)
+        out["pmt_score_caps"] = caps
+        out["pmt_funding_score_cap"] = round(funding_score_cap, 4)
+    out["pmt_edge_score"] = round(adjusted, 4)
+    out["pmt_edge_raw_score"] = round(float(out.get("pmt_edge_raw_score", score)), 4)
+    if penalty > 0.0:
+        penalties = dict(out.get("pmt_score_penalties") or {})
+        penalties["funding_adverse"] = round(penalty, 4)
+        out["pmt_score_penalties"] = penalties
+        out["pmt_score_penalty"] = round(float(out.get("pmt_score_penalty") or 0.0) + penalty, 4)
+    if bonus > 0.0:
+        out["pmt_score_bonus_funding"] = round(bonus, 4)
+    return adjusted, out
+
+
 def _score_simple_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cross: MentalThresholdCross) -> tuple[float, dict[str, Any]]:
     profile = pair_pmt_profile(pmt.symbol)
     aligned = _aligned_with_pmt(cross.side, pmt.label)
@@ -789,9 +872,9 @@ def _score_simple_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cro
         penalties["one_hour_exhaustion"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_EXHAUSTION_1H_PENALTY", 6.0))
     if volume_climax > 0 and volume_ratio >= volume_climax and (one_bar_exhausted or one_hour_exhausted):
         penalties["volume_climax"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_VOLUME_CLIMAX_PENALTY", 6.0))
-        _score_cap(caps, "simple_exhausted_volume_climax", _env_float("FUTURES_PMT_SIMPLE_EXHAUSTED_CLIMAX_SCORE_CAP", 88.0))
+        _score_cap(caps, "simple_exhausted_volume_climax", _env_float("FUTURES_PMT_SIMPLE_EXHAUSTED_CLIMAX_SCORE_CAP", 92.0))
     if one_bar_exhausted and one_hour_exhausted:
-        _score_cap(caps, "simple_stacked_exhaustion", _env_float("FUTURES_PMT_SIMPLE_STACKED_EXHAUSTION_SCORE_CAP", 89.0))
+        _score_cap(caps, "simple_stacked_exhaustion", _env_float("FUTURES_PMT_SIMPLE_STACKED_EXHAUSTION_SCORE_CAP", 92.0))
     elif one_hour_exhausted:
         _score_cap(caps, "simple_one_hour_exhaustion", _env_float("FUTURES_PMT_SIMPLE_ONE_HOUR_EXHAUSTION_SCORE_CAP", 94.0))
 
@@ -801,18 +884,31 @@ def _score_simple_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cro
     if score >= high_score_exhaustion_min and (one_bar_exhausted or one_hour_exhausted):
         _score_cap(caps, "simple_high_score_exhaustion", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_EXHAUSTION_SCORE_CAP", 94.0))
         if signed_1bar >= severe_1bar or signed_1h >= severe_1h:
-            _score_cap(caps, "simple_severe_high_score_exhaustion", _env_float("FUTURES_PMT_SIMPLE_SEVERE_HIGH_SCORE_EXHAUSTION_SCORE_CAP", 89.0))
+            _score_cap(caps, "simple_severe_high_score_exhaustion", _env_float("FUTURES_PMT_SIMPLE_SEVERE_HIGH_SCORE_EXHAUSTION_SCORE_CAP", 92.0))
     if score >= high_score_exhaustion_min:
         stretch_6h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_STRETCHED_6H_PCT", 0.0180))
         stretch_12h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_STRETCHED_12H_PCT", 0.0240))
         volume_chase_ratio = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_RATIO", 1.75))
         volume_chase_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_1H_PCT", 0.0040))
+        blowoff_volume_ratio = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_VOLUME_RATIO", 2.0))
+        blowoff_1bar = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_1BAR_PCT", 0.0180))
+        blowoff_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_1H_PCT", 0.0180))
+        broader_overstretch_24h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_24H_PCT", 0.0800))
+        broader_overstretch_max_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_MAX_1H_PCT", 0.0250))
         if (stretch_6h > 0.0 and signed_6h >= stretch_6h) or (stretch_12h > 0.0 and signed_12h >= stretch_12h):
             penalties["simple_high_score_trend_stretch"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_TREND_STRETCH_PENALTY", 8.0))
-            _score_cap(caps, "simple_high_score_trend_stretch", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_TREND_STRETCH_SCORE_CAP", 89.0))
+            _score_cap(caps, "simple_high_score_trend_stretch", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_TREND_STRETCH_SCORE_CAP", 92.0))
         if volume_chase_ratio > 0.0 and volume_ratio >= volume_chase_ratio and signed_1h >= volume_chase_1h:
             penalties["simple_high_score_volume_chase"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_PENALTY", 8.0))
-            _score_cap(caps, "simple_high_score_volume_chase", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_SCORE_CAP", 89.0))
+            _score_cap(caps, "simple_high_score_volume_chase", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_SCORE_CAP", 92.0))
+        if blowoff_volume_ratio > 0.0 and volume_ratio >= blowoff_volume_ratio and (
+            (blowoff_1bar > 0.0 and signed_1bar >= blowoff_1bar) or (blowoff_1h > 0.0 and signed_1h >= blowoff_1h)
+        ):
+            penalties["simple_high_score_blowoff_chase"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_PENALTY", 9.0))
+            _score_cap(caps, "simple_high_score_blowoff_chase", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_SCORE_CAP", 89.0))
+        if broader_overstretch_24h > 0.0 and signed_24h >= broader_overstretch_24h and signed_1h <= broader_overstretch_max_1h:
+            penalties["simple_high_score_broader_overstretch"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_PENALTY", 9.0))
+            _score_cap(caps, "simple_high_score_broader_overstretch", _env_float("FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_SCORE_CAP", 89.0))
     elif _env_bool("FUTURES_PMT_SIMPLE_BLOCK_SCORE9_FATIGUE", True):
         fatigue_6h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_6H_PCT", 0.0150))
         fatigue_12h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_12H_PCT", 0.0200))
@@ -826,11 +922,11 @@ def _score_simple_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cro
         )
         if fatigue_sequence or late_stretch:
             penalties["simple_score9_trend_fatigue"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_PENALTY", 7.0))
-            _score_cap(caps, "simple_score9_trend_fatigue", _env_float("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_SCORE_CAP", 89.0))
+            _score_cap(caps, "simple_score9_trend_fatigue", _env_float("FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_SCORE_CAP", 91.0))
         overstretch_24h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_OVERSTRETCHED_24H_PCT", 0.0800))
         if overstretch_24h > 0.0 and signed_24h >= overstretch_24h and signed_1bar <= 0.0:
             penalties["simple_score9_broader_overstretch"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_BROADER_OVERSTRETCH_PENALTY", 7.0))
-            _score_cap(caps, "simple_score9_broader_overstretch", _env_float("FUTURES_PMT_SIMPLE_SCORE9_BROADER_OVERSTRETCH_SCORE_CAP", 89.0))
+            _score_cap(caps, "simple_score9_broader_overstretch", _env_float("FUTURES_PMT_SIMPLE_SCORE9_BROADER_OVERSTRETCH_SCORE_CAP", 91.0))
         conflict_6h = _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_CONFLICT_6H_PCT", 0.0)
         conflict_max_1h = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_CONFLICT_MAX_1H_PCT", 0.0030))
         late_flat_distance = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_LATE_FLAT_DISTANCE_PCT", 0.0045))
@@ -842,12 +938,12 @@ def _score_simple_threshold_cross(frame: pd.DataFrame, pmt: PairMarketTrend, cro
         weak_low_volume_pullback = low_volume_pullback > 0.0 and volume_ratio <= low_volume_pullback and signed_1h < 0.0
         if weak_trend_conflict or weak_late_flat or weak_low_volume_pullback:
             penalties["simple_score9_weak_followthrough_quality"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_WEAK_QUALITY_PENALTY", 7.0))
-            _score_cap(caps, "simple_score9_weak_followthrough_quality", _env_float("FUTURES_PMT_SIMPLE_SCORE9_WEAK_QUALITY_SCORE_CAP", 89.0))
+            _score_cap(caps, "simple_score9_weak_followthrough_quality", _env_float("FUTURES_PMT_SIMPLE_SCORE9_WEAK_QUALITY_SCORE_CAP", 91.0))
         failed_volume_ratio = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_RATIO", 2.0))
         failed_volume_distance = max(0.0, _env_pct_fraction("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_MAX_DISTANCE_PCT", 0.0010))
         if failed_volume_ratio > 0.0 and volume_ratio >= failed_volume_ratio and signed_1bar <= 0.0 and level_distance <= failed_volume_distance:
             penalties["simple_score9_failed_volume_cross"] = max(0.0, _env_float("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_PENALTY", 7.0))
-            _score_cap(caps, "simple_score9_failed_volume_cross", _env_float("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_SCORE_CAP", 89.0))
+            _score_cap(caps, "simple_score9_failed_volume_cross", _env_float("FUTURES_PMT_SIMPLE_SCORE9_FAILED_VOLUME_SCORE_CAP", 91.0))
 
     if _env_bool("FUTURES_PMT_SIMPLE_BLOCK_FAILED_RECLAIM_BY_CAP", False) and _recent_failed_level_reclaim(frame, cross):
         _score_cap(caps, "simple_recent_failed_reclaim", _env_float("FUTURES_PMT_SIMPLE_FAILED_RECLAIM_SCORE_CAP", 88.0))
@@ -946,7 +1042,13 @@ def _target_prices(entry_price: float, side: str, leverage: int, tp_margin_pct: 
     return entry_price * (1.0 - tp_move), entry_price * (1.0 + sl_move)
 
 
-def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSignal | None:
+def score_pmt_threshold_signal(
+    frame: pd.DataFrame,
+    config: Any,
+    *,
+    funding_rate: float | None = None,
+    funding_cap: float | None = None,
+) -> FuturesSignal | None:
     symbol = str(getattr(config, "symbol", "BTC_USDT") or "BTC_USDT").upper()
     if not pmt_symbol_allowed(symbol):
         return None
@@ -960,6 +1062,13 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
         return None
 
     score, metadata = _score_threshold_cross(frame, pmt, cross)
+    score, metadata = _apply_funding_score_adjustment(
+        score,
+        metadata,
+        side=cross.side,
+        funding_rate=funding_rate,
+        funding_cap=funding_cap,
+    )
     full_score_min = _pmt_full_score_min(config)
     entry_score_min = _pmt_reduced_entry_min_score(full_score_min)
     metadata["pmt_min_score"] = round(full_score_min, 4)
@@ -1028,7 +1137,13 @@ def score_pmt_threshold_signal(frame: pd.DataFrame, config: Any) -> FuturesSigna
     )
 
 
-def diagnose_pmt_threshold_rejection(frame: pd.DataFrame, config: Any) -> str:
+def diagnose_pmt_threshold_rejection(
+    frame: pd.DataFrame,
+    config: Any,
+    *,
+    funding_rate: float | None = None,
+    funding_cap: float | None = None,
+) -> str:
     symbol = str(getattr(config, "symbol", "BTC_USDT") or "BTC_USDT").upper()
     if not pmt_symbol_allowed(symbol):
         return "symbol_not_enabled_for_pmt"
@@ -1048,6 +1163,13 @@ def diagnose_pmt_threshold_rejection(frame: pd.DataFrame, config: Any) -> str:
     if safety_rejection is not None:
         return f"{safety_rejection} side={cross.side} pmt={pmt.label} level={cross.level:g}"
     score, metadata = _score_threshold_cross(frame, pmt, cross)
+    score, metadata = _apply_funding_score_adjustment(
+        score,
+        metadata,
+        side=cross.side,
+        funding_rate=funding_rate,
+        funding_cap=funding_cap,
+    )
     full_score_min = _pmt_full_score_min(config)
     entry_score_min = _pmt_reduced_entry_min_score(full_score_min)
     if score < entry_score_min:

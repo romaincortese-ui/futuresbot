@@ -238,10 +238,8 @@ def _run_portfolio_backtest(
     def register_pmt_exit(position: FuturesPosition, reason: str, closed_at: pd.Timestamp) -> None:
         if not pmt_strategy_enabled() or not str(position.entry_signal or "").upper().startswith("PMT_THRESHOLD_"):
             return
-        if not _pmt_stop_chase_exit_reason(reason):
-            return
         cooldown_hours = max(0.0, _env_float("FUTURES_PMT_STOP_CHASE_COOLDOWN_HOURS", 0.0))
-        if cooldown_hours <= 0.0:
+        if cooldown_hours <= 0.0 or not _pmt_stop_chase_exit_reason(reason):
             return
         pmt_stop_chase_cooldowns[(position.symbol.upper(), position.side.upper())] = closed_at + pd.Timedelta(hours=cooldown_hours)
 

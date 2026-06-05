@@ -2774,6 +2774,31 @@ class FuturesRuntime:
         # wrap-around (e.g. 22-06)
         return now_hour >= start_h or now_hour < end_h
 
+    def _funding_rate_for_symbol(self, scoped: FuturesConfig) -> float:
+        sym = scoped.symbol
+        now_ts = time.time()
+        cached = self._funding_cache.get(sym)
+        if cached is not None and now_ts - cached[0] < 600.0:
+            return cached[1]
+        rate = 0.0
+        fetcher = getattr(self.client, "get_funding_rate", None)
+        if callable(fetcher):
+            try:
+                payload = fetcher(sym)
+            except Exception as exc:
+                log.debug("Futures funding rate fetch failed for %s: %s", sym, exc)
+                payload = None
+            if isinstance(payload, dict):
+                raw = payload.get("fundingRate") or payload.get("funding_rate") or payload.get("rate") or 0.0
+                try:
+                    rate = float(raw)
+                except (TypeError, ValueError):
+                    rate = 0.0
+            elif isinstance(payload, (int, float)):
+                rate = float(payload)
+        self._funding_cache[sym] = (now_ts, rate)
+        return rate
+
     def _funding_gate_ok(self, scoped: FuturesConfig) -> bool:
         """Return False if the current funding rate for ``scoped.symbol`` exceeds
         the per-symbol absolute cap. Zero cap disables the gate.
@@ -2787,28 +2812,7 @@ class FuturesRuntime:
         if cap <= 0:
             return True
         sym = scoped.symbol
-        now_ts = time.time()
-        cached = self._funding_cache.get(sym)
-        if cached is not None and now_ts - cached[0] < 600.0:
-            rate = cached[1]
-        else:
-            rate = 0.0
-            fetcher = getattr(self.client, "get_funding_rate", None)
-            if callable(fetcher):
-                try:
-                    payload = fetcher(sym)
-                except Exception as exc:
-                    log.debug("Futures funding rate fetch failed for %s: %s", sym, exc)
-                    payload = None
-                if isinstance(payload, dict):
-                    raw = payload.get("fundingRate") or payload.get("funding_rate") or payload.get("rate") or 0.0
-                    try:
-                        rate = float(raw)
-                    except (TypeError, ValueError):
-                        rate = 0.0
-                elif isinstance(payload, (int, float)):
-                    rate = float(payload)
-            self._funding_cache[sym] = (now_ts, rate)
+        rate = self._funding_rate_for_symbol(scoped)
         if abs(rate) > cap:
             # Gate B B2 (memo 1 §7): structured [FUNDING_BLOCK] so ops can
             # distinguish funding-gate rejections from other skip reasons and
@@ -2823,6 +2827,15 @@ class FuturesRuntime:
             )
             return False
         return True
+
+    def _pmt_funding_hard_block_enabled(self) -> bool:
+        return self._env_bool("FUTURES_PMT_FUNDING_HARD_BLOCK_ENABLED", False)
+
+    def _pmt_funding_context(self, scoped: FuturesConfig) -> tuple[float | None, float]:
+        cap = float(scoped.funding_rate_abs_max or 0.0)
+        if not self._env_bool("FUTURES_PMT_FUNDING_SCORE_ENABLED", True):
+            return None, cap
+        return self._funding_rate_for_symbol(scoped), cap
 
     def _available_slots(self) -> int:
         return max(0, int(self.config.max_concurrent_positions) - len(self.open_positions))
@@ -3333,17 +3346,28 @@ class FuturesRuntime:
             if not self._is_in_session(scoped):
                 log.info("Skipping %s: outside trading session %s", sym, scoped.session_hours_utc)
                 continue
-            if not self._funding_gate_ok(scoped):
+            if self._pmt_funding_hard_block_enabled() and not self._funding_gate_ok(scoped):
                 continue
+            funding_rate, funding_cap = self._pmt_funding_context(scoped)
             try:
                 frame = self.client.get_klines(sym, interval="Min15", start=start, end=end)
             except Exception as exc:
                 log.warning("Futures klines fetch failed for %s: %s", sym, exc)
                 continue
             frame = self._drop_incomplete_klines(frame, interval_seconds=900, now_ts=end)
-            signal = score_pmt_threshold_signal(frame, scoped)
+            signal = score_pmt_threshold_signal(
+                frame,
+                scoped,
+                funding_rate=funding_rate,
+                funding_cap=funding_cap,
+            )
             if signal is None:
-                reason = diagnose_pmt_threshold_rejection(frame, scoped)
+                reason = diagnose_pmt_threshold_rejection(
+                    frame,
+                    scoped,
+                    funding_rate=funding_rate,
+                    funding_cap=funding_cap,
+                )
                 self._last_cycle_gate_blocks[sym] = reason
                 log.info("[PMT_GATE_BLOCK] symbol=%s reason=%s", sym, reason)
                 continue

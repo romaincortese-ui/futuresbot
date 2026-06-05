@@ -93,6 +93,15 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_1H_PCT",
         "FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_PENALTY",
         "FUTURES_PMT_SIMPLE_HIGH_SCORE_VOLUME_CHASE_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_VOLUME_RATIO",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_1BAR_PCT",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_1H_PCT",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_PENALTY",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_SCORE_CAP",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_24H_PCT",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_MAX_1H_PCT",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_PENALTY",
+        "FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_SCORE_CAP",
         "FUTURES_PMT_SIMPLE_BLOCK_SCORE9_FATIGUE",
         "FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_6H_PCT",
         "FUTURES_PMT_SIMPLE_SCORE9_FATIGUE_12H_PCT",
@@ -120,6 +129,14 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_SIMPLE_FAILED_RECLAIM_SCORE_CAP",
         "FUTURES_PMT_CONFIRMATION_BARS",
         "FUTURES_PMT_CONFIRMATION_MIN_FOLLOWTHROUGH_PCT",
+        "FUTURES_PMT_FUNDING_SCORE_ENABLED",
+        "FUTURES_PMT_FUNDING_ADVERSE_EXCESS_PENALTY_PER_CAP",
+        "FUTURES_PMT_FUNDING_ADVERSE_MAX_PENALTY",
+        "FUTURES_PMT_FUNDING_ADVERSE_REDUCED_SIZE_CAP_ENABLED",
+        "FUTURES_PMT_FUNDING_ADVERSE_SCORE_CAP",
+        "FUTURES_PMT_FUNDING_FAVORABLE_MAX_BONUS",
+        "FUTURES_PMT_FUNDING_FAVORABLE_BONUS_PER_CAP",
+        "FUTURES_PMT_FUNDING_SCORE_FALLBACK_CAP",
         "FUTURES_PMT_BLOCK_RECENT_FAILED_RECLAIM",
         "FUTURES_PMT_RECENT_RECLAIM_LOOKBACK_BARS",
         "FUTURES_PMT_BLOCK_BROADER_TREND_CONFLICT",
@@ -433,19 +450,47 @@ def test_pmt_simple_core_weight_scales_context_bonus(monkeypatch):
     assert aggressive_signal.score > defensive_signal.score
 
 
-def test_pmt_simple_scoring_only_caps_exhausted_volume_chase(monkeypatch):
+def test_pmt_simple_scoring_sizes_down_exhausted_volume_chase(monkeypatch):
     _enable_pmt(monkeypatch, min_score="90")
     monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_VOLUME_RATIO", "10")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_24H_PCT", "1.0")
     frame = _frame([76000.0] * 100 + [81000.0] * 5 + [81900.0, 82450.0])
-    frame.loc[frame.index[-1], "volume"] = 3200.0
+    frame.loc[frame.index[-1], "volume"] = 1600.0
 
     signal = score_pmt_threshold_signal(frame, _config())
 
-    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert signal is not None
+    assert signal.score == 92.0
+    assert signal.metadata["pmt_balance_fraction"] == 0.50
+    assert "simple_exhausted_volume_climax" in signal.metadata["pmt_score_caps"]
 
-    assert signal is None
+
+def test_pmt_simple_scoring_rejects_high_score_blowoff_chase(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_HIGH_SCORE_BROADER_OVERSTRETCH_24H_PCT", "1.0")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_1H_PCT", "0.015")
+    frame = _frame([76000.0] * 100 + [81000.0] * 5 + [81900.0, 82450.0])
+    frame.loc[frame.index[-1], "volume"] = 3200.0
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
     assert rejection.startswith("score_below_threshold")
-    assert "simple_exhausted_volume_climax" in rejection
+    assert "simple_high_score_blowoff_chase" in rejection
+
+
+def test_pmt_simple_scoring_rejects_high_score_broader_overstretch(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_HIGH_SCORE_BLOWOFF_VOLUME_RATIO", "10")
+    frame = _frame([76000.0] * 100 + [81000.0] * 5 + [81900.0, 82450.0])
+    frame.loc[frame.index[-1], "volume"] = 1600.0
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold")
+    assert "simple_high_score_broader_overstretch" in rejection
 
 
 def test_pmt_simple_scoring_rejects_weak_followthrough(monkeypatch):
@@ -460,26 +505,56 @@ def test_pmt_simple_scoring_rejects_weak_followthrough(monkeypatch):
     assert "simple_weak_followthrough" in rejection
 
 
-def test_pmt_simple_scoring_rejects_severe_high_score_exhaustion(monkeypatch):
+def test_pmt_simple_scoring_sizes_down_severe_high_score_exhaustion(monkeypatch):
     _enable_pmt(monkeypatch, min_score="90")
     monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
     frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74000.0])
 
-    assert score_pmt_threshold_signal(frame, _config()) is None
-    rejection = diagnose_pmt_threshold_rejection(frame, _config())
-    assert rejection.startswith("score_below_threshold")
-    assert "simple_severe_high_score_exhaustion" in rejection
+    signal = score_pmt_threshold_signal(frame, _config())
+
+    assert signal is not None
+    assert signal.score == 92.0
+    assert signal.metadata["pmt_balance_fraction"] == 0.50
+    assert "simple_severe_high_score_exhaustion" in signal.metadata["pmt_score_caps"]
 
 
-def test_pmt_simple_scoring_rejects_high_score_trend_stretch(monkeypatch):
+def test_pmt_simple_scoring_sizes_down_high_score_trend_stretch(monkeypatch):
     _enable_pmt(monkeypatch, min_score="90")
     monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
     frame = _frame([80000.0] * 80 + [77000.0] * 20 + [75100.0] * 4 + [75080.0, 74940.0])
 
-    assert score_pmt_threshold_signal(frame, _config()) is None
-    rejection = diagnose_pmt_threshold_rejection(frame, _config())
-    assert rejection.startswith("score_below_threshold")
-    assert "simple_high_score_trend_stretch" in rejection
+    signal = score_pmt_threshold_signal(frame, _config())
+
+    assert signal is not None
+    assert signal.score == 92.0
+    assert signal.metadata["pmt_balance_fraction"] == 0.50
+    assert "simple_high_score_trend_stretch" in signal.metadata["pmt_score_caps"]
+
+
+def test_pmt_funding_penalty_does_not_veto_mega_threshold(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="90")
+    monkeypatch.setenv("FUTURES_PMT_SIMPLE_SCORING_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_PMT_FUNDING_ADVERSE_EXCESS_PENALTY_PER_CAP", "0.01")
+    frame = _frame([78000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0])
+
+    signal = score_pmt_threshold_signal(
+        frame,
+        _config(),
+        funding_rate=-0.00042,
+        funding_cap=0.00025,
+    )
+
+    assert signal is not None
+    assert signal.side == "SHORT"
+    assert signal.score >= 90.0
+    assert signal.metadata["pmt_funding_adverse"] is True
+    assert signal.metadata["pmt_funding_score_penalty"] > 0.0
+    assert signal.metadata["pmt_score_before_funding"] > signal.score
+    assert signal.score == 91.99
+    assert signal.metadata["pmt_balance_fraction"] == 0.25
+    assert signal.metadata["pmt_funding_score_cap"] == 91.99
+    assert "funding_adverse" in signal.metadata["pmt_score_penalties"]
+    assert "funding_adverse_reduced_size" in signal.metadata["pmt_score_caps"]
 
 
 def test_pmt_backtest_contract_sizing_uses_score_band_fraction(monkeypatch):
