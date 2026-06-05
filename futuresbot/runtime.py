@@ -1537,7 +1537,7 @@ class FuturesRuntime:
             "━━━━━━━━━━━━━━━",
             f"{balance_line} | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>",
             caps_line,
-            f"Hourly checks: <b>{self.config.hourly_check_seconds}s</b> | Heartbeat: <b>{self._heartbeat_label()}</b>",
+            f"Cycle checks: <b>{self._cycle_sleep_seconds()}s</b> | Heartbeat: <b>{self._heartbeat_label()}</b>",
         ])
         self._notify(
             "\n".join(message_parts)
@@ -1545,6 +1545,31 @@ class FuturesRuntime:
 
     def _heartbeat_label(self) -> str:
         return "disabled" if self.config.heartbeat_seconds <= 0 else f"{self.config.heartbeat_seconds}s"
+
+    def _cycle_sleep_seconds(self) -> int:
+        base = max(1, int(self.config.hourly_check_seconds))
+        if not pmt_strategy_enabled():
+            return base
+        default = min(base, 60)
+        return max(5, int(self._env_float("FUTURES_PMT_CYCLE_SECONDS", float(default))))
+
+    def _latency_trace_enabled(self) -> bool:
+        return self._flag("FUTURES_LATENCY_TRACE_ENABLED", pmt_strategy_enabled())
+
+    def _new_latency_trace_id(self, prefix: str) -> str:
+        return f"{prefix}-{self._cycle_counter}-{int(time.time() * 1000)}"
+
+    def _latency_log(self, trace_id: str | None, stage: str, started_at: float, **fields: Any) -> None:
+        if not trace_id or not self._latency_trace_enabled():
+            return
+        elapsed_ms = (time.monotonic() - started_at) * 1000.0
+        field_text = " ".join(
+            f"{key}={value}"
+            for key, value in fields.items()
+            if value is not None and value != ""
+        )
+        suffix = f" {field_text}" if field_text else ""
+        log.info("[LATENCY_TRACE] trace=%s stage=%s elapsed_ms=%.1f%s", trace_id, stage, elapsed_ms, suffix)
 
     def _send_heartbeat(self, *, price: float | None = None, signal: dict[str, Any] | None = None) -> None:
         if not self.telegram.configured:
@@ -3330,6 +3355,8 @@ class FuturesRuntime:
             return None
         if self._pmt_tp_cooldown_active():
             return None
+        scan_started_at = time.monotonic()
+        trace_id = self._new_latency_trace_id("pmt-scan") if self._latency_trace_enabled() else ""
         self._refresh_pmt_core_weight()
         self._cycle_counter += 1
         self._last_cycle_gate_blocks = {}
@@ -3355,6 +3382,7 @@ class FuturesRuntime:
             funding_rate, funding_cap = self._pmt_funding_context(scoped)
             candidates.append((sym, scoped, funding_rate, funding_cap))
         if not candidates:
+            self._latency_log(trace_id, "pmt_scan_no_candidates", scan_started_at, symbols=len(scan_symbols))
             return None
         results = self._score_pmt_candidates(candidates, start=start, end=end)
         for sym, signal, reason, error in results:
@@ -3392,8 +3420,32 @@ class FuturesRuntime:
             if best is None or score > best[0]:
                 best = (score, signal)
         if best is None:
+            self._latency_log(
+                trace_id,
+                "pmt_scan_no_signal",
+                scan_started_at,
+                symbols=len(scan_symbols),
+                candidates=len(candidates),
+            )
             return None
-        return best[1].to_dict()
+        best_signal = best[1]
+        if trace_id:
+            metadata = dict(best_signal.metadata or {})
+            metadata["entry_trace_id"] = trace_id
+            metadata["pmt_scan_ms"] = round((time.monotonic() - scan_started_at) * 1000.0, 1)
+            metadata["pmt_scan_symbols"] = len(scan_symbols)
+            metadata["pmt_scan_candidates"] = len(candidates)
+            best_signal = dataclasses.replace(best_signal, metadata=metadata)
+        self._latency_log(
+            trace_id,
+            "pmt_scan_signal",
+            scan_started_at,
+            symbol=best_signal.symbol,
+            score=round(float(best_signal.score), 2),
+            symbols=len(scan_symbols),
+            candidates=len(candidates),
+        )
+        return best_signal.to_dict()
 
     def _score_pmt_candidates(
         self,
@@ -5446,6 +5498,11 @@ class FuturesRuntime:
         leverage = int(signal_payload["leverage"])
         score = float(signal_payload.get("score") or 0.0)
         symbol = str(signal_payload.get("symbol") or self.config.symbol).upper()
+        entry_started_at = time.monotonic()
+        initial_metadata = dict(signal_payload.get("metadata", {}) or {})
+        trace_id = str(initial_metadata.get("entry_trace_id") or "")
+        if not trace_id and self._latency_trace_enabled():
+            trace_id = self._new_latency_trace_id("entry")
         if symbol in self.open_positions:
             return False
         if self._same_signal_reentry_blocked(signal_payload):
@@ -5480,6 +5537,9 @@ class FuturesRuntime:
         signal_metadata = dict(signal_payload.get("metadata", {}) or {})
         signal_metadata = opportunity_metadata(signal_metadata, score)
         signal_payload["metadata"] = signal_metadata
+        if trace_id:
+            signal_metadata["entry_trace_id"] = trace_id
+        self._latency_log(trace_id, "entry_received", entry_started_at, symbol=symbol, side=side_name, score=round(score, 2))
         signal_metadata.setdefault("setup_regime", setup_regime_for_signal(str(signal_payload.get("entry_signal") or ""), side_name))
         signal_metadata["entry_score_gate"] = min_entry_score
         signal_metadata["entry_leverage_floor"] = float(leverage_floor)
@@ -5544,11 +5604,15 @@ class FuturesRuntime:
                     signal_payload["sl_price"] = new_sl
                     signal_metadata["sl_distance_cap_applied"] = 1.0
                     signal_metadata["sl_distance_cap_pct"] = float(max_sl_dist_pct)
+        contract_started_at = time.monotonic()
         contract = self.client.get_contract_detail(symbol)
+        self._latency_log(trace_id, "contract_detail", contract_started_at, symbol=symbol)
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         capital_multiplier, capital_scaling = self._capital_scaling_multiplier()
         event_margin_multiplier = sharp_event_margin_multiplier(signal_metadata, 1.0)
+        account_started_at = time.monotonic()
         account_snapshot = self._account_snapshot(entry_price)
+        self._latency_log(trace_id, "account_snapshot_initial", account_started_at, symbol=symbol)
         available_balance = float(account_snapshot.get("available_usdt", 0.0) or 0.0)
         if available_balance <= 0:
             available_balance = max(0.0, scoped.margin_budget_usdt - self._total_open_margin())
@@ -5724,7 +5788,9 @@ class FuturesRuntime:
             return False
         projected_margin = contracts * contract_size * entry_price / leverage
         if not self.config.paper_trade:
+            latest_account_started_at = time.monotonic()
             latest_snapshot = self._account_snapshot(entry_price)
+            self._latency_log(trace_id, "account_snapshot_pre_order", latest_account_started_at, symbol=symbol)
             latest_available = float(latest_snapshot.get("available_usdt", 0.0) or 0.0) or available_balance
             live_margin_fraction = full_balance_pct if full_balance_sizing else max(0.0, min(1.0, float(getattr(scoped, "max_margin_fraction", self.config.max_margin_fraction) or 0.0)))
             live_margin_cap = latest_available * live_margin_fraction if latest_available > 0 else 0.0
@@ -5843,9 +5909,12 @@ class FuturesRuntime:
             self._record_activity(f"Opened {side_name} {symbol} x{leverage} (paper)")
             self._save_state()
             return True
+        setup_started_at = time.monotonic()
         self._ensure_live_position_setup(symbol=symbol, side_name=side_name, leverage=leverage)
+        self._latency_log(trace_id, "live_position_setup", setup_started_at, symbol=symbol, side=side_name, leverage=leverage)
         # Sprint 3 §3.5 — try maker-ladder first; on timeout/failure, fall back
         # to taker market order (original behaviour). No-op unless flag on.
+        maker_started_at = time.monotonic()
         maker_result = self._attempt_maker_ladder(
             symbol=symbol,
             side=side,
@@ -5855,6 +5924,14 @@ class FuturesRuntime:
             entry_price=entry_price,
             tp_price=None if scoped.trailing_exit_drawdown_pct > 0 else float(signal_payload["tp_price"]),
             sl_price=float(signal_payload["sl_price"]),
+        )
+        self._latency_log(
+            trace_id,
+            "maker_ladder_attempt",
+            maker_started_at,
+            symbol=symbol,
+            enabled=self._flag("USE_MAKER_LADDER") and not (pmt_mode and not self._flag("FUTURES_PMT_USE_MAKER_LADDER", False)),
+            filled=maker_result is not None,
         )
         if maker_result is not None:
             order_id, detail, maker_filled = maker_result
@@ -5900,6 +5977,7 @@ class FuturesRuntime:
                     self._record_activity(f"Skipped taker fallback: {side_name} {symbol}")
                     self._save_state()
                     return False
+                order_started_at = time.monotonic()
                 guarded_order = self._place_live_entry_order_with_balance_guard(
                     symbol=symbol,
                     side=side,
@@ -5911,7 +5989,16 @@ class FuturesRuntime:
                     min_vol=min_vol,
                     signal_metadata=signal_metadata,
                 )
+                self._latency_log(
+                    trace_id,
+                    "market_order_create",
+                    order_started_at,
+                    symbol=symbol,
+                    side=side_name,
+                    contracts=contracts,
+                )
                 if guarded_order is None:
+                    self._latency_log(trace_id, "entry_order_failed", entry_started_at, symbol=symbol, side=side_name)
                     self._save_state()
                     return False
                 order, contracts = guarded_order
@@ -5919,13 +6006,24 @@ class FuturesRuntime:
                 order_id = self._extract_order_id(order)
                 detail = {}
                 maker_filled = False
+        confirm_started_at = time.monotonic()
         detail, position_row = self._confirm_live_entry(
             symbol=symbol,
             side_name=side_name,
             order_id=order_id,
             expected_contracts=contracts,
         )
+        self._latency_log(
+            trace_id,
+            "entry_confirm",
+            confirm_started_at,
+            symbol=symbol,
+            side=side_name,
+            order_id=order_id,
+            confirmed=position_row is not None,
+        )
         if position_row is None:
+            self._latency_log(trace_id, "entry_unconfirmed", entry_started_at, symbol=symbol, side=side_name, order_id=order_id)
             self._handle_unconfirmed_live_entry(symbol=symbol, side_name=side_name, order_id=order_id)
             return False
         position_id = str(position_row.get("positionId") or position_row.get("position_id") or detail.get("positionId") or "")
@@ -5970,6 +6068,7 @@ class FuturesRuntime:
                 sl_price = anchored_sl
                 signal_payload["tp_price"] = tp_price
                 signal_payload["sl_price"] = sl_price
+                tpsl_started_at = time.monotonic()
                 self._place_fill_anchored_tpsl(
                     symbol=symbol,
                     side_name=side_name,
@@ -5979,6 +6078,7 @@ class FuturesRuntime:
                     sl_price=sl_price,
                     metadata=signal_metadata,
                 )
+                self._latency_log(trace_id, "fill_anchored_tpsl", tpsl_started_at, symbol=symbol, side=side_name)
         # Sprint 3 §3.9 — record entry slippage for weekly attribution report.
         self._record_fill(
             symbol=symbol,
@@ -6035,6 +6135,16 @@ class FuturesRuntime:
         self._notify(self._entry_message(position))
         self._record_activity(f"Opened {side_name} {symbol} x{leverage} (live)")
         self._save_state()
+        self._latency_log(
+            trace_id,
+            "entry_complete",
+            entry_started_at,
+            symbol=symbol,
+            side=side_name,
+            order_id=order_id,
+            fill_price=self._format_price(fill_price),
+            contracts=confirmed_contracts,
+        )
         return True
 
     def _log_entry_fill(
@@ -6359,10 +6469,11 @@ class FuturesRuntime:
     def run(self) -> None:
         _configure_logging()
         log.info(
-            "Starting futures runtime mode=%s symbols=%s hourly_check_seconds=%s heartbeat_seconds=%s paper_trade=%s",
+            "Starting futures runtime mode=%s symbols=%s hourly_check_seconds=%s cycle_sleep_seconds=%s heartbeat_seconds=%s paper_trade=%s",
             self._mode_label(),
             ",".join(self.config.symbols),
             self.config.hourly_check_seconds,
+            self._cycle_sleep_seconds(),
             self.config.heartbeat_seconds,
             self.config.paper_trade,
         )
@@ -6449,8 +6560,9 @@ class FuturesRuntime:
                     f"━━━━━━━━━━━━━━━\n"
                     f"{html.escape(str(exc))}",
                 )
-            log.info("Sleeping %ss before next futures cycle", self.config.hourly_check_seconds)
-            self._sleep_until_next_cycle(self.config.hourly_check_seconds)
+            sleep_seconds = self._cycle_sleep_seconds()
+            log.info("Sleeping %ss before next futures cycle", sleep_seconds)
+            self._sleep_until_next_cycle(sleep_seconds)
 
 
 def _configure_logging() -> None:

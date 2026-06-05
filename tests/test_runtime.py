@@ -34,9 +34,11 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS",
         "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
         "FUTURES_PMT_TP_COOLDOWN_HOURS",
+        "FUTURES_PMT_CYCLE_SECONDS",
         "FUTURES_PMT_PARALLEL_SCAN_ENABLED",
         "FUTURES_PMT_SCAN_WORKERS",
         "FUTURES_PMT_USE_MAKER_LADDER",
+        "FUTURES_LATENCY_TRACE_ENABLED",
         "FUTURES_SYMBOLS",
         "FUTURES_BACKTEST_SYMBOLS",
         "FUTURES_FULL_BALANCE_SIZING_ENABLED",
@@ -155,8 +157,20 @@ def test_pmt_scan_symbols_ignore_overlay_candidates(tmp_path, monkeypatch):
     assert runtime._scan_symbols_for_cycle() == tuple(runtime._active_symbols)
 
 
+def test_pmt_cycle_sleep_uses_fast_strategy_interval(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    runtime = FuturesRuntime(replace(_config(tmp_path), hourly_check_seconds=300), StubClient())
+
+    assert runtime._cycle_sleep_seconds() == 60
+
+    monkeypatch.setenv("FUTURES_PMT_CYCLE_SECONDS", "45")
+
+    assert runtime._cycle_sleep_seconds() == 45
+
+
 def test_pmt_fetch_signal_parallelizes_symbol_klines(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("FUTURES_LATENCY_TRACE_ENABLED", "1")
     monkeypatch.setenv("FUTURES_PMT_PARALLEL_SCAN_ENABLED", "1")
     monkeypatch.setenv("FUTURES_PMT_SCAN_WORKERS", "3")
     symbols = ("BTC_USDT", "ETH_USDT", "SOL_USDT")
@@ -206,6 +220,8 @@ def test_pmt_fetch_signal_parallelizes_symbol_klines(tmp_path, monkeypatch):
 
     assert signal is not None
     assert signal["symbol"] == "ETH_USDT"
+    assert signal["metadata"]["entry_trace_id"].startswith("pmt-scan-")
+    assert signal["metadata"]["pmt_scan_candidates"] == 3
     assert client.max_active_calls > 1
 
 
