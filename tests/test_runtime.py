@@ -2754,6 +2754,80 @@ def test_live_enter_trade_can_skip_low_score_taker_fallback_after_unfilled_maker
     assert runtime.open_positions == {}
 
 
+def test_pmt_live_enter_trade_bypasses_maker_ladder_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("USE_MAKER_LADDER", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "0")
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "0")
+    monkeypatch.setenv("USE_FUNDING_AWARE_ENTRY", "0")
+    monkeypatch.setenv("USE_PORTFOLIO_VAR", "0")
+
+    class PmtFastEntryClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.orders: list[dict[str, object]] = []
+
+        def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
+            return {"availableBalance": "100.0", "equity": "100.0"}
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 1.0, "minVol": 1}
+
+        def get_ticker(self, symbol: str) -> dict[str, str]:
+            raise AssertionError("PMT fast entry should not quote maker ladder")
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            return {"orderId": "entry-pmt-fast"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            volume = str(self.orders[-1]["vol"])
+            return {"orderId": order_id, "dealAvgPrice": "100.0", "dealVol": volume, "positionId": "pos-pmt-fast"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            volume = str(self.orders[-1]["vol"])
+            margin = float(self.orders[-1]["vol"]) * 100.0 / float(self.orders[-1]["leverage"])
+            return [
+                {
+                    "symbol": "BTC_USDT",
+                    "positionType": 2,
+                    "holdVol": volume,
+                    "holdAvgPrice": "100.0",
+                    "im": str(margin),
+                    "leverage": str(self.orders[-1]["leverage"]),
+                    "positionId": "pos-pmt-fast",
+                }
+            ]
+
+    client = PmtFastEntryClient()
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False, margin_budget_usdt=50.0), client)
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "SHORT",
+        "entry_price": 100.0,
+        "leverage": 5,
+        "symbol": "BTC_USDT",
+        "tp_price": 95.0,
+        "sl_price": 102.0,
+        "score": 92.0,
+        "certainty": 0.92,
+        "entry_signal": "PMT_THRESHOLD_SHORT",
+        "metadata": {"tp_margin_pct": 25.0, "sl_margin_pct": 10.0},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    assert [order["order_type"] for order in client.orders] == [5]
+    assert runtime.open_positions["BTC_USDT"].position_id == "pos-pmt-fast"
+
+
 def test_live_enter_trade_registers_only_confirmed_exchange_position(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
     monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")

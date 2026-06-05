@@ -4497,6 +4497,8 @@ class FuturesRuntime:
         No-op (returns None) unless USE_MAKER_LADDER=1.
         """
 
+        if pmt_strategy_enabled() and not self._flag("FUTURES_PMT_USE_MAKER_LADDER", False):
+            return None
         if not self._flag("USE_MAKER_LADDER"):
             return None
         try:
