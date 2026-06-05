@@ -296,14 +296,35 @@ class MexcFuturesClient:
         """Cancel a working futures order by id (Sprint 3 §3.5 maker ladder)."""
         return self.private_post("/api/v1/private/order/cancel", [int(order_id)])
 
-    def place_position_tpsl(self, *, position_id: str, vol: int, take_profit_price: float, stop_loss_price: float) -> Any:
+    def place_position_tpsl(
+        self,
+        *,
+        position_id: str,
+        vol: int,
+        take_profit_price: float | None,
+        stop_loss_price: float,
+        side: str | int | None = None,
+    ) -> Any:
+        side_code: int | None = None
+        if isinstance(side, str):
+            side_text = side.strip().upper()
+            if side_text == "LONG":
+                side_code = 1
+            elif side_text == "SHORT":
+                side_code = 3
+        elif side is not None:
+            try:
+                side_code = int(side)
+            except (TypeError, ValueError):
+                side_code = None
+        profit_trend, loss_trend = self._trigger_trends_for_order_side(side_code or 1)
         payload = {
             "positionId": int(position_id),
             "vol": int(vol),
             "takeProfitPrice": take_profit_price,
             "stopLossPrice": stop_loss_price,
-            "profitTrend": 1,
-            "lossTrend": 1,
+            "profitTrend": profit_trend if take_profit_price else None,
+            "lossTrend": loss_trend if stop_loss_price else None,
             "volType": 2,
         }
         return self.private_post("/api/v1/private/stoporder/place", payload)

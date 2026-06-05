@@ -4694,6 +4694,82 @@ class FuturesRuntime:
                 return value
         return 0.0
 
+    def _pmt_fill_anchored_protection(
+        self,
+        *,
+        side_name: str,
+        intended_entry_price: float,
+        fill_price: float,
+        leverage: int,
+        current_tp_price: float,
+        current_sl_price: float,
+        metadata: dict[str, Any],
+    ) -> tuple[float, float, bool]:
+        if fill_price <= 0 or intended_entry_price <= 0 or leverage <= 0:
+            return current_tp_price, current_sl_price, False
+        if abs(fill_price - intended_entry_price) / intended_entry_price < 0.000001:
+            return current_tp_price, current_sl_price, False
+        tp_margin_pct = self._metadata_float(metadata, "tp_margin_pct")
+        sl_margin_pct = self._metadata_float(metadata, "sl_margin_pct")
+        if tp_margin_pct is None and current_tp_price > 0:
+            tp_margin_pct = abs(current_tp_price - intended_entry_price) / intended_entry_price * leverage * 100.0
+        if sl_margin_pct is None and current_sl_price > 0:
+            sl_margin_pct = abs(current_sl_price - intended_entry_price) / intended_entry_price * leverage * 100.0
+        if tp_margin_pct is None and sl_margin_pct is None:
+            return current_tp_price, current_sl_price, False
+        max_stop_risk_pct = max(0.0, self._env_margin_fraction("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.20)) * 100.0
+        if sl_margin_pct is not None and max_stop_risk_pct > 0:
+            sl_margin_pct = min(sl_margin_pct, max_stop_risk_pct)
+        tp_price = current_tp_price
+        sl_price = current_sl_price
+        if tp_margin_pct is not None:
+            tp_move = max(0.0, tp_margin_pct) / 100.0 / float(leverage)
+            tp_price = fill_price * (1.0 + tp_move) if side_name == "LONG" else fill_price * (1.0 - tp_move)
+        if sl_margin_pct is not None:
+            sl_move = max(0.0, sl_margin_pct) / 100.0 / float(leverage)
+            sl_price = fill_price * (1.0 - sl_move) if side_name == "LONG" else fill_price * (1.0 + sl_move)
+        return tp_price, sl_price, True
+
+    def _place_fill_anchored_tpsl(
+        self,
+        *,
+        symbol: str,
+        side_name: str,
+        position_id: str,
+        contracts: int,
+        tp_price: float | None,
+        sl_price: float,
+        metadata: dict[str, Any],
+    ) -> None:
+        place_position_tpsl = getattr(self.client, "place_position_tpsl", None)
+        if not callable(place_position_tpsl) or not position_id or contracts <= 0 or sl_price <= 0:
+            return
+        take_profit_price = tp_price if tp_price is not None and tp_price > 0 else None
+        try:
+            place_position_tpsl(
+                position_id=position_id,
+                vol=contracts,
+                take_profit_price=take_profit_price,
+                stop_loss_price=sl_price,
+                side=side_name,
+            )
+            metadata["fill_anchored_tpsl_placed"] = 1.0
+        except TypeError:
+            try:
+                place_position_tpsl(
+                    position_id=position_id,
+                    vol=contracts,
+                    take_profit_price=take_profit_price,
+                    stop_loss_price=sl_price,
+                )
+                metadata["fill_anchored_tpsl_placed"] = 1.0
+            except Exception as exc:  # pragma: no cover - exchange best effort
+                log.warning("Fill-anchored TPSL placement failed for %s: %s", symbol, exc)
+                metadata["fill_anchored_tpsl_error"] = str(exc)[:160]
+        except Exception as exc:  # pragma: no cover - exchange best effort
+            log.warning("Fill-anchored TPSL placement failed for %s: %s", symbol, exc)
+            metadata["fill_anchored_tpsl_error"] = str(exc)[:160]
+
     @staticmethod
     def _mexc_balance_insufficient_payload(exc: Exception) -> dict[str, Any] | None:
         payload = exc.payload if isinstance(exc, MexcApiError) else getattr(exc, "payload", None)
@@ -5789,6 +5865,48 @@ class FuturesRuntime:
             confirmed_margin = self._positive_float_from(detail, "usedMargin", "margin")
         if confirmed_margin <= 0:
             confirmed_margin = confirmed_contracts * contract_size * fill_price / confirmed_leverage
+        tp_price = float(signal_payload["tp_price"])
+        sl_price = float(signal_payload["sl_price"])
+        if pmt_mode:
+            anchored_tp, anchored_sl, anchored = self._pmt_fill_anchored_protection(
+                side_name=side_name,
+                intended_entry_price=entry_price,
+                fill_price=fill_price,
+                leverage=confirmed_leverage,
+                current_tp_price=tp_price,
+                current_sl_price=sl_price,
+                metadata=signal_metadata,
+            )
+            if anchored:
+                log.info(
+                    "PMT fill-anchored protection for %s: fill=%s intended=%s TP %.6f -> %.6f SL %.6f -> %.6f leverage=x%d",
+                    symbol,
+                    self._format_price(fill_price),
+                    self._format_price(entry_price),
+                    tp_price,
+                    anchored_tp,
+                    sl_price,
+                    anchored_sl,
+                    confirmed_leverage,
+                )
+                signal_metadata["fill_anchored_protection"] = 1.0
+                signal_metadata["fill_anchored_intended_entry_price"] = round(float(entry_price), 8)
+                signal_metadata["fill_anchored_actual_entry_price"] = round(float(fill_price), 8)
+                signal_metadata["fill_anchored_original_tp_price"] = round(float(tp_price), 8)
+                signal_metadata["fill_anchored_original_sl_price"] = round(float(sl_price), 8)
+                tp_price = anchored_tp
+                sl_price = anchored_sl
+                signal_payload["tp_price"] = tp_price
+                signal_payload["sl_price"] = sl_price
+                self._place_fill_anchored_tpsl(
+                    symbol=symbol,
+                    side_name=side_name,
+                    position_id=position_id,
+                    contracts=confirmed_contracts,
+                    tp_price=None if scoped.trailing_exit_drawdown_pct > 0 else tp_price,
+                    sl_price=sl_price,
+                    metadata=signal_metadata,
+                )
         # Sprint 3 §3.9 — record entry slippage for weekly attribution report.
         self._record_fill(
             symbol=symbol,
@@ -5806,8 +5924,8 @@ class FuturesRuntime:
             contract_size=contract_size,
             leverage=confirmed_leverage,
             margin_usdt=round(float(confirmed_margin), 8),
-            tp_price=float(signal_payload["tp_price"]),
-            sl_price=float(signal_payload["sl_price"]),
+            tp_price=tp_price,
+            sl_price=sl_price,
             position_id=position_id,
             order_id=order_id,
             opened_at=datetime.now(timezone.utc),

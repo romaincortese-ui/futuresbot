@@ -3005,6 +3005,105 @@ def test_enter_trade_normalizes_margin_risk_cap_percent_value(tmp_path, monkeypa
     assert round(runtime._position_stop_risk_pct_of_margin(position), 2) == 20.0
 
 
+def test_pmt_live_enter_trade_reanchors_protection_to_confirmed_fill(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
+    monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
+    monkeypatch.setenv("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", "20")
+    monkeypatch.setenv("USE_NAV_RISK_SIZING", "0")
+    monkeypatch.setenv("USE_DRAWDOWN_KILL", "0")
+    monkeypatch.setenv("USE_FUNDING_AWARE_ENTRY", "0")
+    monkeypatch.setenv("USE_PORTFOLIO_VAR", "0")
+
+    class BnbFillClient(StubClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.orders: list[dict[str, object]] = []
+            self.position_tpsl: list[dict[str, object]] = []
+
+        def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
+            return {"availableBalance": "50.0", "equity": "50.0"}
+
+        def get_contract_detail(self, symbol: str) -> dict[str, object]:
+            return {"contractSize": 0.01, "minVol": 1}
+
+        def change_position_mode(self, position_mode: int):
+            return {"success": True}
+
+        def change_leverage(self, *, symbol: str, leverage: int, position_type: int, open_type: int = 1, position_id: str | None = None):
+            return {"success": True}
+
+        def place_order(self, **kwargs):
+            self.orders.append(dict(kwargs))
+            return {"orderId": "entry-bnb-fill"}
+
+        def get_order(self, order_id: str) -> dict[str, str]:
+            volume = str(self.orders[-1]["vol"])
+            return {"orderId": order_id, "dealAvgPrice": "573.9", "dealVol": volume, "positionId": "pos-bnb-fill"}
+
+        def get_open_positions(self, symbol: str | None = None):
+            volume = str(self.orders[-1]["vol"])
+            leverage = float(self.orders[-1]["leverage"])
+            margin = float(self.orders[-1]["vol"]) * 0.01 * 573.9 / leverage
+            return [
+                {
+                    "symbol": "BNB_USDT",
+                    "positionType": 2,
+                    "holdVol": volume,
+                    "holdAvgPrice": "573.9",
+                    "im": str(margin),
+                    "leverage": str(self.orders[-1]["leverage"]),
+                    "positionId": "pos-bnb-fill",
+                }
+            ]
+
+        def place_position_tpsl(self, **kwargs):
+            self.position_tpsl.append(dict(kwargs))
+            return {"success": True}
+
+    intended_entry = 579.7
+    fill_price = 573.9
+    leverage = 22
+    tp_margin_pct = 200.0
+    sl_margin_pct = 16.5
+    stale_tp = intended_entry * (1.0 - (tp_margin_pct / 100.0) / leverage)
+    stale_sl = intended_entry * (1.0 + (sl_margin_pct / 100.0) / leverage)
+    expected_tp = fill_price * (1.0 - (tp_margin_pct / 100.0) / leverage)
+    expected_sl = fill_price * (1.0 + (sl_margin_pct / 100.0) / leverage)
+
+    client = BnbFillClient()
+    runtime = FuturesRuntime(
+        replace(_config(tmp_path), paper_trade=False, leverage_min=5, leverage_max=25, margin_budget_usdt=50.0),
+        client,
+    )
+    runtime._notify = lambda message, parse_mode="HTML": None
+    signal = {
+        "side": "SHORT",
+        "entry_price": intended_entry,
+        "leverage": leverage,
+        "symbol": "BNB_USDT",
+        "tp_price": stale_tp,
+        "sl_price": stale_sl,
+        "score": 92.06,
+        "certainty": 0.9206,
+        "entry_signal": "PMT_THRESHOLD_SHORT",
+        "metadata": {"tp_margin_pct": tp_margin_pct, "sl_margin_pct": sl_margin_pct},
+    }
+
+    assert runtime._enter_trade(signal) is True
+    position = runtime.open_positions["BNB_USDT"]
+    assert position.entry_price == fill_price
+    assert position.tp_price == pytest.approx(expected_tp)
+    assert position.sl_price == pytest.approx(expected_sl)
+    assert position.sl_price < 581.2
+    assert round(runtime._position_stop_risk_pct_of_margin(position), 2) == sl_margin_pct
+    assert position.metadata["fill_anchored_protection"] == 1.0
+    assert position.metadata["fill_anchored_tpsl_placed"] == 1.0
+    assert client.orders[-1]["stop_loss_price"] == pytest.approx(stale_sl)
+    assert client.position_tpsl[-1]["side"] == "SHORT"
+    assert client.position_tpsl[-1]["stop_loss_price"] == pytest.approx(expected_sl)
+
+
 def test_live_enter_trade_retries_lower_contracts_on_balance_insufficient(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_ATTEMPTS", "1")
     monkeypatch.setenv("FUTURES_ENTRY_CONFIRM_SLEEP_SECONDS", "0")
