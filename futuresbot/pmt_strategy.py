@@ -1098,12 +1098,12 @@ def score_pmt_threshold_signal(
         profit_lock_floor_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_FLOOR_PCT", 5.0))
         profit_lock_exit_min_net_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_EXIT_MIN_NET_PCT", 0.0))
     else:
-        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 20.0))
+        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 4.0))
         profit_lock_giveback_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT", 0.0))
-        profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.70)))
+        profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.35)))
         profit_lock_min_tp_progress = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0))
-        profit_lock_floor_pct = 0.0
-        profit_lock_exit_min_net_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", 20.0))
+        profit_lock_floor_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT", 3.0))
+        profit_lock_exit_min_net_pct = max(0.0, _env_float("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0))
     metadata.update(
         {
             "tp_margin_pct": round(tp_margin_pct, 4),

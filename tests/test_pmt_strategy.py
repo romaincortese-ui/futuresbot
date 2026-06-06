@@ -53,6 +53,7 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT",
         "FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT",
         "FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION",
+        "FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT",
         "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
         "FUTURES_PMT_SIMPLE_SCORING_ENABLED",
         "FUTURES_PMT_SIMPLE_BLOCK_CONFIRMATION_NO_FOLLOWTHROUGH",
@@ -306,11 +307,12 @@ def test_pmt_mega_bearish_breakdown_targets_200pct_margin(monkeypatch):
     assert signal.metadata["pmt_balance_fraction"] == 1.0
     assert signal.metadata["tp_margin_pct"] == 200.0
     assert signal.metadata["sl_margin_pct"] <= 16.0
-    assert signal.metadata["profit_lock_trigger_pct_override"] == 20.0
+    assert signal.metadata["profit_lock_trigger_pct_override"] == 4.0
     assert signal.metadata["profit_lock_giveback_pct_override"] == 0.0
-    assert signal.metadata["profit_lock_pullback_fraction_override"] == 0.70
+    assert signal.metadata["profit_lock_pullback_fraction_override"] == 0.35
     assert signal.metadata["profit_lock_min_tp_progress_override"] == 0.0
-    assert signal.metadata["profit_lock_exit_min_net_pct_override"] == 20.0
+    assert signal.metadata["profit_lock_floor_pct_override"] == 3.0
+    assert signal.metadata["profit_lock_exit_min_net_pct_override"] == 0.0
     assert signal.tp_price == signal.entry_price * (1.0 - 2.0 / signal.leverage)
     assert signal.sl_price <= signal.entry_price * (1.0 + 0.16 / signal.leverage)
 
@@ -664,7 +666,7 @@ def test_profit_lock_fixed_giveback_exits_one_point_from_peak():
     assert second_exit == (100.2, "PEAK_PROFIT_LOCK")
 
 
-def test_pmt_profit_lock_arms_above_20pct_without_tp_progress():
+def test_pmt_profit_lock_uses_pmt_overrides_without_tp_progress():
     position = FuturesPosition(
         symbol="ETH_USDT",
         side="SHORT",
@@ -682,12 +684,12 @@ def test_pmt_profit_lock_arms_above_20pct_without_tp_progress():
         certainty=0.99,
         entry_signal="PMT_THRESHOLD_SHORT",
         metadata={
-            "profit_lock_trigger_pct_override": 20.0,
+            "profit_lock_trigger_pct_override": 4.0,
             "profit_lock_giveback_pct_override": 0.0,
-            "profit_lock_pullback_fraction_override": 0.70,
+            "profit_lock_pullback_fraction_override": 0.35,
             "profit_lock_min_tp_progress_override": 0.0,
-            "profit_lock_exit_min_net_pct_override": 20.0,
-            "profit_lock_floor_pct_override": 0.0,
+            "profit_lock_exit_min_net_pct_override": 0.0,
+            "profit_lock_floor_pct_override": 3.0,
         },
     )
 
@@ -704,7 +706,7 @@ def test_pmt_profit_lock_arms_above_20pct_without_tp_progress():
     )
     assert early_peak_exit is None
     assert changed
-    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 6.6
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 14.3
 
     below_min_net_exit, _changed = evaluate_profit_lock_bar(
         position,
@@ -743,5 +745,5 @@ def test_pmt_profit_lock_arms_above_20pct_without_tp_progress():
     assert below_min_net_exit is None
     assert runner_peak_exit is None
     assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 69.2
-    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 20.76
-    assert final_exit == (99.5848, "PEAK_PROFIT_LOCK")
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 44.98
+    assert final_exit == (99.1004, "PEAK_PROFIT_LOCK")
