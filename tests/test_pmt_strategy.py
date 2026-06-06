@@ -11,6 +11,8 @@ from futuresbot.models import FuturesPosition
 from futuresbot.pmt_strategy import (
     DEFAULT_PMT_PROFILES,
     ELIGIBLE_PMT_SYMBOLS,
+    MentalThresholdCross,
+    PairMarketTrend,
     classify_pair_market_trend,
     diagnose_pmt_threshold_rejection,
     mental_threshold_step,
@@ -416,6 +418,39 @@ def test_pmt_reduced_score_entry_blocks_exhausted_edge(monkeypatch):
     rejection = diagnose_pmt_threshold_rejection(frame, _config())
     assert rejection.startswith("reduced_score_blocked")
     assert "one_hour_exhaustion" in rejection
+
+
+def test_pmt_min_score_requires_strictly_higher_score(monkeypatch):
+    _enable_pmt(monkeypatch, min_score="92.5")
+    monkeypatch.setenv("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", "92.5")
+    frame = _frame([61000.0, 60990.0])
+
+    monkeypatch.setattr(
+        "futuresbot.pmt_strategy.classify_pair_market_trend",
+        lambda frame, symbol: PairMarketTrend(symbol, "BEARISH", -0.05, -0.04, -0.02),
+    )
+    monkeypatch.setattr(
+        "futuresbot.pmt_strategy.detect_mental_threshold_cross",
+        lambda frame, symbol: MentalThresholdCross("SHORT", 61000.0, 61010.0, 60990.0, -0.001, 0.001),
+    )
+    monkeypatch.setattr(
+        "futuresbot.pmt_strategy._score_threshold_cross",
+        lambda frame, pmt, cross: (92.5, {"pmt_label": pmt.label, "pmt_edge_score": 95.0}),
+    )
+
+    assert score_pmt_threshold_signal(frame, _config()) is None
+    rejection = diagnose_pmt_threshold_rejection(frame, _config())
+    assert rejection.startswith("score_below_threshold score=92.50 min=92.50")
+
+    monkeypatch.setattr(
+        "futuresbot.pmt_strategy._score_threshold_cross",
+        lambda frame, pmt, cross: (92.51, {"pmt_label": pmt.label, "pmt_edge_score": 95.0}),
+    )
+    signal = score_pmt_threshold_signal(frame, _config())
+
+    assert signal is not None
+    assert signal.score == 92.51
+    assert signal.metadata["pmt_balance_fraction"] == 0.50
 
 
 def test_pmt_simple_scoring_uses_trend_and_threshold_as_core(monkeypatch):

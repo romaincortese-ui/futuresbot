@@ -1073,7 +1073,7 @@ def score_pmt_threshold_signal(
     entry_score_min = _pmt_reduced_entry_min_score(full_score_min)
     metadata["pmt_min_score"] = round(full_score_min, 4)
     metadata["pmt_entry_min_score"] = round(entry_score_min, 4)
-    if score < entry_score_min:
+    if score <= entry_score_min:
         return None
     if score < full_score_min:
         allowed, reason = _pmt_reduced_score_entry_allowed(score, metadata)
@@ -1172,7 +1172,7 @@ def diagnose_pmt_threshold_rejection(
     )
     full_score_min = _pmt_full_score_min(config)
     entry_score_min = _pmt_reduced_entry_min_score(full_score_min)
-    if score < entry_score_min:
+    if score <= entry_score_min:
         return f"score_below_threshold score={score:.2f} min={entry_score_min:.2f} full_min={full_score_min:.2f} side={cross.side} pmt={pmt.label} level={cross.level:g} penalties={metadata.get('pmt_score_penalties') or {}} caps={metadata.get('pmt_score_caps') or {}}"
     if score < full_score_min:
         allowed, reason = _pmt_reduced_score_entry_allowed(score, metadata)
