@@ -714,6 +714,49 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
     assert runtime.trade_history[-1]["pnl_usdt"] > 0
 
 
+def test_pmt_profit_lock_refreshes_stale_metadata_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", "4")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT", "3")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", "0")
+    runtime = FuturesRuntime(_config(tmp_path), StubClient())
+    position = FuturesPosition(
+        symbol="BTC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=20,
+        margin_usdt=5.0,
+        tp_price=120.0,
+        sl_price=99.0,
+        position_id="paper-pmt-stale-profit-lock",
+        order_id="entry-pmt-stale-profit-lock",
+        opened_at=datetime(2026, 6, 6, tzinfo=timezone.utc),
+        score=92.0,
+        certainty=0.92,
+        entry_signal="PMT_THRESHOLD_LONG",
+        metadata={
+            "profit_lock_trigger_pct_override": 20.0,
+            "profit_lock_pullback_fraction_override": 0.70,
+            "profit_lock_floor_pct_override": 0.0,
+            "profit_lock_exit_min_net_pct_override": 20.0,
+        },
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=100.25) is False
+
+    assert position.metadata["profit_lock_trigger_pct_override"] == 4.0
+    assert position.metadata["profit_lock_pullback_fraction_override"] == 0.35
+    assert position.metadata["profit_lock_floor_pct_override"] == 3.0
+    assert position.metadata["profit_lock_exit_min_net_pct_override"] == 0.0
+    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 5.0
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 3.25
+
+
 def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monkeypatch):
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
     monkeypatch.setenv("FUTURES_MID_PROFIT_LOCK_ENABLED", "0")

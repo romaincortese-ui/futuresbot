@@ -950,6 +950,40 @@ class FuturesRuntime:
         override = cls._metadata_override_float(metadata, key)
         return default if override is None else override
 
+    def _refresh_pmt_profit_lock_overrides(self, position: FuturesPosition, metadata: dict[str, Any]) -> bool:
+        entry_signal = str(position.entry_signal or "")
+        if not entry_signal.startswith("PMT_THRESHOLD_") and "pmt_label" not in metadata:
+            return False
+        if self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED"):
+            values = {
+                "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_TRIGGER_PCT", 18.0)),
+                "profit_lock_giveback_pct_override": max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_GIVEBACK_PCT", 0.0)),
+                "profit_lock_pullback_fraction_override": min(0.95, max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_PULLBACK_FRACTION", 0.95))),
+                "profit_lock_min_tp_progress_override": max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_MIN_TP_PROGRESS", 0.0)),
+                "profit_lock_floor_pct_override": max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_FLOOR_PCT", 5.0)),
+                "profit_lock_exit_min_net_pct_override": max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_EXIT_MIN_NET_PCT", 0.0)),
+            }
+        else:
+            values = {
+                "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 4.0)),
+                "profit_lock_giveback_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
+                "profit_lock_pullback_fraction_override": min(0.95, max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.35))),
+                "profit_lock_min_tp_progress_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0)),
+                "profit_lock_floor_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT", 3.0)),
+                "profit_lock_exit_min_net_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0)),
+            }
+        changed = False
+        for key, value in values.items():
+            current = self._metadata_override_float(metadata, key)
+            if current is None or abs(current - value) > 1e-12:
+                metadata[key] = float(value)
+                changed = True
+        quick_enabled = self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED")
+        if metadata.get("pmt_quick_profit_protection_enabled") is not quick_enabled:
+            metadata["pmt_quick_profit_protection_enabled"] = quick_enabled
+            changed = True
+        return changed
+
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if not self._flag("USE_FUTURES_PROFIT_LOCK") and not (pmt_strategy_enabled() and self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED")):
             return False
@@ -962,7 +996,7 @@ class FuturesRuntime:
         if metadata is not position.metadata:
             position.metadata = metadata
 
-        changed = False
+        changed = self._refresh_pmt_profit_lock_overrides(position, metadata)
         peak_pct = self._metadata_float(metadata, PROFIT_LOCK_PEAK_PCT_KEY) or 0.0
         if net_pnl_pct > peak_pct:
             peak_pct = net_pnl_pct
