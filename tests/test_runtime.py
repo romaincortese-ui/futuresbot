@@ -34,6 +34,9 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS",
         "FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT",
         "FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT",
+        "FUTURES_PMT_EXCHANGE_PROFIT_LOCK_ENABLED",
+        "FUTURES_PMT_EXCHANGE_PROFIT_LOCK_MIN_STEP_TICKS",
+        "FUTURES_PMT_EXCHANGE_PROFIT_LOCK_ERROR_RETRY_SECONDS",
         "FUTURES_PMT_TP_COOLDOWN_HOURS",
         "FUTURES_PMT_CYCLE_SECONDS",
         "FUTURES_PMT_PARALLEL_SCAN_ENABLED",
@@ -74,6 +77,7 @@ def _clear_pmt_strategy_env(monkeypatch):
         "FUTURES_ALLOW_LIVE_HALT_OVERRIDE",
         "DRAWDOWN_SOFT_PCT",
         "DRAWDOWN_HALT_PCT",
+        "TICK_SIZE_BTCUSDT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -92,6 +96,7 @@ class StubClient:
             },
             index=index,
         )
+        self.position_tpsl: list[dict] = []
 
     def get_klines(self, symbol: str, *, interval: str = "Min15", start: int | None = None, end: int | None = None) -> pd.DataFrame:
         return self.frame
@@ -125,6 +130,10 @@ class StubClient:
         return {"dealAvgPrice": "91234.5"}
 
     def cancel_all_tpsl(self, *, position_id: str | None = None, symbol: str | None = None):
+        return {"success": True}
+
+    def place_position_tpsl(self, **kwargs):
+        self.position_tpsl.append(dict(kwargs))
         return {"success": True}
 
 
@@ -757,6 +766,82 @@ def test_pmt_profit_lock_refreshes_stale_metadata_from_env(tmp_path, monkeypatch
     assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 5.0
     assert runtime._hourly_exit(position, current_price=100.25) is True
     assert runtime.open_position is None
+
+
+def test_pmt_profit_lock_places_exchange_stop_when_armed(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("USE_FUTURES_FAIR_PRICE_WS", "0")
+    monkeypatch.setenv("TICK_SIZE_BTCUSDT", "0.01")
+    client = StubClient()
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), client)
+    position = FuturesPosition(
+        symbol="BTC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=20,
+        margin_usdt=5.0,
+        tp_price=120.0,
+        sl_price=99.0,
+        position_id="live-pmt-lock-stop",
+        order_id="entry-pmt-lock-stop",
+        opened_at=datetime(2026, 6, 6, tzinfo=timezone.utc),
+        score=96.0,
+        certainty=0.96,
+        entry_signal="PMT_THRESHOLD_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=100.30) is False
+
+    assert client.position_tpsl == [
+        {
+            "position_id": "live-pmt-lock-stop",
+            "vol": 10,
+            "take_profit_price": None,
+            "stop_loss_price": 100.26,
+            "side": "LONG",
+        }
+    ]
+    assert position.metadata["pmt_exchange_profit_lock_stop_price"] == 100.26
+    assert round(position.metadata["pmt_exchange_profit_lock_stop_gross_pnl_pct"], 3) == 5.1
+    assert round(position.metadata["pmt_exchange_profit_lock_peak_gross_pnl_pct"], 3) == 6.0
+
+
+def test_pmt_profit_lock_replaces_exchange_stop_only_when_improved(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    monkeypatch.setenv("USE_FUTURES_FAIR_PRICE_WS", "0")
+    monkeypatch.setenv("TICK_SIZE_BTCUSDT", "0.01")
+    client = StubClient()
+    runtime = FuturesRuntime(replace(_config(tmp_path), paper_trade=False), client)
+    position = FuturesPosition(
+        symbol="BTC_USDT",
+        side="LONG",
+        entry_price=100.0,
+        contracts=10,
+        contract_size=0.1,
+        leverage=20,
+        margin_usdt=5.0,
+        tp_price=120.0,
+        sl_price=99.0,
+        position_id="live-pmt-lock-replace",
+        order_id="entry-pmt-lock-replace",
+        opened_at=datetime(2026, 6, 6, tzinfo=timezone.utc),
+        score=96.0,
+        certainty=0.96,
+        entry_signal="PMT_THRESHOLD_LONG",
+    )
+    runtime._register_position(position)
+
+    assert runtime._hourly_exit(position, current_price=100.30) is False
+    assert runtime._hourly_exit(position, current_price=100.31) is False
+    assert len(client.position_tpsl) == 1
+    assert runtime._hourly_exit(position, current_price=100.35) is False
+
+    assert [order["stop_loss_price"] for order in client.position_tpsl] == [100.26, 100.3]
 
 
 def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monkeypatch):

@@ -83,6 +83,30 @@ def test_place_order_sets_short_trigger_directions(monkeypatch):
     assert captured["lossTrend"] == 1
 
 
+def test_place_position_tpsl_uses_stop_loss_direction_for_long_profit_lock(monkeypatch):
+    client = _client()
+    captured: dict[str, object] = {}
+
+    def fake_post(path, body):
+        captured.update(body)
+        return {"success": True, "data": {"orderId": "stop-1"}}
+
+    monkeypatch.setattr(client, "private_post", fake_post)
+
+    client.place_position_tpsl(
+        position_id="12345",
+        vol=3,
+        take_profit_price=None,
+        stop_loss_price=100.26,
+        side="LONG",
+    )
+
+    assert captured["takeProfitPrice"] is None
+    assert captured["stopLossPrice"] == 100.26
+    assert captured["profitTrend"] is None
+    assert captured["lossTrend"] == 2
+
+
 def test_close_position_includes_position_id_and_omits_open_leverage(monkeypatch):
     client = _client()
     captured: dict[str, object] = {}

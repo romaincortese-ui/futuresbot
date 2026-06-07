@@ -121,6 +121,10 @@ PROFIT_LOCK_PEAK_USDT_KEY = "profit_lock_peak_pnl_usdt"
 PROFIT_LOCK_PEAK_PRICE_KEY = "profit_lock_peak_price"
 PROFIT_LOCK_STOP_PCT_KEY = "profit_lock_stop_pnl_pct"
 PROFIT_LOCK_STOP_GROSS_PCT_KEY = "profit_lock_stop_gross_pnl_pct"
+PMT_EXCHANGE_PROFIT_LOCK_STOP_PRICE_KEY = "pmt_exchange_profit_lock_stop_price"
+PMT_EXCHANGE_PROFIT_LOCK_STOP_GROSS_PCT_KEY = "pmt_exchange_profit_lock_stop_gross_pnl_pct"
+PMT_EXCHANGE_PROFIT_LOCK_PEAK_GROSS_PCT_KEY = "pmt_exchange_profit_lock_peak_gross_pnl_pct"
+PMT_EXCHANGE_PROFIT_LOCK_ERROR_AT_KEY = "pmt_exchange_profit_lock_error_at"
 BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 
 
@@ -1116,6 +1120,8 @@ class FuturesRuntime:
                 changed = True
             if metadata.get(PROFIT_LOCK_STOP_PCT_KEY) != net_stop_pct:
                 metadata[PROFIT_LOCK_STOP_PCT_KEY] = float(net_stop_pct)
+                changed = True
+            if self._place_pmt_exchange_profit_lock_stop(position, current_price, gross_peak_pct, stop_pct, metadata):
                 changed = True
             if gross_pnl_pct <= stop_pct:
                 min_exit_net_pct = self._metadata_override_or(
@@ -4960,6 +4966,95 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover - exchange best effort
             log.warning("Fill-anchored TPSL placement failed for %s: %s", symbol, exc)
             metadata["fill_anchored_tpsl_error"] = str(exc)[:160]
+
+    def _tick_size_for_symbol(self, symbol: str) -> float:
+        compact_key = f"TICK_SIZE_{symbol.upper().replace('_', '')}"
+        normalized_key = f"TICK_SIZE_{self._normalize_symbol_for_env(symbol)}"
+        tick_size = self._env_float(compact_key, 0.0)
+        if tick_size <= 0.0:
+            tick_size = self._env_float(normalized_key, 0.01)
+        return tick_size if tick_size > 0.0 else 0.01
+
+    def _snap_price_to_tick(self, symbol: str, price: float) -> float:
+        tick_size = self._tick_size_for_symbol(symbol)
+        if tick_size <= 0.0:
+            return round(float(price), 10)
+        snapped = round(float(price) / tick_size) * tick_size
+        if tick_size >= 1.0:
+            return float(int(round(snapped)))
+        tick_text = f"{tick_size:.12f}".rstrip("0")
+        decimals = len(tick_text.split(".", 1)[1]) if "." in tick_text else 0
+        return round(float(snapped), decimals)
+
+    def _pmt_exchange_profit_lock_stop_price(self, position: FuturesPosition, stop_pct: float) -> float:
+        if position.entry_price <= 0.0 or position.leverage <= 0 or stop_pct <= 0.0:
+            return 0.0
+        price_move = (float(stop_pct) / 100.0) / float(position.leverage)
+        raw_price = position.entry_price * (1.0 + price_move) if position.side == "LONG" else position.entry_price * (1.0 - price_move)
+        return self._snap_price_to_tick(position.symbol, raw_price)
+
+    def _place_pmt_exchange_profit_lock_stop(
+        self,
+        position: FuturesPosition,
+        current_price: float,
+        gross_peak_pct: float,
+        stop_pct: float,
+        metadata: dict[str, Any],
+    ) -> bool:
+        if not pmt_strategy_enabled() or self.config.paper_trade:
+            return False
+        if not self._flag("FUTURES_PMT_EXCHANGE_PROFIT_LOCK_ENABLED", True):
+            return False
+        place_position_tpsl = getattr(self.client, "place_position_tpsl", None)
+        if not callable(place_position_tpsl) or not position.position_id or position.contracts <= 0:
+            return False
+        stop_price = self._pmt_exchange_profit_lock_stop_price(position, stop_pct)
+        if stop_price <= 0.0 or current_price <= 0.0:
+            return False
+        if position.side == "LONG" and stop_price >= current_price:
+            return False
+        if position.side == "SHORT" and stop_price <= current_price:
+            return False
+        last_error_at = self._metadata_float(metadata, PMT_EXCHANGE_PROFIT_LOCK_ERROR_AT_KEY)
+        retry_seconds = max(0.0, self._env_float("FUTURES_PMT_EXCHANGE_PROFIT_LOCK_ERROR_RETRY_SECONDS", 30.0))
+        if last_error_at is not None and retry_seconds > 0.0 and time.time() - last_error_at < retry_seconds:
+            return False
+        prior_stop = self._metadata_float(metadata, PMT_EXCHANGE_PROFIT_LOCK_STOP_PRICE_KEY)
+        min_step = self._tick_size_for_symbol(position.symbol) * max(
+            1.0,
+            self._env_float("FUTURES_PMT_EXCHANGE_PROFIT_LOCK_MIN_STEP_TICKS", 1.0),
+        )
+        if prior_stop is not None:
+            improved = stop_price >= prior_stop + min_step if position.side == "LONG" else stop_price <= prior_stop - min_step
+            if not improved:
+                return False
+        try:
+            place_position_tpsl(
+                position_id=position.position_id,
+                vol=position.contracts,
+                take_profit_price=None,
+                stop_loss_price=stop_price,
+                side=position.side,
+            )
+        except Exception as exc:  # pragma: no cover - exchange best effort
+            log.warning("PMT exchange profit-lock stop placement failed for %s: %s", position.symbol, exc)
+            metadata["pmt_exchange_profit_lock_error"] = str(exc)[:160]
+            metadata[PMT_EXCHANGE_PROFIT_LOCK_ERROR_AT_KEY] = time.time()
+            return True
+        metadata[PMT_EXCHANGE_PROFIT_LOCK_STOP_PRICE_KEY] = float(stop_price)
+        metadata[PMT_EXCHANGE_PROFIT_LOCK_STOP_GROSS_PCT_KEY] = float(stop_pct)
+        metadata[PMT_EXCHANGE_PROFIT_LOCK_PEAK_GROSS_PCT_KEY] = float(gross_peak_pct)
+        metadata["pmt_exchange_profit_lock_error"] = ""
+        metadata[PMT_EXCHANGE_PROFIT_LOCK_ERROR_AT_KEY] = 0.0
+        log.info(
+            "[PMT_EXCHANGE_PROFIT_LOCK_STOP] symbol=%s side=%s stop_price=%s stop_pct=%.2f gross_peak_pct=%.2f",
+            position.symbol,
+            position.side,
+            self._format_price(stop_price),
+            stop_pct,
+            gross_peak_pct,
+        )
+        return True
 
     @staticmethod
     def _mexc_balance_insufficient_payload(exc: Exception) -> dict[str, Any] | None:
