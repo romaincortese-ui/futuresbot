@@ -717,9 +717,9 @@ def test_profit_lock_closes_after_peak_pullback(tmp_path, monkeypatch):
 def test_pmt_profit_lock_refreshes_stale_metadata_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
     monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
-    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", "4")
-    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", "0.35")
-    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT", "3")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", "5.5")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", "0.15")
+    monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT", "5")
     monkeypatch.setenv("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", "0")
     runtime = FuturesRuntime(_config(tmp_path), StubClient())
     position = FuturesPosition(
@@ -747,14 +747,16 @@ def test_pmt_profit_lock_refreshes_stale_metadata_from_env(tmp_path, monkeypatch
     )
     runtime._register_position(position)
 
-    assert runtime._hourly_exit(position, current_price=100.25) is False
+    assert runtime._hourly_exit(position, current_price=100.28) is False
 
-    assert position.metadata["profit_lock_trigger_pct_override"] == 4.0
-    assert position.metadata["profit_lock_pullback_fraction_override"] == 0.35
-    assert position.metadata["profit_lock_floor_pct_override"] == 3.0
+    assert position.metadata["profit_lock_trigger_pct_override"] == 5.5
+    assert position.metadata["profit_lock_pullback_fraction_override"] == 0.15
+    assert position.metadata["profit_lock_floor_pct_override"] == 5.0
     assert position.metadata["profit_lock_exit_min_net_pct_override"] == 0.0
-    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 5.0
-    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 3.25
+    assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 5.6
+    assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 5.0
+    assert runtime._hourly_exit(position, current_price=100.25) is True
+    assert runtime.open_position is None
 
 
 def test_profit_lock_uses_gross_peak_trigger_with_net_exit_guard(tmp_path, monkeypatch):

@@ -309,11 +309,11 @@ def test_pmt_mega_bearish_breakdown_targets_200pct_margin(monkeypatch):
     assert signal.metadata["pmt_balance_fraction"] == 1.0
     assert signal.metadata["tp_margin_pct"] == 200.0
     assert signal.metadata["sl_margin_pct"] <= 16.0
-    assert signal.metadata["profit_lock_trigger_pct_override"] == 4.0
+    assert signal.metadata["profit_lock_trigger_pct_override"] == 5.5
     assert signal.metadata["profit_lock_giveback_pct_override"] == 0.0
-    assert signal.metadata["profit_lock_pullback_fraction_override"] == 0.35
+    assert signal.metadata["profit_lock_pullback_fraction_override"] == 0.15
     assert signal.metadata["profit_lock_min_tp_progress_override"] == 0.0
-    assert signal.metadata["profit_lock_floor_pct_override"] == 3.0
+    assert signal.metadata["profit_lock_floor_pct_override"] == 5.0
     assert signal.metadata["profit_lock_exit_min_net_pct_override"] == 0.0
     assert signal.tp_price == signal.entry_price * (1.0 - 2.0 / signal.leverage)
     assert signal.sl_price <= signal.entry_price * (1.0 + 0.16 / signal.leverage)

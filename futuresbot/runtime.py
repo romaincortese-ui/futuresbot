@@ -965,11 +965,11 @@ class FuturesRuntime:
             }
         else:
             values = {
-                "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 4.0)),
+                "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_TRIGGER_PCT", 5.5)),
                 "profit_lock_giveback_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
-                "profit_lock_pullback_fraction_override": min(0.95, max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.35))),
+                "profit_lock_pullback_fraction_override": min(0.95, max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_PULLBACK_FRACTION", 0.15))),
                 "profit_lock_min_tp_progress_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0)),
-                "profit_lock_floor_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT", 3.0)),
+                "profit_lock_floor_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_FLOOR_PCT", 5.0)),
                 "profit_lock_exit_min_net_pct_override": max(0.0, self._env_float("FUTURES_PMT_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0)),
             }
         changed = False
