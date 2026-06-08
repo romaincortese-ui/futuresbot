@@ -213,12 +213,14 @@ def test_each_eligible_pair_has_unique_pmt_and_mental_thresholds():
 
 
 def test_non_btc_pmt_profiles_match_researched_candidate():
+    # Recalibrated to real crypto sizes (2026-06-08): MEGA bands scaled ~0.6x,
+    # FLASH normalised toward ~1.5% for majors. See DEFAULT_PMT_PROFILES.
     expected = {
-        "ETH_USDT": (50.0, 0.010, 0.018, 0.040, 0.052),
-        "SOL_USDT": (2.5, 0.012, 0.020, 0.042, 0.062),
-        "BNB_USDT": (20.0, 0.011, 0.016, 0.032, 0.050),
-        "SEI_USDT": (0.01, 0.020, 0.030, 0.080, 0.120),
-        "ZEC_USDT": (25.0, 0.030, 0.050, 0.100, 0.160),
+        "ETH_USDT": (50.0, 0.010, 0.015, 0.024, 0.031),
+        "SOL_USDT": (2.5, 0.012, 0.016, 0.025, 0.037),
+        "BNB_USDT": (20.0, 0.011, 0.015, 0.019, 0.030),
+        "SEI_USDT": (0.01, 0.020, 0.022, 0.048, 0.072),
+        "ZEC_USDT": (25.0, 0.030, 0.032, 0.060, 0.096),
     }
 
     for symbol, values in expected.items():
@@ -396,6 +398,14 @@ def test_pmt_reduced_score_entry_accepts_clean_edge_at_smaller_size(monkeypatch)
     monkeypatch.setenv("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", "90")
     monkeypatch.setenv("FUTURES_PMT_EXHAUSTION_1BAR_PENALTY", "30")
     monkeypatch.setenv("FUTURES_PMT_EXHAUSTION_1H_PENALTY", "30")
+    # Pin BTC trend thresholds to the pre-recalibration values so this test
+    # exercises the reduced-score-band MECHANISM independently of the default
+    # MEGA/FLASH calibration (which test_non_btc_pmt_profiles_* covers). Under
+    # the recalibrated defaults this ~2.7% move clears 95 (full conviction);
+    # the mechanism itself is unchanged.
+    monkeypatch.setenv("FUTURES_BTCUSDT_PMT_FLASH_6H_PCT", "0.010")
+    monkeypatch.setenv("FUTURES_BTCUSDT_PMT_MEGA_12H_PCT", "0.030")
+    monkeypatch.setenv("FUTURES_BTCUSDT_PMT_MEGA_24H_PCT", "0.050")
     frame = _frame([77000.0] * 100 + [75100.0] * 5 + [75080.0, 74940.0])
 
     signal = score_pmt_threshold_signal(frame, _config())

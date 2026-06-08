@@ -38,13 +38,22 @@ class PairPMTProfile:
     mega_24h_pct: float
 
 
+# Trend thresholds recalibrated to real crypto move sizes (2026-06-08).
+# Rationale: the prior MEGA bands were too wide — a 4% BTC day scored as an
+# ordinary "BULLISH" move and rarely cleared the 92.5 conviction floor, so the
+# bot sat out real trends. MEGA (12h/24h) thresholds scaled ~0.6x so a strong
+# 3-4% day registers as MEGA and earns a high-conviction score; FLASH (6h)
+# normalised to ~1.5% for majors (a genuine 6h flash move). High-volatility
+# alts (SEI, ZEC) scaled proportionally so they stay appropriately higher.
+# threshold_step (mental-threshold level) and flat_24h are intentionally
+# unchanged. Fields: (symbol, threshold_step, flat_24h, flash_6h, mega_12h, mega_24h).
 DEFAULT_PMT_PROFILES: dict[str, PairPMTProfile] = {
-    "BTC_USDT": PairPMTProfile("BTC_USDT", 1000.0, 0.008, 0.010, 0.030, 0.050),
-    "ETH_USDT": PairPMTProfile("ETH_USDT", 50.0, 0.010, 0.018, 0.040, 0.052),
-    "SOL_USDT": PairPMTProfile("SOL_USDT", 2.5, 0.012, 0.020, 0.042, 0.062),
-    "BNB_USDT": PairPMTProfile("BNB_USDT", 20.0, 0.011, 0.016, 0.032, 0.050),
-    "SEI_USDT": PairPMTProfile("SEI_USDT", 0.01, 0.020, 0.030, 0.080, 0.120),
-    "ZEC_USDT": PairPMTProfile("ZEC_USDT", 25.0, 0.030, 0.050, 0.100, 0.160),
+    "BTC_USDT": PairPMTProfile("BTC_USDT", 1000.0, 0.008, 0.015, 0.018, 0.030),
+    "ETH_USDT": PairPMTProfile("ETH_USDT", 50.0, 0.010, 0.015, 0.024, 0.031),
+    "SOL_USDT": PairPMTProfile("SOL_USDT", 2.5, 0.012, 0.016, 0.025, 0.037),
+    "BNB_USDT": PairPMTProfile("BNB_USDT", 20.0, 0.011, 0.015, 0.019, 0.030),
+    "SEI_USDT": PairPMTProfile("SEI_USDT", 0.01, 0.020, 0.022, 0.048, 0.072),
+    "ZEC_USDT": PairPMTProfile("ZEC_USDT", 25.0, 0.030, 0.032, 0.060, 0.096),
 }
 
 
