@@ -172,6 +172,12 @@ def _enable_pmt(monkeypatch, *, min_score: str = "70") -> None:
         "FUTURES_PMT_SCORE_BAND_SIZE_92_94",
         "FUTURES_PMT_SCORE_BAND_SIZE_97_100",
         "FUTURES_PMT_SCORE_BAND_SIZE_95_100",
+        "FUTURES_PMT_STOP_FIRST_SIZING_ENABLED",
+        "FUTURES_PMT_STOP_FIRST_ATR_PERIOD",
+        "FUTURES_PMT_STOP_FIRST_ATR_MULT",
+        "FUTURES_PMT_STOP_FIRST_RISK_BUDGET_MARGIN_PCT",
+        "FUTURES_PMT_STOP_FIRST_TARGET_R",
+        "FUTURES_PMT_STOP_FIRST_MIN_LEVERAGE",
         "MEXC_PERP_DEFAULT_TAKER_FEE_RATE",
     ):
         monkeypatch.delenv(name, raising=False)

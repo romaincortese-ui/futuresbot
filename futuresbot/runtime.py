@@ -99,7 +99,7 @@ from futuresbot.event_overlay import annotate_event_threshold_relief, evaluate_c
 from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
-from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
+from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -991,7 +991,17 @@ class FuturesRuntime:
         entry_signal = str(position.entry_signal or "")
         if not entry_signal.startswith("PMT_THRESHOLD_") and "pmt_label" not in metadata:
             return False
-        if self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED"):
+        if self._metadata_float(metadata, "pmt_stop_first"):
+            tp_margin_pct = self._metadata_float(metadata, "tp_margin_pct") or 0.0
+            values = {
+                "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_TRIGGER_PCT", tp_margin_pct * 0.80)),
+                "profit_lock_giveback_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
+                "profit_lock_pullback_fraction_override": min(0.95, max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_PULLBACK_FRACTION", 0.25))),
+                "profit_lock_min_tp_progress_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0)),
+                "profit_lock_floor_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_FLOOR_PCT", tp_margin_pct * 0.50)),
+                "profit_lock_exit_min_net_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0)),
+            }
+        elif self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED"):
             values = {
                 "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_TRIGGER_PCT", 18.0)),
                 "profit_lock_giveback_pct_override": max(0.0, self._env_float("FUTURES_PMT_QUICK_PROFIT_GIVEBACK_PCT", 0.0)),
@@ -3961,6 +3971,10 @@ class FuturesRuntime:
 
     def _live_leverage_bounds(self, symbol: str | None = None) -> tuple[int, int]:
         min_bound = max(1, int(self.config.leverage_min))
+        if pmt_strategy_enabled() and pmt_stop_first_sizing_enabled():
+            # Stop-first sizing derives leverage from the ATR stop distance;
+            # forcing the configured minimum would silently tighten the stop.
+            min_bound = max(1, int(self._env_float("FUTURES_PMT_STOP_FIRST_MIN_LEVERAGE", 1.0)))
         max_bound = max(min_bound, int(self.config.leverage_max))
         sym = (symbol or "").upper()
         exchange_cap = int(self._exchange_leverage_caps.get(sym, 0) or 0)

@@ -1051,6 +1051,71 @@ def _target_prices(entry_price: float, side: str, leverage: int, tp_margin_pct: 
     return entry_price * (1.0 - tp_move), entry_price * (1.0 + sl_move)
 
 
+def pmt_stop_first_sizing_enabled() -> bool:
+    """Stop-first R-multiple sizing: stop = k x ATR placed outside noise first,
+    leverage derived as floor(risk budget / stop distance) instead of
+    back-solving the stop from a leverage choice."""
+    return _env_bool("FUTURES_PMT_STOP_FIRST_SIZING_ENABLED", False)
+
+
+def _atr_from_frame(frame: pd.DataFrame, period: int) -> float | None:
+    if frame is None or len(frame) < max(2, period + 1):
+        return None
+    try:
+        highs = frame["high"].astype(float)
+        lows = frame["low"].astype(float)
+        closes = frame["close"].astype(float)
+    except (KeyError, TypeError, ValueError):
+        return None
+    prev_close = closes.shift(1)
+    tr = pd.concat([(highs - lows), (highs - prev_close).abs(), (lows - prev_close).abs()], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1.0 / max(1, period), adjust=False).mean()
+    value = float(atr.iloc[-1])
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
+
+
+def _resolve_stop_first_geometry(frame: pd.DataFrame, *, entry_price: float) -> tuple[int, float, float, dict[str, float]] | None:
+    """Return (leverage, tp_margin_pct, sl_margin_pct, metadata) for the
+    stop-first R-design, or None when ATR is unavailable (caller falls back
+    to legacy score-based geometry).
+
+    Replay-calibrated defaults (229 real fills, 2026-03-12..2026-06-08):
+    stop 3.0xATR(14, 15m) = 1R = 20% margin budget, TP at +5R, no
+    breakeven/scale-out. Net-of-fee expectancy +0.68R/trade overall and
+    +1.37R/trade on PMT-era entries.
+    """
+    if entry_price <= 0:
+        return None
+    atr_period = max(2, _env_int("FUTURES_PMT_STOP_FIRST_ATR_PERIOD", 14))
+    atr_value = _atr_from_frame(frame, atr_period)
+    if atr_value is None:
+        return None
+    stop_mult = max(0.1, _env_float("FUTURES_PMT_STOP_FIRST_ATR_MULT", 3.0))
+    risk_budget_pct = max(1.0, _env_float("FUTURES_PMT_STOP_FIRST_RISK_BUDGET_MARGIN_PCT", 20.0))
+    target_r = max(0.5, _env_float("FUTURES_PMT_STOP_FIRST_TARGET_R", 5.0))
+    min_lev = max(1, _env_int("FUTURES_PMT_STOP_FIRST_MIN_LEVERAGE", 1))
+    max_lev = max(min_lev, int(_env_float("FUTURES_PMT_MAX_LEVERAGE", _env_float("FUTURES_LEVERAGE_MAX", 25.0))))
+    stop_frac = stop_mult * atr_value / entry_price
+    if stop_frac <= 0 or not math.isfinite(stop_frac):
+        return None
+    leverage = int((risk_budget_pct / 100.0) / stop_frac)
+    leverage = max(min_lev, min(max_lev, leverage))
+    sl_margin_pct = stop_frac * leverage * 100.0
+    tp_margin_pct = sl_margin_pct * target_r
+    metadata = {
+        "pmt_stop_first": 1.0,
+        "pmt_stop_first_atr": round(atr_value, 10),
+        "pmt_stop_first_atr_period": float(atr_period),
+        "pmt_stop_first_atr_mult": round(stop_mult, 4),
+        "pmt_stop_first_target_r": round(target_r, 4),
+        "pmt_stop_first_risk_budget_pct": round(risk_budget_pct, 4),
+        "pmt_stop_first_stop_price_frac": round(stop_frac, 8),
+    }
+    return leverage, tp_margin_pct, sl_margin_pct, metadata
+
+
 def score_pmt_threshold_signal(
     frame: pd.DataFrame,
     config: Any,
@@ -1098,8 +1163,25 @@ def score_pmt_threshold_signal(
     tp_margin_pct = _tp_margin_pct(score)
     taker_fee_rate = float(getattr(config, "taker_fee_rate", _env_float("MEXC_PERP_DEFAULT_TAKER_FEE_RATE", 0.0008)) or 0.0008)
     sl_margin_pct = _sl_margin_pct(score, leverage=leverage, taker_fee_rate=taker_fee_rate)
+    stop_first = pmt_stop_first_sizing_enabled()
+    stop_first_metadata: dict[str, float] = {}
+    if stop_first:
+        resolved = _resolve_stop_first_geometry(frame, entry_price=entry_price)
+        if resolved is not None:
+            leverage, tp_margin_pct, sl_margin_pct, stop_first_metadata = resolved
+        else:
+            stop_first = False
     tp_price, sl_price = _target_prices(entry_price, cross.side, leverage, tp_margin_pct, sl_margin_pct)
-    if _env_bool("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED", False):
+    if stop_first:
+        # Replay-validated R-design uses a pure stop/TP exit pair; the peak
+        # lock stays available but armed far out so runners are not clipped.
+        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_TRIGGER_PCT", tp_margin_pct * 0.80))
+        profit_lock_giveback_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_GIVEBACK_PCT", 0.0))
+        profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_PULLBACK_FRACTION", 0.25)))
+        profit_lock_min_tp_progress = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_MIN_TP_PROGRESS", 0.0))
+        profit_lock_floor_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_FLOOR_PCT", tp_margin_pct * 0.50))
+        profit_lock_exit_min_net_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_EXIT_MIN_NET_PCT", 0.0))
+    elif _env_bool("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED", False):
         profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_TRIGGER_PCT", 18.0))
         profit_lock_giveback_pct = max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_GIVEBACK_PCT", 0.0))
         profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_QUICK_PROFIT_PULLBACK_FRACTION", 0.95)))
@@ -1132,6 +1214,8 @@ def score_pmt_threshold_signal(
             "profit_lock_exit_min_net_pct_override": profit_lock_exit_min_net_pct,
         }
     )
+    if stop_first_metadata:
+        metadata.update(stop_first_metadata)
     return FuturesSignal(
         symbol=symbol,
         side=cross.side,
