@@ -488,6 +488,39 @@ class FuturesRuntime:
     # without standing up its own perp connector. The futures bot stays
     # single-venue and directional; the spot bot owns the carry leg.
     # ------------------------------------------------------------------
+    def _record_oi_observations(self) -> None:
+        """Append current OI (holdVol) + price snapshots for the scan symbols to
+        a Redis timeseries, for the OI-vs-price lift study. Observation-only and
+        best-effort: any failure is swallowed and never touches trading."""
+        import os as _os
+        import time as _time
+
+        if _os.environ.get("USE_OI_OBSERVATIONS", "1").strip().lower() in {"0", "false", "no", "off", ""}:
+            return
+        if not self.config.redis_url:
+            return
+        try:
+            from futuresbot.oi_publisher import record_oi_snapshots
+
+            wanted = set(self._scan_symbols_for_cycle())
+            if not wanted:
+                return
+            now_ms = int(_time.time() * 1000)
+            snaps: list[tuple[str, int, float, float]] = []
+            for t in (self.client.get_all_tickers() or []):
+                sym = t.get("symbol")
+                if sym not in wanted:
+                    continue
+                oi = t.get("holdVol")
+                price = t.get("lastPrice")
+                if oi and price:
+                    snaps.append((sym, now_ms, float(oi), float(price)))
+            n = record_oi_snapshots(self.config.redis_url, snaps)
+            if n:
+                log.info("[OI_SAMPLE] symbols=%d", n)
+        except Exception as exc:  # pragma: no cover — defensive
+            log.debug("OI observation step failed: %s", exc)
+
     def _publish_funding_observations(self) -> None:
         # Default-ON. Opt out with USE_FUNDING_OBSERVATIONS_PUBLISH=0.
         import os as _os
@@ -6704,6 +6737,10 @@ class FuturesRuntime:
                 # Redis. The spot bot consumes them via mexcbot/funding_carry.
                 # Default ON; opt out with USE_FUNDING_OBSERVATIONS_PUBLISH=0.
                 self._publish_funding_observations()
+                # Shadow study: record OI snapshots to Redis for the OI-vs-price
+                # lift analysis. Observation-only — never read by the trading
+                # path. Default ON; opt out with USE_OI_OBSERVATIONS=0.
+                self._record_oi_observations()
                 self._log_cycle_summary(price=current_price, signal=signal)
                 self._send_heartbeat(price=current_price, signal=signal)
                 # P2 §6 #11 — carry/basis monitor calls intentionally removed.
