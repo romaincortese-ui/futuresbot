@@ -595,9 +595,13 @@ class FuturesConfig:
         if opportunity_bucket_sizing_enabled():
             cap = opportunity_max_leverage()
             leverage_min = dynamic_leverage_min() if dynamic_leverage_enabled() else min(instance.leverage_min, cap)
+            # NB: opportunity-bucket sizing used to force max_concurrent_positions=1,
+            # silently overriding FUTURES_MAX_CONCURRENT_POSITIONS (found 2026-06-10
+            # when the 2-slot rollout booted as "Max concurrent: 1"). Concurrency is
+            # validated independently (14d: 8->10 trades, win 50%->60%) and each slot
+            # still sizes from remaining available balance, so respect the env value.
             instance = dataclasses.replace(
                 instance,
-                max_concurrent_positions=1,
                 leverage_max=min(instance.leverage_max, cap),
                 leverage_min=min(leverage_min, cap),
             )
