@@ -1629,6 +1629,28 @@ class FuturesRuntime:
             lines.extend(self._recent_activity)
         return "\n".join(lines)
 
+    def _leverage_caps_label(self) -> str:
+        from futuresbot.pmt_strategy import pmt_stop_first_sizing_enabled, pmt_strategy_enabled
+
+        if pmt_strategy_enabled() and pmt_stop_first_sizing_enabled():
+            return f"stop-first (3xATR stop, up to x{self.config.leverage_max})"
+        return f"x{self.config.leverage_min}-x{self.config.leverage_max}"
+
+    def _partial_bank_plan_line(self, position: FuturesPosition) -> str:
+        """Entry-time preview of the +1R partial bank for stop-first positions."""
+        from futuresbot.partial_bank import partial_bank_enabled
+
+        metadata = position.metadata if isinstance(position.metadata, dict) else {}
+        if not partial_bank_enabled() or not self._metadata_float(metadata, "pmt_stop_first"):
+            return ""
+        entry = float(position.entry_price or 0.0)
+        sl = float(position.sl_price or 0.0)
+        if entry <= 0 or sl <= 0:
+            return ""
+        one_r = abs(entry - sl)
+        bank_price = entry + one_r if position.side == "LONG" else entry - one_r
+        return f"Bank 50% at +1R <b>${self._format_price(bank_price)}</b> | runner to TP\n"
+
     def _entry_message(self, position: FuturesPosition) -> str:
         stop_risk = self._position_stop_risk_usdt(position)
         stop_risk_pct = self._position_stop_risk_pct_of_margin(position)
@@ -1641,6 +1663,7 @@ class FuturesRuntime:
             f"Entry <b>${self._format_price(position.entry_price)}</b> | x{position.leverage} | margin <b>${position.margin_usdt:.2f}</b>\n"
             f"TP <b>${self._format_price(position.tp_price)}</b> | SL <b>${self._format_price(position.sl_price)}</b>\n"
             f"Risk at SL <b>{stop_risk_text}</b>{stop_risk_pct_text}\n"
+            f"{self._partial_bank_plan_line(position)}"
             f"{self._prediction_overlay_impact_line(position.metadata)}\n"
             f"Score {position.score:.1f} | Cert {position.certainty * 100:.0f}%"
         )
@@ -1695,7 +1718,7 @@ class FuturesRuntime:
             message_parts.extend(["━━━━━━━━━━━━━━━", warning_line])
         message_parts.extend([
             "━━━━━━━━━━━━━━━",
-            f"{balance_line} | Leverage: <b>x{self.config.leverage_min}-x{self.config.leverage_max}</b>",
+            f"{balance_line} | Leverage: <b>{self._leverage_caps_label()}</b>",
             caps_line,
             f"Cycle checks: <b>{self._cycle_sleep_seconds()}s</b> | Heartbeat: <b>{self._heartbeat_label()}</b>",
         ])
