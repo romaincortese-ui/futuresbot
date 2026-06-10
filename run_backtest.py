@@ -220,8 +220,11 @@ def _run_portfolio_backtest(
     trades: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
     step = pd.Timedelta(minutes=15)
-    open_engine: FuturesBacktestEngine | None = None
-    open_position: FuturesPosition | None = None
+    # Capacity-N slot list (FUTURES_BACKTEST_MAX_POSITIONS, default 1 = legacy
+    # behavior). Entries are additive: a second slot only opens when the live
+    # margin calc fits the remaining balance (mirrors [LIVE_MARGIN_CAP]).
+    max_slots = max(1, _env_int("FUTURES_BACKTEST_MAX_POSITIONS", 1))
+    open_slots: list[tuple[FuturesBacktestEngine, FuturesPosition]] = []
     pending_signal: FuturesSignal | None = None
     pending_symbol = ""
     pending_entry_time = None
@@ -253,7 +256,7 @@ def _run_portfolio_backtest(
                             "total_steps": len(all_times),
                             "pct": round(step_index / max(1, len(all_times)) * 100.0, 2),
                             "timestamp": timestamp.isoformat(),
-                            "open_position": bool(open_position is not None),
+                            "open_position": bool(open_slots),
                             "trades": len(trades),
                             "balance": round(balance, 6),
                         }
@@ -261,32 +264,38 @@ def _run_portfolio_backtest(
                 ),
                 flush=True,
             )
-        if pending_signal is not None and pending_entry_time == timestamp and open_position is None:
+        if (
+            pending_signal is not None
+            and pending_entry_time == timestamp
+            and len(open_slots) < max_slots
+            and pending_symbol not in {pos.symbol for _, pos in open_slots}
+        ):
             frame = frames.get(pending_symbol)
             engine = engines.get(pending_symbol)
             idx = indexes.get(pending_symbol, {}).get(timestamp)
             if frame is not None and engine is not None and idx is not None:
-                position = engine._open_position(pending_signal, timestamp, float(frame.iloc[idx]["open"]), balance)
+                held_margin = sum(float(pos.margin_usdt or 0.0) for _, pos in open_slots)
+                position = engine._open_position(pending_signal, timestamp, float(frame.iloc[idx]["open"]), balance - held_margin)
                 if position is not None:
-                    open_engine = engine
-                    open_position = position
+                    open_slots.append((engine, position))
             pending_signal = None
             pending_symbol = ""
             pending_entry_time = None
 
         close_time = timestamp + step
-        if open_position is not None and open_engine is not None:
-            frame = frames.get(open_position.symbol)
-            idx = indexes.get(open_position.symbol, {}).get(timestamp)
+        for slot in list(open_slots):
+            slot_engine, slot_position = slot
+            frame = frames.get(slot_position.symbol)
+            idx = indexes.get(slot_position.symbol, {}).get(timestamp)
             if frame is not None and idx is not None:
                 bar = frame.iloc[idx]
-                open_engine._latest_regime_frame = frame.iloc[: idx + 1]
-                bar_exit = open_engine._bar_exit(open_position, bar)
+                slot_engine._latest_regime_frame = frame.iloc[: idx + 1]
+                bar_exit = slot_engine._bar_exit(slot_position, bar)
                 if bar_exit is not None:
                     exit_price, reason = bar_exit
                     liquidated = reason == "LIQUIDATED"
-                    trade = open_engine._close_position(
-                        open_position,
+                    trade = slot_engine._close_position(
+                        slot_position,
                         close_time,
                         exit_price,
                         reason,
@@ -295,29 +304,29 @@ def _run_portfolio_backtest(
                     )
                     balance += float(trade["pnl_usdt"])
                     trades.append(trade)
-                    register_pmt_exit(open_position, reason, close_time)
+                    register_pmt_exit(slot_position, reason, close_time)
                     if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
                         cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
                         pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
-                    open_position = None
-                    open_engine = None
+                    open_slots.remove(slot)
 
-        if open_position is not None and open_engine is not None and close_time.minute == 0:
-            frame = frames.get(open_position.symbol)
-            idx = indexes.get(open_position.symbol, {}).get(timestamp)
-            if frame is not None and idx is not None:
-                hourly_exit = open_engine._hourly_exit(open_position, float(frame.iloc[idx]["close"]), close_time.to_pydatetime())
-                if hourly_exit is not None:
-                    exit_price, reason = hourly_exit
-                    trade = open_engine._close_position(open_position, close_time, exit_price, reason)
-                    balance += float(trade["pnl_usdt"])
-                    trades.append(trade)
-                    register_pmt_exit(open_position, reason, close_time)
-                    if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
-                        cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
-                        pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
-                    open_position = None
-                    open_engine = None
+        if close_time.minute == 0:
+            for slot in list(open_slots):
+                slot_engine, slot_position = slot
+                frame = frames.get(slot_position.symbol)
+                idx = indexes.get(slot_position.symbol, {}).get(timestamp)
+                if frame is not None and idx is not None:
+                    hourly_exit = slot_engine._hourly_exit(slot_position, float(frame.iloc[idx]["close"]), close_time.to_pydatetime())
+                    if hourly_exit is not None:
+                        exit_price, reason = hourly_exit
+                        trade = slot_engine._close_position(slot_position, close_time, exit_price, reason)
+                        balance += float(trade["pnl_usdt"])
+                        trades.append(trade)
+                        register_pmt_exit(slot_position, reason, close_time)
+                        if pmt_strategy_enabled() and pmt_win_cooldown_exit_reason(reason):
+                            cooldown_hours = max(0.0, _env_float("FUTURES_PMT_TP_COOLDOWN_HOURS", 24.0))
+                            pmt_cooldown_until = close_time + pd.Timedelta(hours=cooldown_hours) if cooldown_hours > 0 else None
+                        open_slots.remove(slot)
 
         pmt_cooldown_active = pmt_strategy_enabled() and pmt_cooldown_until is not None and close_time < pmt_cooldown_until
         if core_weight_replay_enabled and pmt_strategy_enabled():
@@ -341,8 +350,7 @@ def _run_portfolio_backtest(
                     core_weight_replay_rows.append(_core_weight_replay_record(core_weight_replay_payload))
                     core_weight_replay_slot = replay_slot
         if (
-            open_position is not None
-            and open_engine is not None
+            len(open_slots) >= max_slots
             and pending_signal is None
             and not pmt_cooldown_active
             and pmt_strategy_enabled()
@@ -370,33 +378,38 @@ def _run_portfolio_backtest(
                     )
                 )
             candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-            if candidates:
+            if candidates and open_slots:
                 _score10, score, _certainty, symbol, signal = candidates[0]
-                current_score = float(open_position.score or 0.0)
+                weakest = min(open_slots, key=lambda sl: float(sl[1].score or 0.0))
+                weakest_engine, weakest_position = weakest
+                current_score = float(weakest_position.score or 0.0)
                 min_preempt_score = max(0.0, _env_float("FUTURES_PMT_PREEMPT_MIN_SCORE", 97.0))
                 min_preempt_delta = max(0.0, _env_float("FUTURES_PMT_PREEMPT_MIN_SCORE_DELTA", 3.0))
-                different_exposure = signal.symbol != open_position.symbol or signal.side != open_position.side
+                open_exposures = {(pos.symbol, pos.side) for _, pos in open_slots}
+                different_exposure = (signal.symbol, signal.side) not in open_exposures
                 if different_exposure and score >= min_preempt_score and score >= current_score + min_preempt_delta:
-                    frame = frames.get(open_position.symbol)
-                    idx = indexes.get(open_position.symbol, {}).get(timestamp)
+                    frame = frames.get(weakest_position.symbol)
+                    idx = indexes.get(weakest_position.symbol, {}).get(timestamp)
                     if frame is not None and idx is not None:
-                        trade = open_engine._close_position(
-                            open_position,
+                        trade = weakest_engine._close_position(
+                            weakest_position,
                             close_time,
                             float(frame.iloc[idx]["close"]),
                             "PMT_PREEMPTED_BY_SUPERIOR_SIGNAL",
                         )
                         balance += float(trade["pnl_usdt"])
                         trades.append(trade)
-                        open_position = None
-                        open_engine = None
+                        open_slots.remove(weakest)
                         pending_signal = signal
                         pending_symbol = symbol
                         pending_entry_time = frames[symbol].index[indexes[symbol][timestamp] + 1]
 
-        if open_position is None and pending_signal is None and not pmt_cooldown_active and (pmt_strategy_enabled() or close_time.minute == 0):
+        if len(open_slots) < max_slots and pending_signal is None and not pmt_cooldown_active and (pmt_strategy_enabled() or close_time.minute == 0):
+            open_symbols = {pos.symbol for _, pos in open_slots}
             candidates: list[tuple[int, float, float, str, FuturesSignal]] = []
             for symbol, frame in frames.items():
+                if symbol in open_symbols:
+                    continue
                 idx = indexes[symbol].get(timestamp)
                 if idx is None or idx < 220 or idx + 1 >= len(frame):
                     continue
@@ -424,35 +437,37 @@ def _run_portfolio_backtest(
                 pending_entry_time = frames[symbol].index[indexes[symbol][timestamp] + 1]
 
         mtm = 0.0
-        if open_position is not None and open_engine is not None:
-            frame = frames.get(open_position.symbol)
-            idx = indexes.get(open_position.symbol, {}).get(timestamp)
+        for slot_engine, slot_position in open_slots:
+            frame = frames.get(slot_position.symbol)
+            idx = indexes.get(slot_position.symbol, {}).get(timestamp)
             if frame is not None and idx is not None:
-                mtm = open_engine._mark_to_market(open_position, float(frame.iloc[idx]["close"]))
+                mtm += slot_engine._mark_to_market(slot_position, float(frame.iloc[idx]["close"]))
         equity_curve.append(
             {
                 "timestamp": close_time.isoformat(),
                 "equity": round(balance + mtm, 8),
                 "cash_balance": round(balance, 8),
-                "open_positions": 1 if open_position is not None else 0,
+                "open_positions": len(open_slots),
             }
         )
 
-    if open_position is not None and open_engine is not None:
-        frame = frames[open_position.symbol]
+    for slot_engine, slot_position in list(open_slots):
+        frame = frames[slot_position.symbol]
         final_timestamp = frame.index[-1] + step
         final_close = float(frame.iloc[-1]["close"])
-        trade = open_engine._close_position(open_position, final_timestamp, final_close, "END_OF_TEST")
+        trade = slot_engine._close_position(slot_position, final_timestamp, final_close, "END_OF_TEST")
         balance += float(trade["pnl_usdt"])
         trades.append(trade)
-        register_pmt_exit(open_position, "END_OF_TEST", final_timestamp)
+        register_pmt_exit(slot_position, "END_OF_TEST", final_timestamp)
+    if open_slots:
+        open_slots = []
         equity_curve.append({"timestamp": final_timestamp.isoformat(), "equity": round(balance, 8), "cash_balance": round(balance, 8), "open_positions": 0})
 
     report = build_report(equity_curve, trades, base_config.initial_balance)
     report["portfolio_mode"] = True
     report["symbols"] = list(frames.keys())
     report["usable_symbols"] = len(frames)
-    report["max_open_positions"] = 1
+    report["max_open_positions"] = max_slots
     cooldown_hours = max(0.0, _env_float("FUTURES_PMT_STOP_CHASE_COOLDOWN_HOURS", 0.0))
     if cooldown_hours > 0.0:
         report["pmt_stop_chase_cooldown"] = {
