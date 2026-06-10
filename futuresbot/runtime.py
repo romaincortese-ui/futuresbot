@@ -1031,6 +1031,74 @@ class FuturesRuntime:
             changed = True
         return changed
 
+    def _maybe_partial_bank(self, position: FuturesPosition, *, current_price: float, gross_pnl_pct: float | None, metadata: dict[str, Any]) -> bool:
+        """Reduce-only close of a fraction of a stop-first position at +1R.
+
+        Best-effort: any failure leaves the position fully intact (the trade
+        simply keeps running under its existing stop/TP/lock). The resting
+        position-level TPSL stop is intentionally NOT cancelled — it covers
+        the remaining volume, so the runner is never left unprotected.
+        """
+        from futuresbot.partial_bank import partial_bank_decision
+
+        decision = partial_bank_decision(
+            gross_pnl_pct=gross_pnl_pct,
+            sl_margin_pct=self._metadata_float(metadata, "sl_margin_pct"),
+            contracts=int(position.contracts or 0),
+            already_banked=False,
+        )
+        if decision is None:
+            return False
+        vol = decision.vol_to_close
+        try:
+            if not self.config.paper_trade:
+                position_mode = self._live_position_mode()
+                order = self.client.close_position(
+                    symbol=position.symbol,
+                    side=self._close_side(position, position_mode=position_mode),
+                    vol=vol,
+                    leverage=position.leverage,
+                    open_type=self.config.open_type,
+                    position_mode=position_mode,
+                    position_id=position.position_id or None,
+                )
+                order_id = str(order.get("orderId") or "")
+                fill_price = current_price
+                if order_id:
+                    try:
+                        detail = self.client.get_order(order_id)
+                        fill_price = float(detail.get("dealAvgPrice") or current_price)
+                    except Exception:  # pragma: no cover — fill detail best effort
+                        pass
+            else:
+                fill_price = current_price
+        except Exception as exc:  # pragma: no cover — leave position intact
+            log.warning("[PARTIAL_BANK] %s reduce-only close failed: %s", position.symbol, exc)
+            return False
+        remaining = max(1, int(position.contracts) - vol)
+        banked_fraction = vol / float(position.contracts)
+        position.contracts = remaining
+        try:
+            position.margin_usdt = float(position.margin_usdt) * (1.0 - banked_fraction)
+        except (TypeError, ValueError):
+            pass
+        metadata["partial_banked"] = 1.0
+        metadata["partial_bank_price"] = float(fill_price)
+        metadata["partial_bank_vol"] = float(vol)
+        metadata["partial_bank_gross_pnl_pct"] = float(gross_pnl_pct or 0.0)
+        self._save_state()
+        log.info(
+            "[PARTIAL_BANK] %s banked %d/%d contracts at %.4f (+%.1f%% margin, trigger %.1f%%) — runner keeps TP/lock",
+            position.symbol, vol, vol + remaining, fill_price, gross_pnl_pct or 0.0, decision.trigger_margin_pct,
+        )
+        self._notify(
+            f"💰 <b>Partial bank</b> {position.side} {position.symbol}\n"
+            f"Banked {vol}/{vol + remaining} contracts at {self._format_price(fill_price)} "
+            f"(+{(gross_pnl_pct or 0.0):.1f}% margin)\n"
+            f"Runner continues — TP/lock unchanged"
+        )
+        return True
+
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if not self._flag("USE_FUTURES_PROFIT_LOCK") and not (pmt_strategy_enabled() and self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED")):
             return False
@@ -1063,6 +1131,12 @@ class FuturesRuntime:
         elif stored_gross_peak_pct is None and gross_peak_pct > 0.0:
             metadata[PROFIT_LOCK_PEAK_GROSS_PCT_KEY] = float(gross_peak_pct)
             changed = True
+
+        # Small-win-first: bank a fraction of stop-first positions at +1R so a
+        # winner can no longer round-trip to a loss; the runner half keeps the
+        # existing 5R target + peak lock. Replay-calibrated (see partial_bank).
+        if self._metadata_float(metadata, "pmt_stop_first") and not self._metadata_float(metadata, "partial_banked"):
+            self._maybe_partial_bank(position, current_price=current_price, gross_pnl_pct=gross_pnl_pct, metadata=metadata)
 
         # Calculate volatility as a simple rolling stddev of last N closes (or fallback to config/static)
         closes = getattr(self, "_recent_closes", None)
