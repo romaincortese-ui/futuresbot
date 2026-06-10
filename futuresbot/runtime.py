@@ -1523,6 +1523,53 @@ class FuturesRuntime:
             parts.append(f"event {html.escape(event[:80])}")
         return " | ".join(parts)
 
+    def _build_why_message(self) -> str:
+        """On-demand entry diagnosis: per symbol, the current trend label and
+        moves, the last round-number level-cross, and the exact reason the
+        scorer is (not) firing right now — the same analysis the operator
+        previously had to run by hand."""
+        import math
+
+        from futuresbot.pmt_strategy import (
+            classify_pair_market_trend,
+            diagnose_pmt_threshold_rejection,
+            mental_threshold_step,
+        )
+
+        lines = [
+            f"🔬 <b>Entry Diagnosis</b> [{self._mode_label()}]",
+            "━━━━━━━━━━━━━━━",
+            f"Slots: <b>{len(self.open_positions)}/{self.config.max_concurrent_positions}</b>"
+            + (" | ⏸️ paused" if self._paused else ""),
+        ]
+        end = int(time.time())
+        for sym in (list(self._active_symbols) or [self.config.symbol]):
+            try:
+                frame = self.client.get_klines(sym, interval="Min15", start=end - 900 * 160, end=end)
+                if frame is None or len(frame) < 10:
+                    lines.append(f"<b>{html.escape(sym)}</b>: no kline data")
+                    continue
+                pmt = classify_pair_market_trend(frame, sym)
+                trend = f"{pmt.label} {pmt.move_24h_pct * 100:+.1f}%/24h" if pmt else "trend n/a"
+                step = mental_threshold_step(sym)
+                closes = [float(x) for x in frame["close"]]
+                last_cross = None
+                for i in range(1, len(closes)):
+                    if math.floor(closes[i - 1] / step) != math.floor(closes[i] / step) or math.ceil(closes[i - 1] / step) != math.ceil(closes[i] / step):
+                        last_cross = i
+                if last_cross is not None and hasattr(frame, "index"):
+                    when = frame.index[last_cross]
+                    cross_text = f"last cross {when.strftime('%H:%M')} UTC"
+                else:
+                    cross_text = "no level-cross in 40h"
+                scoped = self._config_for_symbol(sym)
+                why = diagnose_pmt_threshold_rejection(frame, scoped)
+                why_text = html.escape((why or "would fire")[:120])
+                lines.append(f"<b>{html.escape(sym)}</b> — {trend} | {cross_text}\n  {why_text}")
+            except Exception as exc:  # pragma: no cover — diagnosis is best effort
+                lines.append(f"<b>{html.escape(sym)}</b>: diagnosis failed ({html.escape(str(exc)[:60])})")
+        return "\n".join(lines)
+
     def _build_status_message(self, *, price: float | None = None, signal: dict[str, Any] | None = None, heartbeat: bool = False) -> str:
         title = "💓 <b>Heartbeat</b>" if heartbeat else "📋 <b>Status</b>"
         current_price = price if price and price > 0 else None
@@ -1767,13 +1814,14 @@ class FuturesRuntime:
         self._save_state()
 
     def _commands_hint(self) -> str:
-        return "/status /pnl /logs /pause /resume /close [SYMBOL|all] /help"
+        return "/status /why /pnl /logs /pause /resume /close [SYMBOL|all] /help"
 
     def _build_help_message(self) -> str:
         return (
             "🤖 <b>Futures Telegram Commands</b>\n"
             "━━━━━━━━━━━━━━━\n"
             "/status — Futures status and every open position\n"
+            "/why — Per-symbol entry diagnosis: trend, last level-cross, block reason\n"
             "/pnl — Realized and open futures P&L across all symbols\n"
             "/logs — Recent runtime activity\n"
             "/pause — Pause new entries (open positions stay managed)\n"
@@ -1925,6 +1973,9 @@ class FuturesRuntime:
                         self._notify(self._build_status_message(price=self._get_reference_price()))
                         self._last_heartbeat_at = time.time()
                         self._record_activity("Telegram: /status")
+                    elif command == "/why":
+                        self._notify(self._build_why_message())
+                        self._record_activity("Telegram: /why")
                     elif command == "/pnl":
                         self._notify(self._build_pnl_message())
                         self._record_activity("Telegram: /pnl")

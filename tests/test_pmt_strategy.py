@@ -439,6 +439,9 @@ def test_pmt_reduced_score_entry_blocks_exhausted_edge(monkeypatch):
 def test_pmt_min_score_requires_strictly_higher_score(monkeypatch):
     _enable_pmt(monkeypatch, min_score="92.5")
     monkeypatch.setenv("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", "92.5")
+    # Disable the float-boundary tolerance: this test pins the STRICT floor
+    # semantics; the epsilon behavior is covered by its own test below.
+    monkeypatch.setenv("FUTURES_PMT_SCORE_FLOOR_EPSILON", "0")
     frame = _frame([61000.0, 60990.0])
 
     monkeypatch.setattr(

@@ -1147,9 +1147,15 @@ def score_pmt_threshold_signal(
     entry_score_min = _pmt_reduced_entry_min_score(full_score_min)
     metadata["pmt_min_score"] = round(full_score_min, 4)
     metadata["pmt_entry_min_score"] = round(entry_score_min, 4)
-    if score <= entry_score_min:
+    # Float-boundary tolerance: penalties produce scores like 92.4999.. that
+    # display as 92.50 yet fail a strict floor check (three documented knife-
+    # edge kills incl. ZEC 425-short 2026-06-10, score 92.50 vs floor 92.50,
+    # -4% follow-through missed). This is NOT a floor loosening (that failed
+    # the gate at 17% win); it only admits the float-equal class.
+    score_floor_epsilon = max(0.0, _env_float("FUTURES_PMT_SCORE_FLOOR_EPSILON", 0.05))
+    if score <= entry_score_min - score_floor_epsilon:
         return None
-    if score < full_score_min:
+    if score < full_score_min - score_floor_epsilon:
         allowed, reason = _pmt_reduced_score_entry_allowed(score, metadata)
         metadata["pmt_reduced_score_entry"] = bool(allowed)
         metadata["pmt_reduced_score_reason"] = reason
