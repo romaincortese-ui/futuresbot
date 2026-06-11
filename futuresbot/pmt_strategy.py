@@ -1222,16 +1222,24 @@ def score_pmt_threshold_signal(
             stop_first = False
     tp_price, sl_price = _target_prices(entry_price, cross.side, leverage, tp_margin_pct, sl_margin_pct)
     if stop_first and score < stop_first_low_tier_score():
-        # Score tier 92.5-95: marginal-conviction entries get a TIGHT peak lock
-        # (arm ~+2% margin, 30% pullback, floor +1%) instead of runner room —
-        # the 2026-06-11 ZEC SL trade peaked +2.26% then died in 19 minutes;
-        # this tier banks that class instead of riding it to -1R. Scores >=95
-        # keep the runner design (bank 50% at +1R, lock at 80% of TP).
-        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_TRIGGER_PCT", 2.0))
+        # Score tier 92.5-95: tight peak lock, SELF-CALIBRATED in R/cost units
+        # (2026-06-11 ETH post-mortem: a fixed +2% arm fired on a 23s spike
+        # that was half a bar's ATR — noise — and the +2.41% floor was below
+        # the trade's own 2.37% round-trip fee, locking a NEGATIVE net exit on
+        # a trade that hit +1R one minute later and ran +34.5%).
+        #   arm   = ARM_R x 1R  (>= ~one bar of ATR-in-margin, since 1R=3xATR)
+        #   floor = max(FLOOR_R x 1R, COST_MULT x round-trip fee in margin %)
+        # Scales per pair and vol regime by construction; the cost term makes
+        # a fee-donating lock impossible.
+        _rt_fee_margin_pct = 2.0 * taker_fee_rate * leverage * 100.0
+        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_ARM_R", 0.35) * sl_margin_pct)
         profit_lock_giveback_pct = 0.0
         profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_PULLBACK_FRACTION", 0.30)))
         profit_lock_min_tp_progress = 0.0
-        profit_lock_floor_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_FLOOR_PCT", 1.0))
+        profit_lock_floor_pct = max(
+            _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_FLOOR_R", 0.15) * sl_margin_pct,
+            _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_FLOOR_COST_MULT", 1.5) * _rt_fee_margin_pct,
+        )
         profit_lock_exit_min_net_pct = 0.0
     elif stop_first:
         # Replay-validated R-design uses a pure stop/TP exit pair; the peak

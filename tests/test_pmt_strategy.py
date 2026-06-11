@@ -838,8 +838,10 @@ def test_stop_first_low_tier_lock_overrides(monkeypatch):
     assert signal is not None
     md = signal.metadata
     if float(signal.score) < 95.0:
-        assert md["profit_lock_trigger_pct_override"] == 2.0
+        sl_margin = float(md["sl_margin_pct"])
+        # R/cost-calibrated tier: arm = 0.35R; floor = max(0.15R, 1.5x RT fee)
+        assert md["profit_lock_trigger_pct_override"] == __import__("pytest").approx(0.35 * sl_margin, rel=1e-4)
         assert md["profit_lock_pullback_fraction_override"] == 0.30
-        assert md["profit_lock_floor_pct_override"] == 1.0
+        assert md["profit_lock_floor_pct_override"] >= 0.15 * sl_margin - 1e-9
     else:
         assert md["profit_lock_trigger_pct_override"] > 10.0

@@ -996,13 +996,19 @@ class FuturesRuntime:
 
             tp_margin_pct = self._metadata_float(metadata, "tp_margin_pct") or 0.0
             if float(position.score or 0.0) < stop_first_low_tier_score():
-                # Tight low-tier lock (score 92.5-95): see pmt_strategy tier block.
+                # Tight low-tier lock, R/cost-calibrated: see pmt_strategy tier block.
+                sl_margin_pct = self._metadata_float(metadata, "sl_margin_pct") or 20.0
+                taker = float(getattr(self.config, "taker_fee_rate", 0.0008) or 0.0008)
+                rt_fee = 2.0 * taker * float(position.leverage or 15) * 100.0
                 values = {
-                    "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_TRIGGER_PCT", 2.0)),
+                    "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_ARM_R", 0.35) * sl_margin_pct),
                     "profit_lock_giveback_pct_override": 0.0,
                     "profit_lock_pullback_fraction_override": min(0.95, max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_PULLBACK_FRACTION", 0.30))),
                     "profit_lock_min_tp_progress_override": 0.0,
-                    "profit_lock_floor_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_FLOOR_PCT", 1.0)),
+                    "profit_lock_floor_pct_override": max(
+                        self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_FLOOR_R", 0.15) * sl_margin_pct,
+                        self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_FLOOR_COST_MULT", 1.5) * rt_fee,
+                    ),
                     "profit_lock_exit_min_net_pct_override": 0.0,
                 }
                 changed = False
