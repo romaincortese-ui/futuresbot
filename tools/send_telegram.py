@@ -101,6 +101,23 @@ def _render_trade(t: dict) -> str:
     return "\n".join(lines)
 
 
+def _note_emoji(label: str) -> str:
+    l = label.lower()
+    if "concentr" in l or "risk" in l:
+        return "🔴"
+    if "fee" in l or "cost" in l:
+        return "💸"
+    if "lever" in l:
+        return "⚡"
+    if "cumul" in l or "total" in l or "ledger" in l:
+        return "📉"
+    if "propos" in l or "suggest" in l or "idea" in l:
+        return "💡"
+    if l.startswith("oi") or "open interest" in l:
+        return "📡"
+    return "▫️"
+
+
 def render(p: dict) -> str:
     out = [f"📊 <b>Futures Daily</b>{' — ' + p['date'] if p.get('date') else ''}", DIV]
 
@@ -130,10 +147,27 @@ def render(p: dict) -> str:
         ctx = p.get("scan_context")
         out.append(f"• No closed trades{(' — ' + ctx) if ctx else ''}")
 
-    # Notes / flags
+    # Notes / flags — phone-friendly: emoji + bold short title, body on its
+    # own indented line. Accepts "Label: text" strings or {label, text} dicts.
     notes = p.get("notes") or []
     if notes:
-        out.append("\n⚠️ <b>Notes</b>\n" + DIV + "\n" + "\n".join(f"• {n}" for n in notes))
+        note_lines = ["\n⚠️ <b>Notes</b>", DIV]
+        for i, n in enumerate(notes):
+            if isinstance(n, dict):
+                label, text = str(n.get("label", "")), str(n.get("text", ""))
+            else:
+                n = str(n)
+                label, _, text = n.partition(": ")
+                if not text:
+                    label, text = "", n
+            if i:
+                note_lines.append("")  # blank line between notes for phone scanning
+            if label:
+                note_lines.append(f"{_note_emoji(label)} <b>{label.strip().capitalize()}</b>")
+                note_lines.append(f"   {text.strip()}")
+            else:
+                note_lines.append(f"▫️ {text.strip()}")
+        out.append("\n".join(note_lines))
 
     # Backtest
     if any(p.get(k) is not None for k in ("bt_24h", "bt_baseline", "bt_7d")):
