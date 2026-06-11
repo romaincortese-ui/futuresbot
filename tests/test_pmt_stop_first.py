@@ -80,6 +80,9 @@ def test_resolve_stop_first_geometry_respects_env_overrides(monkeypatch):
 
 def test_stop_first_signal_carries_geometry_and_lock_overrides(monkeypatch):
     _stop_first_env(monkeypatch)
+    # Pin the runner-tier lock semantics (this test predates the 92.5-95 tight
+    # tier; tier behavior is covered in test_pmt_strategy tier tests).
+    monkeypatch.setenv("FUTURES_PMT_STOP_FIRST_TIER_SCORE", "0")
     symbol = "BTC_USDT"
     level = 75000.0
     step = 1000.0

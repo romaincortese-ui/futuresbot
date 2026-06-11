@@ -285,6 +285,47 @@ def _detect_threshold_cross(previous: float, current: float, symbol: str) -> Men
     return None
 
 
+def stop_first_low_tier_score() -> float:
+    """Score below which stop-first positions use the tight low-tier lock."""
+    return _env_float("FUTURES_PMT_STOP_FIRST_TIER_SCORE", 95.0)
+
+
+def trap_reclaim_block_enabled() -> bool:
+    return _env_bool("FUTURES_PMT_BLOCK_TRAP_RECLAIM", True)
+
+
+def is_trap_reclaim(frame: pd.DataFrame, cross: "MentalThresholdCross", pmt: "PairMarketTrend", *, lookback_bars: int | None = None) -> bool:
+    """Bull/bear-trap reclaim: entering on a level recross AGAINST the broader
+    tape shortly after the same level broke the other way. 2026-06-11 ZEC: 425
+    broke DOWN at 19:00 in a bear tape; the 04:00 LONG recross of 425 failed to
+    SL in 19 minutes. Blocks LONG reclaims of a recently-broken-down level when
+    the 24h move is negative (mirror for SHORT)."""
+    if not trap_reclaim_block_enabled() or frame is None or "close" not in frame:
+        return False
+    lookback = lookback_bars if lookback_bars is not None else max(8, _env_int("FUTURES_PMT_TRAP_RECLAIM_LOOKBACK_BARS", 96))
+    closes = frame["close"].astype(float)
+    if len(closes) < 4:
+        return False
+    window = closes.iloc[-(lookback + 1):-1]
+    level = float(cross.level)
+    move_24h = float(getattr(pmt, "move_24h_pct", 0.0) or 0.0)
+    prior = None
+    broke_down = broke_up = False
+    for value in window:
+        value = float(value)
+        if prior is not None:
+            if prior >= level and value < level:
+                broke_down = True
+            if prior <= level and value > level:
+                broke_up = True
+        prior = value
+    if cross.side == "LONG" and broke_down and move_24h < 0:
+        return True
+    if cross.side == "SHORT" and broke_up and move_24h > 0:
+        return True
+    return False
+
+
 def _pmt_confirmation_bars() -> int:
     default = 0 if _pmt_simple_scoring_enabled() else 1
     return max(0, _env_int("FUTURES_PMT_CONFIRMATION_BARS", default))
@@ -1134,6 +1175,8 @@ def score_pmt_threshold_signal(
         return None
     if _pmt_safety_rejection(frame, pmt, cross) is not None:
         return None
+    if is_trap_reclaim(frame, cross, pmt):
+        return None
 
     score, metadata = _score_threshold_cross(frame, pmt, cross)
     score, metadata = _apply_funding_score_adjustment(
@@ -1178,7 +1221,19 @@ def score_pmt_threshold_signal(
         else:
             stop_first = False
     tp_price, sl_price = _target_prices(entry_price, cross.side, leverage, tp_margin_pct, sl_margin_pct)
-    if stop_first:
+    if stop_first and score < stop_first_low_tier_score():
+        # Score tier 92.5-95: marginal-conviction entries get a TIGHT peak lock
+        # (arm ~+2% margin, 30% pullback, floor +1%) instead of runner room —
+        # the 2026-06-11 ZEC SL trade peaked +2.26% then died in 19 minutes;
+        # this tier banks that class instead of riding it to -1R. Scores >=95
+        # keep the runner design (bank 50% at +1R, lock at 80% of TP).
+        profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_TRIGGER_PCT", 2.0))
+        profit_lock_giveback_pct = 0.0
+        profit_lock_pullback_fraction = min(0.95, max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_PULLBACK_FRACTION", 0.30)))
+        profit_lock_min_tp_progress = 0.0
+        profit_lock_floor_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_FLOOR_PCT", 1.0))
+        profit_lock_exit_min_net_pct = 0.0
+    elif stop_first:
         # Replay-validated R-design uses a pure stop/TP exit pair; the peak
         # lock stays available but armed far out so runners are not clipped.
         profit_lock_trigger_pct = max(0.0, _env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_TRIGGER_PCT", tp_margin_pct * 0.80))
@@ -1261,6 +1316,8 @@ def diagnose_pmt_threshold_rejection(
     safety_rejection = _pmt_safety_rejection(frame, pmt, cross)
     if safety_rejection is not None:
         return f"{safety_rejection} side={cross.side} pmt={pmt.label} level={cross.level:g}"
+    if is_trap_reclaim(frame, cross, pmt):
+        return f"trap_reclaim_block side={cross.side} pmt={pmt.label} level={cross.level:g} (level broke the other way within lookback)"
     score, metadata = _score_threshold_cross(frame, pmt, cross)
     score, metadata = _apply_funding_score_adjustment(
         score,

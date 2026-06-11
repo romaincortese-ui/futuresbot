@@ -801,3 +801,45 @@ def test_pmt_profit_lock_uses_pmt_overrides_without_tp_progress():
     assert round(position.metadata["profit_lock_peak_gross_pnl_pct"], 3) == 69.2
     assert round(position.metadata["profit_lock_stop_gross_pnl_pct"], 3) == 44.98
     assert final_exit == (99.1004, "PEAK_PROFIT_LOCK")
+
+def test_trap_reclaim_blocks_long_after_recent_breakdown(monkeypatch):
+    _enable_pmt(monkeypatch)
+    from futuresbot.pmt_strategy import is_trap_reclaim
+    # 425 broke DOWN mid-window, then LONG recross with negative 24h tape (ZEC 2026-06-11)
+    frame = _frame([430.0] * 40 + [424.0] * 56 + [424.5, 425.6, 426.0])
+    cross = MentalThresholdCross("LONG", 425.0, 424.5, 426.0, 0.003, 0.002)
+    pmt = PairMarketTrend("ZEC_USDT", "BULLISH", -0.05, -0.01, 0.01)
+    assert is_trap_reclaim(frame, cross, pmt) is True
+    pmt_up = PairMarketTrend("ZEC_USDT", "BULLISH", 0.05, 0.01, 0.01)
+    assert is_trap_reclaim(frame, cross, pmt_up) is False  # tape agrees: not a trap
+    monkeypatch.setenv("FUTURES_PMT_BLOCK_TRAP_RECLAIM", "0")
+    assert is_trap_reclaim(frame, cross, pmt) is False
+
+
+def test_trap_reclaim_allows_fresh_breakout(monkeypatch):
+    _enable_pmt(monkeypatch)
+    from futuresbot.pmt_strategy import is_trap_reclaim
+    # level never broke down in lookback: clean break, no trap
+    frame = _frame([424.0] * 96 + [424.5, 425.6, 426.0])
+    cross = MentalThresholdCross("LONG", 425.0, 424.5, 426.0, 0.003, 0.002)
+    pmt = PairMarketTrend("ZEC_USDT", "BULLISH", -0.05, -0.01, 0.01)
+    assert is_trap_reclaim(frame, cross, pmt) is False
+
+
+def test_stop_first_low_tier_lock_overrides(monkeypatch):
+    # Floor lowered for the synthetic frame; this test pins TIER routing
+    # (score <95 -> tight lock), not the production floor.
+    _enable_pmt(monkeypatch, min_score="70")
+    monkeypatch.setenv("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", "70")
+    monkeypatch.setenv("FUTURES_PMT_CONFIRMATION_BARS", "0")
+    monkeypatch.setenv("FUTURES_PMT_STOP_FIRST_SIZING_ENABLED", "1")
+    closes = [63800.0] * 110 + [63900.0, 64120.0]
+    signal = score_pmt_threshold_signal(_frame(closes), _config())
+    assert signal is not None
+    md = signal.metadata
+    if float(signal.score) < 95.0:
+        assert md["profit_lock_trigger_pct_override"] == 2.0
+        assert md["profit_lock_pullback_fraction_override"] == 0.30
+        assert md["profit_lock_floor_pct_override"] == 1.0
+    else:
+        assert md["profit_lock_trigger_pct_override"] > 10.0

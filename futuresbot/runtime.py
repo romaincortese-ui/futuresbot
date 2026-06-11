@@ -992,7 +992,25 @@ class FuturesRuntime:
         if not entry_signal.startswith("PMT_THRESHOLD_") and "pmt_label" not in metadata:
             return False
         if self._metadata_float(metadata, "pmt_stop_first"):
+            from futuresbot.pmt_strategy import stop_first_low_tier_score
+
             tp_margin_pct = self._metadata_float(metadata, "tp_margin_pct") or 0.0
+            if float(position.score or 0.0) < stop_first_low_tier_score():
+                # Tight low-tier lock (score 92.5-95): see pmt_strategy tier block.
+                values = {
+                    "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_TRIGGER_PCT", 2.0)),
+                    "profit_lock_giveback_pct_override": 0.0,
+                    "profit_lock_pullback_fraction_override": min(0.95, max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_PULLBACK_FRACTION", 0.30))),
+                    "profit_lock_min_tp_progress_override": 0.0,
+                    "profit_lock_floor_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_LOCK_FLOOR_PCT", 1.0)),
+                    "profit_lock_exit_min_net_pct_override": 0.0,
+                }
+                changed = False
+                for key, value in values.items():
+                    if self._metadata_float(metadata, key) != value:
+                        metadata[key] = float(value)
+                        changed = True
+                return changed
             values = {
                 "profit_lock_trigger_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_TRIGGER_PCT", tp_margin_pct * 0.80)),
                 "profit_lock_giveback_pct_override": max(0.0, self._env_float("FUTURES_PMT_STOP_FIRST_PROFIT_LOCK_GIVEBACK_PCT", 0.0)),
