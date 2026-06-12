@@ -1117,7 +1117,7 @@ def _atr_from_frame(frame: pd.DataFrame, period: int) -> float | None:
     return value
 
 
-def _resolve_stop_first_geometry(frame: pd.DataFrame, *, entry_price: float) -> tuple[int, float, float, dict[str, float]] | None:
+def _resolve_stop_first_geometry(frame: pd.DataFrame, *, entry_price: float, score: float | None = None) -> tuple[int, float, float, dict[str, float]] | None:
     """Return (leverage, tp_margin_pct, sl_margin_pct, metadata) for the
     stop-first R-design, or None when ATR is unavailable (caller falls back
     to legacy score-based geometry).
@@ -1135,6 +1135,13 @@ def _resolve_stop_first_geometry(frame: pd.DataFrame, *, entry_price: float) -> 
         return None
     stop_mult = max(0.1, _env_float("FUTURES_PMT_STOP_FIRST_ATR_MULT", 3.0))
     risk_budget_pct = max(1.0, _env_float("FUTURES_PMT_STOP_FIRST_RISK_BUDGET_MARGIN_PCT", 20.0))
+    # P1 sizing compromise (2026-06-12): the full budget belongs to the trades
+    # the thesis claims conviction on. Sub-tier scores (92.5-95) risk half —
+    # every SL of the preceding 72h was a sub-95 entry. Same stop distance in
+    # price; leverage and margin-loss-at-stop halve, so R-geometry (locks,
+    # bank, arm — all in R units) scales coherently.
+    if score is not None and score < stop_first_low_tier_score():
+        risk_budget_pct = max(1.0, _env_float("FUTURES_PMT_STOP_FIRST_LOW_TIER_RISK_BUDGET_MARGIN_PCT", 10.0))
     target_r = max(0.5, _env_float("FUTURES_PMT_STOP_FIRST_TARGET_R", 5.0))
     min_lev = max(1, _env_int("FUTURES_PMT_STOP_FIRST_MIN_LEVERAGE", 1))
     max_lev = max(min_lev, int(_env_float("FUTURES_PMT_MAX_LEVERAGE", _env_float("FUTURES_LEVERAGE_MAX", 25.0))))
@@ -1215,7 +1222,7 @@ def score_pmt_threshold_signal(
     stop_first = pmt_stop_first_sizing_enabled()
     stop_first_metadata: dict[str, float] = {}
     if stop_first:
-        resolved = _resolve_stop_first_geometry(frame, entry_price=entry_price)
+        resolved = _resolve_stop_first_geometry(frame, entry_price=entry_price, score=score)
         if resolved is not None:
             leverage, tp_margin_pct, sl_margin_pct, stop_first_metadata = resolved
         else:

@@ -166,3 +166,22 @@ def test_runtime_lock_override_refresh_uses_stop_first_values():
     assert metadata["profit_lock_floor_pct_override"] == pytest.approx(50.0)
     assert metadata["profit_lock_pullback_fraction_override"] == pytest.approx(0.25)
     assert metadata["profit_lock_min_tp_progress_override"] == pytest.approx(0.0)
+
+
+def test_low_tier_score_halves_risk_budget(monkeypatch):
+    _stop_first_env(monkeypatch)
+    from futuresbot.pmt_strategy import _resolve_stop_first_geometry
+    import pandas as pd
+    closes = [60000.0 + i for i in range(120)]
+    frame = pd.DataFrame({"open": closes, "high": [c * 1.002 for c in closes],
+                          "low": [c * 0.998 for c in closes], "close": closes,
+                          "volume": [1000.0] * 120})
+    hi = _resolve_stop_first_geometry(frame, entry_price=60120.0, score=96.0)
+    lo = _resolve_stop_first_geometry(frame, entry_price=60120.0, score=93.0)
+    assert hi is not None and lo is not None
+    # same stop distance in price -> sub-95 margin-loss-at-stop ~half of >=95
+    assert lo[2] < hi[2] * 0.65
+    assert lo[0] <= hi[0]  # leverage floats down with the smaller budget
+    # un-scored callers (legacy) keep the full budget
+    none_score = _resolve_stop_first_geometry(frame, entry_price=60120.0)
+    assert abs(none_score[2] - hi[2]) < 1e-6

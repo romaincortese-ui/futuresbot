@@ -2656,6 +2656,19 @@ class FuturesRuntime:
             self._register_position(recovered)
             log.info("Recovered untracked live position for %s", sym)
 
+    def _consecutive_sl_streak(self) -> int:
+        """Consecutive most-recent closed trades that were stop-loss losses.
+        A winning close (pnl>0) or any non-SL profitable exit resets to 0."""
+        streak = 0
+        for row in reversed(self.trade_history[-12:]):
+            pnl = float(row.get("pnl_usdt") or 0.0)
+            reason = str(row.get("exit_reason") or "").upper()
+            if pnl <= 0 and ("STOP_LOSS" in reason or "LIQUIDATED" in reason):
+                streak += 1
+                continue
+            break
+        return streak
+
     def _close_history_trade(self, position: FuturesPosition, *, exit_price: float, reason: str) -> None:
         direction = 1.0 if position.side == "LONG" else -1.0
         gross_pnl = position.base_qty * (exit_price - position.entry_price) * direction
@@ -6049,6 +6062,16 @@ class FuturesRuntime:
                 signal_metadata["live_margin_budget_capped"] = True
                 signal_metadata["live_available_balance_usdt"] = round(available_balance, 4)
                 signal_metadata["live_margin_cap_usdt"] = round(live_margin_cap, 4)
+        # P1 cold-streak throttle: after N consecutive stop-loss closes, the
+        # next entry sizes at FACTOR until a win resets the streak. Derived
+        # stateless from the persisted trade_history tail (no new state).
+        streak = self._consecutive_sl_streak()
+        if streak >= max(1, int(self._env_float("FUTURES_COLD_STREAK_N", 2.0))) and self._flag("FUTURES_COLD_STREAK_THROTTLE_ENABLED", default=True):
+            factor = min(1.0, max(0.1, self._env_float("FUTURES_COLD_STREAK_FACTOR", 0.5)))
+            log.info("[COLD_STREAK] consecutive_sl=%d -> margin_budget x%.2f", streak, factor)
+            signal_metadata["cold_streak_throttle"] = float(factor)
+            signal_metadata["cold_streak_count"] = float(streak)
+            margin_budget = margin_budget * factor
         if event_margin_multiplier < 1.0:
             log.info(
                 "[SHARP_EVENT_RISK] symbol=%s multiplier=%.2f margin_budget=%.2f base_margin_budget=%.2f",
