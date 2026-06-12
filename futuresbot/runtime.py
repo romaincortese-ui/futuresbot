@@ -1063,13 +1063,18 @@ class FuturesRuntime:
         position-level TPSL stop is intentionally NOT cancelled — it covers
         the remaining volume, so the runner is never left unprotected.
         """
-        from futuresbot.partial_bank import partial_bank_decision
+        from futuresbot.partial_bank import bank_protect_enabled, partial_bank_decision
 
+        sl_margin_pct = self._metadata_float(metadata, "sl_margin_pct")
+        rung = 1 if not self._metadata_float(metadata, "partial_banked") else 2
+        if rung == 2 and (not bank_protect_enabled() or self._metadata_float(metadata, "partial_banked_2")):
+            return False
         decision = partial_bank_decision(
             gross_pnl_pct=gross_pnl_pct,
-            sl_margin_pct=self._metadata_float(metadata, "sl_margin_pct"),
+            sl_margin_pct=sl_margin_pct,
             contracts=int(position.contracts or 0),
             already_banked=False,
+            trigger_r=1.0 if rung == 1 else 2.0,
         )
         if decision is None:
             return False
@@ -1106,10 +1111,35 @@ class FuturesRuntime:
             position.margin_usdt = float(position.margin_usdt) * (1.0 - banked_fraction)
         except (TypeError, ValueError):
             pass
-        metadata["partial_banked"] = 1.0
-        metadata["partial_bank_price"] = float(fill_price)
-        metadata["partial_bank_vol"] = float(vol)
-        metadata["partial_bank_gross_pnl_pct"] = float(gross_pnl_pct or 0.0)
+        metadata["partial_banked" if rung == 1 else "partial_banked_2"] = 1.0
+        metadata[f"partial_bank_price_{rung}"] = float(fill_price)
+        metadata[f"partial_bank_vol_{rung}"] = float(vol)
+        metadata[f"partial_bank_gross_pnl_pct_{rung}"] = float(gross_pnl_pct or 0.0)
+        be_note = ""
+        if rung == 1 and bank_protect_enabled():
+            # P2: move the runner's stop to breakeven(+fee buffer) so a banked
+            # trade can no longer round-trip to a net loss. Software stop
+            # updates always; the resting exchange TPSL is re-placed best-effort.
+            from futuresbot.partial_bank import breakeven_stop_price
+
+            new_sl = breakeven_stop_price(float(position.entry_price), position.side)
+            improves = new_sl > float(position.sl_price or 0) if position.side == "LONG" else new_sl < float(position.sl_price or 1e18)
+            if improves:
+                position.sl_price = new_sl
+                metadata["runner_breakeven_sl"] = float(new_sl)
+                be_note = chr(10) + "Runner SL -> breakeven " + self._format_price(new_sl)
+                if not self.config.paper_trade:
+                    try:
+                        self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
+                        self.client.place_position_tpsl(
+                            position_id=position.position_id,
+                            vol=int(position.contracts),
+                            take_profit_price=float(position.tp_price) if position.tp_price else None,
+                            stop_loss_price=new_sl,
+                            side=position.side,
+                        )
+                    except Exception as exc:  # pragma: no cover — software stop still moved
+                        log.warning("[BANK_PROTECT] exchange stop re-place failed for %s: %s", position.symbol, exc)
         self._save_state()
         log.info(
             "[PARTIAL_BANK] %s banked %d/%d contracts at %.4f (+%.1f%% margin, trigger %.1f%%) — runner keeps TP/lock",
@@ -1119,7 +1149,7 @@ class FuturesRuntime:
             f"💰 <b>Partial bank</b> {position.side} {position.symbol}\n"
             f"Banked {vol}/{vol + remaining} contracts at {self._format_price(fill_price)} "
             f"(+{(gross_pnl_pct or 0.0):.1f}% margin)\n"
-            f"Runner continues — TP/lock unchanged"
+            f"Runner continues — TP/lock unchanged{be_note}"
         )
         return True
 
@@ -1159,7 +1189,7 @@ class FuturesRuntime:
         # Small-win-first: bank a fraction of stop-first positions at +1R so a
         # winner can no longer round-trip to a loss; the runner half keeps the
         # existing 5R target + peak lock. Replay-calibrated (see partial_bank).
-        if self._metadata_float(metadata, "pmt_stop_first") and not self._metadata_float(metadata, "partial_banked"):
+        if self._metadata_float(metadata, "pmt_stop_first"):
             self._maybe_partial_bank(position, current_price=current_price, gross_pnl_pct=gross_pnl_pct, metadata=metadata)
 
         # Calculate volatility as a simple rolling stddev of last N closes (or fallback to config/static)

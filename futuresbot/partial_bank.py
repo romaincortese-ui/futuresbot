@@ -71,3 +71,17 @@ def partial_bank_decision(
     vol = int(round(contracts * fraction))
     vol = max(1, min(contracts - 1, vol))
     return PartialBankDecision(vol_to_close=vol, trigger_margin_pct=trigger_margin_pct)
+
+
+def breakeven_stop_price(entry_price: float, side: str, buffer_pct: float | None = None) -> float:
+    """Runner stop after a bank: entry +/- a small buffer that covers the
+    round-trip fee in price terms, so a breakeven-stopped runner still nets
+    >= 0 for the whole trade (the banked rung stays profit)."""
+    buf = buffer_pct if buffer_pct is not None else _env_float("FUTURES_PMT_BANK_BREAKEVEN_BUFFER_PCT", 0.15)
+    buf = max(0.0, buf) / 100.0
+    return entry_price * (1.0 + buf) if str(side).upper() == "LONG" else entry_price * (1.0 - buf)
+
+
+def bank_protect_enabled() -> bool:
+    """P2 feature flag: breakeven-after-bank + the +2R second rung."""
+    return _env_bool("FUTURES_PMT_BANK_PROTECT_ENABLED", True)

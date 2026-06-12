@@ -46,3 +46,10 @@ def test_failopen_on_missing_data():
     assert _d(gross_pnl_pct=None) is None
     assert _d(sl_margin_pct=None) is None
     assert _d(sl_margin_pct=0.0) is None
+
+
+def test_breakeven_stop_price_sides(monkeypatch):
+    from futuresbot.partial_bank import breakeven_stop_price
+    monkeypatch.setenv("FUTURES_PMT_BANK_BREAKEVEN_BUFFER_PCT", "0.2")
+    assert abs(breakeven_stop_price(100.0, "LONG") - 100.2) < 1e-9
+    assert abs(breakeven_stop_price(100.0, "SHORT") - 99.8) < 1e-9

@@ -93,27 +93,36 @@ def simulate(fill, bars, atr_pct, P, score, streak):
     else:
         arm = P["runner_lock_arm_r"] * one_r
         floor = 0.5 * P["tp_r"] * one_r
-    peak, banked = -99.0, False
+    peak, banked, banked2 = -99.0, False, False
     result_r = None
     for h, l, _c in bars:
         # favorable excursion uses the bar extreme in the trade's direction
         hi = ((h - o) / o if fav > 0 else (o - l) / o) * lev * 100
         lo = ((l - o) / o if fav > 0 else (o - h) / o) * lev * 100
         stop = -one_r
+        if banked and P.get("breakeven_after_bank", 0):
+            stop = max(stop, 0.0)  # runner can no longer round-trip below entry
         if peak >= arm:
-            stop = max(floor, peak * (1 - P["pullback"]))
+            stop = max(stop, floor, peak * (1 - P["pullback"]))
         if lo <= stop:
             result_r = stop / one_r
             break
         if not banked and hi >= P["bank_trigger_r"] * one_r:
             banked = True
+        if banked and not banked2 and P.get("bank2_r", 0) and hi >= P["bank2_r"] * one_r:
+            banked2 = True
         if hi >= P["tp_r"] * one_r:
             result_r = P["tp_r"]
             break
         peak = max(peak, hi)
     if result_r is None:
         result_r = 0.0  # timeout flat-ish (conservative)
-    gross_pct = (0.5 * P["bank_trigger_r"] + 0.5 * result_r) * one_r if banked else result_r * one_r
+    if banked and banked2:
+        gross_pct = (0.5 * P["bank_trigger_r"] + 0.25 * P["bank2_r"] + 0.25 * result_r) * one_r
+    elif banked:
+        gross_pct = (0.5 * P["bank_trigger_r"] + 0.5 * result_r) * one_r
+    else:
+        gross_pct = result_r * one_r
     net = margin * (gross_pct - rt_fee) / 100.0
     sl_hit = (not banked) and result_r <= -0.99
     return net, sl_hit
