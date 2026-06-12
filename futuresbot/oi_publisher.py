@@ -16,7 +16,7 @@ from typing import Sequence
 log = logging.getLogger(__name__)
 
 OI_TS_KEY_PREFIX = "oi_ts:"
-DEFAULT_MAX_AGE_SECONDS = 3 * 86400  # retain ~3 days of snapshots
+DEFAULT_MAX_AGE_SECONDS = 7 * 86400  # retain ~7 days for the OI lift study
 
 
 def _client(redis_url: str):
