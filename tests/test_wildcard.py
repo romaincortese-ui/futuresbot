@@ -62,3 +62,19 @@ def test_rejects_no_pullback():
 def test_max_positions_default(monkeypatch):
     monkeypatch.delenv("FUTURES_WILDCARD_MAX_POSITIONS", raising=False)
     assert wildcard_max_positions() == 1
+
+
+def test_available_slots_excludes_wildcard():
+    # PMT slot count must exclude wildcard positions (separate slot).
+    import os
+    os.environ.setdefault("USE_FUTURES_PMT_STRATEGY", "1")
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    rt.config = SimpleNamespace(max_concurrent_positions=2)
+    pmt = SimpleNamespace(metadata={"pmt_stop_first": 1.0})
+    wc = SimpleNamespace(metadata={"wildcard": 1.0})
+    rt.open_positions = {"BTC_USDT": pmt, "FOO_USDT": wc}
+    # 2 positions total, but only 1 is PMT -> 1 PMT slot still free
+    assert rt._available_slots() == 1
+    assert rt._wildcard_open_count() == 1

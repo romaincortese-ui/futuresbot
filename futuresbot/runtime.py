@@ -100,6 +100,7 @@ from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
+from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -185,6 +186,7 @@ class FuturesRuntime:
         self._last_prediction_overlay_refresh_at = 0.0
         self._last_prediction_overlay_error_at = 0.0
         self._last_prophet_archive_at = 0.0
+        self._last_wildcard_scan_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
         self._last_pmt_core_weight_log_at = 0.0
@@ -1757,10 +1759,23 @@ class FuturesRuntime:
         stop_risk_pct = self._position_stop_risk_pct_of_margin(position)
         stop_risk_text = f"${stop_risk:.2f}" if stop_risk is not None else "n/a"
         stop_risk_pct_text = f" ({stop_risk_pct:.2f}% of margin)" if stop_risk_pct is not None else ""
+        md = position.metadata if isinstance(position.metadata, dict) else {}
+        if md.get("wildcard"):
+            header = "🎲 <b>WILDCARD Position Opened</b>"
+            try:
+                _roc = float(md.get("wildcard_roc_pct", 0.0) or 0.0) * 100
+                _rsi = float(md.get("wildcard_rsi", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                _roc = _rsi = 0.0
+            wc_line = f"Meteorite: 3h move <b>{_roc:+.1f}%</b> | RSI {_rsi:.0f}\n"
+        else:
+            header = "🚀 <b>Futures Position Opened</b>"
+            wc_line = ""
         return (
-            f"🚀 <b>Futures Position Opened</b> [{self._mode_label()}]\n"
+            f"{header} [{self._mode_label()}]\n"
             f"━━━━━━━━━━━━━━━\n"
             f"<b>{html.escape(position.side)}</b> {html.escape(position.symbol)} | {html.escape(position.entry_signal)}\n"
+            f"{wc_line}"
             f"Entry <b>${self._format_price(position.entry_price)}</b> | x{position.leverage} | margin <b>${position.margin_usdt:.2f}</b>\n"
             f"TP <b>${self._format_price(position.tp_price)}</b> | SL <b>${self._format_price(position.sl_price)}</b>\n"
             f"Risk at SL <b>{stop_risk_text}</b>{stop_risk_pct_text}\n"
@@ -3192,8 +3207,138 @@ class FuturesRuntime:
             return None, cap
         return self._funding_rate_for_symbol(scoped), cap
 
+    def _is_wildcard_position(self, position: FuturesPosition) -> bool:
+        md = getattr(position, "metadata", None)
+        return bool(isinstance(md, dict) and md.get("wildcard"))
+
     def _available_slots(self) -> int:
-        return max(0, int(self.config.max_concurrent_positions) - len(self.open_positions))
+        # PMT slots exclude wildcard positions (the wildcard has its own slot).
+        # No-op when no wildcard positions exist (count == len(open_positions)).
+        pmt_open = sum(1 for p in self.open_positions.values() if not self._is_wildcard_position(p))
+        return max(0, int(self.config.max_concurrent_positions) - pmt_open)
+
+    def _wildcard_open_count(self) -> int:
+        return sum(1 for p in self.open_positions.values() if self._is_wildcard_position(p))
+
+    def _maybe_scan_wildcard(self) -> None:
+        """Separate 'wildcard' strategy: scan the broad MEXC universe for an
+        extreme mover mid-flight (see futuresbot.wildcard) and open it in its
+        OWN slot. Fully isolated from the PMT entry path; best-effort (never
+        raises into the cycle). Off unless FUTURES_WILDCARD_ENABLED=1."""
+        if not wildcard_enabled() or self._paused:
+            return
+        if self._wildcard_open_count() >= wildcard_max_positions():
+            return
+        now_t = time.time()
+        if now_t - self._last_wildcard_scan_at < wildcard_scan_interval_seconds():
+            return
+        self._last_wildcard_scan_at = now_t
+        try:
+            snapshot = self._account_snapshot(self._get_reference_price())
+            available = float(snapshot.get("available_usdt", 0.0) or 0.0)
+            if available <= 0:
+                return
+            tickers = self.client.get_all_tickers() or []
+            floor = wildcard_min_turnover_usdt()
+            min_move = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_MOVE", 0.08))
+            movers = []
+            for t in tickers:
+                sym = str(t.get("symbol") or "")
+                if not sym.endswith("_USDT") or sym in self.open_positions:
+                    continue
+                turn = float(t.get("amount24") or 0.0)
+                chg = abs(float(t.get("riseFallRate") or 0.0))
+                if turn >= floor and chg >= min_move:
+                    movers.append((chg, sym))
+            movers.sort(reverse=True)
+            best = None
+            scan_end = int(now_t)
+            for _chg, sym in movers[: int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))]:
+                try:
+                    df = self.client.get_klines(sym, interval="Min15", start=scan_end - 60 * 900, end=scan_end)
+                except Exception:
+                    continue
+                sig = detect_wildcard_signal(df, sym)
+                if sig is not None and (best is None or abs(sig.roc_pct) > abs(best.roc_pct)):
+                    best = sig
+            if best is None:
+                return
+            log.info("[WILDCARD_SCAN] candidate=%s side=%s roc=%.1f%% rsi=%.0f lev=x%d", best.symbol, best.side, best.roc_pct * 100, best.rsi, best.leverage)
+            self._open_wildcard_position(best, available)
+        except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
+            log.warning("[WILDCARD_SCAN] failed: %s", exc)
+
+    def _open_wildcard_position(self, sig: Any, available_balance: float) -> bool:
+        """Isolated wildcard entry — reuses the live order primitive + TPSL +
+        position registration; never routes through the PMT _enter_trade path.
+        Stamps pmt_stop_first + sl/tp margin so the existing bank/breakeven/lock
+        exits manage it; score 96 -> runner-tier exits (bank 50% @+1R, ride)."""
+        symbol = sig.symbol
+        if symbol in self.open_positions:
+            return False
+        try:
+            contract = self.client.get_contract_detail(symbol)
+        except Exception as exc:
+            log.warning("[WILDCARD] contract detail failed for %s: %s", symbol, exc)
+            return False
+        contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
+        min_vol = int(float(contract.get("minVol", 1) or 1))
+        margin = max(0.0, sig.balance_fraction * available_balance)
+        if margin <= 0 or sig.entry_price <= 0:
+            return False
+        contracts = int((margin * sig.leverage / sig.entry_price) / contract_size)
+        if contracts < min_vol:
+            log.info("[WILDCARD] %s contracts %d below min_vol %d — skip", symbol, contracts, min_vol)
+            return False
+        side_name = sig.side
+        metadata: dict[str, Any] = {
+            "wildcard": 1.0, "pmt_stop_first": 1.0,
+            "sl_margin_pct": float(sig.sl_margin_pct), "tp_margin_pct": float(sig.tp_margin_pct),
+            "wildcard_roc_pct": round(float(sig.roc_pct), 4), "wildcard_rsi": float(sig.rsi),
+        }
+        if self.config.paper_trade:
+            position = FuturesPosition(
+                symbol=symbol, side=side_name, entry_price=sig.entry_price, contracts=contracts,
+                contract_size=contract_size, leverage=sig.leverage,
+                margin_usdt=round(contracts * contract_size * sig.entry_price / sig.leverage, 8),
+                tp_price=sig.tp_price, sl_price=sig.sl_price, position_id="PAPER", order_id="PAPER",
+                opened_at=datetime.now(timezone.utc), score=96.0, certainty=0.9,
+                entry_signal=f"WILDCARD_{side_name}", metadata=metadata,
+            )
+            self._register_position(position)
+            self._notify(self._entry_message(position))
+            self._record_activity(f"Opened WILDCARD {side_name} {symbol} x{sig.leverage} (paper)")
+            self._save_state()
+            return True
+        self._ensure_live_position_setup(symbol=symbol, side_name=side_name, leverage=sig.leverage)
+        side = 1 if side_name == "LONG" else 3
+        guarded = self._place_live_entry_order_with_balance_guard(
+            symbol=symbol, side=side, side_name=side_name, contracts=contracts, leverage=sig.leverage,
+            take_profit_price=sig.tp_price, stop_loss_price=sig.sl_price, min_vol=min_vol, signal_metadata=metadata,
+        )
+        if guarded is None:
+            return False
+        order, contracts = guarded
+        order_id = self._extract_order_id(order)
+        fill = sig.entry_price
+        if order_id:
+            try:
+                fill = float(self.client.get_order(order_id).get("dealAvgPrice") or sig.entry_price)
+            except Exception:  # pragma: no cover
+                pass
+        position = FuturesPosition(
+            symbol=symbol, side=side_name, entry_price=fill, contracts=contracts,
+            contract_size=contract_size, leverage=sig.leverage,
+            margin_usdt=round(contracts * contract_size * fill / sig.leverage, 8),
+            tp_price=sig.tp_price, sl_price=sig.sl_price, position_id=order_id, order_id=order_id,
+            opened_at=datetime.now(timezone.utc), score=96.0, certainty=0.9,
+            entry_signal=f"WILDCARD_{side_name}", metadata=metadata,
+        )
+        self._register_position(position)
+        self._notify(self._entry_message(position))
+        self._record_activity(f"Opened WILDCARD {side_name} {symbol} x{sig.leverage}")
+        self._save_state()
+        return True
 
     def _event_candidate_side(self, decision: Any) -> str | None:
         try:
@@ -6969,6 +7114,9 @@ class FuturesRuntime:
                         refreshed_price = self._mark_price_for_position(self.open_position)
                         if refreshed_price is not None:
                             current_price = refreshed_price
+                # Separate 'wildcard' strategy (own slot, broad-universe scan).
+                # Best-effort; never affects the PMT path. Off unless enabled.
+                self._maybe_scan_wildcard()
                 self._write_status(signal=signal, price=current_price)
                 self._publish_runtime_status(signal=signal, price=current_price)
                 # P1 §6 #5 (assessment) + cross-bot synergy with mexc-bot-v2:
