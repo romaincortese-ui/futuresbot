@@ -845,3 +845,39 @@ def test_stop_first_low_tier_lock_overrides(monkeypatch):
         assert md["profit_lock_floor_pct_override"] >= 0.15 * sl_margin - 1e-9
     else:
         assert md["profit_lock_trigger_pct_override"] > 10.0
+
+
+def test_volume_filter_disabled_by_default(monkeypatch):
+    _enable_pmt(monkeypatch)
+    from futuresbot.pmt_strategy import volume_filter_blocks
+    # low-volume final bar; filter is off by default so it never blocks
+    closes = [60000.0] * 120
+    frame = _frame(closes)
+    frame.loc[frame.index[-1], "volume"] = 100.0
+    assert volume_filter_blocks(frame) is False
+
+
+def test_volume_filter_blocks_low_volume_when_enabled(monkeypatch):
+    _enable_pmt(monkeypatch)
+    monkeypatch.setenv("FUTURES_PMT_VOLUME_FILTER_ENABLED", "1")
+    from futuresbot.pmt_strategy import volume_filter_blocks, volume_expansion_z
+    closes = [60000.0] * 120
+    frame = _frame(closes)
+    # give the base bars real variance so std>0, then set the breakout bar
+    vols = [900.0 + (i % 5) * 50.0 for i in range(120)]
+    frame["volume"] = vols
+    frame.loc[frame.index[-1], "volume"] = 200.0  # below-average breakout bar
+    assert volume_expansion_z(frame) < 0.5
+    assert volume_filter_blocks(frame) is True
+    frame.loc[frame.index[-1], "volume"] = 5000.0  # volume-expanded breakout
+    assert volume_expansion_z(frame) >= 0.5
+    assert volume_filter_blocks(frame) is False
+
+
+def test_volume_filter_fails_open_without_volume(monkeypatch):
+    _enable_pmt(monkeypatch)
+    monkeypatch.setenv("FUTURES_PMT_VOLUME_FILTER_ENABLED", "1")
+    import pandas as pd
+    from futuresbot.pmt_strategy import volume_filter_blocks
+    frame = pd.DataFrame({"open": [1, 2], "high": [1, 2], "low": [1, 2], "close": [1, 2]})
+    assert volume_filter_blocks(frame) is False

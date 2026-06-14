@@ -294,6 +294,43 @@ def trap_reclaim_block_enabled() -> bool:
     return _env_bool("FUTURES_PMT_BLOCK_TRAP_RECLAIM", True)
 
 
+def volume_filter_enabled() -> bool:
+    return _env_bool("FUTURES_PMT_VOLUME_FILTER_ENABLED", False)
+
+
+def volume_expansion_z(frame: pd.DataFrame) -> float | None:
+    """Breakout-bar volume as a z-score vs the trailing 20 bars. None when
+    volume is unavailable (caller fails open)."""
+    if frame is None or "volume" not in frame or len(frame) < 22:
+        return None
+    try:
+        vol = frame["volume"].astype(float)
+    except (KeyError, TypeError, ValueError):
+        return None
+    base = vol.iloc[-21:-1]
+    mu = float(base.mean())
+    sd = float(base.std())
+    if not math.isfinite(sd) or sd <= 0:
+        return None
+    z = (float(vol.iloc[-1]) - mu) / sd
+    return z if math.isfinite(z) else None
+
+
+def volume_filter_blocks(frame: pd.DataFrame) -> bool:
+    """Reject a cross whose breakout bar lacks volume expansion. Observational
+    gate (232 real fills, 2026-06-14): trades that cleared the 92.5 score floor
+    but entered on vol_z < 0.5 produced 86% of total losses (win 30% vs 42%,
+    -$175 of the -$204 bleed) — additive to the score, not priced in. Filter
+    class (the only entry-side family that survives). Fails open when volume
+    is missing; off unless FUTURES_PMT_VOLUME_FILTER_ENABLED=1."""
+    if not volume_filter_enabled():
+        return False
+    z = volume_expansion_z(frame)
+    if z is None:
+        return False
+    return z < _env_float("FUTURES_PMT_VOLUME_FILTER_MIN_Z", 0.5)
+
+
 def is_trap_reclaim(frame: pd.DataFrame, cross: "MentalThresholdCross", pmt: "PairMarketTrend", *, lookback_bars: int | None = None) -> bool:
     """Bull/bear-trap reclaim: entering on a level recross AGAINST the broader
     tape shortly after the same level broke the other way. 2026-06-11 ZEC: 425
@@ -1184,6 +1221,8 @@ def score_pmt_threshold_signal(
         return None
     if is_trap_reclaim(frame, cross, pmt):
         return None
+    if volume_filter_blocks(frame):
+        return None
 
     score, metadata = _score_threshold_cross(frame, pmt, cross)
     score, metadata = _apply_funding_score_adjustment(
@@ -1333,6 +1372,9 @@ def diagnose_pmt_threshold_rejection(
         return f"{safety_rejection} side={cross.side} pmt={pmt.label} level={cross.level:g}"
     if is_trap_reclaim(frame, cross, pmt):
         return f"trap_reclaim_block side={cross.side} pmt={pmt.label} level={cross.level:g} (level broke the other way within lookback)"
+    if volume_filter_blocks(frame):
+        z = volume_expansion_z(frame)
+        return f"volume_filter_block side={cross.side} pmt={pmt.label} vol_z={z:.2f} (below min for breakout confirmation)"
     score, metadata = _score_threshold_cross(frame, pmt, cross)
     score, metadata = _apply_funding_score_adjustment(
         score,
