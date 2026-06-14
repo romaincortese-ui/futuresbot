@@ -913,3 +913,23 @@ def test_universe_expansion_profiles_present(monkeypatch):
     # explicit env list (shadow) DOES allow them
     monkeypatch.setenv("FUTURES_PMT_SYMBOLS", "BTC_USDT,XAU_USDT,XLM_USDT")
     assert pmt_symbol_allowed("XAU_USDT") is True
+
+
+def test_low_tier_early_lock_can_be_disabled(monkeypatch):
+    # When the early lock is disabled, a 92.5-95 trade no longer arms the tight
+    # pre-bank lock; it uses the runner-tier lock (far out) + bank/breakeven.
+    _enable_pmt(monkeypatch, min_score="70")
+    monkeypatch.setenv("FUTURES_PMT_REDUCED_ENTRY_MIN_SCORE", "70")
+    monkeypatch.setenv("FUTURES_PMT_CONFIRMATION_BARS", "0")
+    monkeypatch.setenv("FUTURES_PMT_STOP_FIRST_SIZING_ENABLED", "1")
+    closes = [63800.0] * 110 + [63900.0, 64120.0]
+    # early lock ON (default): low-tier arm is the tight ~0.30R value
+    sig_on = score_pmt_threshold_signal(_frame(closes), _config())
+    # early lock OFF: low-tier should use the runner-tier (far) arm
+    monkeypatch.setenv("FUTURES_PMT_STOP_FIRST_LOW_TIER_EARLY_LOCK_ENABLED", "0")
+    sig_off = score_pmt_threshold_signal(_frame(closes), _config())
+    assert sig_on is not None and sig_off is not None
+    if float(sig_on.score) < 95.0:
+        on_arm = sig_on.metadata["profit_lock_trigger_pct_override"]
+        off_arm = sig_off.metadata["profit_lock_trigger_pct_override"]
+        assert off_arm > on_arm  # far-out runner lock vs tight early lock

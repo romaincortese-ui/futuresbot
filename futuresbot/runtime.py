@@ -992,10 +992,10 @@ class FuturesRuntime:
         if not entry_signal.startswith("PMT_THRESHOLD_") and "pmt_label" not in metadata:
             return False
         if self._metadata_float(metadata, "pmt_stop_first"):
-            from futuresbot.pmt_strategy import stop_first_low_tier_score
+            from futuresbot.pmt_strategy import low_tier_early_lock_enabled, stop_first_low_tier_score
 
             tp_margin_pct = self._metadata_float(metadata, "tp_margin_pct") or 0.0
-            if float(position.score or 0.0) < stop_first_low_tier_score():
+            if float(position.score or 0.0) < stop_first_low_tier_score() and low_tier_early_lock_enabled():
                 # Tight low-tier lock, R/cost-calibrated: see pmt_strategy tier block.
                 sl_margin_pct = self._metadata_float(metadata, "sl_margin_pct") or 20.0
                 taker = float(getattr(self.config, "taker_fee_rate", 0.0008) or 0.0008)

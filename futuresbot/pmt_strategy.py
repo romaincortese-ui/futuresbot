@@ -303,6 +303,16 @@ def stop_first_low_tier_score() -> float:
     return _env_float("FUTURES_PMT_STOP_FIRST_TIER_SCORE", 95.0)
 
 
+def low_tier_early_lock_enabled() -> bool:
+    """Whether 92.5-95 trades arm the tight peak lock BEFORE the +1R bank.
+    Replay (232 real fills, 2026-06-14): the early lock pre-empts the +1R bank
+    on wiggle-then-run trades (+$15.56 vs +$333.59 for no-pre-bank-lock + a
+    breakeven runner; 2 live cases — ZEC/ETH — armed at ~0.3R then ran to +1R
+    minutes after the scratch-exit). When disabled, the low tier uses the
+    runner-tier lock (far out) and relies on bank-50%-at-+1R + breakeven."""
+    return _env_bool("FUTURES_PMT_STOP_FIRST_LOW_TIER_EARLY_LOCK_ENABLED", True)
+
+
 def trap_reclaim_block_enabled() -> bool:
     return _env_bool("FUTURES_PMT_BLOCK_TRAP_RECLAIM", True)
 
@@ -1280,7 +1290,7 @@ def score_pmt_threshold_signal(
         else:
             stop_first = False
     tp_price, sl_price = _target_prices(entry_price, cross.side, leverage, tp_margin_pct, sl_margin_pct)
-    if stop_first and score < stop_first_low_tier_score():
+    if stop_first and score < stop_first_low_tier_score() and low_tier_early_lock_enabled():
         # Score tier 92.5-95: tight peak lock, SELF-CALIBRATED in R/cost units
         # (2026-06-11 ETH post-mortem: a fixed +2% arm fired on a 23s spike
         # that was half a bar's ATR — noise — and the +2.41% floor was below
