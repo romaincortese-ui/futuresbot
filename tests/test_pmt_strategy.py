@@ -206,16 +206,24 @@ def test_pmt_win_cooldown_includes_peak_profit_lock():
 
 
 def test_each_eligible_pair_has_unique_pmt_and_mental_thresholds():
-    assert tuple(DEFAULT_PMT_PROFILES) == ELIGIBLE_PMT_SYMBOLS
+    # Every eligible pair has a profile; profiles may be a SUPERSET (universe-
+    # expansion candidates gated on via env, not in the champion default set).
+    assert set(ELIGIBLE_PMT_SYMBOLS).issubset(DEFAULT_PMT_PROFILES)
 
-    mental_steps = [profile.threshold_step for profile in DEFAULT_PMT_PROFILES.values()]
-    pmt_thresholds = [
-        (profile.flat_24h_pct, profile.flash_6h_pct, profile.mega_12h_pct, profile.mega_24h_pct)
-        for profile in DEFAULT_PMT_PROFILES.values()
+    # The eligible-6 each have a distinct mental step and a distinct trend-band
+    # set (no pair shares another's live calibration).
+    elig = [DEFAULT_PMT_PROFILES[s] for s in ELIGIBLE_PMT_SYMBOLS]
+    assert len({p.threshold_step for p in elig}) == len(elig)
+    assert len({(p.flat_24h_pct, p.flash_6h_pct, p.mega_12h_pct, p.mega_24h_pct) for p in elig}) == len(elig)
+
+    # Across the FULL profile set the trend-band calibration is unique per pair
+    # (each derived from its own history). Numeric step values may coincide
+    # across different price scales (e.g. SOL 2.5 vs TAO 2.5) and that is fine.
+    all_bands = [
+        (p.flat_24h_pct, p.flash_6h_pct, p.mega_12h_pct, p.mega_24h_pct)
+        for p in DEFAULT_PMT_PROFILES.values()
     ]
-
-    assert len(set(mental_steps)) == len(ELIGIBLE_PMT_SYMBOLS)
-    assert len(set(pmt_thresholds)) == len(ELIGIBLE_PMT_SYMBOLS)
+    assert len(set(all_bands)) == len(all_bands)
 
 
 def test_non_btc_pmt_profiles_match_researched_candidate():
@@ -881,3 +889,27 @@ def test_volume_filter_fails_open_without_volume(monkeypatch):
     from futuresbot.pmt_strategy import volume_filter_blocks
     frame = pd.DataFrame({"open": [1, 2], "high": [1, 2], "low": [1, 2], "close": [1, 2]})
     assert volume_filter_blocks(frame) is False
+
+
+def test_universe_expansion_profiles_present(monkeypatch):
+    # Universe-expansion pairs (derived per-pair, 2026-06-14): present with
+    # their derived geometry, and allowed only when listed in FUTURES_PMT_SYMBOLS
+    # (champion default stays the eligible 6).
+    from futuresbot.pmt_strategy import DEFAULT_PMT_PROFILES, pmt_symbol_allowed
+    expected = {
+        "XAU_USDT": (50.0, 0.0052, 0.0061, 0.0125, 0.0229),
+        "XLM_USDT": (0.0025, 0.0266, 0.0372, 0.0593, 0.1129),
+        "TONCOIN_USDT": (0.025, 0.0301, 0.0314, 0.0514, 0.0802),
+        "ENA_USDT": (0.001, 0.0259, 0.0339, 0.0596, 0.0819),
+        "TAO_USDT": (2.5, 0.0238, 0.0261, 0.0396, 0.0643),
+    }
+    for sym, vals in expected.items():
+        p = DEFAULT_PMT_PROFILES[sym]
+        assert (p.threshold_step, p.flat_24h_pct, p.flash_6h_pct, p.mega_12h_pct, p.mega_24h_pct) == vals
+    # champion default (eligible 6) does NOT allow the new pairs
+    monkeypatch.delenv("FUTURES_PMT_SYMBOLS", raising=False)
+    assert pmt_symbol_allowed("XAU_USDT") is False
+    assert pmt_symbol_allowed("BTC_USDT") is True
+    # explicit env list (shadow) DOES allow them
+    monkeypatch.setenv("FUTURES_PMT_SYMBOLS", "BTC_USDT,XAU_USDT,XLM_USDT")
+    assert pmt_symbol_allowed("XAU_USDT") is True

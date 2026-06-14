@@ -51,7 +51,11 @@ DEFAULT_CORRELATION_BUCKETS = (
     "TAO_USDT:ai_beta,"
     "SEI_USDT:l1_beta,"
     "LINK_USDT:oracle_beta,"
-    "ZEC_USDT:privacy_beta"
+    "ZEC_USDT:privacy_beta,"
+    "XAU_USDT:commodity,"
+    "XLM_USDT:payments_beta,"
+    "TONCOIN_USDT:ton_l1,"
+    "ENA_USDT:defi_beta"
 )
 
 

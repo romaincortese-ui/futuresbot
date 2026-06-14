@@ -54,6 +54,19 @@ DEFAULT_PMT_PROFILES: dict[str, PairPMTProfile] = {
     "BNB_USDT": PairPMTProfile("BNB_USDT", 20.0, 0.011, 0.015, 0.019, 0.030),
     "SEI_USDT": PairPMTProfile("SEI_USDT", 0.01, 0.020, 0.022, 0.048, 0.072),
     "ZEC_USDT": PairPMTProfile("ZEC_USDT", 25.0, 0.030, 0.032, 0.060, 0.096),
+    # Universe-expansion candidates (2026-06-14). Steps + trend bands DERIVED
+    # mechanically from each pair's own 75d 15m move distribution (clean
+    # round-number step ~1.5% of price; bands = 40th/75th/80th/80th percentiles
+    # of |24h|/|6h|/|12h|/|24h| moves), the same method that reproduces the 6
+    # researched profiles. Selected for raw-cross reach >= the existing-6
+    # baseline (24.2%) at major-tier liquidity, ranked by frequency x
+    # diversification (low BTC correlation). Gated to Futures-shadow via env;
+    # NOT in the champion default universe until the live A/B confirms.
+    "XAU_USDT": PairPMTProfile("XAU_USDT", 50.0, 0.0052, 0.0061, 0.0125, 0.0229),
+    "XLM_USDT": PairPMTProfile("XLM_USDT", 0.0025, 0.0266, 0.0372, 0.0593, 0.1129),
+    "TONCOIN_USDT": PairPMTProfile("TONCOIN_USDT", 0.025, 0.0301, 0.0314, 0.0514, 0.0802),
+    "ENA_USDT": PairPMTProfile("ENA_USDT", 0.001, 0.0259, 0.0339, 0.0596, 0.0819),
+    "TAO_USDT": PairPMTProfile("TAO_USDT", 2.5, 0.0238, 0.0261, 0.0396, 0.0643),
 }
 
 
