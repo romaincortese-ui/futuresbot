@@ -303,6 +303,28 @@ def stop_first_low_tier_score() -> float:
     return _env_float("FUTURES_PMT_STOP_FIRST_TIER_SCORE", 95.0)
 
 
+_STOP_FIRST_MAX_LEV_DEFAULTS = {
+    # Gold's ultra-low 15m ATR (~0.08%) makes 3xATR a tiny stop, which pushes
+    # stop-first leverage to the global x25 cap. At x25 a macro/weekend GAP
+    # blows through the tight stop for a multi-R loss. Cap it (2026-06-14).
+    "XAU_USDT": 12.0,
+}
+
+
+def stop_first_symbol_max_leverage(symbol: str) -> float | None:
+    """Per-symbol stop-first leverage cap (gap-risk control); None = use global.
+    Override via FUTURES_PMT_STOP_FIRST_MAX_LEVERAGE_OVERRIDES='SYM:lev,...'."""
+    overrides = dict(_STOP_FIRST_MAX_LEV_DEFAULTS)
+    for part in os.environ.get("FUTURES_PMT_STOP_FIRST_MAX_LEVERAGE_OVERRIDES", "").split(","):
+        if ":" in part:
+            k, v = part.split(":", 1)
+            try:
+                overrides[k.strip().upper()] = float(v)
+            except ValueError:
+                pass
+    return overrides.get(symbol.upper())
+
+
 def low_tier_early_lock_enabled() -> bool:
     """Whether 92.5-95 trades arm the tight peak lock BEFORE the +1R bank.
     Replay (232 real fills, 2026-06-14): the early lock pre-empts the +1R bank
@@ -1177,7 +1199,7 @@ def _atr_from_frame(frame: pd.DataFrame, period: int) -> float | None:
     return value
 
 
-def _resolve_stop_first_geometry(frame: pd.DataFrame, *, entry_price: float, score: float | None = None) -> tuple[int, float, float, dict[str, float]] | None:
+def _resolve_stop_first_geometry(frame: pd.DataFrame, *, entry_price: float, score: float | None = None, symbol: str = "") -> tuple[int, float, float, dict[str, float]] | None:
     """Return (leverage, tp_margin_pct, sl_margin_pct, metadata) for the
     stop-first R-design, or None when ATR is unavailable (caller falls back
     to legacy score-based geometry).
@@ -1205,6 +1227,9 @@ def _resolve_stop_first_geometry(frame: pd.DataFrame, *, entry_price: float, sco
     target_r = max(0.5, _env_float("FUTURES_PMT_STOP_FIRST_TARGET_R", 5.0))
     min_lev = max(1, _env_int("FUTURES_PMT_STOP_FIRST_MIN_LEVERAGE", 1))
     max_lev = max(min_lev, int(_env_float("FUTURES_PMT_MAX_LEVERAGE", _env_float("FUTURES_LEVERAGE_MAX", 25.0))))
+    sym_cap = stop_first_symbol_max_leverage(symbol)
+    if sym_cap is not None:
+        max_lev = max(min_lev, min(max_lev, int(sym_cap)))
     stop_frac = stop_mult * atr_value / entry_price
     if stop_frac <= 0 or not math.isfinite(stop_frac):
         return None
@@ -1284,7 +1309,7 @@ def score_pmt_threshold_signal(
     stop_first = pmt_stop_first_sizing_enabled()
     stop_first_metadata: dict[str, float] = {}
     if stop_first:
-        resolved = _resolve_stop_first_geometry(frame, entry_price=entry_price, score=score)
+        resolved = _resolve_stop_first_geometry(frame, entry_price=entry_price, score=score, symbol=symbol)
         if resolved is not None:
             leverage, tp_margin_pct, sl_margin_pct, stop_first_metadata = resolved
         else:

@@ -933,3 +933,24 @@ def test_low_tier_early_lock_can_be_disabled(monkeypatch):
         on_arm = sig_on.metadata["profit_lock_trigger_pct_override"]
         off_arm = sig_off.metadata["profit_lock_trigger_pct_override"]
         assert off_arm > on_arm  # far-out runner lock vs tight early lock
+
+
+def test_xau_stop_first_leverage_capped(monkeypatch):
+    # XAU's tiny ATR would push stop-first leverage to the global cap; the
+    # per-symbol cap (x12) bounds gap risk. Other symbols unaffected.
+    import pandas as pd
+    from futuresbot.pmt_strategy import _resolve_stop_first_geometry, stop_first_symbol_max_leverage
+    monkeypatch.setenv("FUTURES_PMT_STOP_FIRST_SIZING_ENABLED", "1")
+    assert stop_first_symbol_max_leverage("XAU_USDT") == 12.0
+    assert stop_first_symbol_max_leverage("ENA_USDT") is None
+    # ultra-low-ATR frame (gold-like): tight stop -> would clamp to global max
+    base = 4200.0
+    closes = [base + (i % 3) * 0.5 for i in range(120)]  # ~0.01% wiggle
+    frame = pd.DataFrame({"open": closes, "high": [x * 1.0004 for x in closes],
+                          "low": [x * 0.9996 for x in closes], "close": closes,
+                          "volume": [1000.0] * 120})
+    capped = _resolve_stop_first_geometry(frame, entry_price=base, score=96.0, symbol="XAU_USDT")
+    uncapped = _resolve_stop_first_geometry(frame, entry_price=base, score=96.0, symbol="ENA_USDT")
+    assert capped is not None and uncapped is not None
+    assert capped[0] <= 12          # XAU leverage bounded
+    assert uncapped[0] > capped[0]  # same frame, no cap -> higher leverage
