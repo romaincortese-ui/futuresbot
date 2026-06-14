@@ -3324,45 +3324,37 @@ class FuturesRuntime:
             return False
         order, contracts = guarded
         order_id = self._extract_order_id(order)
-        # Verify the order actually FILLED before recording a position. Fast
-        # movers (EVAA 2026-06-14) can return an order id yet be rejected by
-        # MEXC's price-limit protection and never execute — recording then would
-        # create a phantom that reconcile drops (noisy "opened -> cleared").
         fill = sig.entry_price
-        deal_vol = 0.0
-        detail: dict[str, Any] = {}
         if order_id:
             try:
-                detail = self.client.get_order(order_id) or {}
-                deal_vol = self._order_deal_volume(detail)
-                if detail.get("dealAvgPrice"):
-                    fill = float(detail.get("dealAvgPrice") or sig.entry_price)
+                d = self.client.get_order(order_id) or {}
+                if d.get("dealAvgPrice"):
+                    fill = float(d.get("dealAvgPrice") or sig.entry_price)
             except Exception:  # pragma: no cover
                 pass
-        if deal_vol <= 0:
-            # No fill on the order — confirm there's no live position before bailing
-            # (so we never abandon a real fill). If genuinely none, cancel + skip.
-            live_vol = 0.0
-            try:
-                for row in (self.client.get_open_positions(symbol) or []):
-                    if self._position_row_side(row) == side_name:
-                        live_vol = self._open_position_volume(row)
-                        break
-            except Exception:  # pragma: no cover
-                live_vol = 0.0
-            if live_vol <= 0:
-                log.warning("[WILDCARD] entry order %s for %s did not fill (likely price-limit/rejected) — no position opened", order_id, symbol)
-                try:
-                    self.client.cancel_all_tpsl(position_id=order_id, symbol=symbol)
-                except Exception:  # pragma: no cover
-                    pass
-                return False
-            contracts = int(live_vol)
+        # Resolve the REAL exchange position id (NOT the order id) so the reconcile
+        # can match it — EVAA 2026-06-14 was orphaned because position_id was set
+        # to the order id (821...) while the live position id was 1417108026.
+        exch_position_id = ""
+        try:
+            for row in (self.client.get_open_positions(symbol) or []):
+                if self._position_row_side(row) == side_name and self._open_position_volume(row) > 0:
+                    exch_position_id = str(row.get("positionId") or row.get("position_id") or "")
+                    contracts = int(self._open_position_volume(row))
+                    if row.get("holdAvgPrice") or row.get("openAvgPrice"):
+                        fill = float(row.get("holdAvgPrice") or row.get("openAvgPrice") or fill)
+                    break
+        except Exception:  # pragma: no cover
+            exch_position_id = ""
+        if not exch_position_id:
+            # No live position confirmed — order didn't fill (price-limit/reject).
+            log.warning("[WILDCARD] entry order %s for %s did not fill (no live position) — skipping", order_id, symbol)
+            return False
         position = FuturesPosition(
             symbol=symbol, side=side_name, entry_price=fill, contracts=contracts,
             contract_size=contract_size, leverage=sig.leverage,
             margin_usdt=round(contracts * contract_size * fill / sig.leverage, 8),
-            tp_price=sig.tp_price, sl_price=sig.sl_price, position_id=order_id, order_id=order_id,
+            tp_price=sig.tp_price, sl_price=sig.sl_price, position_id=exch_position_id, order_id=order_id,
             opened_at=datetime.now(timezone.utc), score=96.0, certainty=0.9,
             entry_signal=f"WILDCARD_{side_name}", metadata=metadata,
         )
