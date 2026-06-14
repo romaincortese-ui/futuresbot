@@ -1643,7 +1643,11 @@ class FuturesRuntime:
             self._prediction_overlay_status_line(),
             f"Entries: {entries_state}",
             f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
-            f"Open positions: <b>{len(self.open_positions)}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
+            f"PMT positions: <b>{sum(1 for p in self.open_positions.values() if not self._is_wildcard_position(p))}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
+            *([(
+                f"🎲 Wildcard: <b>{self._wildcard_open_count()}</b>/{wildcard_max_positions()} slot"
+                + ("" if not self._wildcard_open_count() else " — " + ", ".join(html.escape(p.symbol) for p in self.open_positions.values() if self._is_wildcard_position(p)))
+            )] if wildcard_enabled() else []),
             "━━━━━━━━━━━━━━━",
         ]
         if not self.open_positions:
@@ -3320,12 +3324,40 @@ class FuturesRuntime:
             return False
         order, contracts = guarded
         order_id = self._extract_order_id(order)
+        # Verify the order actually FILLED before recording a position. Fast
+        # movers (EVAA 2026-06-14) can return an order id yet be rejected by
+        # MEXC's price-limit protection and never execute — recording then would
+        # create a phantom that reconcile drops (noisy "opened -> cleared").
         fill = sig.entry_price
+        deal_vol = 0.0
+        detail: dict[str, Any] = {}
         if order_id:
             try:
-                fill = float(self.client.get_order(order_id).get("dealAvgPrice") or sig.entry_price)
+                detail = self.client.get_order(order_id) or {}
+                deal_vol = self._order_deal_volume(detail)
+                if detail.get("dealAvgPrice"):
+                    fill = float(detail.get("dealAvgPrice") or sig.entry_price)
             except Exception:  # pragma: no cover
                 pass
+        if deal_vol <= 0:
+            # No fill on the order — confirm there's no live position before bailing
+            # (so we never abandon a real fill). If genuinely none, cancel + skip.
+            live_vol = 0.0
+            try:
+                for row in (self.client.get_open_positions(symbol) or []):
+                    if self._position_row_side(row) == side_name:
+                        live_vol = self._open_position_volume(row)
+                        break
+            except Exception:  # pragma: no cover
+                live_vol = 0.0
+            if live_vol <= 0:
+                log.warning("[WILDCARD] entry order %s for %s did not fill (likely price-limit/rejected) — no position opened", order_id, symbol)
+                try:
+                    self.client.cancel_all_tpsl(position_id=order_id, symbol=symbol)
+                except Exception:  # pragma: no cover
+                    pass
+                return False
+            contracts = int(live_vol)
         position = FuturesPosition(
             symbol=symbol, side=side_name, entry_price=fill, contracts=contracts,
             contract_size=contract_size, leverage=sig.leverage,
