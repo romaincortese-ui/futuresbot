@@ -150,6 +150,16 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal |
     leverage = int(min(10.0, max(5.0, _f("FUTURES_WILDCARD_LEVERAGE", 7.0))))
     sl_frac = _f("FUTURES_WILDCARD_SL_ATR_MULT", 1.5) * atr_pct
     tp_r = _f("FUTURES_WILDCARD_TP_R", 5.0)
+    # Hard cap on per-trade stop-loss (margin %). A 1.5xATR stop on a high-ATR
+    # alt at x5-10 can lose 60-70% of margin (SIREN 2026-06-15 = -68.8%). Cap it
+    # by trimming leverage first (preserves the ATR stop DISTANCE so the trade
+    # still has room), then only tighten the stop itself if even x1 would breach.
+    max_sl_margin = _f("FUTURES_WILDCARD_MAX_SL_MARGIN_PCT", 20.0)
+    if max_sl_margin > 0 and sl_frac > 0:
+        if sl_frac * leverage * 100.0 > max_sl_margin:
+            leverage = max(1, int(max_sl_margin / (sl_frac * 100.0)))
+        if sl_frac * leverage * 100.0 > max_sl_margin:  # even x1 stop too wide
+            sl_frac = max_sl_margin / 100.0 / leverage
     sl_margin = sl_frac * leverage * 100.0
     tp_margin = tp_r * sl_margin
     sl_price = cur * (1 - sl_frac) if s > 0 else cur * (1 + sl_frac)

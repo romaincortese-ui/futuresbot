@@ -78,3 +78,22 @@ def test_available_slots_excludes_wildcard():
     # 2 positions total, but only 1 is PMT -> 1 PMT slot still free
     assert rt._available_slots() == 1
     assert rt._wildcard_open_count() == 1
+
+
+def test_sl_margin_capped_at_20(monkeypatch):
+    # A wide ATR stop on a volatile alt must never lose more than the cap
+    # (SIREN 2026-06-15 lost -68.8%). Force a wide stop and assert the cap holds.
+    monkeypatch.setenv("FUTURES_WILDCARD_SL_ATR_MULT", "8.0")
+    sig = detect_wildcard_signal(_frame(_apply(_MID_LONG)), "FOO_USDT")
+    assert sig is not None
+    assert sig.sl_margin_pct <= 20.0 + 1e-6   # never beyond the -20% cap
+    assert sig.leverage >= 1
+    # the cap is honoured by trimming leverage, not by leaving sl_margin huge
+    assert sig.sl_price < sig.entry_price < sig.tp_price
+
+
+def test_sl_margin_cap_is_configurable(monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_SL_ATR_MULT", "8.0")
+    monkeypatch.setenv("FUTURES_WILDCARD_MAX_SL_MARGIN_PCT", "10.0")
+    sig = detect_wildcard_signal(_frame(_apply(_MID_LONG)), "FOO_USDT")
+    assert sig is not None and sig.sl_margin_pct <= 10.0 + 1e-6

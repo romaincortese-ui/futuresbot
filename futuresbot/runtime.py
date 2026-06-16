@@ -100,6 +100,7 @@ from futuresbot.event_policy import evaluate_event_policy
 from futuresbot.opportunity_score import opportunity_balance_fraction, opportunity_metadata, opportunity_nav_risk_pct
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
+from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
@@ -1887,7 +1888,7 @@ class FuturesRuntime:
         self._save_state()
 
     def _commands_hint(self) -> str:
-        return "/status /why /pnl /logs /pause /resume /close [SYMBOL|all] /help"
+        return "/status /why /pnl /logs /reconcile /pause /resume /close [SYMBOL|all] /help"
 
     def _build_help_message(self) -> str:
         return (
@@ -1897,6 +1898,7 @@ class FuturesRuntime:
             "/why — Per-symbol entry diagnosis: trend, last level-cross, block reason\n"
             "/pnl — Realized and open futures P&L across all symbols\n"
             "/logs — Recent runtime activity\n"
+            "/reconcile — Adopt any untracked MEXC open positions into bot state (orphan recovery)\n"
             "/pause — Pause new entries (open positions stay managed)\n"
             "/resume — Resume new entries\n"
             "/close — Close the first open position\n"
@@ -2049,6 +2051,9 @@ class FuturesRuntime:
                     elif command == "/why":
                         self._notify(self._build_why_message())
                         self._record_activity("Telegram: /why")
+                    elif command in {"/reconcile", "/reconciliate"}:
+                        self._notify(self._reconcile_orphans_message())
+                        self._record_activity("Telegram: /reconcile")
                     elif command == "/pnl":
                         self._notify(self._build_pnl_message())
                         self._record_activity("Telegram: /pnl")
@@ -3221,6 +3226,99 @@ class FuturesRuntime:
         pmt_open = sum(1 for p in self.open_positions.values() if not self._is_wildcard_position(p))
         return max(0, int(self.config.max_concurrent_positions) - pmt_open)
 
+    def _resting_stop_for(self, symbol: str, position_id: str) -> tuple[float, float]:
+        """Best-effort read of a position's resting SL/TP (stoporder list).
+        Returns (sl_price, tp_price); 0.0 when unavailable."""
+        try:
+            payload = self.client.private_get("/api/v1/private/stoporder/list/orders", {"symbol": symbol, "page_num": 1, "page_size": 20})
+        except Exception:
+            return 0.0, 0.0
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            return 0.0, 0.0
+        for row in rows:
+            if str(row.get("positionId") or "") != str(position_id):
+                continue
+            try:
+                return float(row.get("stopLossPrice") or 0.0), float(row.get("takeProfitPrice") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0, 0.0
+        return 0.0, 0.0
+
+    def _reconcile_orphans_message(self) -> str:
+        """/reconcile — read every MEXC open position and ADOPT any the bot is
+        not tracking into local state (so its exit logic takes over). Exchange
+        READ-ONLY: reads positions + resting stops, writes only local bot state;
+        never places or closes a trade. Orphans flagged if they lack a stop."""
+        if self.config.paper_trade:
+            return "🔁 <b>Reconcile</b> [PAPER]\n━━━━━━━━━━━━━━━\nPaper mode — no live positions to reconcile."
+        try:
+            rows = self.client.get_open_positions() or []
+        except Exception as exc:
+            return f"⚠️ <b>Reconcile failed</b>\n━━━━━━━━━━━━━━━\nCould not read MEXC positions: {html.escape(str(exc)[:120])}"
+        tracked_ids = {str(p.position_id) for p in self.open_positions.values() if p.position_id}
+        tracked_syms = {p.symbol for p in self.open_positions.values()}
+        adopted: list[str] = []
+        already = 0
+        no_stop: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            sym = str(row.get("symbol") or "").upper()
+            pid = str(row.get("positionId") or row.get("position_id") or "")
+            vol = self._open_position_volume(row)
+            if vol <= 0 or not sym:
+                continue
+            if pid in tracked_ids or sym in tracked_syms:
+                already += 1
+                continue
+            side_name = self._position_row_side(row) or ("LONG" if int(row.get("positionType", 1) or 1) == 1 else "SHORT")
+            entry = float(row.get("holdAvgPrice") or row.get("openAvgPrice") or 0.0)
+            lev = int(float(row.get("leverage") or 1))
+            if entry <= 0 or lev <= 0:
+                continue
+            try:
+                contract_size = float(self.client.get_contract_detail(sym).get("contractSize", 0.0001) or 0.0001)
+            except Exception:
+                contract_size = 0.0001
+            sl_price, tp_price = self._resting_stop_for(sym, pid)
+            sl_margin = abs(entry - sl_price) / entry * lev * 100.0 if sl_price > 0 else 20.0
+            tp_margin = abs(tp_price - entry) / entry * lev * 100.0 if tp_price > 0 else sl_margin * 5.0
+            is_wc = sym not in set(self.config.symbols)
+            metadata: dict[str, Any] = {
+                "pmt_stop_first": 1.0, "adopted": 1.0,
+                "sl_margin_pct": round(sl_margin, 4), "tp_margin_pct": round(tp_margin, 4),
+            }
+            if is_wc:
+                metadata["wildcard"] = 1.0
+            position = FuturesPosition(
+                symbol=sym, side=side_name, entry_price=entry, contracts=int(vol),
+                contract_size=contract_size, leverage=lev,
+                margin_usdt=float(row.get("im") or row.get("oim") or round(int(vol) * contract_size * entry / lev, 8)),
+                tp_price=tp_price, sl_price=sl_price, position_id=pid, order_id=pid,
+                opened_at=datetime.now(timezone.utc), score=96.0, certainty=0.9,
+                entry_signal=f"{'WILDCARD' if is_wc else 'ADOPTED'}_{side_name}", metadata=metadata,
+            )
+            self._register_position(position)
+            tag = "🎲" if is_wc else "•"
+            stop_txt = self._format_price(sl_price) if sl_price > 0 else "NONE ⚠️"
+            adopted.append(f"{tag} {side_name} {html.escape(sym)} x{lev} | entry {self._format_price(entry)} | SL {stop_txt}")
+            if sl_price <= 0:
+                no_stop.append(sym)
+        if adopted:
+            self._save_state()
+        lines = ["🔁 <b>Reconcile</b> [LIVE]", "━━━━━━━━━━━━━━━",
+                 f"MEXC open positions: <b>{sum(1 for r in rows if self._open_position_volume(r) > 0)}</b> | already tracked: <b>{already}</b> | adopted: <b>{len(adopted)}</b>"]
+        if adopted:
+            lines.append("━━━━━━━━━━━━━━━")
+            lines.extend(adopted)
+            lines.append("Adopted into bot state — exit logic (bank/breakeven/lock) now active.")
+        if no_stop:
+            lines.append(f"⚠️ No resting stop on: {', '.join(html.escape(s) for s in no_stop)} — bot will manage via software exits; consider a manual stop.")
+        if not adopted and not no_stop:
+            lines.append("All exchange positions already tracked. Nothing to adopt.")
+        return "\n".join(lines)
+
     def _wildcard_open_count(self) -> int:
         return sum(1 for p in self.open_positions.values() if self._is_wildcard_position(p))
 
@@ -3272,6 +3370,31 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
             log.warning("[WILDCARD_SCAN] failed: %s", exc)
 
+    def _regime_size_multiplier(self, symbol: str) -> float:
+        """Continuous size scaler by the TRADED symbol's own trend-efficiency:
+        full size in a clean trend, floor in chop (default-off). Symbol-own (not
+        BTC) so the wildcard isn't throttled in its normal flat-BTC habitat.
+        Fail-open to 1.0 on any data error — never blocks an entry on a hiccup."""
+        if not self._flag("FUTURES_REGIME_SIZE_SCALER_ENABLED", default=False):
+            return 1.0
+        try:
+            window = max(4, int(self._env_float("FUTURES_REGIME_EFF_WINDOW", 24.0)))
+            end = int(time.time()); start = end - (window + 6) * 900
+            frame = self.client.get_klines(symbol, interval="Min15", start=start, end=end)
+            eff = trend_efficiency([float(x) for x in frame["close"]], window)
+            mult = regime_size_multiplier(
+                eff,
+                lo=self._env_float("FUTURES_REGIME_EFF_LO", 0.20),
+                hi=self._env_float("FUTURES_REGIME_EFF_HI", 0.45),
+                floor_mult=self._env_float("FUTURES_REGIME_FLOOR_MULT", 0.25),
+            )
+            if mult < 1.0:
+                log.info("[REGIME] %s eff=%.2f -> size x%.2f", symbol, eff, mult)
+            return mult
+        except Exception as exc:  # pragma: no cover — regime never blocks on data error
+            log.warning("[REGIME] efficiency calc failed for %s, full size: %s", symbol, exc)
+            return 1.0
+
     def _open_wildcard_position(self, sig: Any, available_balance: float) -> bool:
         """Isolated wildcard entry — reuses the live order primitive + TPSL +
         position registration; never routes through the PMT _enter_trade path.
@@ -3288,9 +3411,19 @@ class FuturesRuntime:
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         min_vol = int(float(contract.get("minVol", 1) or 1))
         margin = max(0.0, sig.balance_fraction * available_balance)
+        margin *= self._regime_size_multiplier(symbol)  # chop -> floor, clean trend -> full
         if margin <= 0 or sig.entry_price <= 0:
             return False
         contracts = int((margin * sig.leverage / sig.entry_price) / contract_size)
+        if self._flag("FUTURES_RISK_BASED_SIZING_ENABLED", default=False):
+            max_risk_pct = self._env_float("FUTURES_MAX_TRADE_RISK_PCT", 5.0)
+            capped = risk_capped_contracts(
+                contracts=contracts, entry_price=sig.entry_price, sl_price=sig.sl_price,
+                contract_size=contract_size, equity_usdt=available_balance, max_risk_pct=max_risk_pct,
+            )
+            if capped != contracts:
+                log.info("[RISK_SIZE] wildcard %s contracts %d -> %d (cap %.1f%% equity)", symbol, contracts, capped, max_risk_pct)
+            contracts = capped
         if contracts < min_vol:
             log.info("[WILDCARD] %s contracts %d below min_vol %d — skip", symbol, contracts, min_vol)
             return False
@@ -6271,6 +6404,10 @@ class FuturesRuntime:
             signal_metadata["cold_streak_throttle"] = float(factor)
             signal_metadata["cold_streak_count"] = float(streak)
             margin_budget = margin_budget * factor
+        regime_mult = self._regime_size_multiplier(symbol)
+        if regime_mult < 1.0:
+            signal_metadata["regime_size_multiplier"] = round(regime_mult, 4)
+            margin_budget = margin_budget * regime_mult
         if event_margin_multiplier < 1.0:
             log.info(
                 "[SHARP_EVENT_RISK] symbol=%s multiplier=%.2f margin_budget=%.2f base_margin_budget=%.2f",
@@ -6381,6 +6518,24 @@ class FuturesRuntime:
             contracts = int((margin_budget * leverage / entry_price) / contract_size)
             if size_multiplier < 1.0 and not full_balance_sizing:
                 contracts = max(0, int(contracts * size_multiplier))
+        # Account-level risk cap: shrink the position so a 1R stop loses at most
+        # FUTURES_MAX_TRADE_RISK_PCT of equity (default-off). Validated 2026-06-16:
+        # turns the 48h -$25.6 drawdown into ~breakeven; the full-balance BNB 1R
+        # was ~19% of equity (ruin zone) — this caps it to the growth-optimal band.
+        if self._flag("FUTURES_RISK_BASED_SIZING_ENABLED", default=False):
+            max_risk_pct = self._env_float("FUTURES_MAX_TRADE_RISK_PCT", 5.0)
+            capped = risk_capped_contracts(
+                contracts=contracts, entry_price=entry_price,
+                sl_price=float(signal_payload.get("sl_price") or 0.0),
+                contract_size=contract_size, equity_usdt=available_balance,
+                max_risk_pct=max_risk_pct,
+            )
+            if capped != contracts:
+                signal_metadata["risk_capped_from_contracts"] = float(contracts)
+                signal_metadata["risk_capped_contracts"] = float(capped)
+                signal_metadata["risk_cap_pct"] = float(max_risk_pct)
+                log.info("[RISK_SIZE] %s contracts %d -> %d (cap %.1f%% equity, eq=%.2f)", symbol, contracts, capped, max_risk_pct, available_balance)
+            contracts = capped
         min_vol = int(float(contract.get("minVol", 1) or 1))
         if contracts < min_vol:
             log.info("Futures signal skipped: contracts below min volume")
