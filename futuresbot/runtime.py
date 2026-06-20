@@ -1066,6 +1066,11 @@ class FuturesRuntime:
         position-level TPSL stop is intentionally NOT cancelled — it covers
         the remaining volume, so the runner is never left unprotected.
         """
+        # Option A (convex wildcard exit): skip the +1R partial bank so the FULL
+        # wildcard position rides the runner — capturing the fat-tail move the
+        # wildcard exists to catch, instead of capping half at +1R. PMT untouched.
+        if metadata.get("wildcard") and self._flag("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", default=False):
+            return False
         from futuresbot.partial_bank import bank_protect_enabled, partial_bank_decision
 
         sl_margin_pct = self._metadata_float(metadata, "sl_margin_pct")

@@ -97,3 +97,15 @@ def test_sl_margin_cap_is_configurable(monkeypatch):
     monkeypatch.setenv("FUTURES_WILDCARD_MAX_SL_MARGIN_PCT", "10.0")
     sig = detect_wildcard_signal(_frame(_apply(_MID_LONG)), "FOO_USDT")
     assert sig is not None and sig.sl_margin_pct <= 10.0 + 1e-6
+
+
+def test_wildcard_convex_exit_skips_partial_bank():
+    # Option A: with the convex flag on, a wildcard position must NOT partial-bank
+    # at +1R (it rides the full runner). PMT positions are unaffected (no wildcard key).
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    rt._flag = lambda k, default=False: k == "FUTURES_WILDCARD_CONVEX_EXIT_ENABLED"
+    pos = SimpleNamespace(contracts=100, symbol="FOO_USDT")
+    # wildcard + flag -> gate returns False even at a banked-worthy +1R gain
+    assert rt._maybe_partial_bank(pos, current_price=1.0, gross_pnl_pct=99.0, metadata={"wildcard": 1.0}) is False
