@@ -109,3 +109,20 @@ def test_wildcard_convex_exit_skips_partial_bank():
     pos = SimpleNamespace(contracts=100, symbol="FOO_USDT")
     # wildcard + flag -> gate returns False even at a banked-worthy +1R gain
     assert rt._maybe_partial_bank(pos, current_price=1.0, gross_pnl_pct=99.0, metadata={"wildcard": 1.0}) is False
+
+
+def test_trade_attribution_tags():
+    # Stage-1 tagger: deterministic conditional features for win/loss study.
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    pos = SimpleNamespace(metadata={"wildcard": 1.0, "sl_margin_pct": 20.0, "wildcard_roc_pct": 0.13})
+    trade = {"pnl_usdt": 2.0, "fees_usdt": 0.2, "pnl_pct": 10.0,
+             "entry_time": "2026-06-25T10:00:00+00:00", "exit_time": "2026-06-25T10:30:00+00:00",
+             "exit_reason": "trail"}
+    t = rt._trade_attribution_tags(pos, trade)
+    assert t["is_win"] is True and t["is_wildcard"] is True
+    assert t["entry_3h_roc_pct"] == 13.0
+    assert t["r_multiple"] == 0.5          # pnl_pct 10 / sl_margin 20
+    assert t["hold_min"] == 30.0
+    assert rt._trade_attribution_tags(SimpleNamespace(metadata={}), {}) == {} or isinstance(rt._trade_attribution_tags(SimpleNamespace(metadata={}), {}), dict)

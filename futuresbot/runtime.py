@@ -2756,6 +2756,7 @@ class FuturesRuntime:
                 "pnl_pct": (pnl / position.margin_usdt * 100.0) if position.margin_usdt > 0 else 0.0,
             }
         )
+        trade["tags"] = self._trade_attribution_tags(position, trade)
         self.trade_history.append(trade)
         self._record_position_exit(position, trade)
         self._attach_execution_quality_report(
@@ -2801,6 +2802,43 @@ class FuturesRuntime:
         )
         self._notify(self._close_message(trade))
         self._record_activity(f"Closed {position.side} {position.symbol}: {reason} ${pnl:+.2f}")
+
+    def _trade_attribution_tags(self, position: "FuturesPosition", trade: dict[str, Any]) -> dict[str, Any]:
+        """Stage-1 post-trade tagger: deterministic conditional features written
+        to every closed trade so the daily routine can run win/loss CONDITIONAL-
+        EXPECTANCY analysis over a rolling window (with-condition vs without — not
+        loss-frequency). Pure/observational — never affects trading. Fail-soft.
+        Key feature: entry_3h_roc_pct (wildcard) — the 5d review found winners
+        clustered at |ROC|>=12% (5W/1L) vs <12% (0W/6L)."""
+        try:
+            md = position.metadata or {}
+            def mf(k):
+                try:
+                    return float(md.get(k))
+                except (TypeError, ValueError):
+                    return None
+            pnl = float(trade.get("pnl_usdt", 0.0) or 0.0)
+            fees = float(trade.get("fees_usdt", 0.0) or 0.0)
+            gross = pnl + fees
+            sl = mf("sl_margin_pct")
+            pnl_pct = float(trade.get("pnl_pct", 0.0) or 0.0)
+            roc = mf("wildcard_roc_pct")
+            try:
+                hold_min = round((datetime.fromisoformat(trade["exit_time"]) - datetime.fromisoformat(trade["entry_time"])).total_seconds() / 60.0, 1)
+            except Exception:
+                hold_min = None
+            return {
+                "is_win": pnl > 0,
+                "r_multiple": round(pnl_pct / sl, 2) if sl and sl > 0 else None,
+                "hold_min": hold_min,
+                "is_wildcard": bool(md.get("wildcard")),
+                "entry_3h_roc_pct": round(abs(roc) * 100.0, 1) if roc is not None else None,
+                "regime_size_mult": mf("regime_size_multiplier") or 1.0,
+                "fee_share_of_gross": round(abs(fees / gross), 3) if abs(gross) > 1e-9 else None,
+                "exit_reason": trade.get("exit_reason"),
+            }
+        except Exception:  # pragma: no cover — tagging must never break a close
+            return {}
 
     def _reconcile_closed_position(self) -> None:
         if not self.open_positions or self.config.paper_trade:
