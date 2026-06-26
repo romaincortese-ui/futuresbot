@@ -107,15 +107,31 @@ def stats(trades, since=None):
     return (f"n={len(R):3d} netR={netR:+6.2f} net$={usd:+6.2f} win%={100*wins/len(R):3.0f} "
             f"avgR={avg:+.2f} best={best:+.2f} netR_exBest={netR_xbest:+6.2f}")
 
+import urllib.request, json as _json
+def bybit_listed(sym):
+    try:
+        req = urllib.request.Request(f"https://api.bybit.com/v5/market/kline?category=linear&symbol={sym.replace('_','')}&interval=15&limit=2", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            d = _json.loads(r.read().decode())
+        return bool(((d.get("result") or {}).get("list")) or [])
+    except Exception:
+        return None  # unknown -> fail-open (do not veto)
+
 t30 = now - 30 * 86400
-wc = serialize(scan("wildcard"))
-os.environ["FUTURES_SQUEEZE_LONG_ONLY"] = "0"; sqLS = serialize(scan("squeeze"))
-os.environ["FUTURES_SQUEEZE_LONG_ONLY"] = "1"; sqLO = serialize(scan("squeeze"))
-print("\n=== 60d ===")
-print(f"WILDCARD (baseline) : {stats(wc)}")
-print(f"SQUEEZE  long+short : {stats(sqLS)}")
-print(f"SQUEEZE  long-only  : {stats(sqLO)}")
+wc_f = scan("wildcard")
+os.environ["FUTURES_SQUEEZE_LONG_ONLY"] = "1"; sq_f = scan("squeeze")
+syms = sorted({f[1] for f in wc_f} | {f[1] for f in sq_f})
+listed = {s: bybit_listed(s) for s in syms}
+n_only = sum(1 for s in syms if listed[s] is False)
+print(f"\ncross-exchange: {len(syms)} picked symbols | {n_only} MEXC-only (not on Bybit) | "
+      f"{sum(1 for v in listed.values() if v is None)} unknown(fail-open)")
+def gate(fires): return [f for f in fires if listed.get(f[1]) is not False]  # drop confirmed MEXC-only
+wc, wcV = serialize(wc_f), serialize(gate(wc_f))
+sq, sqV = serialize(sq_f), serialize(gate(sq_f))
+def line(name, tr, since=None): print(f"{name:30} {stats(tr, since)}")
+print("\n=== 60d  (raw  ->  + cross-exchange gate) ===")
+line("WILDCARD", wc); line("WILDCARD + gate", wcV)
+line("SQUEEZE long-only", sq); line("SQUEEZE long-only + gate", sqV)
 print("=== last 30d ===")
-print(f"WILDCARD (baseline) : {stats(wc, t30)}")
-print(f"SQUEEZE  long+short : {stats(sqLS, t30)}")
-print(f"SQUEEZE  long-only  : {stats(sqLO, t30)}")
+line("WILDCARD", wc, t30); line("WILDCARD + gate", wcV, t30)
+line("SQUEEZE long-only", sq, t30); line("SQUEEZE long-only + gate", sqV, t30)

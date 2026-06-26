@@ -3543,6 +3543,32 @@ class FuturesRuntime:
             log.warning("[REGIME] efficiency calc failed for %s, full size: %s", symbol, exc)
             return 1.0
 
+    def _external_entry_veto(self, sig: Any, kind: str) -> tuple[bool, str]:
+        """Fail-OPEN reality check vs a second venue (Bybit/OKX): veto MEXC-only /
+        uncorroborated pumps and entries into the crowded side. Any error -> allow."""
+        try:
+            from futuresbot.external_gate import decide_cross_exchange, decide_funding_crowding, fetch_reference
+            timeout = self._env_float("FUTURES_EXTERNAL_GATE_TIMEOUT", 0.6)
+            listed, ref_roc, funding, turn = fetch_reference(sig.symbol, timeout=timeout)
+            min_turn = self._env_float("FUTURES_EXTERNAL_GATE_MIN_REF_TURNOVER", 500000.0)
+            if listed and turn > 0 and turn < min_turn:
+                listed = False  # dead reference listing != real corroboration
+            mexc_move = float(sig.roc_pct) if kind == "WILDCARD" else 0.0  # squeeze: existence-only
+            allow_x, rx = decide_cross_exchange(
+                mexc_move, ref_roc, listed,
+                require_listed=self._flag("FUTURES_EXTERNAL_GATE_REQUIRE_LISTED", default=True),
+                min_corroboration=self._env_float("FUTURES_EXTERNAL_GATE_MIN_CORROBORATION", 0.4),
+            )
+            if not allow_x:
+                return (False, rx)
+            allow_f, rf = decide_funding_crowding(
+                sig.side, funding, max_abs=self._env_float("FUTURES_EXTERNAL_GATE_MAX_FUNDING", 0.001),
+            )
+            return (allow_f, rf if not allow_f else "ok")
+        except Exception as exc:  # pragma: no cover — gate never blocks on infra error
+            log.warning("[EXTERNAL_GATE] fail-open for %s: %s", getattr(sig, "symbol", "?"), exc)
+            return (True, "failopen")
+
     def _open_wildcard_position(self, sig: Any, available_balance: float, kind: str = "WILDCARD") -> bool:
         """Isolated wildcard entry — reuses the live order primitive + TPSL +
         position registration; never routes through the PMT _enter_trade path.
@@ -3551,6 +3577,11 @@ class FuturesRuntime:
         symbol = sig.symbol
         if symbol in self.open_positions:
             return False
+        if self._flag("FUTURES_EXTERNAL_GATE_ENABLED", default=False):
+            allow, reason = self._external_entry_veto(sig, kind)
+            if not allow:
+                log.info("[EXTERNAL_GATE] VETO %s %s %s — %s", kind, sig.side, symbol, reason)
+                return False
         try:
             contract = self.client.get_contract_detail(symbol)
         except Exception as exc:
