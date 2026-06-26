@@ -1,3 +1,112 @@
+# Daily Audit — 2026-06-26
+
+---
+
+## Automated Assessment (UTC ~18:25)
+
+### 1. Trades Reviewed (24h)
+
+**0 PMT trades. 0 Wildcard trades.**
+Equity: **$62.61** (up +$1.55 from $61.06 on Jun 24; source unclear — no closed trades found in 48h across 29 checked symbols; likely funding credit or settlement lag).
+
+No open positions.
+
+**Market context (at scan time):**
+- BTC: ~$60,100 (FLAT, trap_reclaim_block SHORT at $60k)
+- ETH: FLASH_BULLISH +0.45% 24h
+- SOL: MEGA_BULLISH **+8.11% 24h**, +6.15% 12h, +5.79% 6h (strong but no mental level break)
+- BNB: FLASH_BULLISH +1.54% 24h
+- SEI: MEGA_BEARISH **-9.24% 24h**, -3.97% 12h (strong but no mental level break)
+- ZEC: FLASH_BULLISH +4.24% 24h
+
+PMT gate histogram (all 6 blocked): `{no_mental_threshold_cross pmt:5, trap_reclaim_block side:1}`
+
+---
+
+### 1b. WILDCARD — Diagnose & Improve
+
+**Ledger (all 4 live trades, unchanged):**
+
+| # | Symbol | Side | Date | Net | PnL% margin | Status |
+|---|--------|------|------|-----|-------------|--------|
+| 1 | EVAA | LONG | Jun 14 | +$3.16 | +26.3% | WIN (operator closed) |
+| 2 | EVAA | SHORT | Jun 15 | +$0.91 | +9.5% | WIN |
+| 3 | SIREN | SHORT | Jun 15 | -$8.70 | -67.9% | LOSS (pre-cap) |
+| 4 | UB | SHORT | Jun 24 | -$1.11 | -18.7% | LOSS (with cap) |
+
+**Cumulative: 2W/2L, 50% WR, net -$5.74. Still < 5 trades for tunable gate.**
+
+**(a) Scan diagnostics (today's universe scan):**
+- 931 MEXC USDT-settled contracts scanned
+- 4 movers passed turnover (≥$3M) + |24h move| ≥8% gate:
+  - MAGMA_USDT: -22.4% 24h, $12M turnover
+  - VELVET_USDT: +15.5% 24h, $15.7M turnover
+  - HEI_USDT: -10.8% 24h, $9.3M turnover
+  - CAP_USDT: +8.7% 24h, $3.8M turnover
+
+Gate 2 (pullback-resume) broke all 4:
+- MAGMA: ROC -22% PASS, but current bar resuming UP (wrong direction vs entry SHORT); no clean pullback structure
+- VELVET: ROC +15.5% PASS, but current bar closing DOWN (not resuming LONG); prev > prev2 so no pullback either
+- HEI: ROC -10.8% PASS, resumed SHORT, but no prior pullback (prev not bouncing against the drop)
+- CAP: Insufficient bars (26 < 30 minimum)
+
+No 5003/2015 order rejects (no entries attempted). No tick-snapping execution bug triggered.
+
+**(b) Dormancy:** Not dormant by intent — 4 qualifying movers were scanned. All blocked by gate 2 (no pullback-resume structure). Correct behavior: the wildcard waits for a flag/pennant entry, not a raw momentum chase. Loosening gate 2 would chase vertical moves — DO NOT.
+
+**(c) Improve:** 4 live trades < 5 required. No tunable proposed. Monitor.
+
+---
+
+### 2. Champion vs Shadow
+
+| Service | Equity | Cycles | Status |
+|---------|--------|--------|--------|
+| Futures-bot (LIVE) | **$62.61** | ~561 | Active, cycling 45s |
+| Futures-shadow (PAPER) | **$100.00** | ~22,289 | Active, cycling 45s |
+
+Shadow gate: identical to champion — `{no_mental_threshold_cross pmt:5, trap_reclaim_block side:1}`. No candidate staged; shadow mirroring champion. Shadow equity gap ($37.39) reflects live losses before shadow diverged. No A/B conclusions (need ≥5 shadow trades; 0 since staging).
+
+---
+
+### 3. Diagnose — One lever
+
+**OI STUDY (update attempt):**
+OI data spans Jun 19-26 (7 days, 11,480 samples/symbol). MEXC historical position API returned 0 PMT trades in 14d — prior trades (Jun 17-22) are beyond the API's return horizon. Cannot add new data points to the study. Last known results (from Jun 24 audit): NEUTRAL=0/3, CONFIRMED=1/2, DIVERGENT=1/1 — inconclusive (6 trades). **OI promotion blocked.**
+
+**Lever for next 24h: None.**
+- SOL MEGA_BULLISH (+8% 24h) is the notable signal but the `no_mental_threshold_cross` block is structurally correct — no round-number or prior-high break has occurred yet. If SOL breaks a psychological level during the next 24h, the bot would enter. Nothing to tune.
+- BTC $60k trap_reclaim_block (SHORT) is working correctly — price dipped below $60k and recovered, correctly suppressing SHORT entries.
+- Calibration at 13/15 trades (from Jun 24 audit; 0 new trades added). Walk-forward gate remains blocked until ≥2 more live PMT fills.
+- No replay run: no candidate change to evaluate.
+
+---
+
+### 4. Validate
+
+- **pytest:** 525/525 passed ✓
+- **Replay:** N/A (no change proposed)
+- **Shadow:** No candidate staged; mirroring champion
+
+---
+
+### 5. Deploy
+
+**None.** No code or env changes. Correct status: observe and wait.
+
+---
+
+### 6. Summary
+
+- Equity: $62.61 (+$1.55 from Jun 24; +2.5%); -44.8% from Jun 9 peak
+- Trades 24h: 0 PMT, 0 Wildcard
+- Wildcard: 4 movers scanned, all blocked at pullback-resume gate. Not dormant — correct behavior
+- Lever: None. OI study inconclusive. Entry side frozen. Calibration needs 2 more live PMT fills
+- Deploy: None
+- Bot: healthy, cycling, no errors
+
+---
+
 # Daily Audit — 2026-06-24
 
 ---
