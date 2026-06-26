@@ -111,6 +111,25 @@ def test_wildcard_convex_exit_skips_partial_bank():
     assert rt._maybe_partial_bank(pos, current_price=1.0, gross_pnl_pct=99.0, metadata={"wildcard": 1.0}) is False
 
 
+def test_wildcard_convex_skips_profit_and_micro_locks():
+    # Convex wildcards must skip BOTH discretionary profit-locks so the runner
+    # rides the -1R stop / +5R TP. micro_lock was the real +0.5R clipper (the
+    # base profit_lock is already off in prod). PMT positions are NOT convex.
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    rt._flag = lambda k, default=False: k == "FUTURES_WILDCARD_CONVEX_EXIT_ENABLED"
+    wc = SimpleNamespace(metadata={"wildcard": 1.0})
+    assert rt._is_wildcard_convex(wc) is True
+    assert rt._profit_lock_exit(wc, 1.0) is False
+    assert rt._micro_lock_exit(wc, 1.0) is False
+    # PMT (no wildcard key) is not convex, so it is not short-circuited by the gate
+    assert rt._is_wildcard_convex(SimpleNamespace(metadata={"pmt_stop_first": 1.0})) is False
+    # convex gate also requires the flag to be on
+    rt._flag = lambda k, default=False: False
+    assert rt._is_wildcard_convex(wc) is False
+
+
 def test_trade_attribution_tags():
     # Stage-1 tagger: deterministic conditional features for win/loss study.
     from types import SimpleNamespace

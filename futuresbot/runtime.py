@@ -1161,7 +1161,17 @@ class FuturesRuntime:
         )
         return True
 
+    def _is_wildcard_convex(self, position: FuturesPosition) -> bool:
+        """True when this is a wildcard position AND the convex-exit flag is on.
+        Convex wildcards skip the discretionary PROFIT locks so the full size
+        rides its -1R resting stop / +5R TP — the fat-tail runner the wildcard
+        exists to catch. Hard stops, risk caps and loss exits are unaffected."""
+        md = position.metadata if isinstance(position.metadata, dict) else {}
+        return bool(md.get("wildcard")) and self._flag("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", default=False)
+
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
+        if self._is_wildcard_convex(position):
+            return False
         if not self._flag("USE_FUTURES_PROFIT_LOCK") and not (pmt_strategy_enabled() and self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED")):
             return False
         gross_pnl_pct = self._position_pnl_pct(position, current_price)
@@ -1376,6 +1386,8 @@ class FuturesRuntime:
         return False
 
     def _micro_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
+        if self._is_wildcard_convex(position):
+            return False
         if os.environ.get("FUTURES_MICRO_LOCK_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
             return False
         micro_exit, changed = evaluate_micro_lock_tick(
