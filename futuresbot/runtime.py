@@ -1798,13 +1798,19 @@ class FuturesRuntime:
         pnl_usdt = float(trade.get("pnl_usdt") or 0.0)
         pnl_pct = float(trade.get("pnl_pct") or 0.0)
         reason_label = _exit_reason_label(trade.get("exit_reason") or "CLOSED", pnl_usdt=pnl_usdt, pnl_pct=pnl_pct)
+        bank_line = ""
+        if trade.get("banked_pnl_usdt") is not None:
+            banked = float(trade.get("banked_pnl_usdt") or 0.0)
+            runner = float(trade.get("runner_pnl_usdt") or 0.0)
+            bank_line = f"Partial bank: <b>${banked:+.2f}</b> | Runner: <b>${runner:+.2f}</b>\n"
         return (
             f"🏁 <b>Futures Position Closed</b> [{self._mode_label()}]\n"
             f"━━━━━━━━━━━━━━━\n"
             f"<b>{html.escape(str(trade.get('side') or '?'))}</b> {html.escape(str(trade.get('symbol') or self.config.symbol))}\n"
             f"Reason: <b>{html.escape(reason_label)}</b>\n"
             f"Entry <b>${self._format_price(float(trade.get('entry_price') or 0.0))}</b> | Exit <b>${self._format_price(float(trade.get('exit_price') or 0.0))}</b>\n"
-            f"PnL <b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}% of margin)"
+            f"{bank_line}"
+            f"PnL{' (total)' if bank_line else ''} <b>${pnl_usdt:+.2f}</b> ({pnl_pct:+.2f}% of margin)"
         )
 
     def _send_startup_message(self) -> None:
@@ -2728,6 +2734,29 @@ class FuturesRuntime:
             break
         return streak
 
+    def _banked_realized_pnl(self, position: FuturesPosition) -> tuple[float, int, float, float]:
+        """Realized PnL from any +1R/+2R partial banks (reconstructed from the
+        stored fill metadata). The runner-leg close only covers the REMAINING
+        size, so without this the banked profit is dropped from both the Telegram
+        message and internal accounting. Returns (net, contracts, gross, fees)."""
+        md = position.metadata if isinstance(position.metadata, dict) else {}
+        entry = float(position.entry_price or 0.0)
+        cs = float(getattr(position, "contract_size", 0.0) or 0.0)
+        if entry <= 0 or cs <= 0:
+            return 0.0, 0, 0.0, 0.0
+        dirn = 1.0 if position.side == "LONG" else -1.0
+        fee_rate = self.get_symbol_taker_fee_rate(position.symbol)
+        net = 0.0; vol = 0; gross = 0.0; fees = 0.0
+        for rung in (1, 2):
+            v = self._metadata_float(md, f"partial_bank_vol_{rung}")
+            px = self._metadata_float(md, f"partial_bank_price_{rung}")
+            if v and px and v > 0 and px > 0:
+                bq = float(v) * cs
+                g = bq * (float(px) - entry) * dirn
+                f = bq * (entry + float(px)) * fee_rate
+                net += g - f; gross += g; fees += f; vol += int(v)
+        return net, vol, gross, fees
+
     def _close_history_trade(self, position: FuturesPosition, *, exit_price: float, reason: str) -> None:
         direction = 1.0 if position.side == "LONG" else -1.0
         gross_pnl = position.base_qty * (exit_price - position.entry_price) * direction
@@ -2756,6 +2785,21 @@ class FuturesRuntime:
                 "pnl_pct": (pnl / position.margin_usdt * 100.0) if position.margin_usdt > 0 else 0.0,
             }
         )
+        # Fold in any +1R/+2R partial banks so the trade reflects TOTAL realized
+        # PnL (banked + runner), not just the final runner leg. Fixes the
+        # Telegram close message and the daily-review/expectancy undercount.
+        banked_net, banked_vol, banked_gross, banked_fees = self._banked_realized_pnl(position)
+        if banked_vol > 0:
+            trade["runner_pnl_usdt"] = pnl
+            trade["banked_pnl_usdt"] = banked_net
+            gross_pnl += banked_gross
+            fees += banked_fees
+            pnl = gross_pnl - fees
+            orig_contracts = int(position.contracts or 0) + banked_vol
+            orig_margin = (float(position.margin_usdt) * orig_contracts / int(position.contracts)) if position.contracts else float(position.margin_usdt)
+            trade["fees_usdt"] = fees
+            trade["pnl_usdt"] = pnl
+            trade["pnl_pct"] = (pnl / orig_margin * 100.0) if orig_margin > 0 else trade["pnl_pct"]
         trade["tags"] = self._trade_attribution_tags(position, trade)
         self.trade_history.append(trade)
         self._record_position_exit(position, trade)

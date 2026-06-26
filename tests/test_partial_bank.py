@@ -53,3 +53,24 @@ def test_breakeven_stop_price_sides(monkeypatch):
     monkeypatch.setenv("FUTURES_PMT_BANK_BREAKEVEN_BUFFER_PCT", "0.2")
     assert abs(breakeven_stop_price(100.0, "LONG") - 100.2) < 1e-9
     assert abs(breakeven_stop_price(100.0, "SHORT") - 99.8) < 1e-9
+
+
+def test_close_message_shows_partial_bank_and_total():
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    rt._mode_label = lambda: "LIVE"
+    rt._format_price = lambda p: f"{p:,.2f}"
+    rt.config = SimpleNamespace(symbol="BTC_USDT")
+    # banked +$3.00, runner -$0.01 -> message must show the breakdown and the +$2.99 total
+    banked = {"side": "SHORT", "symbol": "BTC_USDT", "exit_reason": "STOP_LOSS",
+              "entry_price": 59925.5, "exit_price": 59850.0, "pnl_usdt": 2.99, "pnl_pct": 20.0,
+              "banked_pnl_usdt": 3.00, "runner_pnl_usdt": -0.01}
+    msg = rt._close_message(banked)
+    assert "Partial bank: <b>$+3.00</b>" in msg and "Runner: <b>$-0.01</b>" in msg
+    assert "PnL (total) <b>$+2.99</b>" in msg
+    # no banking -> no breakdown line, plain PnL
+    plain = {"side": "LONG", "symbol": "BTC_USDT", "exit_reason": "CLOSED",
+             "entry_price": 60000.0, "exit_price": 60100.0, "pnl_usdt": 1.0, "pnl_pct": 5.0}
+    msg2 = rt._close_message(plain)
+    assert "Partial bank" not in msg2 and "PnL <b>$+1.00</b>" in msg2

@@ -1,0 +1,76 @@
+{
+    "date": "2026-06-25",
+    "equity": 60.23,
+    "equity_change_pct": -1.36,
+    "trades_24h": 2,
+    "win_rate": 0.5,
+    "pnl_24h": -0.82,
+    "review": [
+        {
+            "symbol": "ESPORTS_USDT",
+            "side": "LONG",
+            "entry": 0.03562,
+            "exit": 0.03404,
+            "lev": 5,
+            "realised": -1.406,
+            "fee": -0.050,
+            "pnl_pct": -22.0,
+            "margin_usdt": 6.37,
+            "acct_pct": 10.6,
+            "exit_reason": "SL (~20% margin cap, 5.6min hold)",
+            "design_ok": true,
+            "wildcard": true
+        },
+        {
+            "symbol": "SYN_USDT",
+            "side": "LONG",
+            "entry": 0.43397,
+            "exit": 0.44788,
+            "lev": 3,
+            "realised": 0.668,
+            "fee": -0.034,
+            "pnl_pct": 9.6,
+            "margin_usdt": 6.98,
+            "acct_pct": 11.6,
+            "exit_reason": "TP (62s hold)",
+            "design_ok": true,
+            "wildcard": true
+        }
+    ],
+    "wildcard_ledger": {
+        "trades": 20,
+        "wins": 10,
+        "losses": 10,
+        "win_rate": 0.50,
+        "net_usd": -11.38,
+        "post_jun18_trades": 13,
+        "post_jun18_net": -5.12,
+        "status": "20 total trades, 10W/10L (50%), net -$11.38. DISABLE GATE MET (>=10 trades, net-negative).",
+        "gate_met": true,
+        "proposal": "FUTURES_WILDCARD_ENABLED=0 (operator must apply)"
+    },
+    "scan_context": {
+        "gate_histogram": {
+            "no_mental_threshold_cross pmt": 5,
+            "score_below_threshold ZEC=89.75_floor=92.5": 1
+        },
+        "btc_24h_pct": -0.19,
+        "btc_12h_pct": -3.33,
+        "sei_24h_pct": 11.89,
+        "market_note": "MEGA_BEARISH x5 (no threshold cross). SEI +11.89% 24h but 12h=+0.03% stalled. ZEC FLAT score 89.75: one_hour_exhaustion -6, funding cap 91.99."
+    },
+    "notes": [
+        "Shadow: champion $60.23 LIVE vs shadow $100.00 PAPER. Candidate FUTURES_PMT_VOLUME_FILTER_ENABLED=1 staged on shadow. Shadow blocks ZEC today by vol_z=-0.52; champion blocked by score<floor.",
+        "PMT: 0 trades today (3rd consecutive dormant day). Correct — ranging/bearish market, no threshold cross on any pair.",
+        "WC 24h: ESPORTS LONG SL -$1.41 (10.6% margin, lev=5, 20% cap working) + SYN LONG TP +$0.67 (11.6% margin, lev=3, 62s TP). Both design-correct.",
+        "POST-JUN18 PMT (7d recap): BTC SHORT Jun19 SL -$4.85; BNB SHORT Jun19 WIN +$0.66 (bank+lock); ZEC LONG Jun20 SL -$1.21 (10min); BNB LONG Jun22 SL -$3.90 (lev=24). Net -$9.30. Shadow vol-filter would have blocked ZEC Jun20.",
+        "FLAG: BNB LONG Jun22 lev=24 used ~23.8% margin vs 20% tier cap. Investigate FULL_BALANCE_SIZING interaction with PMT tiered budget.",
+        "WILDCARD DISABLE PROPOSAL: 20 trades, 10W/10L (50%), net -$11.38. Disable gate met (>=10 trades, net-negative). Apply FUTURES_WILDCARD_ENABLED=0.",
+        "WC TICK-SNAP BUG: still unresolved (runtime.py ~3462 uses sig.tp_price/sl_price without priceUnit snap). Not causing 5003 on current symbols but latent risk.",
+        "OI STUDY: all 4 Jun18-25 PMT trades = NEUTRAL (|OI%|<0.5% at entry). n=4 insufficient. Jun14 data pruned. Extend OI retention to 14d if Jun14 study still desired.",
+        "SHADOW CANDIDATE: PMT vol-filter blocked ZEC today (vol_z=-0.52). If championed, Jun20 ZEC SL (-$1.21) likely avoided. Monitor."
+    ],
+    "bt_fields": null,
+    "change": "none",
+    "deploy": "none. pytest 524/524 passed. Wildcard disable proposed (operator-only)."
+}

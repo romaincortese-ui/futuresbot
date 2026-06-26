@@ -1,0 +1,42 @@
+{
+  "date": "2026-06-09",
+  "run": "run2_16:10UTC",
+  "window_start": "2026-06-02T00:00:00Z",
+  "window_end": "2026-06-09T16:00:00Z",
+  "methodology": "portfolio_mode (1 open position at a time — matches live behavior)",
+  "note": "CORRECTED from run1 which used per-symbol mode (9 trades, -$3.59 was methodology error). Portfolio mode is authoritative.",
+  "config_note": "live Railway config; key: SCORE_BAND_SIZE_95_100=1.0, SCORE_BAND_SIZE_92_94=0.50, PMT_MIN_SCORE=92.5",
+  "backtest_initial_balance_usdt": 300.0,
+  "symbols": ["BTC_USDT", "ETH_USDT", "SOL_USDT", "BNB_USDT", "SEI_USDT", "ZEC_USDT"],
+  "total_trades": 2,
+  "total_pnl": 181.16,
+  "win_rate": 0.50,
+  "profit_factor": 4.02,
+  "max_drawdown": -0.638,
+  "trades": [
+    {"symbol": "SOL_USDT", "side": "SHORT", "signal": "PMT_THRESHOLD_SHORT", "score": 97.64,
+     "leverage": 25, "margin_usdt": 299.84, "entry_price": 69.73, "exit_price": 70.18,
+     "realised_pnl": -60.01, "exit_reason": "STOP_LOSS",
+     "concentration_flag": "margin=100% of $300 base; stop-out ~10-16% of $113 live equity (above 8% threshold)"},
+    {"symbol": "BTC_USDT", "side": "SHORT", "signal": "PMT_THRESHOLD_SHORT", "score": 96.92,
+     "leverage": 22, "margin_usdt": 239.88, "entry_price": 63969.0, "exit_price": 60945.8,
+     "realised_pnl": 241.17, "exit_reason": "END_OF_TEST"}
+  ],
+  "live_context": {
+    "live_equity_usd": 113.05,
+    "live_trades_24h": 0,
+    "live_gate_histogram": "no_mental_threshold_cross:6 (all symbols)",
+    "walk_forward_oos_pf": 0.199,
+    "calibration_trades_available": 5,
+    "calibration_min_required": 15
+  },
+  "change_tested": {
+    "param": "FUTURES_PMT_SCORE_BAND_SIZE_95_100",
+    "old": 1.0,
+    "new": 0.75,
+    "result_pnl": 147.07,
+    "result_pf": 4.27,
+    "result_max_dd": -0.565,
+    "verdict": "REJECTED — P&L $147 < baseline $181"
+  }
+}
