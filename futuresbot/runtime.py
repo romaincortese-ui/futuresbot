@@ -137,6 +137,11 @@ class FuturesRuntime:
         self.client = client
         self.telegram = TelegramClient(config.telegram_token, config.telegram_chat_id)
         self._state_path = Path(self.config.runtime_state_file)
+        # Stage-2 feature store: one row per close, on the same persistent volume
+        # as the state file (survives redeploys), for conditional-expectancy.
+        self._feature_store_path = Path(
+            os.environ.get("FUTURES_FEATURE_STORE_FILE") or (self._state_path.parent / "futures_feature_store.jsonl")
+        )
         # Multi-position state (keyed by symbol). Insertion order is preserved so
         # the "primary" position visible to legacy single-position display code is
         # deterministic (first opened or first loaded from state).
@@ -2815,6 +2820,7 @@ class FuturesRuntime:
             trade["pnl_usdt"] = pnl
             trade["pnl_pct"] = (pnl / orig_margin * 100.0) if orig_margin > 0 else trade["pnl_pct"]
         trade["tags"] = self._trade_attribution_tags(position, trade)
+        self._append_feature_store(trade, position)
         self.trade_history.append(trade)
         self._record_position_exit(position, trade)
         self._attach_execution_quality_report(
@@ -2860,6 +2866,29 @@ class FuturesRuntime:
         )
         self._notify(self._close_message(trade))
         self._record_activity(f"Closed {position.side} {position.symbol}: {reason} ${pnl:+.2f}")
+
+    def _append_feature_store(self, trade: dict[str, Any], position: "FuturesPosition") -> None:
+        """Append one structured feature row per close to the persistent store
+        (Stage-2 conditional-expectancy corpus). Best-effort; never breaks a close."""
+        try:
+            es = str(trade.get("entry_signal") or getattr(position, "entry_signal", "") or "")
+            kind = "SQUEEZE" if es.startswith("SQUEEZE") else "WILDCARD" if es.startswith("WILDCARD") else "PMT"
+            try:
+                ts = datetime.fromisoformat(trade["exit_time"]).timestamp()
+            except Exception:
+                ts = time.time()
+            md = position.metadata or {}
+            row = {
+                "ts": round(ts), "symbol": trade.get("symbol"), "side": trade.get("side"), "kind": kind,
+                "leverage": trade.get("leverage"), "pnl_usdt": trade.get("pnl_usdt"), "pnl_pct": trade.get("pnl_pct"),
+                "sl_margin_pct": md.get("sl_margin_pct"), "setup_regime": trade.get("setup_regime"),
+                **(trade.get("tags") or {}),
+            }
+            self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._feature_store_path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, default=str) + "\n")
+        except Exception as exc:  # pragma: no cover — feature store never breaks a close
+            log.debug("feature store append failed: %s", exc)
 
     def _trade_attribution_tags(self, position: "FuturesPosition", trade: dict[str, Any]) -> dict[str, Any]:
         """Stage-1 post-trade tagger: deterministic conditional features written
