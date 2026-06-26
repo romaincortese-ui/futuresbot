@@ -102,6 +102,7 @@ from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
+from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -188,6 +189,7 @@ class FuturesRuntime:
         self._last_prediction_overlay_error_at = 0.0
         self._last_prophet_archive_at = 0.0
         self._last_wildcard_scan_at = 0.0
+        self._last_squeeze_scan_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
         self._last_pmt_core_weight_log_at = 0.0
@@ -3469,6 +3471,53 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
             log.warning("[WILDCARD_SCAN] failed: %s", exc)
 
+    def _maybe_scan_squeeze(self) -> None:
+        """Coiled-Spring strategy: scan the LIQUID universe for a volatility
+        squeeze that just RELEASED (futuresbot.squeeze) and open it in the shared
+        wildcard/convex slot (inherits the -20% cap + convex exit). Long-biased.
+        Off unless FUTURES_SQUEEZE_ENABLED=1. Best-effort; never raises."""
+        if not squeeze_enabled() or self._paused:
+            return
+        if self._wildcard_open_count() >= wildcard_max_positions():  # shared convex slot
+            return
+        now_t = time.time()
+        interval = max(60, int(self._env_float("FUTURES_SQUEEZE_SCAN_INTERVAL_SECONDS", 900.0)))
+        if now_t - self._last_squeeze_scan_at < interval:
+            return
+        self._last_squeeze_scan_at = now_t
+        try:
+            snapshot = self._account_snapshot(self._get_reference_price())
+            available = float(snapshot.get("available_usdt", 0.0) or 0.0)
+            if available <= 0:
+                return
+            tickers = self.client.get_all_tickers() or []
+            floor = wildcard_min_turnover_usdt()
+            liquid = []
+            for t in tickers:
+                sym = str(t.get("symbol") or "")
+                if not sym.endswith("_USDT") or sym in self.open_positions:
+                    continue
+                turn = float(t.get("amount24") or 0.0)
+                if turn >= floor:
+                    liquid.append((turn, sym))
+            liquid.sort(reverse=True)
+            best = None
+            scan_end = int(now_t)
+            for _turn, sym in liquid[: int(self._env_float("FUTURES_SQUEEZE_MAX_SCAN", 30))]:
+                try:
+                    df = self.client.get_klines(sym, interval="Min15", start=scan_end - 80 * 900, end=scan_end)
+                except Exception:
+                    continue
+                sig = detect_squeeze_signal(df, sym)
+                if sig is not None and (best is None or abs(sig.roc_pct) > abs(best.roc_pct)):
+                    best = sig
+            if best is None:
+                return
+            log.info("[SQUEEZE_SCAN] candidate=%s side=%s break=%.2f%% lev=x%d sl=%.1f%%", best.symbol, best.side, best.roc_pct * 100, best.leverage, best.sl_margin_pct)
+            self._open_wildcard_position(best, available, kind="SQUEEZE")
+        except Exception as exc:  # pragma: no cover — squeeze never breaks the cycle
+            log.warning("[SQUEEZE_SCAN] failed: %s", exc)
+
     def _regime_size_multiplier(self, symbol: str) -> float:
         """Continuous size scaler by the TRADED symbol's own trend-efficiency:
         full size in a clean trend, floor in chop (default-off). Symbol-own (not
@@ -3494,7 +3543,7 @@ class FuturesRuntime:
             log.warning("[REGIME] efficiency calc failed for %s, full size: %s", symbol, exc)
             return 1.0
 
-    def _open_wildcard_position(self, sig: Any, available_balance: float) -> bool:
+    def _open_wildcard_position(self, sig: Any, available_balance: float, kind: str = "WILDCARD") -> bool:
         """Isolated wildcard entry — reuses the live order primitive + TPSL +
         position registration; never routes through the PMT _enter_trade path.
         Stamps pmt_stop_first + sl/tp margin so the existing bank/breakeven/lock
@@ -3532,6 +3581,8 @@ class FuturesRuntime:
             "sl_margin_pct": float(sig.sl_margin_pct), "tp_margin_pct": float(sig.tp_margin_pct),
             "wildcard_roc_pct": round(float(sig.roc_pct), 4), "wildcard_rsi": float(sig.rsi),
         }
+        if kind == "SQUEEZE":
+            metadata["squeeze"] = 1.0
         if self.config.paper_trade:
             position = FuturesPosition(
                 symbol=symbol, side=side_name, entry_price=sig.entry_price, contracts=contracts,
@@ -3539,11 +3590,11 @@ class FuturesRuntime:
                 margin_usdt=round(contracts * contract_size * sig.entry_price / sig.leverage, 8),
                 tp_price=sig.tp_price, sl_price=sig.sl_price, position_id="PAPER", order_id="PAPER",
                 opened_at=datetime.now(timezone.utc), score=96.0, certainty=0.9,
-                entry_signal=f"WILDCARD_{side_name}", metadata=metadata,
+                entry_signal=f"{kind}_{side_name}", metadata=metadata,
             )
             self._register_position(position)
             self._notify(self._entry_message(position))
-            self._record_activity(f"Opened WILDCARD {side_name} {symbol} x{sig.leverage} (paper)")
+            self._record_activity(f"Opened {kind} {side_name} {symbol} x{sig.leverage} (paper)")
             self._save_state()
             return True
         self._ensure_live_position_setup(symbol=symbol, side_name=side_name, leverage=sig.leverage)
@@ -3588,11 +3639,11 @@ class FuturesRuntime:
             margin_usdt=round(contracts * contract_size * fill / sig.leverage, 8),
             tp_price=sig.tp_price, sl_price=sig.sl_price, position_id=exch_position_id, order_id=order_id,
             opened_at=datetime.now(timezone.utc), score=96.0, certainty=0.9,
-            entry_signal=f"WILDCARD_{side_name}", metadata=metadata,
+            entry_signal=f"{kind}_{side_name}", metadata=metadata,
         )
         self._register_position(position)
         self._notify(self._entry_message(position))
-        self._record_activity(f"Opened WILDCARD {side_name} {symbol} x{sig.leverage}")
+        self._record_activity(f"Opened {kind} {side_name} {symbol} x{sig.leverage}")
         self._save_state()
         return True
 
@@ -7395,6 +7446,7 @@ class FuturesRuntime:
                 # Separate 'wildcard' strategy (own slot, broad-universe scan).
                 # Best-effort; never affects the PMT path. Off unless enabled.
                 self._maybe_scan_wildcard()
+                self._maybe_scan_squeeze()  # Coiled-Spring (off unless FUTURES_SQUEEZE_ENABLED=1)
                 self._write_status(signal=signal, price=current_price)
                 self._publish_runtime_status(signal=signal, price=current_price)
                 # P1 §6 #5 (assessment) + cross-bot synergy with mexc-bot-v2:
