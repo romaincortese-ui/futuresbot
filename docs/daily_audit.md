@@ -1,3 +1,118 @@
+# Daily Audit — 2026-07-16
+
+---
+
+## Automated Assessment (UTC ~16:20)
+
+**Gap note:** the 2026-07-13 entry below was never committed by that run (docs/daily_audit.md sat modified-but-uncommitted in the working tree); it is committed now as part of this run, unchanged. No audit exists for 07-14/07-15.
+
+### 1. Trades (last 24h, MEXC + persisted trade_history)
+
+**PMT: 0 trades.** Expected — `FUTURES_ENTRY_MIN_SCORE=1000` (decommissioned since 2026-07-13) still blocks all `_enter_trade` entries; last PMT close was 2026-07-14 00:55 (BTC_USDT SHORT, -$3.49, pre-dates this window). No PMT positions open.
+
+**Convex (wildcard+squeeze): 1 closed trade, a big one.** `BILL_USDT` WILDCARD_SHORT: entry 2026-07-15 07:28 @ 0.03589, exit 2026-07-16 15:43 @ 0.0294, x4, score 96, held 32.3h, exit_reason EXCHANGE_CLOSE (server-side TP, not a discretionary lock — matches the convex-exit design that skips profit-locks and lets winners run). **+$5.15 (+71.75%, R=4.43).** This is the kind of multi-day runner the convex thesis is built on. No open wildcard/squeeze positions right now.
+
+Also closed just outside the strict 24h window: `NEAR_USDT` SQUEEZE_LONG, 2026-07-15 06:12->07:27, -$0.163 (R=-1.14) — quick stop-out, unremarkable.
+
+**0 open positions anywhere.** Equity $66.84 (was ~$61.7 a day ago on the one closed trade) -> **+8.3%/24h**, all from the one wildcard win.
+
+### 2. Champion vs Shadow
+
+**Futures-bot (champion) WAS redeployed** — 2026-07-16 15:42 UTC, current `main` (3ad120a), resolving the 16-day deploy gap flagged in the 07-13 report. `pytest -q`: 539/539 green. No Tracebacks/errors in visible logs.
+
+**Futures-shadow is still stuck on the 2026-06-14 build** (32 days, cycle #59,553, equity flat $100.00, 0 trades) — it predates PMT-decommission, the squeeze sleeve, the external gate, and the convex-exit change, so it is not a usable champion-vs-shadow comparison right now. This is the same issue as 07-13, still unresolved. **Flagging again as the top operational item** — recommend `railway up --service Futures-shadow` (env-only resync, no code change) at the next flat window so it starts mirroring current champion; not self-applied per protocol (deploy = operator call, and it's outside what this run was asked to do).
+
+### 3. Wildcard ledger (running, since inception 2026-06-15, last 200 trade_history entries)
+
+24 wildcard trades lifetime, 12 wins (50%), net **-$5.34** — but this is dominated by pre-06-16 tail risk (SIREN -$8.88, before the -20% SL cap) and pre-06-26 trades (before the convex no-early-lock exit change). **Judging on the operator-designated post-06-26 window** (per 2026-07-13 operator decision): 4 wildcard trades, net **+$9.47** (O_USDT +2.15/R5.0, TRIA +3.47/R4.94, VANRY -1.30/R-0.96, BILL +5.15/R4.43); squeeze sleeve 5 trades, net **+$0.73** (3W/2L). Combined convex since 06-26: **9 trades, net +$10.20, 67% win rate, avg R ~2.6.** Continues to earn its keep — no disable proposal.
+
+Squeeze/wildcard scan diagnostics (short ~30min log window, retention-limited): one candidate seen, `ANSEM_USDT` LONG (ROC 13.7%, RSI 72) — vetoed by `EXTERNAL_GATE` (`ref_not_listed`, i.e. not listed on the reference exchange). Looks like the veto working as intended (screening out an illiquid/unverifiable micro-cap mover), not a bug. Stage-2 feature store has 22 rows accumulated since 06-26 — still below a useful sample for a with/without-X split; no proposal yet, as expected.
+
+### 4. Diagnose — lever for next 24h
+
+**None.** No entry-side lever available (PMT frozen by operator decision; convex sleeves performing to design). The only open item is the Futures-shadow resync (operational, not a strategy tune) — see above.
+
+### 5. Validate
+
+- `pytest -q`: 539/539 passed.
+- No exit/sizing/entry change proposed this run, so no replay/MC/shadow gate needed.
+
+### 6. Deploy
+
+**None this run** (champion already redeployed prior to this run, independently of this audit; no new candidate change to promote).
+
+### 7. Summary
+
+- Equity: $66.84 (+8.3%/24h, driven by 1 wildcard win)
+- Trades 24h: 0 PMT / 1 wildcard (BILL_USDT SHORT +$5.15, R4.43, 32h hold)
+- Shadow: $100.00 flat, still on stale 06-14 build — not a valid comparison; propose resync
+- Convex ledger since 06-26: +$10.20 / 9 trades / 67% win — earning its keep
+- Deploy: none this run; champion already resynced to `main` outside this audit
+- Bot: healthy, cycling normally, no errors
+
+---
+
+# Daily Audit — 2026-07-13
+
+---
+
+## Automated Assessment (UTC ~22:45)
+
+**GAP NOTICE:** no audit entry exists between 2026-06-26 and today — 16 days with no recorded run. This is the first review in that window; findings below reflect current live state only, not a continuous 24h-by-24h trail.
+
+### 1. Trades Reviewed (last ~24-48h, MEXC historical positions)
+
+**PMT: 1 closed trade.** SOL_USDT SHORT, x15, entry 77.15 -> exit 76.83, opened 2026-07-12 21:30 UTC, closed 2026-07-13 00:02 UTC. Net **+$0.30** (gross +$0.478, fees -$0.185). Small, quick win — matches the small-wins design intent. No issues.
+
+**Wildcard: 0 new opens/closes in 24h,** but **1 wildcard position has been open since 2026-07-09 17:40 UTC (4 days)**: ARB_USDT LONG, x5 (floor of the 5-10x band), margin $1.96 (~3% of equity — below the 5-15% balance_fraction spec, likely trimmed further by a risk cap), currently ~+$0.10 unrealized (price +0.9% since entry). Not misbehaving (still within the -20% SL cap, small size), but it has not progressed toward +1R in 4 days — the convex "ride the runner" exit only pays off if the move continues; a 4-day flat chop is dead capital, not proof of a bug. Scan diagnostics for wildcard rejects were not available this run (Railway log retention only reached back ~4h from `railway logs`, not the full 24h — see Validate section).
+
+Open positions right now: BTC_USDT SHORT (x20, entry 61,934.30, opened 2026-07-13 18:00 UTC, unrealized -$0.59) + the ARB wildcard above.
+
+### 2. Champion vs Shadow
+
+Futures-shadow paper equity is flat at exactly **$100.00, 0 trades** — because Futures-shadow has not been redeployed since **2026-06-14** (29 days). It is not running any of the code merged since then and cannot serve as a candidate comparison right now (see Deploy Drift below).
+
+### 3. Deploy Drift — TOP FINDING
+
+**Futures-bot (champion) has not been redeployed since 2026-06-26 23:22 UTC (16+ days).** Five commits merged to `main` since that deploy have never shipped to the live container:
+
+| Commit | What | Live effect right now |
+|---|---|---|
+| `8062f4e` | fix: close message + accounting reflect partial banks | **Bug still live** — Telegram close messages / trade_history undercount banked (+1R/+2R) profit on the deployed build |
+| `6de8084` | convex wildcard exit (skip discretionary profit-locks) | Inert — `FUTURES_WILDCARD_CONVEX_EXIT_ENABLED=1` is already set on Railway but the deployed code predates this flag |
+| `859de73` | Coiled-Spring squeeze-breakout entry (long-only) | Inert — `FUTURES_SQUEEZE_ENABLED=1` already set, same issue |
+| `c561b91` | external cross-exchange/crowding entry veto (fail-open) | Inert — `FUTURES_EXTERNAL_GATE_ENABLED=1` already set, same issue |
+| `3ad120a` | Stage-2 conditional-expectancy engine + feature store | Propose-only, no live risk either way, but the feature store isn't accumulating data while undeployed |
+
+Notably, the Railway env vars for the three feature flags were **already flipped on**, implying deploy was intended and simply never executed — this looks like a stalled/interrupted rollout, not a pending decision. `pytest` is green (539/539) on current `main`.
+
+**Did not deploy this run**: a champion position is currently open (BTC_USDT SHORT + the ARB wildcard), and the protocol says avoid deploying with a position open. This is the top priority for the next review that catches a flat window — ship current `main` to both Futures-bot and Futures-shadow to resync the champion/shadow baseline.
+
+### 4. Diagnose — lever for next 24h
+
+No new tuning lever proposed. The dominant issue is operational (ship already-merged, already-tested code), not a strategy parameter. Once deployed, re-baseline the champion-vs-shadow comparison since shadow will restart from the current `main`, not the stale June 14 build.
+
+### 5. Validate
+
+- `pytest -q`: **539/539 passed**.
+- No exit/sizing/entry change proposed this run, so no replay/MC/shadow gate needed.
+- Log retention caveat: `railway logs --since` did not return data older than ~4h regardless of the requested window (tried 24h/96h) — 24h trade facts here came from MEXC `get_historical_positions` directly, per protocol; wildcard scan-reject diagnostics could not be pulled for the full window.
+
+### 6. Deploy
+
+**None.** Position open (see above). Recommend deploying current `main` (the 5 commits above) at the next flat window.
+
+### 7. Summary
+
+- Equity: ~$64.4 (current live read; no reliable 24h-ago baseline exists due to the 16-day reporting gap)
+- Trades 24h: 1 PMT (SOL SHORT, +$0.30, win) / 0 new wildcard (1 wildcard, ARB LONG, still open 4 days)
+- Shadow: $100.00 flat, stale build (June 14) — not a valid comparison until redeployed
+- Top flag: 16-day deploy gap — 5 merged commits (1 live accounting bug fix + 3 already-flagged-on feature flags + 1 propose-only engine) sitting undeployed; propose shipping at next flat window
+- Deploy: none this run (position open)
+- Bot: healthy, cycling normally, no errors in visible logs
+
+---
+
 # Daily Audit — 2026-06-26
 
 ---
