@@ -138,4 +138,6 @@ def default_conditions() -> dict:
         "fee_heavy>=30pct": lambda r: (r.get("fee_share_of_gross") or 0) >= 0.30,
         "chop_regime": lambda r: (r.get("regime_size_mult") or 1.0) < 1.0,
         "exit=stop": lambda r: "STOP" in str(r.get("exit_reason") or "").upper(),
+        "late_entry>=0.8": lambda r: (r.get("entry_lateness") if r.get("entry_lateness") is not None else -1) >= 0.8,
+        "early_entry<=0.5": lambda r: 0 <= (r.get("entry_lateness") if r.get("entry_lateness") is not None else -1) <= 0.5,
     }

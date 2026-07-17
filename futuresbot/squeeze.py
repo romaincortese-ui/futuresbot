@@ -30,6 +30,12 @@ def squeeze_enabled() -> bool:
     return raw is not None and raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _rej(reasons, tag):
+    if reasons is not None:
+        reasons.append(tag)
+    return None
+
+
 def _ema(s: pd.Series, n: int) -> pd.Series:
     return s.ewm(span=n, adjust=False).mean()
 
@@ -41,7 +47,7 @@ def _atr_series(frame: pd.DataFrame, n: int) -> pd.Series:
     return tr.rolling(n).mean()
 
 
-def detect_squeeze_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal | None:
+def detect_squeeze_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] | None = None) -> WildcardSignal | None:
     """TTM-style squeeze release. Returns a WildcardSignal-compatible signal or None.
 
     Gates (completed bars, no look-ahead):
@@ -55,7 +61,7 @@ def detect_squeeze_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal | 
     """
     need = max(BB_PERIOD, KC_PERIOD) + 30
     if frame is None or "close" not in frame or len(frame) < need:
-        return None
+        return _rej(reasons, "short_frame")
     c = frame["close"].astype(float); h = frame["high"].astype(float); l = frame["low"].astype(float)
     bb_k = _f("FUTURES_SQUEEZE_BB_K", 2.0)
     kc_m = _f("FUTURES_SQUEEZE_KC_MULT", 1.5)
@@ -65,7 +71,7 @@ def detect_squeeze_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal | 
     kc_up = ema + kc_m * atr; kc_lo = ema - kc_m * atr
     squeeze_on = (bb_up < kc_up) & (bb_lo > kc_lo)
     if not bool(squeeze_on.iloc[-2]):
-        return None  # the coil must be active right up to the breakout bar
+        return _rej(reasons, "no_active_coil")  # the coil must be active right up to the breakout bar
     # count the coil length ending at the prior bar (excludes the breakout bar)
     coil = 0
     for i in range(2, len(squeeze_on) + 1):
@@ -75,7 +81,7 @@ def detect_squeeze_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal | 
             break
     min_len = int(_f("FUTURES_SQUEEZE_MIN_LEN", 6))
     if coil < min_len:
-        return None
+        return _rej(reasons, "coil_too_short")
 
     cur = float(c.iloc[-1])
     # break/stop reference = the RECENT tight range (not the smeared full coil,
@@ -88,24 +94,24 @@ def detect_squeeze_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal | 
     elif cur < coil_lo and not long_only:
         side, s = "SHORT", -1
     else:
-        return None  # no decisive break of the coil range
+        return _rej(reasons, "no_range_break")  # no decisive break of the coil range
 
     atr_pct = _atr_pct(frame)
     if atr_pct is None or atr_pct <= 0:
-        return None
+        return _rej(reasons, "no_atr")
     # No RSI gate: a genuine squeeze RELEASE spikes RSI on the break bar by design
     # (the coil already guarantees we were not extended). Kept only for the signal.
     rsi = _rsi(frame)
     # climax guard: don't buy a vertical blow-off bar (the spike top)
     prev = float(c.iloc[-2])
     if abs(cur / prev - 1.0) > _f("FUTURES_SQUEEZE_VERTICAL_ATR_MULT", 3.0) * atr_pct:
-        return None
+        return _rej(reasons, "vertical_climax")
     # volume expansion on the breakout bar
     if "volume" in frame and len(frame) >= 22:
         v = frame["volume"].astype(float)
         b = v.iloc[-21:-1]; mu = float(b.mean()); std = float(b.std())
         if std > 0 and (float(v.iloc[-1]) - mu) / std < _f("FUTURES_SQUEEZE_MIN_VOL_Z", 1.0):
-            return None
+            return _rej(reasons, "low_volume_z")
 
     # Stop = the coil boundary we just broke out of (structural), floored so a
     # razor-thin coil doesn't whipsaw. This is the convexity: tight, real stop.

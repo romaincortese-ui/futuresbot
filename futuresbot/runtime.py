@@ -195,6 +195,8 @@ class FuturesRuntime:
         self._last_prophet_archive_at = 0.0
         self._last_wildcard_scan_at = 0.0
         self._last_squeeze_scan_at = 0.0
+        self._pending_entry_lateness: float | None = None
+        self._last_shadow_resolve_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
         self._last_pmt_core_weight_log_at = 0.0
@@ -2882,6 +2884,7 @@ class FuturesRuntime:
                 "ts": round(ts), "symbol": trade.get("symbol"), "side": trade.get("side"), "kind": kind,
                 "leverage": trade.get("leverage"), "pnl_usdt": trade.get("pnl_usdt"), "pnl_pct": trade.get("pnl_pct"),
                 "sl_margin_pct": md.get("sl_margin_pct"), "setup_regime": trade.get("setup_regime"),
+                "entry_lateness": md.get("entry_lateness"),
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3459,12 +3462,14 @@ class FuturesRuntime:
         raises into the cycle). Off unless FUTURES_WILDCARD_ENABLED=1."""
         if not wildcard_enabled() or self._paused:
             return
-        if self._wildcard_open_count() >= wildcard_max_positions():
-            return
         now_t = time.time()
         if now_t - self._last_wildcard_scan_at < wildcard_scan_interval_seconds():
             return
         self._last_wildcard_scan_at = now_t
+        if self._wildcard_open_count() >= wildcard_max_positions():
+            # Own bucket so slot-contention is measurable (decides the 2nd-slot question).
+            log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._wildcard_open_count())
+            return
         try:
             snapshot = self._account_snapshot(self._get_reference_price())
             available = float(snapshot.get("available_usdt", 0.0) or 0.0)
@@ -3484,18 +3489,30 @@ class FuturesRuntime:
                     movers.append((chg, sym))
             movers.sort(reverse=True)
             best = None
+            best_lateness: float | None = None
+            hist: dict[str, int] = {}
+            scanned = 0
             scan_end = int(now_t)
             for _chg, sym in movers[: int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))]:
                 try:
                     df = self.client.get_klines(sym, interval="Min15", start=scan_end - 60 * 900, end=scan_end)
                 except Exception:
+                    hist["kline_error"] = hist.get("kline_error", 0) + 1
                     continue
-                sig = detect_wildcard_signal(df, sym)
+                scanned += 1
+                reasons: list[str] = []
+                sig = detect_wildcard_signal(df, sym, reasons)
+                for r in reasons:
+                    hist[r] = hist.get(r, 0) + 1
                 if sig is not None and (best is None or abs(sig.roc_pct) > abs(best.roc_pct)):
                     best = sig
+                    best_lateness = self._entry_lateness(df, sig.side)
+            log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d histogram=%s signal=%s",
+                     len(movers), scanned, hist or "{}", best.symbol if best else "none")
             if best is None:
                 return
-            log.info("[WILDCARD_SCAN] candidate=%s side=%s roc=%.1f%% rsi=%.0f lev=x%d", best.symbol, best.side, best.roc_pct * 100, best.rsi, best.leverage)
+            log.info("[WILDCARD_SCAN] candidate=%s side=%s roc=%.1f%% rsi=%.0f lev=x%d lateness=%s", best.symbol, best.side, best.roc_pct * 100, best.rsi, best.leverage, f"{best_lateness:.2f}" if best_lateness is not None else "n/a")
+            self._pending_entry_lateness = best_lateness
             self._open_wildcard_position(best, available)
         except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
             log.warning("[WILDCARD_SCAN] failed: %s", exc)
@@ -3507,13 +3524,15 @@ class FuturesRuntime:
         Off unless FUTURES_SQUEEZE_ENABLED=1. Best-effort; never raises."""
         if not squeeze_enabled() or self._paused:
             return
-        if self._wildcard_open_count() >= wildcard_max_positions():  # shared convex slot
-            return
         now_t = time.time()
         interval = max(60, int(self._env_float("FUTURES_SQUEEZE_SCAN_INTERVAL_SECONDS", 900.0)))
         if now_t - self._last_squeeze_scan_at < interval:
             return
         self._last_squeeze_scan_at = now_t
+        self._resolve_shadow_ledger()  # piggyback the 15m cadence; throttled internally
+        if self._wildcard_open_count() >= wildcard_max_positions():  # shared convex slot
+            log.info("[SQUEEZE_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._wildcard_open_count())
+            return
         try:
             snapshot = self._account_snapshot(self._get_reference_price())
             available = float(snapshot.get("available_usdt", 0.0) or 0.0)
@@ -3531,18 +3550,28 @@ class FuturesRuntime:
                     liquid.append((turn, sym))
             liquid.sort(reverse=True)
             best = None
+            hist: dict[str, int] = {}
+            scanned = 0
             scan_end = int(now_t)
             for _turn, sym in liquid[: int(self._env_float("FUTURES_SQUEEZE_MAX_SCAN", 30))]:
                 try:
                     df = self.client.get_klines(sym, interval="Min15", start=scan_end - 80 * 900, end=scan_end)
                 except Exception:
+                    hist["kline_error"] = hist.get("kline_error", 0) + 1
                     continue
-                sig = detect_squeeze_signal(df, sym)
+                scanned += 1
+                reasons: list[str] = []
+                sig = detect_squeeze_signal(df, sym, reasons)
+                for r in reasons:
+                    hist[r] = hist.get(r, 0) + 1
                 if sig is not None and (best is None or abs(sig.roc_pct) > abs(best.roc_pct)):
                     best = sig
+            log.info("[SQUEEZE_SCAN_SUMMARY] universe=%d scanned=%d histogram=%s signal=%s",
+                     len(liquid), scanned, hist or "{}", best.symbol if best else "none")
             if best is None:
                 return
             log.info("[SQUEEZE_SCAN] candidate=%s side=%s break=%.2f%% lev=x%d sl=%.1f%%", best.symbol, best.side, best.roc_pct * 100, best.leverage, best.sl_margin_pct)
+            self._pending_entry_lateness = None  # squeeze enters AT the break by design
             self._open_wildcard_position(best, available, kind="SQUEEZE")
         except Exception as exc:  # pragma: no cover — squeeze never breaks the cycle
             log.warning("[SQUEEZE_SCAN] failed: %s", exc)
@@ -3571,6 +3600,70 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — regime never blocks on data error
             log.warning("[REGIME] efficiency calc failed for %s, full size: %s", symbol, exc)
             return 1.0
+
+    @staticmethod
+    def _entry_lateness(df: Any, side: str) -> float | None:
+        """How far into the 3h move the entry sits: 0 = at the move's origin,
+        1 = at its extreme. The objective 'are we chasing?' metric — a feature
+        column for the learning engine, deliberately NOT a gate."""
+        try:
+            from futuresbot.wildcard import ROC_BARS
+            c = [float(x) for x in df["close"][-(ROC_BARS + 1):]]
+            lo, hi = min(c), max(c)
+            if hi <= lo:
+                return None
+            cur = c[-1]
+            return (cur - lo) / (hi - lo) if side == "LONG" else (hi - cur) / (hi - lo)
+        except Exception:
+            return None
+
+    def _resolve_shadow_ledger(self) -> None:
+        """Resolve pending shadow-ledger counterfactuals (throttled to hourly).
+        Best-effort: any error leaves the ledger untouched."""
+        if time.time() - self._last_shadow_resolve_at < 3600:
+            return
+        self._last_shadow_resolve_at = time.time()
+        try:
+            from futuresbot import shadow_ledger as shadow
+            path = shadow.ledger_path(str(self._feature_store_path.parent))
+            rows = shadow.load_rows(path)
+            pending = [r for r in rows if r.get("outcome") is None]
+            if not pending:
+                return
+            now_ts = time.time()
+            resolved = 0
+            by_symbol: dict[str, list] = {}
+            for row in pending:
+                by_symbol.setdefault(str(row.get("symbol")), []).append(row)
+            for sym, sym_rows in by_symbol.items():
+                start = min(int(r["ts"]) for r in sym_rows)
+                try:
+                    df = self.client.get_klines(sym, interval="Min15", start=start - 900, end=int(now_ts))
+                    bars = [(int(t.timestamp()), float(h), float(lo)) for t, h, lo in zip(df.index, df["high"], df["low"])]
+                except Exception:
+                    continue
+                for row in sym_rows:
+                    out = shadow.resolve_outcome(row, bars, now_ts)
+                    if out is not None:
+                        rows[rows.index(row)] = out
+                        resolved += 1
+            if resolved:
+                shadow.rewrite(path, rows)
+                log.info("[SHADOW_LEDGER] resolved %d counterfactual(s), %d still pending", resolved, len(pending) - resolved)
+        except Exception as exc:  # pragma: no cover — never disturbs trading
+            log.debug("shadow ledger resolve failed: %s", exc)
+
+    def _shadow_log_untaken(self, sig: Any, kind: str, reject_reason: str) -> None:
+        """Record a signal that was produced but NOT taken (veto/sizing/slot) so
+        the conditional-expectancy engine can evaluate entry gates counterfactually."""
+        try:
+            from futuresbot import shadow_ledger as shadow
+            path = shadow.ledger_path(str(self._feature_store_path.parent))
+            shadow.append_row(path, shadow.candidate_row(
+                sig, sleeve=kind, reject_reason=reject_reason, lateness=self._pending_entry_lateness,
+            ))
+        except Exception as exc:  # pragma: no cover
+            log.debug("shadow ledger append failed: %s", exc)
 
     def _external_entry_veto(self, sig: Any, kind: str) -> tuple[bool, str]:
         """Fail-OPEN reality check vs a second venue (Bybit/OKX): veto MEXC-only /
@@ -3610,6 +3703,7 @@ class FuturesRuntime:
             allow, reason = self._external_entry_veto(sig, kind)
             if not allow:
                 log.info("[EXTERNAL_GATE] VETO %s %s %s — %s", kind, sig.side, symbol, reason)
+                self._shadow_log_untaken(sig, kind, f"veto:{reason}")
                 return False
         try:
             contract = self.client.get_contract_detail(symbol)
@@ -3634,6 +3728,7 @@ class FuturesRuntime:
             contracts = capped
         if contracts < min_vol:
             log.info("[WILDCARD] %s contracts %d below min_vol %d — skip", symbol, contracts, min_vol)
+            self._shadow_log_untaken(sig, kind, "min_vol_skip")
             return False
         side_name = sig.side
         metadata: dict[str, Any] = {
@@ -3643,6 +3738,8 @@ class FuturesRuntime:
         }
         if kind == "SQUEEZE":
             metadata["squeeze"] = 1.0
+        if self._pending_entry_lateness is not None:
+            metadata["entry_lateness"] = round(float(self._pending_entry_lateness), 3)
         if self.config.paper_trade:
             position = FuturesPosition(
                 symbol=symbol, side=side_name, entry_price=sig.entry_price, contracts=contracts,
@@ -4190,6 +4287,14 @@ class FuturesRuntime:
             self._last_pmt_core_weight_log_at = now
 
     def _fetch_pmt_signal(self) -> dict[str, Any] | None:
+        if self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0) >= 999.0:
+            # PMT decommissioned (convex-only trial, operator 2026-07-13): entries
+            # are impossible, so skip the 6-symbol kline fetch + scoring entirely.
+            # Keep the cycle counter/log so liveness stays visible.
+            self._cycle_counter += 1
+            self._last_cycle_gate_blocks = {}
+            log.info("[CYCLE_SUMMARY] cycle=%d pmt_scan_skipped=entries_disabled (FUTURES_ENTRY_MIN_SCORE>=999) signal=no", self._cycle_counter)
+            return None
         if self._available_slots() <= 0:
             return None
         if self._pmt_tp_cooldown_active():

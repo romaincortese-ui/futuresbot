@@ -93,7 +93,13 @@ def _rsi(frame: pd.DataFrame) -> float:
     return 100.0 - 100.0 / (1.0 + gain / loss)
 
 
-def detect_wildcard_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal | None:
+def _rej(reasons, tag):
+    if reasons is not None:
+        reasons.append(tag)
+    return None
+
+
+def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] | None = None) -> WildcardSignal | None:
     """V1 pullback-resume + exhaustion guard. Returns a signal or None.
 
     Gates (all on completed bars, no look-ahead):
@@ -106,15 +112,15 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal |
       4. VOLUME: breakout-bar volume expansion (z >= min).
     """
     if frame is None or "close" not in frame or len(frame) < ROC_BARS + ATR_PERIOD + 2:
-        return None
+        return _rej(reasons, "short_frame")
     c = frame["close"].astype(float); h = frame["high"].astype(float); l = frame["low"].astype(float)
     cur = float(c.iloc[-1]); prev = float(c.iloc[-2]); prev2 = float(c.iloc[-3])
     base = float(c.iloc[-(ROC_BARS + 1)])
     if cur <= 0 or base <= 0:
-        return None
+        return _rej(reasons, "bad_price")
     roc = cur / base - 1.0
     if abs(roc) < _f("FUTURES_WILDCARD_MIN_ROC", 0.08):
-        return None
+        return _rej(reasons, "roc_below_min")
     side = "LONG" if roc > 0 else "SHORT"
     s = 1 if side == "LONG" else -1
 
@@ -122,30 +128,30 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str) -> WildcardSignal |
     resumed = (cur > prev) if s > 0 else (cur < prev)
     pulled_back = (prev < prev2) if s > 0 else (prev > prev2)
     if not (resumed and pulled_back):
-        return None
+        return _rej(reasons, "no_pullback_resume")
 
     # 3. exhaustion guard
     rsi = _rsi(frame)
     rsi_max = _f("FUTURES_WILDCARD_RSI_MAX", 90.0); rsi_min = _f("FUTURES_WILDCARD_RSI_MIN", 10.0)
     if (s > 0 and rsi >= rsi_max) or (s < 0 and rsi <= rsi_min):
-        return None
+        return _rej(reasons, "rsi_exhausted")
     bar_h = float(h.iloc[-1]); bar_l = float(l.iloc[-1]); rng = bar_h - bar_l
     if rng > 0:
         adverse_wick = ((bar_h - cur) if s > 0 else (cur - bar_l)) / rng
         if adverse_wick > _f("FUTURES_WILDCARD_MAX_WICK", 0.45):  # climax/reversal candle
-            return None
+            return _rej(reasons, "climax_wick")
     atr_pct = _atr_pct(frame)
     if atr_pct is None or atr_pct <= 0:
-        return None
+        return _rej(reasons, "no_atr")
     if abs(cur / prev - 1.0) > _f("FUTURES_WILDCARD_VERTICAL_ATR_MULT", 2.0) * atr_pct:  # vertical blow-off
-        return None
+        return _rej(reasons, "vertical_blowoff")
 
     # 4. volume expansion
     if "volume" in frame and len(frame) >= 22:
         v = frame["volume"].astype(float)
         b = v.iloc[-21:-1]; mu = float(b.mean()); sd = float(b.std())
         if sd > 0 and (float(v.iloc[-1]) - mu) / sd < _f("FUTURES_WILDCARD_MIN_VOL_Z", 1.0):
-            return None
+            return _rej(reasons, "low_volume_z")
 
     leverage = int(min(10.0, max(5.0, _f("FUTURES_WILDCARD_LEVERAGE", 7.0))))
     sl_frac = _f("FUTURES_WILDCARD_SL_ATR_MULT", 1.5) * atr_pct
