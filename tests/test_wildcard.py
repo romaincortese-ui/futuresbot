@@ -130,6 +130,36 @@ def test_wildcard_convex_skips_profit_and_micro_locks():
     assert rt._is_wildcard_convex(wc) is False
 
 
+def test_per_sleeve_convex_slots():
+    # Slots are per-sleeve: an open WILDCARD must not block SQUEEZE, and vice
+    # versa (the single shared slot sat occupied ~69% of a 21d window).
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    wc = SimpleNamespace(metadata={"wildcard": 1.0})
+    sq = SimpleNamespace(metadata={"wildcard": 1.0, "squeeze": 1.0})
+    pmt = SimpleNamespace(metadata={"pmt_stop_first": 1.0})
+    rt.open_positions = {"A_USDT": wc, "B_USDT": sq, "C_USDT": pmt}
+    assert rt._convex_open_count("WILDCARD") == 1
+    assert rt._convex_open_count("SQUEEZE") == 1
+    rt.open_positions = {"B_USDT": sq}
+    assert rt._convex_open_count("WILDCARD") == 0  # squeeze open leaves wildcard slot free
+
+
+def test_top_turnover_symbols_band():
+    from futuresbot.runtime import FuturesRuntime
+    tickers = [
+        {"symbol": "BTC_USDT", "amount24": 900e6},
+        {"symbol": "ETH_USDT", "amount24": 500e6},
+        {"symbol": "AKE_USDT", "amount24": 37e6},
+        {"symbol": "TINY_USDT", "amount24": 4e6},
+        {"symbol": "BTC_USD", "amount24": 999e9},  # non-USDT ignored
+    ]
+    majors = FuturesRuntime._top_turnover_symbols(tickers, 2)
+    assert majors == {"BTC_USDT", "ETH_USDT"}
+    assert FuturesRuntime._top_turnover_symbols(tickers, 0) == set()
+
+
 def test_trade_attribution_tags():
     # Stage-1 tagger: deterministic conditional features for win/loss study.
     from types import SimpleNamespace

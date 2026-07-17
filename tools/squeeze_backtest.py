@@ -21,9 +21,10 @@ FEE = 0.000594; BAL = 62.0; TP_R = 5.0; MAXBARS = 192  # 48h forward at 15m
 STBL = ("USDC", "USDE", "USD1", "DAI", "FDUSD", "TUSD", "BUSD")
 
 tk = c.public_get("/api/v1/contract/ticker", {}); td = tk.get("data") if isinstance(tk, dict) else tk
+SKIP = int(os.environ.get("BT_UNIV_SKIP", "0"))  # skip top-N by turnover (band test)
 uni = sorted([(t["symbol"], float(t.get("amount24") or 0)) for t in (td or [])
               if t.get("symbol", "").endswith("_USDT") and float(t.get("amount24") or 0) >= 3e6
-              and not any(k in t["symbol"] for k in STBL)], key=lambda x: -x[1])[:UNIV]
+              and not any(k in t["symbol"] for k in STBL)], key=lambda x: -x[1])[SKIP:SKIP + UNIV]
 
 def fetch_min15(sym):
     step = 900; span = step * 1999; cur = now - (SPAN_D + 2) * 86400; frames = []

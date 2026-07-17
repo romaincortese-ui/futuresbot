@@ -3466,9 +3466,9 @@ class FuturesRuntime:
         if now_t - self._last_wildcard_scan_at < wildcard_scan_interval_seconds():
             return
         self._last_wildcard_scan_at = now_t
-        if self._wildcard_open_count() >= wildcard_max_positions():
-            # Own bucket so slot-contention is measurable (decides the 2nd-slot question).
-            log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._wildcard_open_count())
+        if self._convex_open_count("WILDCARD") >= wildcard_max_positions():
+            # Own bucket so slot-contention stays measurable (per-sleeve slots).
+            log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._convex_open_count("WILDCARD"))
             return
         try:
             snapshot = self._account_snapshot(self._get_reference_price())
@@ -3478,10 +3478,15 @@ class FuturesRuntime:
             tickers = self.client.get_all_tickers() or []
             floor = wildcard_min_turnover_usdt()
             min_move = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_MOVE", 0.08))
+            # Band focus (backtested 60d+21d, outlier-robust): the wildcard's edge
+            # lives in the SMALL-CAP band. On a major, +8% IS the move; on a
+            # small cap it's the beginning. Top-turnover names stay squeeze turf.
+            exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 30.0))
+            majors = self._top_turnover_symbols(tickers, exclude_top)
             movers = []
             for t in tickers:
                 sym = str(t.get("symbol") or "")
-                if not sym.endswith("_USDT") or sym in self.open_positions:
+                if not sym.endswith("_USDT") or sym in self.open_positions or sym in majors:
                     continue
                 turn = float(t.get("amount24") or 0.0)
                 chg = abs(float(t.get("riseFallRate") or 0.0))
@@ -3530,8 +3535,8 @@ class FuturesRuntime:
             return
         self._last_squeeze_scan_at = now_t
         self._resolve_shadow_ledger()  # piggyback the 15m cadence; throttled internally
-        if self._wildcard_open_count() >= wildcard_max_positions():  # shared convex slot
-            log.info("[SQUEEZE_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._wildcard_open_count())
+        if self._convex_open_count("SQUEEZE") >= wildcard_max_positions():  # per-sleeve slot
+            log.info("[SQUEEZE_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._convex_open_count("SQUEEZE"))
             return
         try:
             snapshot = self._account_snapshot(self._get_reference_price())
@@ -3600,6 +3605,32 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — regime never blocks on data error
             log.warning("[REGIME] efficiency calc failed for %s, full size: %s", symbol, exc)
             return 1.0
+
+    @staticmethod
+    def _top_turnover_symbols(tickers: list, n: int) -> set[str]:
+        """Top-n USDT perps by 24h turnover — the liquid 'majors' band."""
+        if n <= 0:
+            return set()
+        ranked = sorted(
+            ((float(t.get("amount24") or 0.0), str(t.get("symbol") or "")) for t in tickers
+             if str(t.get("symbol") or "").endswith("_USDT")),
+            reverse=True,
+        )
+        return {sym for _turn, sym in ranked[:n]}
+
+    def _convex_open_count(self, kind: str) -> int:
+        """Open convex positions of ONE sleeve. Slots are per-sleeve (max 1
+        wildcard + 1 squeeze concurrently): the single shared slot sat occupied
+        ~69% of a 21d window — a 110h +$0.10 hold cost the AKE +600% launch."""
+        count = 0
+        for position in self.open_positions.values():
+            md = position.metadata if isinstance(position.metadata, dict) else {}
+            if not md.get("wildcard"):
+                continue
+            is_squeeze = bool(md.get("squeeze"))
+            if (kind == "SQUEEZE") == is_squeeze:
+                count += 1
+        return count
 
     @staticmethod
     def _entry_lateness(df: Any, side: str) -> float | None:
