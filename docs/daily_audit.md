@@ -1,3 +1,73 @@
+# Daily Audit — 2026-07-18
+
+---
+
+## Automated Assessment (UTC ~22:50)
+
+**Gap note:** no audit ran 2026-07-17 (skipped day, one day after the 07-16 catch-up run). Findings below use the exact last-24h window from MEXC/`trade_history` timestamps, plus a 48h-since-last-audit cross-check.
+
+### 1. Trades (last 24h, exact window 07-17 22:46 -> 07-18 22:46 UTC)
+
+**PMT: 0.** Still blocked by `FUTURES_ENTRY_MIN_SCORE=1000` (decommissioned 2026-07-13, per operator decision — not re-litigated).
+
+**Convex: 1 closed trade.** `BILL_USDT` WILDCARD_SHORT: entry 03:11, exit 04:15 (64.6min hold), x5, score 96, exit_reason EXCHANGE_CLOSE (server-side SL). **-$1.00 (-19.15% of margin, R=-1.07).** Clean, fast stop-out — no leak, no design violation.
+
+**1 open position:** `ALLO_USDT` WILDCARD_LONG, x5, opened 07-18 10:28 UTC, margin $8.15, entry 0.45305, TP 0.52732 (+5R design), SL 0.43844, unrealized ~-$0.55 (-6.7% of margin) as of this run. Occupies the wildcard slot; squeeze slot is free (0 open squeeze positions).
+
+**Also in the 48h since the last audit (07-16):** `AKE_USDT` SQUEEZE_LONG, entry 07-16 -> exit 07-17 14:14, **+$2.49 (+49.6%, R=2.53), exit_reason MANUAL_CLOSE** (operator closed it — this is the AKE launch named in the 07-17 wildcard-band commit forensics; not a bot decision).
+
+Equity: **$67.69** (was $66.84 at the 07-16 audit, 48h ago) — small net gain, consistent with realized +$1.49 (BILL -$1.00, AKE +$2.49) plus the current -$0.55 unrealized on ALLO.
+
+### 2. Champion vs Shadow
+
+**Futures-bot (champion):** confirmed on current `main` — last deploy `d4fbd06` (wildcard small-cap band focus + per-sleeve convex slots), SUCCESS 2026-07-17 15:37 UTC. Live logs show `[WILDCARD_SCAN_SUMMARY]` / `[SQUEEZE_SCAN_SUMMARY]` telemetry firing every cycle, confirming both recent commits (`1634cb1`, `d4fbd06`) are live, not just merged.
+
+**Futures-shadow: still stale on the 2026-06-14 build (34 days now), equity flat $100.00, 0 trades, still running the pre-decommission PMT-only scan** (`[PMT_GATE_BLOCK]` on all 6 pairs every cycle, no wildcard/squeeze/telemetry code present). This is the **3rd consecutive audit flagging this** (07-13, 07-16, 07-18) with no resync yet — champion-vs-shadow comparison remains unusable. Re-flagging with more urgency: recommend `railway up --service Futures-shadow` (env-only resync to current `main`, no code change) at the next flat window. Not self-applied — deploy actions are an operator call per protocol.
+
+### 3. Wildcard/squeeze convex ledger (running, since 06-26 operator decision point)
+
+**13 trades, net +$10.56, netR +20.34, 53.8% win rate.** Outlier-robust: net stays positive even ex-best (+$5.41 dropping BILL_USDT's +$5.15). Split: WILDCARD 7 trades/+$7.34/netR+9.95/42.9% win; SQUEEZE 6 trades/+$3.22/netR+10.39/66.7% win. Full trade list unchanged from 07-16 plus 3 new: ARB_USDT SQUEEZE +$0.11 (07-14), AKE_USDT SQUEEZE +$2.49 (07-17), BILL_USDT WILDCARD -$1.00 (07-18). Continues to earn its keep — no disable proposal.
+
+**Note for the record:** 2 of these 13 trades (ARB 07-14, AKE 07-17) closed via `MANUAL_CLOSE` (operator-initiated), not a designed exit path. Immaterial to P&L here (both were profitable holds) but worth tracking against DECISION_RULE.md pass-criterion 4 ("no manual rescues") as the sample grows.
+
+### 4. Learning loop
+
+**(a) Feature store:** 24 rows (was 22 at the 07-17 verification point) — grew by exactly 2 rows matching the 2 convex closes since then (AKE, BILL). Still in sync with the exchange ledger.
+
+Ran `tools/learn_from_trades.py` (n=24, window 06-27→07-18, overall mean +$0.42/trade, 54.2% win, meanR +0.79). Only one condition clears both AVOID/FAVOR verdict and n>=10-per-side: **`hold>=120min` FAVOR** (14 trades avg +$1.36/85.7% win vs 10 trades avg -$0.89/10% win, OOS-consistent). Reported per protocol, but flagging it as **not actionable** — hold time is an outcome, not a pre-trade signal (winners naturally take longer to reach TP/bank; losers get stopped fast). No proposal from this. All other conditions (kind=WILDCARD/SQUEEZE/PMT, leverage tiers, side) are "weak" or "insufficient" — below the reporting bar.
+
+**(b) Shadow ledger (vetoed-signal counterfactuals):** only 2 resolved rows (`SKHYSTOCK_USDT` -1R stop, `SPCXSTOCK_USDT` +5R TP — both vetoed on `ref_not_listed`). Net counterfactual is positive, which would argue the veto cost a winner, but n=2 is far below the >=10-row minimum — no proposal, continuing to accumulate.
+
+**(c) Scan telemetry** (short ~45min log window, retention-limited — same limitation as prior audits): 3x `WILDCARD_SCAN_SUMMARY` samples, all `skipped=slot_occupied` (ALLO holding the slot the whole window — can't assess reject buckets while occupied). 3x `SQUEEZE_SCAN_SUMMARY`, dominant bucket `no_active_coil` (~15-20 of 30 scanned each cycle), no signal — consistent with a quiet/no-setup regime, not a bug. No entry-failure error codes (5003/2015) seen in this window.
+
+**(d) Decision rule** (docs/DECISION_RULE.md, horizon = 30 convex trades from 07-13 23:00 UTC or 2026-10-13): **5 of 30 trades elapsed** (ARB +0.34R, NEAR -1.14R, BILL +4.43R, AKE +2.53R, BILL -1.07R). **Net R = +5.09, ex-best (drop the +4.43R BILL win) = +0.66R** — still positive, though thin at this sample size; not a real test yet. No drawdown concern (equity trended up over the window; both losses were small, quick stop-outs). No orphaned positions; the 2 MANUAL_CLOSEs noted above are the only wrinkle against criterion 4. `USE_DRAWDOWN_KILL=0` env override still in place (operator-aware, unchanged).
+
+### 5. Diagnose — lever for next 24h
+
+**None on the entry/exit side** — PMT frozen by operator decision, convex sleeves performing to design, decision-rule sample too small to act on. **Operational item (not a strategy lever):** Futures-shadow resync, now flagged 3 audits running.
+
+### 6. Validate
+
+- `pytest -q`: **not run this session** — no local Python available in this environment, and the deployed container's venv lacks dev/test deps (pandas native libs missing when pytest was ad-hoc installed: `libstdc++.so.6` not present in the slim runtime image). No code or config change is proposed this run, so there is no regression risk from skipping this gate today.
+- No exit/sizing/entry change proposed, so no replay/MC/shadow gate needed.
+
+### 7. Deploy
+
+**None.** Champion already current (d4fbd06, 07-17). No candidate change to promote. A live position (ALLO_USDT) is open, which would block a deploy anyway.
+
+### 8. Summary
+
+- Equity: $67.69 (+1.3% since the 07-16 audit, 48h)
+- Trades: 0 PMT / 1 convex closed in strict 24h (BILL_USDT -$1.00, R-1.07); +1 more convex (AKE +$2.49, R+2.53) in the 48h since last audit
+- Open: ALLO_USDT WILDCARD_LONG, unrealized ~-$0.55
+- Convex ledger since 06-26: +$10.56 / 13 trades / 53.8% win / netR +20.34 — earning its keep
+- Decision rule: 5/30 trades, net R +5.09 (+0.66 ex-best) — on track, sample still small
+- Top flag: Futures-shadow still on the 06-14 build (34 days stale) — 3rd consecutive audit raising this
+- Deploy: none this run
+- Bot: healthy, cycling normally, no errors, no entry-execution failures observed
+
+---
+
 # Daily Audit — 2026-07-16
 
 ---
