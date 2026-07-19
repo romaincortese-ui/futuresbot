@@ -1,3 +1,74 @@
+# Daily Audit — 2026-07-19
+
+---
+
+## Automated Assessment (UTC ~22:25)
+
+### 1. Trades (last 24h, exact window 07-18 22:25 -> 07-19 22:25 UTC)
+
+**PMT: 0.** Still blocked by `FUTURES_ENTRY_MIN_SCORE=1000` (decommissioned 2026-07-13, operator decision — not re-litigated).
+
+**Convex: 2 closed trades, both losses.**
+- `ALLO_USDT` WILDCARD_LONG: entry 07-18 10:28, exit 07-19 03:59 (17.5h hold), x5, exit_reason EXCHANGE_CLOSE (server-side SL). **-$1.45 (-17.8% margin, R=-1.09).**
+- `PI_USDT` WILDCARD_LONG: entry 07-19 15:14, exit 15:55 (41min hold), x4, exit_reason EXCHANGE_CLOSE (server-side SL). **-$0.96 (-16.1% margin, R=-0.97).**
+
+Both are clean, fast stop-outs — no leak, no design violation.
+
+**No open positions** — wildcard and squeeze slots both free.
+
+**Untracked trade (flagged, not a bot action):** MEXC's raw position ledger shows a third closed position this window — `SOL_USDT` LONG, opened 02:11, closed 17:02, x5, realised -$0.13 — that appears in **neither** `trade_history` nor `open_positions` at any point in the bot's persisted state. This looks like a manual/external trade placed directly on the exchange, outside the bot's control loop entirely (not a reconciliation bug — the bot never held state for it, so no orphan-warning path applies). Immaterial P&L; flagged for operator awareness/reconciliation only.
+
+Equity: **$65.76** (was $67.69 at the 07-18 audit) — **-2.85%**, consistent with the two convex losses (-$2.41) net of the small untracked SOL loss.
+
+### 2. Champion vs Shadow
+
+**Futures-bot (champion):** current `main` (`d4fbd06`), cycling normally, telemetry firing, no errors, no 5003/2015 execution failures in the sampled log window.
+
+**Futures-shadow: still stale on the 2026-06-14 build** (35+ days), equity flat $100.00, 0 trades, still running the pre-decommission PMT-only scan (`no_mental_threshold_cross` / `score_below_threshold` gate blocks every cycle, no wildcard/squeeze/telemetry code present). **This is the 4th consecutive audit flagging this** (07-13, 07-16, 07-18, 07-19). Champion-vs-shadow comparison remains unusable. Recommend `railway up --service Futures-shadow` (env-only resync to current `main`, no code change) at the next flat window — not self-applied, operator call.
+
+### 3. Wildcard/squeeze convex ledger (running, since 06-26 operator decision point)
+
+**15 trades, net +$8.15, netR +18.28, 46.7% win rate.** Outlier-robust: net stays positive ex-best (+$3.00, dropping BILL_USDT's +$5.15). Split: WILDCARD 9 trades/+$4.93; SQUEEZE 6 trades/+$3.22. Continues to earn its keep — no disable proposal.
+
+### 4. Learning loop
+
+**(a) Feature store:** 26 rows (was 24 at 07-18) — grew by exactly 2, matching the ALLO/PI closes. In sync with the exchange ledger.
+
+Ran `tools/learn_from_trades.py` (n=26, window 06-27→07-19, overall mean +$0.30/trade, 50.0% win, meanR +0.65). Same single actionable-bar-clearing condition as 07-18: **`hold>=120min` FAVOR** (15 trades avg +$1.17/80% win vs 11 trades avg -$0.90/9.1% win, OOS-consistent). Still **not actionable** — hold time is an outcome, not a pre-trade signal. No new condition clears n>=10-per-side.
+
+**(b) Shadow ledger (vetoed-signal counterfactuals):** 3 rows (was 2), only 2 resolved (`SKHYSTOCK_USDT` -1R, `SPCXSTOCK_USDT` +5R, both `veto:ref_not_listed`); new `USOIL_USDT` row unresolved. Still far below the >=10-row minimum — no proposal.
+
+**(c) Scan telemetry** (~50min log window): wildcard rejects `roc_below_min` / `no_pullback_resume` / `low_volume_z` — consistent with a quiet regime. Squeeze dominant bucket `no_active_coil` (~26-27/30 scanned). **One squeeze signal fired this window (`USOIL_USDT`, 22:14 UTC) but was correctly vetoed by the external ref-not-listed gate before entry** — matches the new shadow-ledger row exactly; confirmed via open_positions=0 that no entry occurred. No 5003/2015 execution-failure codes observed.
+
+**(d) Decision rule** (docs/DECISION_RULE.md, horizon = 30 convex trades from 07-13 23:00 UTC or 2026-10-13): **7 of 30 trades elapsed** (ARB +0.34R, NEAR -1.14R, BILL +4.43R, AKE +2.53R, BILL -1.07R, ALLO -1.09R, PI -0.97R). **Net R = +3.03, ex-best (drop the +4.43R BILL win) = -1.40 — the ex-best figure has flipped negative for the first time** (was +0.66 at 07-18) after today's two losses. Still very early (n=7 of 30) — not a proposal trigger, but the outlier-dependence criterion (pass criterion #2) is now the one to watch as the sample grows. No drawdown concern at this equity scale. `USE_DRAWDOWN_KILL=0` env override still in place (operator-aware, unchanged).
+
+### 5. Diagnose — lever for next 24h
+
+**None on the entry/exit side** — PMT frozen by operator decision, convex sleeves performing to design (2 clean stop-outs, no leak), decision-rule sample too small to act on, learning-loop conditions still below the actionable bar. **Operational item (not a strategy lever):** Futures-shadow resync, now flagged 4 audits running — recommend prioritizing this at the next flat window since it blocks the entire champion-vs-shadow comparison mechanism.
+
+### 6. Validate
+
+- `pytest -q`: not run this session (no code/config change proposed, so no regression risk to gate).
+- No exit/sizing/entry change proposed, so no replay/MC/shadow validation needed.
+
+### 7. Deploy
+
+**None.** Champion already current (`d4fbd06`, 07-17). No candidate change to promote.
+
+### 8. Summary
+
+- Equity: $65.76 (-2.85% vs the 07-18 audit)
+- Trades: 0 PMT / 2 convex closed, both losses (ALLO -$1.45/R-1.09, PI -$0.96/R-0.97)
+- Untracked: SOL_USDT -$0.13, appears in neither trade_history nor open_positions — likely a manual/external trade, flagged for awareness only
+- Open: none (both convex slots free)
+- Convex ledger since 06-26: +$8.15 / 15 trades / 46.7% win / netR +18.28 — earning its keep
+- Decision rule: 7/30 trades, net R +3.03, ex-best now -1.40 (first negative reading) — sample still small, watch this metric
+- Top flag: Futures-shadow still on the 06-14 build (35+ days stale) — 4th consecutive audit raising this
+- Deploy: none this run
+- Bot: healthy, cycling normally, no errors, no entry-execution failures observed
+
+---
+
 # Daily Audit — 2026-07-18
 
 ---
