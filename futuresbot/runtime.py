@@ -3660,6 +3660,33 @@ class FuturesRuntime:
         except Exception:
             return None
 
+    def _maybe_send_learning_digest(self) -> None:
+        """Weekly propose-only self-report to Telegram: trial scoreboard + engine
+        findings + shadow counterfactual scorecard. Marker-file throttled
+        (survives redeploys via the /data volume). Fail-soft; never trades."""
+        try:
+            if os.environ.get("FUTURES_LEARNING_DIGEST_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+                return
+            days = max(1.0, self._env_float("FUTURES_LEARNING_DIGEST_DAYS", 7.0))
+            marker = self._feature_store_path.parent / "learning_digest_marker.txt"
+            now_t = time.time()
+            try:
+                last = float(marker.read_text().strip())
+            except Exception:
+                last = 0.0
+            if now_t - last < days * 86400.0:
+                return
+            from futuresbot import shadow_ledger as shadow
+            from futuresbot.learning_digest import build_learning_digest, load_jsonl
+            store_rows = load_jsonl(self._feature_store_path)
+            shadow_rows = load_jsonl(shadow.ledger_path(str(self._feature_store_path.parent)))
+            self._notify(build_learning_digest(store_rows, shadow_rows))
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(str(now_t), encoding="utf-8")
+            log.info("[LEARNING_DIGEST] sent store=%d shadow=%d", len(store_rows), len(shadow_rows))
+        except Exception as exc:  # pragma: no cover — digest never breaks the cycle
+            log.debug("learning digest failed: %s", exc)
+
     def _resolve_shadow_ledger(self) -> None:
         """Resolve pending shadow-ledger counterfactuals (throttled to hourly).
         Best-effort: any error leaves the ledger untouched."""
@@ -7655,6 +7682,7 @@ class FuturesRuntime:
                 # Best-effort; never affects the PMT path. Off unless enabled.
                 self._maybe_scan_wildcard()
                 self._maybe_scan_squeeze()  # Coiled-Spring (off unless FUTURES_SQUEEZE_ENABLED=1)
+                self._maybe_send_learning_digest()  # weekly propose-only self-report
                 self._write_status(signal=signal, price=current_price)
                 self._publish_runtime_status(signal=signal, price=current_price)
                 # P1 §6 #5 (assessment) + cross-bot synergy with mexc-bot-v2:
