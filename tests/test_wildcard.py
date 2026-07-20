@@ -146,6 +146,29 @@ def test_per_sleeve_convex_slots():
     assert rt._convex_open_count("WILDCARD") == 0  # squeeze open leaves wildcard slot free
 
 
+def test_wildcard_rank_prefers_deep_pullback():
+    # A deep-pullback (lateness 0.50-0.70) candidate outranks a bigger-ROC
+    # extreme-chase; among same-class candidates, |roc| decides. Never gates.
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    k = FuturesRuntime._wildcard_rank_key
+    deep_small = k(SimpleNamespace(roc_pct=0.09), 0.60)
+    chase_big = k(SimpleNamespace(roc_pct=0.30), 1.00)
+    assert deep_small > chase_big
+    assert k(SimpleNamespace(roc_pct=0.30), 0.60) > deep_small  # same class -> roc
+    assert k(SimpleNamespace(roc_pct=0.30), None) == (0, 0.30)  # unknown lateness = not deep
+
+
+def test_engine_has_lateness_conditions():
+    from futuresbot.conditional_expectancy import default_conditions
+    conds = default_conditions()
+    row = {"entry_lateness": 0.95}
+    assert conds["stalled_reclaim(lat 0.85-0.99)"](row) is True
+    assert conds["at_extreme(lat>=0.99)"]({"entry_lateness": 0.995}) is True
+    assert conds["deep_pullback(lat 0.50-0.70)"]({"entry_lateness": 0.6}) is True
+    assert conds["deep_pullback(lat 0.50-0.70)"]({"entry_lateness": None}) is False
+
+
 def test_top_turnover_symbols_band():
     from futuresbot.runtime import FuturesRuntime
     tickers = [

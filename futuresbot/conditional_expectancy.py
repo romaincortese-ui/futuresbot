@@ -136,6 +136,11 @@ def default_conditions() -> dict:
         "hold<=30min": lambda r: (r.get("hold_min") or 1e9) <= 30,
         "hold>=120min": lambda r: (r.get("hold_min") or 0) >= 120,
         "fee_heavy>=30pct": lambda r: (r.get("fee_share_of_gross") or 0) >= 0.30,
+        # Lateness zones (247-fire study, 60d): deep pullback was the gold bucket,
+        # the stalled-reclaim middle was the suspect (n=27 — monitored, NOT a gate).
+        "deep_pullback(lat 0.50-0.70)": lambda r: r.get("entry_lateness") is not None and 0.50 <= r["entry_lateness"] < 0.70,
+        "stalled_reclaim(lat 0.85-0.99)": lambda r: r.get("entry_lateness") is not None and 0.85 <= r["entry_lateness"] < 0.99,
+        "at_extreme(lat>=0.99)": lambda r: r.get("entry_lateness") is not None and r["entry_lateness"] >= 0.99,
         "chop_regime": lambda r: (r.get("regime_size_mult") or 1.0) < 1.0,
         "exit=stop": lambda r: "STOP" in str(r.get("exit_reason") or "").upper(),
         "late_entry>=0.8": lambda r: (r.get("entry_lateness") if r.get("entry_lateness") is not None else -1) >= 0.8,

@@ -3509,9 +3509,12 @@ class FuturesRuntime:
                 sig = detect_wildcard_signal(df, sym, reasons)
                 for r in reasons:
                     hist[r] = hist.get(r, 0) + 1
-                if sig is not None and (best is None or abs(sig.roc_pct) > abs(best.roc_pct)):
-                    best = sig
-                    best_lateness = self._entry_lateness(df, sig.side)
+                if sig is not None:
+                    lat = self._entry_lateness(df, sig.side)
+                    key = self._wildcard_rank_key(sig, lat)
+                    if best is None or key > self._wildcard_rank_key(best, best_lateness):
+                        best = sig
+                        best_lateness = lat
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d histogram=%s signal=%s",
                      len(movers), scanned, hist or "{}", best.symbol if best else "none")
             if best is None:
@@ -3605,6 +3608,15 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — regime never blocks on data error
             log.warning("[REGIME] efficiency calc failed for %s, full size: %s", symbol, exc)
             return 1.0
+
+    @staticmethod
+    def _wildcard_rank_key(sig: Any, lateness: float | None) -> tuple[int, float]:
+        """Candidate ranking: deep-pullback entries (lateness 0.50-0.70) first,
+        then |roc|. Lateness study (247 fires, 60d, both-halves consistent):
+        deep-pullback avg +1.55R/43% win vs +0.12R at the extreme — when both
+        fire in one scan, take the flag. Never gates; only reorders."""
+        is_deep = 1 if (lateness is not None and 0.50 <= lateness < 0.70) else 0
+        return (is_deep, abs(float(sig.roc_pct or 0.0)))
 
     @staticmethod
     def _top_turnover_symbols(tickers: list, n: int) -> set[str]:
