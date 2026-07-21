@@ -56,7 +56,8 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
     if actionable:
         lines.append("Engine (propose-only):")
         for p in actionable:
-            lines.append(f"• {p['verdict']} <b>{p['condition']}</b> gap ${p['gap_usd']:+.2f} (n={p['with']['n']})")
+            unit = "R" if p.get("metric") == "R" else "$"
+            lines.append(f"• {p['verdict']} <b>{p['condition']}</b> gap {p.get('gap', p['gap_usd']):+.2f}{unit} (n={p['with']['n']})")
     else:
         lines.append("Engine: no OOS-consistent findings yet")
 

@@ -57,11 +57,25 @@ def summarize(rows: list[dict]) -> dict:
 
 
 def conditional_expectancy(rows: list[dict], predicate, *, min_n: int = 8, min_oos_n: int = 4) -> dict:
-    """Mean-$ expectancy WITH vs WITHOUT the condition, plus an out-of-sample
-    (time-split) check that the sign of the gap holds on unseen (later) trades."""
-    w = summarize([r for r in rows if _safe(predicate, r)])
-    wo = summarize([r for r in rows if not _safe(predicate, r)])
+    """Expectancy WITH vs WITHOUT the condition, plus an out-of-sample
+    (time-split) check that the sign of the gap holds on unseen (later) trades.
+
+    Metric: mean-R when >=80% of rows carry r_multiple, else mean-$. R is
+    scale-invariant — deposits/withdrawals change $-at-risk per trade, so a
+    $-gap across a deposit boundary would bias findings toward the bigger-
+    account rows (2026-07-21 deposit roughly doubled equity)."""
+    use_r = rows and sum(1 for r in rows if _r_mult(r) is not None) >= 0.8 * len(rows)
+    def mean_metric(summary, sub_rows):
+        if use_r:
+            rs = [_r_mult(r) for r in sub_rows if _r_mult(r) is not None]
+            return (sum(rs) / len(rs)) if rs else 0.0
+        return summary["mean_usd"]
+    w_rows = [r for r in rows if _safe(predicate, r)]
+    wo_rows = [r for r in rows if not _safe(predicate, r)]
+    w = summarize(w_rows)
+    wo = summarize(wo_rows)
     gap_usd = round(w["mean_usd"] - wo["mean_usd"], 3)
+    gap = round(mean_metric(w, w_rows) - mean_metric(wo, wo_rows), 3)
 
     srt = sorted(rows, key=_ts)
     half = len(srt) // 2
@@ -70,19 +84,20 @@ def conditional_expectancy(rows: list[dict], predicate, *, min_n: int = 8, min_o
         won = [r for r in hh if not _safe(predicate, r)]
         if len(wn) < min_oos_n or len(won) < min_oos_n:
             return None
-        return summarize(wn)["mean_usd"] - summarize(won)["mean_usd"]
+        return mean_metric(summarize(wn), wn) - mean_metric(summarize(won), won)
     g_early = half_gap(srt[:half])
     g_late = half_gap(srt[half:])
     # Confirmed only if BOTH halves strictly agree in direction with the overall
     # gap (a neutral/zero half does NOT confirm).
-    if g_early is None or g_late is None or gap_usd == 0:
+    if g_early is None or g_late is None or gap == 0:
         oos_consistent = False
-    elif gap_usd > 0:
+    elif gap > 0:
         oos_consistent = g_early > 0 and g_late > 0
     else:
         oos_consistent = g_early < 0 and g_late < 0
     return {
         "with": w, "without": wo, "gap_usd": gap_usd,
+        "gap": gap, "metric": "R" if use_r else "usd",
         "oos": {
             "early_gap": round(g_early, 3) if g_early is not None else None,
             "late_gap": round(g_late, 3) if g_late is not None else None,
@@ -101,20 +116,21 @@ def rank_conditions(rows: list[dict], conditions: dict, *, min_n: int = 8) -> li
         ce = conditional_expectancy(rows, pred, min_n=min_n)
         if not ce["enough"]:
             verdict = "insufficient"
-        elif ce["gap_usd"] < 0 and ce["oos"]["consistent"]:
+        elif ce["gap"] < 0 and ce["oos"]["consistent"]:
             verdict = "AVOID"
-        elif ce["gap_usd"] > 0 and ce["oos"]["consistent"]:
+        elif ce["gap"] > 0 and ce["oos"]["consistent"]:
             verdict = "FAVOR"
         else:
             verdict = "weak"
         out.append({
             "condition": name, "verdict": verdict, "gap_usd": ce["gap_usd"],
+            "gap": ce["gap"], "metric": ce["metric"],
             "with": ce["with"], "without": ce["without"], "oos": ce["oos"],
         })
 
     def keyf(p):
         actionable = p["verdict"] in ("AVOID", "FAVOR")
-        return (actionable, abs(p["gap_usd"]) * math.sqrt(p["with"]["n"] + 1))
+        return (actionable, abs(p["gap"]) * math.sqrt(p["with"]["n"] + 1))
     return sorted(out, key=keyf, reverse=True)
 
 

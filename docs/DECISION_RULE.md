@@ -37,3 +37,12 @@ Whichever comes FIRST:
 - The daily assessment reports progress against this rule (trades elapsed,
   net R, ex-best R, drawdown).
 - The rolling ledger, not 24h P&L, is the only scoreboard.
+
+## Capital-flow annotations (deposits/withdrawals)
+
+- 2026-07-21: operator DEPOSIT of ~+$72 (equity $65.76 -> $137.83). Not P&L.
+- Drawdown for criterion 3 must be computed on a FLOW-ADJUSTED equity curve
+  (subtract deposits from post-deposit equity; add back withdrawals) or,
+  equivalently, from the cumulative R curve. Raw equity deltas across a flow
+  boundary are not P&L. Net R / ex-best R criteria are unaffected (R is
+  scale-invariant); the engine compares conditions in R for the same reason.
