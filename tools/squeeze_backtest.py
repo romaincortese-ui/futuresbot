@@ -17,7 +17,10 @@ now = int(time.time())
 SPAN_D = int(os.environ.get("BT_SPAN_D", "60"))
 UNIV = int(os.environ.get("BT_UNIV", "45"))
 HAIR = float(os.environ.get("BT_HAIRCUT_BPS", "10")) / 10000.0
-FEE = 0.000594; BAL = 62.0; TP_R = 5.0; MAXBARS = 192  # 48h forward at 15m
+FEE = 0.000594; BAL = 62.0; TP_R = 5.0
+# 7d forward horizon (was 48h): the convex tail IS the strategy — O_USDT ran
+# 6.6 days; a 48h sim truncated exactly the runners the exit exists to catch.
+MAXBARS = int(float(os.environ.get("BT_HORIZON_D", "7")) * 96)
 STBL = ("USDC", "USDE", "USD1", "DAI", "FDUSD", "TUSD", "BUSD")
 
 tk = c.public_get("/api/v1/contract/ticker", {}); td = tk.get("data") if isinstance(tk, dict) else tk
