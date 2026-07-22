@@ -1,3 +1,61 @@
+# Daily Audit — 2026-07-22
+
+---
+
+## Automated Assessment (UTC ~18:45)
+
+### 1. Trades (last 24h)
+
+**PMT: 0** (frozen, `FUTURES_ENTRY_MIN_SCORE=1000`, unchanged). **Convex: 0 closed** — feature store's last close is `PEPE_USDT` SQUEEZE at 07-21 12:01 UTC (just outside the 24h window). Confirmed via `railway logs --filter close` (no close events) and via the 6-symbol PMT position-history export (last closed position 07-19, expected since PMT is frozen).
+
+**1 open convex position:** `ESPORTS_USDT` WILDCARD_LONG, x2, entry 0.0243, sl 0.0224, tp 0.0333 — currently unrealized **+$2.06 (+38.7% margin)**, tp_progress 0.52, tracking cleanly toward the bank-at-1R/runner design, no anomalies.
+
+Equity: **$139.34** (vs $137.83 post-deposit baseline 07-21) — +1.1%, driven by the open ESPORTS unrealized gain.
+
+### 2. Champion vs Shadow
+
+**Futures-bot (champion):** redeployed today (`db4140fa`, 07-22 10:40 UTC, commit `380e1b4`), cycling normally, 557/557 tests pass, no 5003/2015 execution errors in the sampled window.
+
+**Futures-shadow: still on the 2026-06-14 build** (deployment list confirms last SUCCESS = 06-14 21:00, no redeploy since) — **5th consecutive audit flagging this** (07-13, 07-16, 07-18, 07-19, 07-22). It is missing the squeeze sleeve (added 06-26), the PMT decommission, the decision-rule/shadow-ledger telemetry, and today's regime-scaler-trim fix. **Correction to the 07-19 note:** shadow's old build DOES include working wildcard-entry code — it opened and closed 2 live paper trades this window (`BANK_USDT` WILDCARD_LONG x7, both exited `PEAK_PROFIT_LOCK`, net **+$1.59**), so champion-vs-shadow is usable for raw wildcard mechanics but not for anything added since 06-14. Currently a flat window (0 shadow positions) — good time to resync (`railway up --service Futures-shadow`, env-only, operator call, not self-applied).
+
+### 3. Wildcard/squeeze convex ledger (since 06-26 operator decision point, cumulative)
+
+9 closed trades since the 07-13 decommission (see Decision rule below); no new closes this window to add.
+
+### 4. Learning loop
+
+**(a) Feature store:** 28 rows (was 22 on 07-17), growing with closes — in sync.
+
+**(b) Shadow ledger:** still 3 resolved rows (`SKHYSTOCK_USDT` -1R, `SPCXSTOCK_USDT` +5R, `USOIL_USDT` -1R, all `veto:ref_not_listed`). Net +3R on n=3 — far below the >=10-row minimum, no proposal.
+
+**(c) Scan telemetry** (~9h sampled window, 36 cycles each sleeve): **wildcard** — 230 movers evaluated, rejects `roc_below_min` (177), `no_pullback_resume` (34), `low_volume_z` (16), `climax_wick` (3). **squeeze** — dominant `no_active_coil` (902/~1080 scanned), `coil_too_short` (105), `no_range_break` (64), `low_volume_z` (9). Consistent with a quiet regime — gates working as designed, no loosening proposed. No 5003/2015 execution failures.
+
+**(d) Decision rule** (horizon = 30 convex trades from 07-13 23:00 UTC or 2026-10-13): **9 of 30 elapsed** (ARB +0.34R, NEAR -1.14R, BILL +4.43R, AKE +2.53R, BILL -1.07R, ALLO -1.09R, PI -0.97R, ERA -1.06R, PEPE -1.05R). **Net R = +0.92, ex-best (drop the +4.43R BILL win) = -3.51** — still outlier-dependent (pass criterion #2 not yet met if evaluated today); too early to act (n=9 of 30). No drawdown concern at this equity scale. `USE_DRAWDOWN_KILL=0` override unchanged, operator-aware.
+
+### 5. Diagnose — lever for next 24h
+
+**None.** PMT frozen by operator decision; convex gates are correctly dormant in a quiet regime (no rejected mover showed demonstrable continuation); decision-rule and shadow-ledger samples too small to act on. **Operational item (not a strategy lever):** Futures-shadow resync — 5 consecutive audits stale, now confirmed via deployment history, and a flat window is available right now.
+
+### 6. Validate
+
+- `pytest -q`: **557 passed.**
+- No exit/sizing/entry change proposed — no replay/MC/shadow validation needed.
+
+### 7. Deploy
+
+**None.** No candidate change to promote.
+
+### 8. Summary
+
+- Equity: $139.34 (+1.1% vs the 07-21 post-deposit baseline)
+- Trades: 0 closed / 1 open (ESPORTS_USDT WILDCARD_LONG, unrealized +$2.06)
+- Decision rule: 9/30 trades, net R +0.92, ex-best -3.51 (still outlier-dependent — watch this metric)
+- Top flag: Futures-shadow confirmed still on the 06-14 build (5th consecutive audit) — usable for wildcard mechanics only, blind to everything shipped since; flat window available for resync
+- Deploy: none this run
+- Bot: healthy, cycling normally, no errors, no entry-execution failures observed
+
+---
+
 # Daily Audit — 2026-07-19
 
 ---
