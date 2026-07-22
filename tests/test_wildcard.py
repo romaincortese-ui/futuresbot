@@ -198,3 +198,16 @@ def test_trade_attribution_tags():
     assert t["r_multiple"] == 0.5          # pnl_pct 10 / sl_margin 20
     assert t["hold_min"] == 30.0
     assert rt._trade_attribution_tags(SimpleNamespace(metadata={}), {}) == {} or isinstance(rt._trade_attribution_tags(SimpleNamespace(metadata={}), {}), dict)
+
+
+def test_regime_trim_conditions_read_recorded_multiplier():
+    # The scaler's multiplier is now recorded in metadata -> the tagger's
+    # regime_size_mult column is real, so these conditions can actually fire.
+    from futuresbot.conditional_expectancy import default_conditions
+    conds = default_conditions()
+    assert conds["regime_trimmed(mult<1)"]({"regime_size_mult": 0.32}) is True
+    assert conds["regime_trimmed(mult<1)"]({"regime_size_mult": 1.0}) is False
+    assert conds["regime_trimmed_hard(<0.5)"]({"regime_size_mult": 0.32}) is True
+    assert conds["regime_trimmed_hard(<0.5)"]({"regime_size_mult": 0.75}) is False
+    # missing column must not fabricate a trim
+    assert conds["regime_trimmed(mult<1)"]({}) is False

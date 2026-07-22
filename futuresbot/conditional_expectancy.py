@@ -157,6 +157,13 @@ def default_conditions() -> dict:
         "deep_pullback(lat 0.50-0.70)": lambda r: r.get("entry_lateness") is not None and 0.50 <= r["entry_lateness"] < 0.70,
         "stalled_reclaim(lat 0.85-0.99)": lambda r: r.get("entry_lateness") is not None and 0.85 <= r["entry_lateness"] < 0.99,
         "at_extreme(lat>=0.99)": lambda r: r.get("entry_lateness") is not None and r["entry_lateness"] >= 0.99,
+        # Does the regime size-scaler earn its keep? It cut a live +3R winner to
+        # ~32% of intended size; until 2026-07-22 its multiplier was applied but
+        # never recorded, so this condition could never fire. AVOID here means
+        # scaler-trimmed trades are WORSE (it works); FAVOR means it is costing
+        # size on good trades.
+        "regime_trimmed(mult<1)": lambda r: (r.get("regime_size_mult") or 1.0) < 0.999,
+        "regime_trimmed_hard(<0.5)": lambda r: (r.get("regime_size_mult") or 1.0) < 0.5,
         "chop_regime": lambda r: (r.get("regime_size_mult") or 1.0) < 1.0,
         "exit=stop": lambda r: "STOP" in str(r.get("exit_reason") or "").upper(),
         "late_entry>=0.8": lambda r: (r.get("entry_lateness") if r.get("entry_lateness") is not None else -1) >= 0.8,

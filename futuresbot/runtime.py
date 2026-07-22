@@ -3466,10 +3466,11 @@ class FuturesRuntime:
         if now_t - self._last_wildcard_scan_at < wildcard_scan_interval_seconds():
             return
         self._last_wildcard_scan_at = now_t
-        if self._convex_open_count("WILDCARD") >= wildcard_max_positions():
-            # Own bucket so slot-contention stays measurable (per-sleeve slots).
-            log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._convex_open_count("WILDCARD"))
-            return
+        # Slot occupied: still SCAN, so the candidate we cannot take is logged to
+        # the shadow ledger and resolved as a counterfactual. Previously this
+        # short-circuited, so we knew THAT we skipped but never WHAT — the
+        # opportunity cost of a long hold had to be reconstructed by hand.
+        slot_blocked = self._convex_open_count("WILDCARD") >= wildcard_max_positions()
         try:
             snapshot = self._account_snapshot(self._get_reference_price())
             available = float(snapshot.get("available_usdt", 0.0) or 0.0)
@@ -3520,6 +3521,11 @@ class FuturesRuntime:
             if best is None:
                 return
             log.info("[WILDCARD_SCAN] candidate=%s side=%s roc=%.1f%% rsi=%.0f lev=x%d lateness=%s", best.symbol, best.side, best.roc_pct * 100, best.rsi, best.leverage, f"{best_lateness:.2f}" if best_lateness is not None else "n/a")
+            if slot_blocked:
+                self._pending_entry_lateness = best_lateness
+                self._shadow_log_untaken(best, "WILDCARD", "slot_occupied")
+                log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied candidate=%s open=%d", best.symbol, self._convex_open_count("WILDCARD"))
+                return
             self._pending_entry_lateness = best_lateness
             self._open_wildcard_position(best, available)
         except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
@@ -3538,9 +3544,9 @@ class FuturesRuntime:
             return
         self._last_squeeze_scan_at = now_t
         self._resolve_shadow_ledger()  # piggyback the 15m cadence; throttled internally
-        if self._convex_open_count("SQUEEZE") >= wildcard_max_positions():  # per-sleeve slot
-            log.info("[SQUEEZE_SCAN_SUMMARY] skipped=slot_occupied open=%d", self._convex_open_count("SQUEEZE"))
-            return
+        # Scan even when the sleeve's slot is full, so the untaken candidate is
+        # logged + resolved as a counterfactual (see _maybe_scan_wildcard).
+        slot_blocked = self._convex_open_count("SQUEEZE") >= wildcard_max_positions()
         try:
             snapshot = self._account_snapshot(self._get_reference_price())
             available = float(snapshot.get("available_usdt", 0.0) or 0.0)
@@ -3580,6 +3586,10 @@ class FuturesRuntime:
                 return
             log.info("[SQUEEZE_SCAN] candidate=%s side=%s break=%.2f%% lev=x%d sl=%.1f%%", best.symbol, best.side, best.roc_pct * 100, best.leverage, best.sl_margin_pct)
             self._pending_entry_lateness = None  # squeeze enters AT the break by design
+            if slot_blocked:
+                self._shadow_log_untaken(best, "SQUEEZE", "slot_occupied")
+                log.info("[SQUEEZE_SCAN_SUMMARY] skipped=slot_occupied candidate=%s open=%d", best.symbol, self._convex_open_count("SQUEEZE"))
+                return
             self._open_wildcard_position(best, available, kind="SQUEEZE")
         except Exception as exc:  # pragma: no cover — squeeze never breaks the cycle
             log.warning("[SQUEEZE_SCAN] failed: %s", exc)
@@ -3783,7 +3793,12 @@ class FuturesRuntime:
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         min_vol = int(float(contract.get("minVol", 1) or 1))
         margin = max(0.0, sig.balance_fraction * available_balance)
-        margin *= self._regime_size_multiplier(symbol)  # chop -> floor, clean trend -> full
+        intended_margin = margin
+        regime_mult = self._regime_size_multiplier(symbol)  # chop -> floor, clean trend -> full
+        margin *= regime_mult
+        if regime_mult < 0.999:
+            log.info("[SIZE_TRIM] %s %s regime_mult=%.2f margin %.2f -> %.2f (intended %.0f%% of balance)",
+                     kind, symbol, regime_mult, intended_margin, margin, sig.balance_fraction * 100)
         if margin <= 0 or sig.entry_price <= 0:
             return False
         contracts = int((margin * sig.leverage / sig.entry_price) / contract_size)
@@ -3805,6 +3820,12 @@ class FuturesRuntime:
             "wildcard": 1.0, "pmt_stop_first": 1.0,
             "sl_margin_pct": float(sig.sl_margin_pct), "tp_margin_pct": float(sig.tp_margin_pct),
             "wildcard_roc_pct": round(float(sig.roc_pct), 4), "wildcard_rsi": float(sig.rsi),
+            # Record what the regime scaler DID. Previously applied but never
+            # stored, so the tagger's regime_size_mult column read 1.0 forever
+            # and the scaler was structurally unmeasurable (ESPORTS was trimmed
+            # to ~32% of intended size and the store still logged 1.0).
+            "regime_size_multiplier": round(float(regime_mult), 4),
+            "intended_margin_usdt": round(float(intended_margin), 4),
         }
         if kind == "SQUEEZE":
             metadata["squeeze"] = 1.0
