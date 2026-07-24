@@ -1,3 +1,75 @@
+# Daily Audit — 2026-07-24
+
+---
+
+## Automated Assessment (UTC ~22:10)
+
+### 1. Trades (last 24h)
+
+**PMT: 0** (frozen, `FUTURES_ENTRY_MIN_SCORE=1000`, unchanged; confirmed via fresh 6-symbol position-history export, 226 closed positions, window still ends 07-19). **Convex: 2 closed** — feature store grew 28→31 rows:
+- `XRP_USDT` SQUEEZE LONG, x5, -1.43R / **-$0.30** (-3.31% margin), exit `EXCHANGE_CLOSE` (stop). Larger than the usual ~-1.0R stop cluster because the SL was unusually tight (`sl_margin_pct`=2.31%) and fees ate 31.8% of gross on this trade — fee-drag on tight-stop squeeze entries, consistent with the known convex fee-drag concern, not a new bug.
+- `SNXX_USDT` WILDCARD SHORT, x3, -1.07R / **-$2.77** (-17.63% margin), exit `STOP_LOSS` — clean -1R stop, no anomaly.
+
+Also closed just outside the strict 24h window (25.5h ago, still worth flagging): `ESPORTS_USDT` WILDCARD_LONG hit its **+5R TP** at 07-23 20:37 UTC after a 58h hold — **+5.09R / +$4.08**. This was the long-open position tracked across the last several audits.
+
+Equity: **$138.21** (vs $139.8 07-23, vs $137.83 post-deposit 07-21 baseline) — -1.1% day-over-day, driven by realizing the last leg of ESPORTS' gain net of the two new stops.
+
+### 1-OPEN. Open positions
+
+**None.** 0 open positions confirmed via exchange query (`get_open_positions()`, all symbols) — flat window right after SNXX's stop.
+
+### 2. Champion vs Shadow
+
+**Futures-bot (champion):** cycling normally, 557/557 tests pass, no Tracebacks/errors and no 5003/2015 execution failures in the sampled log window (~1h, 500 lines). Wildcard/squeeze scans both showing quiet-regime rejection patterns (see 4c).
+
+**Shadow: stale, comparison suppressed pending resync** (confirmed again — still PMT-gate-only code, no `SQUEEZE_SCAN_SUMMARY` lines, flat paper equity 100.00, 0 positions; this is now a 7th confirmation but per the 07-23 decision this is logged once as an action item and not re-elaborated — see Diagnose).
+
+### 3. Wildcard/squeeze convex ledger (since 07-13 decommission, cumulative)
+
+**12 closed trades** (was 9): win rate 33% (4/12), net R **+3.51**, ex-best R (drop ESPORTS +5.09) **-1.58**, net $ **+$3.20**. Still outlier-dependent — two of four wins (BILL +4.43R, ESPORTS +5.09R) account for essentially the entire edge.
+
+### 4. Learning loop
+
+**(a) Feature store:** 31 rows (was 28), in sync with the 3 new closes above.
+
+**(b) Shadow ledger: grew from 6 to 9 rows, all now resolved** (AKE resolved -1R since 07-23; 2 new rows added: `ON_USDT` WILDCARD `slot_occupied` -1R, `PEPE_USDT` SQUEEZE `min_vol_skip` -1R, `DOGE_USDT` SQUEEZE `slot_occupied` -1R). Split:
+- `slot_occupied`: **n=5, net -5.0R** (ERA, DEXE, AKE, ON, DOGE — every one a loser). Still below the 10-row action threshold, but the signal so far is that the single wildcard slot is **protective, not costing money** — answers the recurring "am I missing a second slot?" question with data, for now.
+- `veto:ref_not_listed`: n=3, net +3R (unchanged, still below threshold).
+- `min_vol_skip`: n=1, -1R (new category, too small to characterize).
+
+**(c) Scan telemetry** (~1h sampled window, 3 cycles/sleeve): **wildcard** — 5-6 movers/cycle, dominant reject `roc_below_min` (10/11), one `no_pullback_resume`. **squeeze** — universe 93, ~30 scanned/cycle, dominant `no_active_coil` (85/90), `coil_too_short` (2), `no_range_break` (2). Quiet regime, gates behaving as designed. No `SIZE_TRIM` lines, no 5003/2015 execution failures.
+
+**(d) Decision rule** (horizon = 30 convex trades from 07-13 23:00 UTC or 2026-10-13): **12 of 30 elapsed** — net R +3.51, ex-best -1.58 (still fails the outlier-robustness criterion if judged today). No drawdown concern. `USE_DRAWDOWN_KILL=0` override unchanged, operator-aware. **Note:** per `docs/DECISION_RULE.md`, today (07-24) is the deadline for a one-time operator edit to the pre-registered thresholds before they lock until the horizon — no edit was made this window, so the criteria are now immutable as originally registered.
+
+### 5. Wildcard diagnose
+
+No execution failures (0 5003/2015 in sample). Scan is correctly dormant — `roc_below_min` dominates, no rejected mover showed evidence of continuation worth a gate change. No loosening proposed.
+
+### 6. Diagnose — lever for next 24h
+
+**None.** PMT frozen; convex gates correctly dormant in a quiet regime; decision-rule (12/30) and shadow-ledger (5 and 3 rows) samples still below action thresholds. **Operational item (logged once, not re-flagged further):** Futures-shadow resync remains outstanding.
+
+### 7. Validate
+
+- `pytest -q`: **557 passed.**
+- No exit/sizing/entry change proposed — no replay/MC/shadow validation needed.
+
+### 8. Deploy
+
+**None.** No candidate change to promote.
+
+### 9. Summary
+
+- Equity: $138.21 (-1.1% vs 07-23, +0.3% vs the 07-21 post-deposit baseline)
+- Trades: 2 closed (XRP -1.43R/-$0.30, SNXX -1.07R/-$2.77), 0 open (ESPORTS closed +5.09R/+$4.08 just outside the window)
+- Decision rule: 12/30 trades, net R +3.51, ex-best -1.58 — still outlier-dependent; thresholds lock today per the pre-registered doc
+- Slot-cost signal: 5 slot_occupied shadow rows net -5R — protective so far, not yet actionable (n<10)
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy, cycling normally, no errors, no entry-execution failures observed
+
+---
+
 # Daily Audit — 2026-07-23
 
 ---
