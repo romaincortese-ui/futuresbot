@@ -1,48 +1,48 @@
-# Pre-registered decision rule — convex-only trial
+# Pre-registered decision rule — CONVEX TRIAL 2 (from 2026-07-25)
 
-**Registered:** 2026-07-17 (operator-approved plan, adversarial-panel item 5).
-**Status:** PROPOSED thresholds — operator may edit ONCE before 2026-07-24; after
-that the criteria are immutable until the horizon.
+Trial 1 (2026-07-13 -> 07-25) was **terminated early at 11/30 trades — by design,
+not by drift**: it produced exactly the finding it existed to produce (see
+`DECISION_RULE_trial1_archived.md`). Thin-1R squeeze fires were identified as a
+structural, fee-driven loss source and filtered out; the ledger from before that
+change is no longer representative, so the counter resets.
 
-## The question
-Does the convex-only futures bot (wildcard + squeeze entries, convex exit,
-external veto, -20% SL cap, 5% risk cap) have a positive, non-outlier-dependent
-edge worth funding with real capital?
+## The change under test (shipped at trial 2 start)
+`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=8` — squeeze setups whose 1R is below 8% of
+margin are SKIPPED (logged `fee_doomed_thin_stop` + shadow ledger), not widened.
+Evidence: 60d/316 fires — thin(<8%) netR **-104.5** (avgR -0.53, 15% win, fees
+**24.1% of 1R**) vs normal(>=8%) netR **+40.2** (avgR +0.34, fees 4.4%).
+Removing them takes the sleeve from -64R to +40R. Corroborated independently by
+19 live trades (thin: 16.3% fee drag, net -$0.22) and 9 shadow rows (thin
+candidates DOGE/PEPE resolved -1R). Widening was REJECTED: the floor sweep only
+moved -64R -> -56R because a wider stop drags the +5R TP proportionally further.
 
-## Horizon
-Whichever comes FIRST:
-- **30 closed convex trades** counted from 2026-07-13 23:00 UTC (the PMT
-  decommission), or
-- **2026-10-13** (90 days).
-
-## Pass criteria (ALL must hold at the horizon)
-1. **Net R > 0 after fees** across the window (feature-store rows, `r_multiple`).
+## Pass criteria (unchanged, evaluated at 30 convex trades or 90 days)
+1. **Net R > 0** after fees across the window (feature-store `r_multiple`).
 2. **Outlier-robust:** net R still > 0 after dropping the single best trade.
-3. **Max drawdown** from the window's equity peak **< 30%**.
+3. **Max drawdown** from the window's peak **< 30%**, flow-adjusted (deposits are
+   not P&L; see the capital-flow annotations below).
 4. **No unexplained behavior:** every close attributable to a designed exit
-   (stop/TP/exchange close) — no orphaned positions or manual rescues.
+   (-1R stop / +5R TP / exchange close) — no orphaned positions, no manual
+   rescues (operator committed 2026-07-19 to no manual closes).
 
-## Outcomes (pre-committed)
-- **PASS → graduate:** fund the account to a size where the edge pays for the
-  effort (operator decides amount; the point is the *decision* is forced).
-- **FAIL → kill or paper:** disable live entries (convex flags off) and either
-  shut down or continue paper-only. No "one more tweak" extension on live money.
-- **AMBIGUOUS** (e.g. net R > 0 but outlier-dependent): extend ONCE by 30 trades
-  paper-or-live at operator's choice, then the rule is binding.
+Pass -> fund the account to a size where the edge pays for the effort.
+Fail -> shut down or go paper-only. No extending the window to chase a verdict.
 
-## Discipline
-- Strategy changes during the window are allowed only if risk-reducing or
-  telemetry-only (the standing evidence-first gates apply). Entry-gate changes
-  reset the trade counter.
-- The daily assessment reports progress against this rule (trades elapsed,
-  net R, ex-best R, drawdown).
-- The rolling ledger, not 24h P&L, is the only scoreboard.
+## Settled — do NOT re-propose without NEW evidence
+- **2nd wildcard slot: REJECTED.** Shadow ledger: 5 slot-blocked candidates
+  resolved **5-for-5 at -1R (net -5R)**. The single per-sleeve slot is
+  protective, not costly. (Supersedes the 07-17 slot-contention rationale.)
+- **Synthetics veto exemption: REJECTED.** The SPCXSTOCK +5R counterfactual that
+  motivated it came from a 1.19%-margin stop — inside the proven fee-doomed
+  bucket; the other two synthetics resolved -1R. They fail the fee test
+  independently of the listing test.
+- **Wider ATR stops (1.5 -> 2.0/2.5x): RETRACTED**, pending out-of-regime and
+  contracts-space validation (adversarial panel, 07-21).
+- No MIN_ROC raise, no lateness VETO, no ratchet/trail (+1R ratchet costs -12.3R
+  across the 7 trades reaching +2R), no funding-hold policy.
 
-## Capital-flow annotations (deposits/withdrawals)
-
-- 2026-07-21: operator DEPOSIT of ~+$72 (equity $65.76 -> $137.83). Not P&L.
-- Drawdown for criterion 3 must be computed on a FLOW-ADJUSTED equity curve
-  (subtract deposits from post-deposit equity; add back withdrawals) or,
-  equivalently, from the cumulative R curve. Raw equity deltas across a flow
-  boundary are not P&L. Net R / ex-best R criteria are unaffected (R is
-  scale-invariant); the engine compares conditions in R for the same reason.
+## Capital-flow annotations
+- 2026-07-21: operator DEPOSIT ~+$72 (equity $65.76 -> $137.83). Not P&L.
+- Drawdown must be computed flow-adjusted (or from the cumulative R curve).
+  Net R / ex-best R are scale-invariant and unaffected; the conditional-
+  expectancy engine compares conditions in R for the same reason.

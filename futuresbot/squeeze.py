@@ -131,6 +131,16 @@ def detect_squeeze_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] |
         if sl_frac * leverage * 100.0 > max_sl_margin:
             sl_frac = max_sl_margin / 100.0 / leverage
     sl_margin = sl_frac * leverage * 100.0
+    # FEE-DOOMED FILTER (default OFF pending the 60d study + trial verdict).
+    # Fees are fixed per round-trip, so a thin 1R is eaten by costs before the
+    # trade can win: live evidence — XRP 1R=2.31% margin burned 31.8% of gross
+    # on fees (closed -1.43R), PEPE 6.55% burned 13.1%; every trade with
+    # 1R>=13% paid 0.5-4.6%. SKIP the setup rather than widening the stop:
+    # widening drags the +5R TP proportionally further (the coupling that sank
+    # the wide-stop thesis), so a floored major would need an implausible move.
+    min_sl_margin = _f("FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT", 0.0)
+    if min_sl_margin > 0 and sl_margin < min_sl_margin:
+        return _rej(reasons, "fee_doomed_thin_stop")
     tp_margin = tp_r * sl_margin
     sl_price = cur * (1 - sl_frac) if s > 0 else cur * (1 + sl_frac)
     tp_price = cur * (1 + sl_frac * tp_r) if s > 0 else cur * (1 - sl_frac * tp_r)

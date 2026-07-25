@@ -51,3 +51,22 @@ def test_detects_squeeze_release_long():
     assert sig.sl_price < sig.entry_price < sig.tp_price
     assert sig.sl_margin_pct <= 20.0 + 1e-6  # -20% cap honoured
     assert 5 <= sig.leverage <= 10 or sig.leverage >= 1
+
+
+def test_fee_doomed_thin_stop_filter(monkeypatch):
+    # A thin 1R (in MARGIN terms) is eaten by fixed round-trip fees before the
+    # trade can win (live: XRP 1R=2.31% margin -> 31.8% of gross paid in fees,
+    # closed -1.43R). With the filter armed, such setups are SKIPPED, not
+    # widened (widening drags the +5R TP proportionally further).
+    f = _squeeze_break_frame()
+    monkeypatch.delenv("FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT", raising=False)
+    base = detect_squeeze_signal(f, "FOO_USDT")
+    assert base is not None  # default OFF -> unchanged behaviour
+    # arm the filter above this setup's 1R -> rejected with a named reason
+    monkeypatch.setenv("FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT", str(base.sl_margin_pct + 1))
+    reasons: list[str] = []
+    assert detect_squeeze_signal(f, "FOO_USDT", reasons) is None
+    assert "fee_doomed_thin_stop" in reasons
+    # filter below the setup's 1R -> still trades
+    monkeypatch.setenv("FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT", str(max(0.01, base.sl_margin_pct - 1)))
+    assert detect_squeeze_signal(f, "FOO_USDT") is not None
