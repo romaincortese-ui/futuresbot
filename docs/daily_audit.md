@@ -1,3 +1,78 @@
+# Daily Audit — 2026-07-25
+
+---
+
+## Automated Assessment (UTC ~21:15)
+
+### 1. Trades (last 24h)
+
+**PMT: 0** (frozen, `FUTURES_ENTRY_MIN_SCORE=1000`, unchanged). **Convex: 5 closed** — feature store grew 31→36 rows:
+- `XAU_USDT` SQUEEZE LONG, x5, **-3.79R / -$0.04** (-1.08% margin), 06:21 UTC, hold 1.2min, exit `EXCHANGE_CLOSE`. Anomaly: `sl_margin_pct`=0.28% (razor-thin) meant fees alone were 286% of the gross loss. Entered ~3.5h *before* the operator's thin-stop filter (`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=8`, commit `c3deab5`, deployed 09:46 UTC today) went live — this trade is the live, real-money confirmation of exactly the failure mode that filter now blocks.
+- `ESPORTS_USDT` WILDCARD SHORT, x2, -1.06R / -$0.61 (-15.4% margin), 12:25 UTC — clean -1R stop.
+- `HYPE_USDT` SQUEEZE LONG, x5, -1.14R / -$0.17 (-4.9% margin), 14:12 UTC, entry ~09:48 UTC (~2min after the filter deploy). `sl_margin_pct`=4.29% — *below* the new 8% floor. Single occurrence right at the deploy boundary (likely an in-flight scan cycle from the old process/pod), not a repeat — the next 2 squeeze fires (AKE 16.1%, and none since) are clear of the floor. Worth a glance next run, not yet an action item.
+- `AKE_USDT` SQUEEZE LONG, x3, -1.27R / -$0.68 (-20.4% margin), 15:41 UTC — clean -1R stop, filter-compliant (16.1% margin).
+- `ALLO_USDT` WILDCARD SHORT, x3, -1.05R / -$1.38 (-18.9% margin), 19:06 UTC — clean -1R stop.
+
+Net this window: -$2.88 / -4.31R, 0/5 winners. Equity: **$135.09** (vs $138.21 07-24) — -2.3%.
+
+### 1-OPEN. Open positions
+
+**None.** `[ACCOUNT]` confirms `positions=0`, flat since ALLO's stop.
+
+### 2. Champion vs Shadow
+
+**Futures-bot (champion):** cycling normally, 558/558 tests pass (was 557 — new test for the thin-stop filter), no Tracebacks, no 5003/2015 execution errors in sampled logs (~48min window).
+
+**Shadow: stale, comparison suppressed pending resync** (action item logged once on 07-23/07-24; not re-flagged further).
+
+### 3. Wildcard/squeeze convex ledger
+
+**Operator reset the trial today** (`docs/DECISION_RULE.md` rewritten 09:46 UTC): Trial 1 (07-13→07-25, 11/30 trades) was terminated *by design* — it isolated the fee-doomed thin-stop pattern (60d study: thin-stop squeeze setups netR -104.5 vs normal +40.2) and the fix shipped (`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=8`). Ledger before the reset is no longer representative per the doc.
+
+**Trial 2 (since 09:46 UTC today): 4 convex trades, net R -4.52, net $ -$2.84, 0% win rate.** All 4 are clean -1R stops in a quiet/choppy regime — far too early to read (n=4). XAU above predates the reset and isn't counted in Trial 2.
+
+### 4. Learning loop
+
+**(a) Feature store:** 36 rows (was 31), in sync with the 5 closes above.
+
+**(b) Shadow ledger:** grew 9→12 rows, but **all 3 new rows are unresolved** (`XAUT_USDT` slot_occupied, `SNDKSTOCK_USDT` veto:ref_not_listed, `SPX500_USDT` slot_occupied) — no change to the resolved splits:
+- `slot_occupied`: n=5 resolved, net **-5.0R** (unchanged) — still protective, not costly.
+- `veto:ref_not_listed`: n=3 resolved, net **+3R** (unchanged).
+- `min_vol_skip`: n=1, -1R (unchanged).
+
+**(c) Scan telemetry** (~48min sampled window, 3 cycles/sleeve): **wildcard** — 4 movers/cycle, dominant reject `roc_below_min` (9/12). **squeeze** — universe 70-75, 30 scanned/cycle, dominant `no_active_coil` (78/90), `coil_too_short`, `no_range_break`. Quiet regime, gates behaving as designed. No `SIZE_TRIM` lines, no 5003/2015 failures.
+
+**(d) Decision rule:** superseded by the operator's reset — see §3. Trial 2 stands at 4 trades (of 30 or 90 days), net R -4.52. `USE_DRAWDOWN_KILL=0` override unchanged, operator-aware.
+
+### 5. Wildcard diagnose
+
+No execution failures. Scan correctly dormant (`roc_below_min` / `no_active_coil` dominant). No rejected mover showed continuation evidence worth a gate change. No loosening proposed.
+
+### 6. Diagnose — lever for next 24h
+
+**None new.** The operator already shipped and deployed the one live lever (thin-stop squeeze filter) this morning, ahead of this run — reviewed and confirmed working (§3, §4d). Sample too thin (n=4 post-reset) for any further change. Watch item only: HYPE's sub-floor `sl_margin_pct` at the exact deploy boundary (§1) — recheck next run if it recurs.
+
+### 7. Validate
+
+- `pytest -q`: **558 passed** (+1 vs yesterday, covers the new filter).
+- No new exit/sizing/entry change proposed this run — nothing to replay/MC/shadow-stage.
+
+### 8. Deploy
+
+**None this run.** (Operator's own thin-stop filter deploy at 09:46 UTC today predates this audit; reviewed, not re-deployed.)
+
+### 9. Summary
+
+- Equity: $135.09 (-2.3% vs 07-24, -2.0% vs the 07-21 post-deposit baseline)
+- Trades: 5 closed, 0/5 winners, net -$2.88/-4.31R; 0 open
+- Trial reset today by the operator: thin-stop squeeze filter live (`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=8`); Trial 2 at 4 trades, net R -4.52 (too early to read); XAU trade retrospectively confirms the exact failure the filter fixes
+- Slot-cost signal: unchanged, 5 slot_occupied rows net -5R — still protective
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy, cycling normally, no errors, no entry-execution failures observed
+
+---
+
 # Daily Audit — 2026-07-24
 
 ---
