@@ -25,7 +25,7 @@ from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.squeeze import detect_squeeze_signal
 
 c = MexcFuturesClient(FuturesConfig.from_env())
-now = int(time.time())
+now = int(time.time()) - int(float(os.environ.get("BT_END_OFFSET_D", "0")) * 86400)
 SPAN_D = int(os.environ.get("BT_SPAN_D", "60"))
 UNIV = int(os.environ.get("BT_UNIV", "30"))
 SKIP = int(os.environ.get("BT_UNIV_SKIP", "0"))  # squeeze turf = liquid band

@@ -2755,6 +2755,37 @@ class FuturesRuntime:
             break
         return streak
 
+    def _convex_loss_streak(self) -> int:
+        """Consecutive most-recent CONVEX closes that lost money, ANY exit reason.
+
+        Deliberately not _consecutive_sl_streak: that PMT-era helper matches only
+        STOP_LOSS/LIQUIDATED, but convex server-side stops report EXCHANGE_CLOSE,
+        so it silently reads 0 through a real losing streak (7 in a row, 07-24).
+        A drawdown protocol must count losses, not exit labels."""
+        streak = 0
+        for row in reversed(self.trade_history[-20:]):
+            es = str(row.get("entry_signal") or "")
+            if not (es.startswith("WILDCARD") or es.startswith("SQUEEZE")):
+                continue  # PMT/other rows don't inform the convex streak
+            if float(row.get("pnl_usdt") or 0.0) < 0:
+                streak += 1
+                continue
+            break
+        return streak
+
+    def _convex_streak_multiplier(self) -> tuple[float, int]:
+        """Size multiplier from the convex losing streak (industry-standard
+        drawdown protocol; PMT had one, the convex rewrite dropped it).
+        Halves per loss beyond the trigger, floored. Restores fully on a win."""
+        if not self._flag("FUTURES_CONVEX_STREAK_THROTTLE_ENABLED", default=False):
+            return 1.0, 0
+        streak = self._convex_loss_streak()
+        n = max(1, int(self._env_float("FUTURES_CONVEX_STREAK_N", 2.0)))
+        if streak < n:
+            return 1.0, streak
+        floor = min(1.0, max(0.05, self._env_float("FUTURES_CONVEX_STREAK_FLOOR", 0.25)))
+        return max(floor, 0.5 ** (streak - n + 1)), streak
+
     def _banked_realized_pnl(self, position: FuturesPosition) -> tuple[float, int, float, float]:
         """Realized PnL from any +1R/+2R partial banks (reconstructed from the
         stored fill metadata). The runner-leg close only covers the REMAINING
@@ -3796,6 +3827,14 @@ class FuturesRuntime:
         intended_margin = margin
         regime_mult = self._regime_size_multiplier(symbol)  # chop -> floor, clean trend -> full
         margin *= regime_mult
+        # Drawdown protocol (industry-standard: cut size on consecutive losses).
+        # PMT had a cold-streak throttle; the convex rewrite dropped it. Purely
+        # backward-looking, restores fully on the first win.
+        streak_mult, loss_streak = self._convex_streak_multiplier()
+        if streak_mult < 1.0:
+            log.warning("[STREAK_THROTTLE] %s losing streak=%d -> size x%.2f (margin %.2f -> %.2f)",
+                        kind, loss_streak, streak_mult, margin, margin * streak_mult)
+            margin *= streak_mult
         if regime_mult < 0.999:
             log.info("[SIZE_TRIM] %s %s regime_mult=%.2f margin %.2f -> %.2f (intended %.0f%% of balance)",
                      kind, symbol, regime_mult, intended_margin, margin, sig.balance_fraction * 100)
@@ -3826,6 +3865,8 @@ class FuturesRuntime:
             # to ~32% of intended size and the store still logged 1.0).
             "regime_size_multiplier": round(float(regime_mult), 4),
             "intended_margin_usdt": round(float(intended_margin), 4),
+            "streak_multiplier": round(float(streak_mult), 4),
+            "loss_streak_at_entry": float(loss_streak),
         }
         if kind == "SQUEEZE":
             metadata["squeeze"] = 1.0
@@ -4956,10 +4997,18 @@ class FuturesRuntime:
             curve = self._build_equity_curve(account_snapshot=account_snapshot)
             if not curve:
                 return 1.0
+            # Windows are configurable: a 90d lookback can measure a strategy
+            # that no longer exists. On 2026-07-25 the 90d curve still carried
+            # the decommissioned PMT era (dd_90d 70%), so enabling the kill with
+            # the default window would have HALTED a bot whose live config was
+            # only 5.5% off its peak. Defaults unchanged; operators shorten the
+            # window after a strategy change.
             state = compute_drawdown_state(
                 curve,
                 soft_pct=self._env_float("DRAWDOWN_SOFT_PCT", 0.08),
                 hard_pct=self._env_float("DRAWDOWN_HALT_PCT", 0.15),
+                soft_window_days=self._env_float("DRAWDOWN_SOFT_WINDOW_DAYS", 30.0),
+                hard_window_days=self._env_float("DRAWDOWN_HALT_WINDOW_DAYS", 90.0),
             )
             if state.label == "HALT":
                 log.info(
