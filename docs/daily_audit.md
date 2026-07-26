@@ -1,3 +1,129 @@
+# Daily Audit — 2026-07-26
+
+---
+
+## Automated Assessment (UTC ~19:05)
+
+### 0. HEADLINE — thin-stop filter has never actually been live
+
+`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=8` (commit `c3deab5`, believed deployed
+07-25 09:46/10:46 UTC) is set correctly in Railway's variable store, but is
+**absent from the running process's environment**. Confirmed via `railway ssh`:
+`os.environ.get('FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT')` returns `None` on the
+live container, while all other 173 configured variables (checked exhaustively,
+name-by-name) ARE present — this is an isolated gap, not a general env-sync
+problem. No redeploy has occurred since the 07-25 10:46 SUCCESS deployment
+(deployment list checked), so this isn't a stale-worker artifact either — the
+var appears to have never been injected into that running process to begin
+with, despite the deploy nominally shipping the code+config together.
+
+**Live consequence:** today's open `XAU_USDT` SQUEEZE_LONG position (entered
+10:07 UTC) has `sl_margin_pct=0.235%` — 34x below the 8% floor that should
+have blocked it. This is the *exact* failure mode the filter exists to
+prevent, happening in real money 24h+ after the fix was believed live.
+Independently corroborated by the shadow ledger: an `XAUT_USDT` SQUEEZE
+candidate (`sl_margin_pct=0.27%`, ts 07-25 21:34 UTC) reached "candidate"
+status at all, which requires clearing `detect_squeeze_signal`'s internal gate
+— it could only get there if the floor check saw `min_sl_margin=0` (the
+function's fallback default when the env var is absent).
+
+**Action item (not self-applied):** restart/redeploy `Futures-bot` — no code
+or config change needed, just a process restart so the already-correct
+Railway variable gets injected. Per the runbook, deploys are avoided while a
+position is open; XAU_USDT is open now, so this is deferred to the operator or
+the next run once flat. Also worth the operator's attention: *how* a variable
+can be set in Railway's store yet missing from the running process for 24h+
+without a redeploy resetting it — if `railway variables set` was used without
+triggering Railway's auto-redeploy, that's a process gap worth knowing about
+for future config changes.
+
+### 1. Trades (last 24h)
+
+**0 closed trades.** PMT frozen (unchanged). Feature store unchanged at 36
+rows (consistent with 0 closes). Equity $135.11 vs $135.09 yesterday (+0.01%,
+flat — the only P&L is the open XAU position's tiny unrealized).
+
+### 1-OPEN. Open positions
+
+**XAU_USDT SQUEEZE LONG, x5, held ~9h (opened 10:07 UTC):** entry $4,066.73,
+current ~$4,073, +3.28R (peak +4.81R at $4,075.91 — 0.19R short of the +5R TP
+— giveback -1.52R from peak, Min15 replay). TP +0.23% away, SL -0.05% away.
+`regime_size_multiplier=0.25` (trimmed to 25% of intended size); margin $3.25
+of an intended $16.21 — undersized as designed by the regime scaler, not a
+bug. Unrealized +$0.03. Because `sl_margin_pct` is only 0.235% (see §0), even
+the R-multiples here are close to meaningless in dollar terms (~$0.008/R) —
+this trade cannot pay for its own fees regardless of outcome, which is
+precisely the pattern the (non-functioning) filter is meant to exclude.
+
+### 2. Champion vs Shadow
+
+**Champion:** cycling normally, no Tracebacks, no 5003/2015 errors in sampled
+logs. **Shadow: stale, comparison suppressed pending resync** (per the
+standing 07-23 action item — not re-flagged further).
+
+### 3. Wildcard/squeeze convex ledger
+
+**Trial 2 (since 07-25 09:46 UTC reset): 4 closed, net R -4.52, 0% win rate**
+(unchanged — 0 closes today) **+ 1 open at +3.28R.** Per §0, treat this
+trial's premise (filter enforced from reset) as unverified until the env-var
+gap is fixed — the trades so far were NOT actually filtered, so a clean
+re-baseline may be warranted once the fix is confirmed live rather than
+continuing to count against the original start point.
+
+### 4. Learning loop
+
+**(a) Feature store:** 36 rows, unchanged. **(b) Shadow ledger:** 12→14 rows;
+2 new (`TAO_USDT`, `BANK_USDT`, both `slot_occupied`, unresolved). Resolved
+splits unchanged from yesterday: `slot_occupied` n=5, net **-5.0R** (still
+protective); `veto:ref_not_listed` n=3, net **+3R**; `min_vol_skip` n=1, -1R.
+**(c) Scan telemetry** (~1h sampled): squeeze — universe 77, 30 scanned/cycle,
+dominant `no_active_coil` (21/30), `no_range_break`, `coil_too_short` — quiet
+regime, gates behaving as designed (modulo §0). Wildcard — 1 mover/cycle,
+`no_pullback_resume`. No `SIZE_TRIM` beyond XAU's own entry, no 5003/2015.
+**(d) Decision rule:** 4/30 trades (superseded framing, see §3).
+`USE_DRAWDOWN_KILL=0` unchanged, operator-aware.
+
+### 5. Wildcard diagnose
+
+No execution failures. Dormancy is correct behavior (quiet regime). No
+loosening proposed.
+
+### 6. Diagnose — lever for next 24h
+
+**The lever is §0** — not a parameter tune but an operational fix: get the
+already-approved `FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=8` actually running.
+Nothing else proposed; the sample is too thin and the ledger too compromised
+by the live bug to draw further conclusions this run.
+
+### 7. Validate
+
+- `pytest -q`: **558 passed** (local run; Python not on PATH via the `python`
+  shim, used the local interpreter directly — no code change this run so
+  nothing to regress).
+- No new exit/sizing/entry change proposed — nothing to replay/MC/shadow-stage.
+
+### 8. Deploy
+
+**None.** The one action item (§0) is a restart, deferred while XAU_USDT is
+open — see runbook guidance against deploying with a position open.
+
+### 9. Summary
+
+- Equity: $135.11 (+0.01% vs 07-25, flat)
+- Trades: 0 closed; 1 open (XAU_USDT SQUEEZE LONG, +3.28R, peak +4.81R)
+- **Critical: the 07-25 thin-stop squeeze filter has never been live** —
+  Railway config correct, running process missing the var. Confirmed via
+  direct env inspection + corroborated by a shadow-ledger candidate that
+  should have been gate-rejected. Action item: restart Futures-bot once flat.
+- Trial 2: 4 closed (net R -4.52) + 1 open, but the trial's filtered premise
+  is unverified pending the fix above
+- Slot-cost signal: unchanged, 5 rows net -5R — still protective
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run (restart deferred — position open)
+- Bot: healthy, cycling normally, no errors
+
+---
+
 # Daily Audit — 2026-07-25
 
 ---
