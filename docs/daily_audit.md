@@ -1,3 +1,154 @@
+# Daily Audit — 2026-07-29
+
+---
+
+## Automated Assessment (UTC ~16:50)
+
+**Note: no audit ran 07-27 or 07-28** (scheduled task is configured daily at
+17:08 UTC; last doc entry before this one is 07-26). This run pulled 72h of
+closed positions (not just 24h) to cover the gap — nothing was missed.
+
+### 0. Follow-up — 07-26 thin-stop env-var bug is resolved
+
+`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT` is confirmed present in the running
+process (`railway ssh` env inspection: value `12`, up from the `8` shipped
+07-25 — see below). The 07-26 finding (var correct in Railway's store but
+absent from the running process) was fixed as a side effect of the operator's
+own 07-26 20:30 UTC deploy (`9ff2a21`, convex streak throttle), which
+restarted the process and re-injected all variables. No action item remains.
+
+**New operator-side config observed live (already deployed/set, not by this
+run — reporting for awareness):**
+- `FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=1` (code default is OFF) — halves
+  size after 2 consecutive convex losses (any exit reason via
+  `_convex_loss_streak`), floors at 0.25x, resets on first win.
+- `FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT` raised `8`→`12` (live variable change,
+  not tied to a doc'd commit).
+- `USE_DRAWDOWN_KILL=1` (previously `0` per the standing operator override)
+  with `DRAWDOWN_HALT_PCT=0.95`, `DRAWDOWN_HALT_WINDOW_DAYS=30`. Flagging:
+  the code default halt threshold is `0.15` (15% drawdown); `0.95` means the
+  kill only fires at a 95% drawdown in the trailing 30d — functionally inert
+  in practice, even though the flag itself is "on". Not proposing a change
+  (operator-owned lever) — just surfacing the gap between nominal and
+  effective protection.
+
+### 1. Trades (since last audit, 07-26 19:05 UTC — 3 closed; 0 in the strict
+last 24h)
+
+1. **XAU_USDT LONG SQUEEZE** — closed 07-26 21:25 UTC (the position flagged
+   open in the 07-26 report). +$0.013 (+0.40%), R **+1.70**, hold 11.3h.
+   `sl_margin_pct=0.235%` (the broken-filter stop) meant fees ate **66.7%** of
+   gross profit — confirms the 07-26 prediction exactly: this trade could not
+   pay for its own fees regardless of outcome.
+2. **NIL_USDT LONG WILDCARD** — opened 07-27 12:11, closed 13:03 (52 min). R
+   **-1.07**, -$1.77. `entry_lateness=1.0` (entered at the vertical top).
+3. **BTW_USDT LONG WILDCARD** — opened 07-27 13:44, closed 14:15 (31 min). R
+   **-1.65**, -$3.39. `entry_lateness=1.0` (also chased the top). Realized
+   loss (29.3% of margin) exceeded the 1R stop distance (17.7%) by 65% —
+   stop slippage on a thin/illiquid mover, not a fee issue
+   (`fee_share_of_gross=1.6%`).
+
+### 1-OPEN. Open positions
+
+- **NIL_USDT SHORT WILDCARD x5**, held ~39.6h (opened 07-28 01:13 UTC):
+  entry 0.03688, current 0.03433, **+1.80R** (peak +2.55R, giveback -0.75R,
+  Min15 replay). TP 12.9% away, SL 11.6% away. `regime_size_multiplier=0.658`
+  — margin $10.25 of an intended $15.59 (undersized as designed). Entered at
+  `entry_lateness=1.0` yet currently profitable — contrasts with the two
+  lateness=1.0 losses above; too small a sample to read anything into it.
+- **BEAT_USDT LONG SQUEEZE x4**, held ~11.6h (opened 07-29 05:10 UTC): entry
+  3.604, current ~4.12, **+2.88R** (peak +3.25R, giveback -0.36R). TP 8.7%
+  away, SL 17.2% away. `regime_size_multiplier=0.270` — margin $3.60 of an
+  intended $14.35.
+
+### 2. Champion vs Shadow
+
+Champion: cycling normally, 0 Tracebacks, 0 order-reject codes (5003/2015) in
+a 4.7h/3000-line sample. **Shadow: stale, comparison suppressed pending
+resync** (standing 07-23 action item, not re-flagged further).
+
+### 3. Convex ledger (Trial 2, since 07-25 09:46 UTC reset)
+
+**7/30 closed, net R -5.54, ex-best -7.24R, win rate 1/7 (14.3%)** + 2 open
+(+1.80R, +2.88R unrealized). Still deeply negative even crediting the best
+trade (XAU +1.70R) — sample remains too thin to call.
+
+### 4. Learning loop
+
+**(a) Feature store:** 39 rows (+3, matches the 3 closes above — in sync).
+**(b) Shadow ledger:** 17 rows (+3: TAO/BANK resolved, COTI new+resolved).
+Resolved splits (full recount this run):
+- `veto:ref_not_listed` n=4, net **+8R** (was n=3/+3R) — still under the
+  n>=10 bar for a tuning proposal, but the trend keeps pointing the same way
+  (this veto is costing more than it saves).
+- `slot_occupied` n=**11** — crosses the n>=10 reporting bar for the first
+  time. Net **+1R** (flipped sign from the settled -5R/n=5 finding), driven
+  by 2 outlier +5R TP wins against 9 losses at -1R (82% loss rate, one winner
+  itself entered at `entry_lateness=1.0`). This is new evidence against a
+  "Settled" `DECISION_RULE.md` call, but +1R over 11 rows, 2 of them
+  outliers, is not "clearly positive" by the standard the panel set —
+  recommend continued tracking, **not** proposing a 2nd slot yet.
+- `min_vol_skip` n=1, -1R (unchanged). New bucket `veto:move_not_corroborated`
+  n=1, +5R (single sample).
+
+**(c) Scan telemetry** (4.7h/18 cycles sampled each sleeve): WILDCARD 132
+movers scanned, dominant reject `roc_below_min` (85, 64%) then
+`no_pullback_resume` (36, 27%), `low_volume_z`(8), `climax_wick`(2),
+`rsi_exhausted`(1). SQUEEZE avg universe 90, 540 scanned, dominant
+`no_active_coil` (475, 88%), `coil_too_short`(42), `no_range_break`(23). No
+`SIZE_TRIM` in this window (no new entries sampled), no 5003/2015.
+
+**(d) Decision rule:** Trial 2 at 7/30 (see §3). `USE_DRAWDOWN_KILL` flipped
+0→1 since the standing baseline note — see §0 (effectively inert at the
+current threshold). Equity $135.76 vs the 07-21 post-deposit mark $137.83:
+-1.5%, well inside the 30%/20% drawdown bounds.
+
+### 5. Wildcard/squeeze diagnose
+
+No execution failures (0 5003/2015 across the sample). 0 closes in the
+strict last-24h is correct dormancy — both sleeve slots are occupied by the
+two open positions, so new entries were structurally blocked regardless of
+regime. No loosening proposed.
+
+### 6. Diagnose — lever for next 24h
+
+**No parameter change proposed.** Trial 2 (7/30) and the newly-n>=10
+slot-cost signal (+1R, outlier-driven) are both too thin/ambiguous to act on.
+The one substantive finding this run is informational (§0): the drawdown-kill
+threshold is nominally on but practically inert — operator-owned, flagged not
+changed.
+
+### 7. Validate
+
+`pytest -q`: **561 passed** (local interpreter; no code change this run so
+nothing to regress — count is up from 558 on 07-26, consistent with the
+07-26 20:30 streak-throttle commit's added tests).
+
+### 8. Deploy
+
+**None.**
+
+### 9. Summary
+
+- Equity: $135.76 (-1.5% vs the 07-21 post-deposit mark, flat/healthy)
+- Trades: 0 in strict last-24h; 3 since the 07-26 audit (net R +1.70, -1.07,
+  -1.65) + 2 open (+1.80R, +2.88R)
+- 07-26's env-var bug (thin-stop filter not actually live) is resolved,
+  confirmed via direct env inspection
+- New operator config observed: streak throttle ON, squeeze SL floor 8→12,
+  drawdown-kill ON but threshold (0.95) is functionally inert — flagged for
+  awareness only
+- Slot-cost signal crossed n>=10 for the first time: +1R (was settled -5R),
+  but outlier-driven — not proposing a 2nd slot
+- Trial 2: 7/30 convex, net R -5.54, ex-best -7.24R
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy, cycling normally, no errors
+- **Gap:** no audit ran 07-27/07-28 despite the daily schedule — worth the
+  operator's attention
+
+---
+
 # Daily Audit — 2026-07-26
 
 ---
