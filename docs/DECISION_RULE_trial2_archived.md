@@ -1,45 +1,4 @@
-# Pre-registered decision rule — CONVEX TRIAL 3 (from 2026-07-29)
-
-## Why trial 2 was voided (not extended)
-Trial 2 (2026-07-25 -> 07-29) is DISCARDED, not judged. Cause: `railway variables
---set` creates a deployment that Railway marks **SKIPPED** when no code changed,
-so the running container keeps its ORIGINAL environment. The flags armed during
-trial 2 (streak throttle, drawdown kill, 30d window) were therefore **inert for
-~70 hours** while `railway variables` reported them as set. Detected 07-29 only
-because the operator noticed no Telegram boot message. Trial 2 measured a bot
-that was not running its stated config, so its ledger is uninterpretable.
-
-VERIFICATION RULE (mandatory from now on): after any env change, run
-`railway up --service Futures-bot` and confirm BOTH a fresh `cycle=1` AND the
-value inside the container via `railway ssh -- printenv | grep <VAR>`. Never
-treat `railway variables` output as proof a flag is live.
-
-## The change under test in trial 3
-`FUTURES_WILDCARD_SL_ATR_MULT=3.0` (was 1.5) — the wildcard price stop is now
-2.0x wider. Because the -20% margin cap re-derives leverage, DOLLAR risk per
-trade is unchanged; only the price distance and leverage move. Evidence: the
-stop-width grid is positive and monotone in BOTH 60d windows (in-sample +47.3R
-at 2.0x vs +25.3R at 1.0x; OOS +19.6R vs -0.7R), plus live corroboration that
-13 of 16 stopped trades returned to breakeven within 24h.
-Also live and verified in-container: streak throttle, drawdown kill (30d window),
-squeeze min-1R 12%, x5 leverage caps, external gate, band split, convex exits.
-
-REJECTED for trial 3 (tested, do not re-propose without new evidence):
-- Peak trails at ANY arm/giveback: paired test at stop 2.0x gives t=-2.01,
-  95% CI [-0.398,-0.009], P(trail better)=2%. A trail only ever modifies
-  WINNERS (18/125 fires, all already profitable) so it cannot reduce losses or
-  drawdown; it lowers median balance and RAISES P(end down) 9%->14%.
-- Lower TP (1R/2R/3R): only TP 5R is positive in both windows.
-- Time-stall / partial scale-out / breakeven ratchet: all convert losers but all
-  cost more than they save (best alternative +59.9R vs +78.3R no-trail).
-
-## OPEN ISSUE to watch in trial 3 — stop slippage
-Realized losses overshoot the intended -1R: BTW_USDT closed -29.27% margin
-against a 17.72% intended stop (r_multiple -1.65, a 65% overshoot); live losers
-average roughly -1.1R to -1.3R, not -1.0R. Backtests assume exactly -1R, so
-every measured edge is OPTIMISTIC on the loss side. Track mean loser R; if it
-stays worse than -1.15R, the wider stop's benefit must be re-scored against it.
-
+# Pre-registered decision rule — CONVEX TRIAL 2 (from 2026-07-25)
 
 Trial 1 (2026-07-13 -> 07-25) was **terminated early at 11/30 trades — by design,
 not by drift**: it produced exactly the finding it existed to produce (see

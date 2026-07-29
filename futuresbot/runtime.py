@@ -1659,21 +1659,39 @@ class FuturesRuntime:
         snapshot = self._account_snapshot(current_price)
         active_syms = list(self._active_symbols) or [self.config.symbol]
         entries_state = "🧊 retired" if self._strategies_retired() else ("⏸️ paused" if self._paused else "▶️ active")
+        # PMT entries are blocked when the score floor is set impossibly high
+        # (operator decommission 2026-07-13). Previously the status claimed
+        # "active | PMT threshold" regardless, which read as if PMT still traded.
+        pmt_blocked = self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0) >= 999.0
         if pmt_strategy_enabled() and not self._strategies_retired():
-            entries_state = f"{entries_state} | PMT threshold"
+            entries_state = f"{entries_state} | PMT ⛔ decommissioned" if pmt_blocked else f"{entries_state} | PMT threshold"
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
-            f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}): {html.escape(', '.join(active_syms))}",
+            # What the bot ACTUALLY hunts. The old line listed only the 6 PMT
+            # pairs, which since the 07-13 decommission is the one universe it
+            # can NOT enter — the convex sleeves scan different bands entirely.
+            (f"PMT universe (⛔ entries off): {html.escape(', '.join(active_syms))}"
+             if pmt_blocked else
+             f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}): {html.escape(', '.join(active_syms))}"),
+            *([f"🎲 Wildcard hunts small-caps (excl. top-{int(self._env_float('FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER', 30.0))} turnover) | "
+               f"stop {self._env_float('FUTURES_WILDCARD_SL_ATR_MULT', 1.5):.1f}xATR"] if wildcard_enabled() else []),
+            *([f"🌀 Squeeze hunts top-{int(self._env_float('FUTURES_SQUEEZE_MAX_SCAN', 30.0))} liquid | "
+               f"min 1R {self._env_float('FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT', 0.0):.0f}% margin"] if squeeze_enabled() else []),
             self._btc_trend_line(),
             f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
             self._prediction_overlay_status_line(),
             f"Entries: {entries_state}",
             f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
             f"PMT positions: <b>{sum(1 for p in self.open_positions.values() if not self._is_wildcard_position(p))}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
+            # Slots are PER-SLEEVE since 07-17: counting both sleeves against a
+            # single cap rendered as "2/1 slot", which looked like a breach.
             *([(
-                f"🎲 Wildcard: <b>{self._wildcard_open_count()}</b>/{wildcard_max_positions()} slot"
-                + ("" if not self._wildcard_open_count() else " — " + ", ".join(html.escape(p.symbol) for p in self.open_positions.values() if self._is_wildcard_position(p)))
+                f"🎲 WC: <b>{self._convex_open_count('WILDCARD')}</b>/{wildcard_max_positions()}"
+                + f" | 🌀 SQ: <b>{self._convex_open_count('SQUEEZE')}</b>/{wildcard_max_positions()}"
+                + ("" if not self._wildcard_open_count() else " — " + ", ".join(
+                    f"{html.escape(p.symbol)}{'(sq)' if (p.metadata or {}).get('squeeze') else '(wc)'}"
+                    for p in self.open_positions.values() if self._is_wildcard_position(p)))
             )] if wildcard_enabled() else []),
             "━━━━━━━━━━━━━━━",
         ]
