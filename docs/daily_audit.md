@@ -1,4 +1,167 @@
-# Daily Audit — 2026-07-29
+# Daily Audit — 2026-07-30
+
+---
+
+## Automated Assessment (UTC ~16:12)
+
+### 1. Trades since last audit (07-29 16:50 UTC)
+
+**1 real close, 0 visible in the feature store — reconcile-drop bug found (see §1a).**
+
+1. **BEAT_USDT LONG SQUEEZE x4** — opened 07-29 05:10 UTC (reported open at
+   +2.88R, peak +3.25R, in the 07-29 audit), closed **07-30 03:18:46 UTC**
+   (~22.1h hold). Exchange ledger: entry 3.604, exit 3.417, realised
+   **-$0.7743** (profitRatio -21.41%, margin ~$3.60 of an intended $14.35 —
+   `regime_size_multiplier=0.270`). Round-tripped from +3.25R peak through
+   breakeven to a loss. `r_multiple` is **not recoverable** (see below) but
+   -21.4% margin loss is consistent with a stop-loss fill, so **R ≈ -1**
+   (design-consistent, not confirmed).
+
+### 1a. BUG — feature-store row silently lost on a reconcile race
+
+MEXC's `get_historical_positions` had **not yet indexed** BEAT_USDT's close
+at the exact moment (03:18:46 UTC, same second as `updateTime`) the
+open-position-guard reconcile loop checked it. The reconcile code
+(`runtime.py:3021-3045`) does a **single** history lookup (page_size=20); on
+a miss it logs `[POSITION_RECONCILE_DROP] reason=no_exchange_position_no_history_match`,
+sends one Telegram warning ("Cleared from bot state without recording P&L"),
+and drops the position from `open_positions`/`trade_history` **permanently
+— no retry**. Confirmed via direct MEXC query minutes ago: the position
+**is** in history now (it just wasn't at 03:18:46). Result: feature store
+stayed at 39 rows (should be 40), `trade_history` also lacks the entry, and
+the trade's exact `sl_margin_pct`/`r_multiple`/`exit_reason` are gone for
+good — even though the Telegram alert did fire in real time.
+
+This is a known, tested code path
+(`tests/test_runtime.py::test_reconcile_clears_stale_live_position_with_missing_history`)
+built for genuinely-orphaned positions (e.g. manually closed outside the
+bot), but it has no grace window, so it also fires on a benign
+history-indexing race. **Proposed fix (not applied):** require the
+history-miss to persist across 2 consecutive reconcile passes (~2s apart,
+per the guard's own poll interval) before finalizing the drop, so a
+transient MEXC indexing lag doesn't erase a real trade's outcome. This is a
+bookkeeping/reconcile fix, not an exit/sizing/entry change — doesn't need
+the V-stack replay gate, but not deployed this run (open position live,
+propose-only per protocol).
+
+### 1-OPEN. Open positions
+
+- **NIL_USDT SHORT WILDCARD x5**, held **63.0h** (opened 07-28 01:13:54
+  UTC): entry 0.03688, current ~0.0332, **+2.62R** (peak **+2.76R** at
+  15:15 UTC today, giveback **-0.14R** — Min15 kline replay since entry,
+  252 bars). TP **9.9%** away, SL **15.4%** away.
+  `regime_size_multiplier=0.658` — margin $10.25 of an intended $15.59
+  (undersized as designed). `entry_lateness=1.0`. Predates Trial 3 (opened
+  under the old `FUTURES_WILDCARD_SL_ATR_MULT=1.5`).
+- **BEAT_USDT** — closed (§1). No other open positions
+  (`get_open_positions` returned only NIL_USDT).
+
+### 2. Champion vs Shadow
+
+Champion: cycling normally. Sampled ~9h of logs across boot (07-29
+21:19-21:35), the BEAT close window (07-30 02:30-04:00), and 07-30
+08:29-16:11 (5000 lines): **0 Tracebacks, 0 order-reject codes (5003/2015)**
+outside the reconcile-drop finding above. **Shadow: stale, comparison
+suppressed pending resync** (standing 07-23 action item).
+
+### 3. Trial 3 status (superseded Trial 2 — see docs/DECISION_RULE.md)
+
+**Trial 2 was voided**, not concluded: `railway variables --set` created a
+Railway-**SKIPPED** deployment (no code changed), so trial-2's flags were
+inert for ~70h without the container knowing — its ledger is
+uninterpretable and was discarded (not this run's finding; already in
+DECISION_RULE.md as of 07-29 22:19 BST).
+
+**Trial 3** (`FUTURES_WILDCARD_SL_ATR_MULT` 1.5→3.0) deployed 07-29 21:19
+UTC. Verified live in-container this run (`railway ssh printenv` shows
+`FUTURES_WILDCARD_SL_ATR_MULT=3.0`, `FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=1`,
+`USE_DRAWDOWN_KILL=1`/`DRAWDOWN_HALT_PCT=0.95`,
+`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=12` — all match the doc'd config) and a
+clean fresh boot (`cycle=1` at 21:20:43 UTC, no Traceback). **0/30 convex
+trades under Trial 3** — both NIL_USDT (open) and BEAT_USDT (closed) were
+opened *before* the redeploy, so nothing has traded under the new stop
+width yet.
+
+### 4. Learning loop
+
+**(a) Feature store:** 39 rows — did **not** grow despite a real close (see
+§1a). `learn_from_trades.py` over the 39 rows: OOS-consistent AVOID/FAVOR
+conditions unchanged from the established pattern —
+`hold>=120min` FAVOR (n=22/17, gap +$1.92), `regime_trimmed(mult<1)` /
+`chop_regime` AVOID (n=22/17, gap -$1.20, identical — same underlying flag),
+`regime_trimmed_hard(<0.5)` AVOID (n=13/26, gap -$0.35). No new signal this
+run; not proposing a change (these describe *which* trades the regime
+sizer already flags as risky, not an independent lever).
+
+**(b) Shadow ledger:** 22 rows (+5 since 07-29: SNXX/AKE/JIMOTHY/SOXS new,
+AAVE+AKE(20) resolved).
+- `veto:ref_not_listed` n=4, net **+8R** — unchanged, still below the n>=10
+  bar.
+- `slot_occupied` n=**13** resolved (+2), net **-1R** (flipped negative
+  again — was +1R at n=11, -5R at n=5). Win rate 2/13 (15.4%). This signal
+  has now oscillated -5R → +1R → -1R as it crossed n>=10; reads as
+  **still protective, not a 2nd-slot case**, but the sign is unstable —
+  recommend continued tracking over a proposal either way.
+- `min_vol_skip` n=1 (-1R), `veto:move_not_corroborated` n=1 (+5R) —
+  unchanged, single samples.
+- 3 unresolved rows (SNXX, JIMOTHY, SOXS).
+
+**(c) Scan telemetry** (squeeze slot free ~13h, 34 cycles/900 scanned):
+dominant reject `no_active_coil` (735, 82%), `coil_too_short` (93, 10%),
+`no_range_break` (61, 7%), `low_volume_z` (10), `fee_doomed_thin_stop` (1).
+**0 signals fired** — correct dormancy (no qualifying coils), not
+execution-blocked. Wildcard scanner structurally idle (slot occupied by
+NIL_USDT, `movers=0 scanned=0` every cycle). No `SIZE_TRIM` lines sampled
+(no new entries in the window).
+
+**(d) Decision rule:** Trial 3 at 0/30 (see §3, too new to have entries).
+Equity $134.25 vs the 07-21 post-deposit mark $137.83: -2.6%, well inside
+bounds. `USE_DRAWDOWN_KILL=1`/`DRAWDOWN_HALT_PCT=0.95` confirmed live —
+nominally on, practically inert at that threshold (standing note, not
+re-flagged as new).
+
+### 5. Wildcard/squeeze diagnose
+
+Squeeze: correct dormancy, no loosening proposed (see §4c). Wildcard:
+structurally idle (single slot occupied by NIL_USDT for 63h). No execution
+failures (5003/2015) found in the sampled windows.
+
+### 6. Diagnose — lever for next 24h
+
+**No strategy parameter change proposed.** The one substantive finding is
+the reconcile-drop bug (§1a) — a bookkeeping/logging fix, proposed but not
+applied (open position live; low urgency, rare race). Trial 3 needs live
+entries before it produces anything to judge.
+
+### 7. Validate
+
+No code change applied this run — `pytest` not re-run. Confirmed the
+reconcile-drop path already has test coverage
+(`test_reconcile_clears_stale_live_position_with_missing_history`,
+`test_reconcile_drops_stale_local_live_position_without_exchange_id`) for
+the *intended* case; the proposed fix would need a new test for the
+retry/grace-window behavior before it could go through the normal deploy
+gate.
+
+### 8. Deploy
+
+**None.**
+
+### 9. Summary
+
+- Equity: $134.25 (-2.6% vs the 07-21 post-deposit mark, flat/healthy)
+- Trades: 1 real close since last audit (BEAT_USDT, -$0.77, R≈-1
+  estimated) — **missed by the feature store due to a reconcile-drop race
+  bug**, proposed fix not applied
+- Open: NIL_USDT SHORT x5, held 63.0h, +2.62R (peak +2.76R, giveback
+  -0.14R), TP 9.9%/SL 15.4% away
+- Trial 3 (wildcard stop 1.5x→3.0x) verified live since 07-29 21:19 UTC,
+  0/30 entries so far — both tracked positions predate it
+- Slot cost: -1R over 13 resolved rows (protective, sign still unstable)
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy, cycling normally, 0 Tracebacks/order-rejects in sampled
+  windows outside the reconcile-drop finding
 
 ---
 
