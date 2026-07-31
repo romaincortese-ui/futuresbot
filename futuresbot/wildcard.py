@@ -43,10 +43,17 @@ def wildcard_enabled() -> bool:
 
 
 def wildcard_max_positions() -> int:
+    """Wildcard slot cap. Default 2 since 2026-07-31 (trial 4): the panel's
+    pre-registered trigger was met — shadow-ledger slot_occupied n=15, netR
+    +3.00 — and slot occupancy was the dominant cause of missed 7d movers
+    (ON +198%, COTI +161%, MMT +113%, CAP +104%, all detected, all blocked).
+    The default carries the config because env-only changes produce SKIPPED
+    Railway deploys that never restart the container. Squeeze stays at 1
+    (see squeeze_max_positions) — it has no such evidence."""
     try:
-        return max(1, int(_f("FUTURES_WILDCARD_MAX_POSITIONS", 1)))
+        return max(1, int(_f("FUTURES_WILDCARD_MAX_POSITIONS", 2)))
     except ValueError:
-        return 1
+        return 2
 
 
 def wildcard_scan_interval_seconds() -> int:

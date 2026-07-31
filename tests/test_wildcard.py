@@ -60,8 +60,9 @@ def test_rejects_no_pullback():
 
 
 def test_max_positions_default(monkeypatch):
+    # Default is 2 since trial 4 (shadow-ledger slot evidence, n=15 netR +3.00).
     monkeypatch.delenv("FUTURES_WILDCARD_MAX_POSITIONS", raising=False)
-    assert wildcard_max_positions() == 1
+    assert wildcard_max_positions() == 2
 
 
 def test_available_slots_excludes_wildcard():
