@@ -1,3 +1,133 @@
+# Daily Audit — 2026-07-31
+
+---
+
+## Automated Assessment (UTC ~16:20)
+
+### 1. Trades (last 24h, since 07-30 16:50 UTC)
+
+**1 closed trade** (feature store 40 rows, confirmed by `futures_runtime_status.json`'s
+own "Last:" line — no reconcile-drop suspected this window):
+
+1. **NIL_USDT SHORT WILDCARD x5** — the position open in yesterday's report.
+   Closed **07-31 11:07 UTC** via `EXCHANGE_CLOSE` at the **+5R TP** (deep
+   pullback entry, `entry_lateness=1.0`; held 82h/3.4d). **+$9.83
+   (+95.94% of margin), R +5.06.** `regime_size_mult=0.658` (undersized as
+   designed, matches yesterday's "intended vs actual margin" note). This is
+   the sleeve design working exactly as intended — a slow multi-day runner
+   to full TP, no bank/lock/trail applied at any point.
+
+### 1-OPEN. Open positions
+
+**None.** `get_open_positions` / `futures_runtime_status.json` both confirm
+0 open (PMT 0/2, WC 0/1, SQ 0/1). Equity **$139.03**, available $139.03.
+
+### 2. Champion vs Shadow
+
+Champion: cycling normally on the ~70min log window available via `railway
+logs` (CLI does not expose a full 24h range) — 0 Tracebacks, 0 order-reject
+codes (5003/2015), no `[SIZE_TRIM]` lines (no entries attempted in the
+sampled window). **Shadow: stale, comparison suppressed pending resync**
+(standing 07-23 action item).
+
+### 3. Trial 3 status (see docs/DECISION_RULE.md)
+
+`FUTURES_WILDCARD_SL_ATR_MULT=3.0` remains live. **1/30 convex trades under
+Trial 3** (NIL_USDT above — opened 07-28, before the 07-29 21:19 UTC
+redeploy, but closed after; counting by open time per prior convention this
+predates Trial 3, so **effectively still 0/30 genuinely-Trial-3 trades**;
+flagging the ambiguity rather than picking a side).
+
+Since PMT decommission (2026-07-13), the full convex ledger (feature store,
+n=21 closes): **netR -0.76, ex-best netR -5.85** (driven by the single
++5.09R ESPORTS trade), max drawdown on the cumulative-R curve **11.98R**,
+win rate 28.6%. This is progress reporting only (n=21 is below the 30-trade
+/ 90-day evaluation point) — not a pass/fail verdict per
+`docs/DECISION_RULE.md`.
+
+### 4. Learning loop
+
+**(a) Feature store:** 40 rows (was 39 on 07-30 pre-bug-report; +1 matches
+today's single close — no evidence of a repeat drop this window).
+`learn_from_trades.py` over all 40 rows — same OOS-consistent pattern as
+prior runs, no new signal: `hold>=120min` FAVOR (n=23/17, gap +$2.31),
+`regime_trimmed(mult<1)`/`chop_regime` AVOID (n=23/17, gap -$0.75, same
+underlying flag), `regime_trimmed_hard(<0.5)` AVOID (n=13/27, gap -$0.71).
+These describe which trades the regime sizer already flags as risky, not an
+independent lever — not proposing a change.
+One note: `leverage>=7` (flagged AVOID in a prior session's memory) now
+reads **"weak"/not OOS-confirmed** (n=16/24, gap -$0.41) — the earlier
+finding has not held up as the sample grew; not restating it as settled.
+
+**(b) Shadow ledger:** 22 rows (16 `slot_occupied`, 4 `veto:ref_not_listed`,
+1 `min_vol_skip`, 1 `veto:move_not_corroborated`).
+- `slot_occupied`: **14 resolved** (+1 vs 07-30's 13), net **+4.0R** — sign
+  flipped positive again (**-5R → +1R → -1R → +4.0R** across the last 4
+  audits). Split by sleeve: **wildcard n=8, net +4.0R** (still under the
+  n>=10 bar); **squeeze n=6, net +0.0R**. Given the instability, still
+  reading this as **not yet a 2nd-slot case** — recommend continued
+  tracking, not a proposal, until wildcard-only clears n>=10 on a
+  consistent sign. 2 unresolved (JIMOTHY_USDT, SOXS_USDT).
+- `veto:ref_not_listed` n=4, net +8R — unchanged, below the n>=10 bar.
+- `min_vol_skip` n=1 (-1R), `veto:move_not_corroborated` n=1 (+5R) —
+  unchanged single samples.
+
+**(c) Scan telemetry** (sampled ~70min, all-clear window): wildcard
+dominant reject `roc_below_min` (movers found but most below the ROC
+floor); squeeze dominant reject `no_active_coil` (~90%). Consistent with a
+quiet/choppy regime (BTC 24h -3.14% per bot status) — correct dormancy, no
+loosening proposed. Full-24h scan histograms not available via `railway
+logs` CLI this run (only ~70min returned); noting the tooling gap rather
+than extrapolating from a partial window.
+
+**(d) Decision rule:** see §3. `USE_DRAWDOWN_KILL=1`/`DRAWDOWN_HALT_PCT=0.95`
+unchanged (standing operator override, not re-flagged as new).
+
+### 5. Wildcard/squeeze diagnose
+
+Both sleeves correctly idle in a quiet/choppy market — no candidates
+qualified, no execution failures (5003/2015) in the sampled window. Not
+proposing any gate loosening.
+
+### 6. Diagnose — lever for next 24h
+
+**No strategy parameter change proposed.** The reconcile-drop bug found
+07-30 (§1a of that entry) remains unresolved — proposed fix (2-pass grace
+window before finalizing a dropped position) still not applied; not
+re-elaborating here since it was logged in full yesterday and today's close
+reconciled cleanly (feature store 39→40, matches the 1 close). Otherwise:
+everything behaving to design, thin sample (n=1 close) — no lever tested.
+
+### 7. Validate
+
+No code change proposed — `pytest` not run this pass.
+
+### 8. Deploy
+
+**None.**
+
+### 9. Summary
+
+- Equity: $139.03 (+2.41% vs 07-30's $135.76 mark)
+- Trades: 1 close — NIL_USDT SHORT WILDCARD, +$9.83, +5.06R, hit +5R TP
+  (EXCHANGE_CLOSE), 82h hold
+- Open: none
+- Trial 3: 1/30 by close-time but the position predates the redeploy by
+  open-time — flagging as ambiguous, not counting as a clean Trial-3 data
+  point yet
+- Convex ledger since 07-13: n=21, netR -0.76, ex-best -5.85R, maxDD 11.98R
+  (progress only, not at the 30-trade gate)
+- Slot cost: 14 resolved, net +4.0R (wildcard n=8 +4.0R — still <10;
+  squeeze n=6 +0.0R) — sign unstable across recent audits, no proposal
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy, cycling normally, 0 Tracebacks/order-rejects in sampled
+  window
+- Outstanding: reconcile-drop 2-pass-grace fix still proposed, not applied
+  (operator-gated)
+
+---
+
 # Daily Audit — 2026-07-30
 
 ---
