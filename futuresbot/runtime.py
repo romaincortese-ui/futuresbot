@@ -102,7 +102,7 @@ from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
-from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled
+from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
     evaluate_sharp_opportunity_overlay,
@@ -1688,7 +1688,7 @@ class FuturesRuntime:
             # single cap rendered as "2/1 slot", which looked like a breach.
             *([(
                 f"🎲 WC: <b>{self._convex_open_count('WILDCARD')}</b>/{wildcard_max_positions()}"
-                + f" | 🌀 SQ: <b>{self._convex_open_count('SQUEEZE')}</b>/{wildcard_max_positions()}"
+                + f" | 🌀 SQ: <b>{self._convex_open_count('SQUEEZE')}</b>/{squeeze_max_positions()}"
                 + ("" if not self._wildcard_open_count() else " — " + ", ".join(
                     f"{html.escape(p.symbol)}{'(sq)' if (p.metadata or {}).get('squeeze') else '(wc)'}"
                     for p in self.open_positions.values() if self._is_wildcard_position(p)))
@@ -3543,8 +3543,7 @@ class FuturesRuntime:
                 if turn >= floor and chg >= min_move:
                     movers.append((chg, sym))
             movers.sort(reverse=True)
-            best = None
-            best_lateness: float | None = None
+            cands: list = []
             hist: dict[str, int] = {}
             scanned = 0
             scan_end = int(now_t)
@@ -3561,22 +3560,35 @@ class FuturesRuntime:
                     hist[r] = hist.get(r, 0) + 1
                 if sig is not None:
                     lat = self._entry_lateness(df, sig.side)
-                    key = self._wildcard_rank_key(sig, lat)
-                    if best is None or key > self._wildcard_rank_key(best, best_lateness):
-                        best = sig
-                        best_lateness = lat
-            log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d histogram=%s signal=%s",
-                     len(movers), scanned, hist or "{}", best.symbol if best else "none")
+                    cands.append((self._wildcard_rank_key(sig, lat), sig, lat))
+            cands.sort(key=lambda x: x[0], reverse=True)
+            best = cands[0][1] if cands else None
+            best_lateness = cands[0][2] if cands else None
+            log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d histogram=%s signal=%s",
+                     len(movers), scanned, len(cands), hist or "{}", best.symbol if best else "none")
             if best is None:
                 return
-            log.info("[WILDCARD_SCAN] candidate=%s side=%s roc=%.1f%% rsi=%.0f lev=x%d lateness=%s", best.symbol, best.side, best.roc_pct * 100, best.rsi, best.leverage, f"{best_lateness:.2f}" if best_lateness is not None else "n/a")
             if slot_blocked:
                 self._pending_entry_lateness = best_lateness
                 self._shadow_log_untaken(best, "WILDCARD", "slot_occupied")
                 log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied candidate=%s open=%d", best.symbol, self._convex_open_count("WILDCARD"))
                 return
-            self._pending_entry_lateness = best_lateness
-            self._open_wildcard_position(best, available)
+            # Rank-ordered fallthrough: a vetoed top candidate no longer wastes the
+            # whole scan — we log it (so the external gate finally gets measured on
+            # REAL alts, not just synthetics) and try the next-best candidate.
+            for _key, sig, lat in cands[: int(self._env_float("FUTURES_WILDCARD_MAX_CANDIDATES", 3))]:
+                self._pending_entry_lateness = lat
+                log.info("[WILDCARD_SCAN] candidate=%s side=%s roc=%.1f%% rsi=%.0f lev=x%d lateness=%s",
+                         sig.symbol, sig.side, sig.roc_pct * 100, sig.rsi, sig.leverage,
+                         f"{lat:.2f}" if lat is not None else "n/a")
+                if self._flag("FUTURES_EXTERNAL_GATE_ENABLED", default=False):
+                    allow, reason = self._external_entry_veto(sig, "WILDCARD")
+                    if not allow:
+                        log.info("[EXTERNAL_GATE] VETO WILDCARD %s %s — %s (trying next candidate)", sig.side, sig.symbol, reason)
+                        self._shadow_log_untaken(sig, "WILDCARD", f"veto:{reason}")
+                        continue
+                if self._open_wildcard_position(sig, available, veto_checked=True):
+                    return
         except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
             log.warning("[WILDCARD_SCAN] failed: %s", exc)
 
@@ -3595,7 +3607,7 @@ class FuturesRuntime:
         self._resolve_shadow_ledger()  # piggyback the 15m cadence; throttled internally
         # Scan even when the sleeve's slot is full, so the untaken candidate is
         # logged + resolved as a counterfactual (see _maybe_scan_wildcard).
-        slot_blocked = self._convex_open_count("SQUEEZE") >= wildcard_max_positions()
+        slot_blocked = self._convex_open_count("SQUEEZE") >= squeeze_max_positions()
         try:
             snapshot = self._account_snapshot(self._get_reference_price())
             available = float(snapshot.get("available_usdt", 0.0) or 0.0)
@@ -3820,7 +3832,7 @@ class FuturesRuntime:
             log.warning("[EXTERNAL_GATE] fail-open for %s: %s", getattr(sig, "symbol", "?"), exc)
             return (True, "failopen")
 
-    def _open_wildcard_position(self, sig: Any, available_balance: float, kind: str = "WILDCARD") -> bool:
+    def _open_wildcard_position(self, sig: Any, available_balance: float, kind: str = "WILDCARD", veto_checked: bool = False) -> bool:
         """Isolated wildcard entry — reuses the live order primitive + TPSL +
         position registration; never routes through the PMT _enter_trade path.
         Stamps pmt_stop_first + sl/tp margin so the existing bank/breakeven/lock
@@ -3828,7 +3840,7 @@ class FuturesRuntime:
         symbol = sig.symbol
         if symbol in self.open_positions:
             return False
-        if self._flag("FUTURES_EXTERNAL_GATE_ENABLED", default=False):
+        if not veto_checked and self._flag("FUTURES_EXTERNAL_GATE_ENABLED", default=False):
             allow, reason = self._external_entry_veto(sig, kind)
             if not allow:
                 log.info("[EXTERNAL_GATE] VETO %s %s %s — %s", kind, sig.side, symbol, reason)

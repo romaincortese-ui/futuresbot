@@ -211,3 +211,31 @@ def test_regime_trim_conditions_read_recorded_multiplier():
     assert conds["regime_trimmed_hard(<0.5)"]({"regime_size_mult": 0.75}) is False
     # missing column must not fabricate a trim
     assert conds["regime_trimmed(mult<1)"]({}) is False
+
+
+def test_per_sleeve_caps_are_independent(monkeypatch):
+    # Wildcard went to 2 slots on shadow evidence; squeeze stays at 1.
+    from futuresbot.wildcard import wildcard_max_positions
+    from futuresbot.squeeze import squeeze_max_positions
+    monkeypatch.setenv("FUTURES_WILDCARD_MAX_POSITIONS", "2")
+    monkeypatch.delenv("FUTURES_SQUEEZE_MAX_POSITIONS", raising=False)
+    assert wildcard_max_positions() == 2
+    assert squeeze_max_positions() == 1          # independent default
+    monkeypatch.setenv("FUTURES_SQUEEZE_MAX_POSITIONS", "3")
+    assert squeeze_max_positions() == 3
+
+
+def test_open_position_skips_veto_when_already_checked():
+    # The scan now runs the external gate itself (so it can fall through to the
+    # next candidate); the opener must not re-run it and double-charge the API.
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    calls = []
+    rt._flag = lambda k, default=False: k == "FUTURES_EXTERNAL_GATE_ENABLED"
+    rt._external_entry_veto = lambda sig, kind: (calls.append(kind), (False, "x"))[1]
+    rt.open_positions = {}
+    sig = SimpleNamespace(symbol="FOO_USDT", side="LONG")
+    # veto_checked=True -> gate must NOT run again (no calls recorded)
+    rt._open_wildcard_position(sig, 100.0, veto_checked=True)
+    assert calls == []

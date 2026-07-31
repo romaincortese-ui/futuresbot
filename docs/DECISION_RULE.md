@@ -1,61 +1,40 @@
-# Pre-registered decision rule — CONVEX TRIAL 3 (from 2026-07-29)
+# Pre-registered decision rule — CONVEX TRIAL 4 (from 2026-07-31)
 
-## Why trial 2 was voided (not extended)
-Trial 2 (2026-07-25 -> 07-29) is DISCARDED, not judged. Cause: `railway variables
---set` creates a deployment that Railway marks **SKIPPED** when no code changed,
-so the running container keeps its ORIGINAL environment. The flags armed during
-trial 2 (streak throttle, drawdown kill, 30d window) were therefore **inert for
-~70 hours** while `railway variables` reported them as set. Detected 07-29 only
-because the operator noticed no Telegram boot message. Trial 2 measured a bot
-that was not running its stated config, so its ledger is uninterpretable.
+Trial 3 (07-29 -> 07-31) archived. It produced one closed trade (NIL_USDT
++5.06R / +$9.83, full TP after 82h) — too few to judge, so trial 4 supersedes it
+rather than extending.
 
-VERIFICATION RULE (mandatory from now on): after any env change, run
-`railway up --service Futures-bot` and confirm BOTH a fresh `cycle=1` AND the
-value inside the container via `railway ssh -- printenv | grep <VAR>`. Never
-treat `railway variables` output as proof a flag is live.
+## Changes under test in trial 4
+1. **Second wildcard slot** — FUTURES_WILDCARD_MAX_POSITIONS=2 (squeeze stays 1
+   via the new independent FUTURES_SQUEEZE_MAX_POSITIONS). Evidence: the
+   pre-registered trigger set by the adversarial panel ("blocked candidates net
+   clearly positive over >=10 resolved rows") was met — shadow ledger
+   slot_occupied n=15, netR +3.00, meanR +0.20. This REVERSES the 07-22 reading
+   (n=5, -5.00R, "slot-lock is protective"), which was retracted on more data.
+   Slot occupancy was also the dominant cause of the 7d missed movers: ON +198%,
+   COTI +161%, MMT +113%, CAP +104%, 1000RATS +121% were all DETECTED and
+   blocked by the slot, not by any gate.
+   Honest caveat: +0.20R mean is thin (~3 wins at +5R vs 12 losses at -1R), and
+   shadow counterfactuals ignore fills/slippage/fees. Worst case 3 concurrent
+   convex positions (2 WC + 1 SQ) ~ 5-7% of equity at risk.
+2. **Rank-ordered candidate fallthrough** — a vetoed top candidate no longer
+   wastes the scan: the bot logs it and tries the next-best (up to
+   FUTURES_WILDCARD_MAX_CANDIDATES=3). Two effects: fewer wasted scans, and the
+   external gate finally gets MEASURED on real alts.
 
-## The change under test in trial 3
-`FUTURES_WILDCARD_SL_ATR_MULT=3.0` (was 1.5) — the wildcard price stop is now
-2.0x wider. Because the -20% margin cap re-derives leverage, DOLLAR risk per
-trade is unchanged; only the price distance and leverage move. Evidence: the
-stop-width grid is positive and monotone in BOTH 60d windows (in-sample +47.3R
-at 2.0x vs +25.3R at 1.0x; OOS +19.6R vs -0.7R), plus live corroboration that
-13 of 16 stopped trades returned to breakeven within 24h.
-Also live and verified in-container: streak throttle, drawdown kill (30d window),
-squeeze min-1R 12%, x5 leverage caps, external gate, band split, convex exits.
-
-REJECTED for trial 3 (tested, do not re-propose without new evidence):
-- Peak trails at ANY arm/giveback: paired test at stop 2.0x gives t=-2.01,
-  95% CI [-0.398,-0.009], P(trail better)=2%. A trail only ever modifies
-  WINNERS (18/125 fires, all already profitable) so it cannot reduce losses or
-  drawdown; it lowers median balance and RAISES P(end down) 9%->14%.
-- Lower TP (1R/2R/3R): only TP 5R is positive in both windows.
-- Time-stall / partial scale-out / breakeven ratchet: all convert losers but all
-  cost more than they save (best alternative +59.9R vs +78.3R no-trail).
-
-## OPEN ISSUE to watch in trial 3 — stop slippage
-Realized losses overshoot the intended -1R: BTW_USDT closed -29.27% margin
-against a 17.72% intended stop (r_multiple -1.65, a 65% overshoot); live losers
-average roughly -1.1R to -1.3R, not -1.0R. Backtests assume exactly -1R, so
-every measured edge is OPTIMISTIC on the loss side. Track mean loser R; if it
-stays worse than -1.15R, the wider stop's benefit must be re-scored against it.
-
-
-Trial 1 (2026-07-13 -> 07-25) was **terminated early at 11/30 trades — by design,
-not by drift**: it produced exactly the finding it existed to produce (see
-`DECISION_RULE_trial1_archived.md`). Thin-1R squeeze fires were identified as a
-structural, fee-driven loss source and filtered out; the ledger from before that
-change is no longer representative, so the counter resets.
-
-## The change under test (shipped at trial 2 start)
-`FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT=8` — squeeze setups whose 1R is below 8% of
-margin are SKIPPED (logged `fee_doomed_thin_stop` + shadow ledger), not widened.
-Evidence: 60d/316 fires — thin(<8%) netR **-104.5** (avgR -0.53, 15% win, fees
-**24.1% of 1R**) vs normal(>=8%) netR **+40.2** (avgR +0.34, fees 4.4%).
-Removing them takes the sleeve from -64R to +40R. Corroborated independently by
-19 live trades (thin: 16.3% fee drag, net -$0.22) and 9 shadow rows (thin
-candidates DOGE/PEPE resolved -1R). Widening was REJECTED: the floor sweep only
-moved -64R -> -56R because a wider stop drags the +5R TP proportionally further.
+## External gate: reviewed and DELIBERATELY NOT CHANGED
+The "+2.00R mean on vetoed candidates" signal does NOT survive inspection. All 4
+ref_not_listed vetoes are SYNTHETIC products (SKHYSTOCK, SPCXSTOCK, USOIL,
+SNDKSTOCK), all squeeze-sleeve, and ALL have 1R between 1.19% and 3.22% of
+margin — i.e. inside the fee-doomed bucket that FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT
+=12 now blocks independently. Relaxing the gate would not re-admit them; the fee
+filter catches them first. They were logged while that filter was set-but-inert
+(the SKIPPED-deploy bug, 07-26..07-29).
+Meanwhile the gate's cost on REAL alts is UNMEASURED: KOMA_USDT (+246% in 7d,
+$15.5M turnover) fires 4 wildcard signals with a healthy 16.40%-margin 1R and
+would be vetoed — but never appeared in the ledger because only the top-ranked
+candidate per scan was logged. Change #2 fixes exactly that blind spot.
+DECISION: instrument now, adjudicate at >=10 resolved REAL-ALT veto rows.
 
 ## Pass criteria (unchanged, evaluated at 30 convex trades or 90 days)
 1. **Net R > 0** after fees across the window (feature-store `r_multiple`).

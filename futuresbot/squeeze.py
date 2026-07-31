@@ -25,6 +25,16 @@ BB_PERIOD = 20
 KC_PERIOD = 20
 
 
+def squeeze_max_positions() -> int:
+    """Squeeze slot cap, independent of the wildcard's. The wildcard went to 2
+    slots on shadow-ledger evidence (blocked candidates net +3.00R over 15 rows);
+    the squeeze has no such evidence, so it stays at 1."""
+    try:
+        return max(1, int(_f("FUTURES_SQUEEZE_MAX_POSITIONS", 1)))
+    except ValueError:
+        return 1
+
+
 def squeeze_enabled() -> bool:
     raw = os.environ.get("FUTURES_SQUEEZE_ENABLED")
     return raw is not None and raw.strip().lower() in {"1", "true", "yes", "y", "on"}

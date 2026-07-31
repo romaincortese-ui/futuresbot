@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pandas as pd
@@ -2738,8 +2738,8 @@ def test_drawdown_halt_blocks_without_manual_pause(tmp_path, monkeypatch, caplog
     config = replace(_config(tmp_path), margin_budget_usdt=100.0)
     runtime = FuturesRuntime(config, StubClient())
     runtime.trade_history = [
-        {"pnl_usdt": 25.0, "closed_at": "2026-05-01T00:00:00+00:00"},
-        {"pnl_usdt": -45.0, "closed_at": "2026-05-02T00:00:00+00:00"},
+        {"pnl_usdt": 25.0, "closed_at": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()},
+        {"pnl_usdt": -45.0, "closed_at": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()},
     ]
 
     with caplog.at_level(logging.INFO, logger="futuresbot.runtime"):
@@ -2756,9 +2756,13 @@ def test_live_drawdown_halt_ignores_stale_override_without_confirmation(tmp_path
     monkeypatch.delenv("FUTURES_ALLOW_LIVE_HALT_OVERRIDE", raising=False)
     config = replace(_config(tmp_path), margin_budget_usdt=100.0, paper_trade=False)
     runtime = FuturesRuntime(config, StubClient())
+    # Relative dates: hardcoded ones silently fall outside the 90d drawdown
+    # window as the calendar advances (this test broke on 2026-07-31).
+    _t0 = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    _t1 = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
     runtime.trade_history = [
-        {"pnl_usdt": 100.0, "closed_at": "2026-05-01T00:00:00+00:00"},
-        {"pnl_usdt": -100.0, "closed_at": "2026-05-02T00:00:00+00:00"},
+        {"pnl_usdt": 100.0, "closed_at": _t0},
+        {"pnl_usdt": -100.0, "closed_at": _t1},
     ]
 
     with caplog.at_level(logging.WARNING, logger="futuresbot.runtime"):
@@ -2773,8 +2777,8 @@ def test_live_drawdown_uses_current_equity_after_deposit(tmp_path, monkeypatch, 
     config = replace(_config(tmp_path), margin_budget_usdt=75.0, paper_trade=False)
     runtime = FuturesRuntime(config, FundedStubClient())
     runtime.trade_history = [
-        {"pnl_usdt": 1.42, "closed_at": "2026-05-01T00:00:00+00:00"},
-        {"pnl_usdt": -13.3021, "closed_at": "2026-05-02T00:00:00+00:00"},
+        {"pnl_usdt": 1.42, "closed_at": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()},
+        {"pnl_usdt": -13.3021, "closed_at": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()},
     ]
 
     with caplog.at_level(logging.INFO, logger="futuresbot.runtime"):
