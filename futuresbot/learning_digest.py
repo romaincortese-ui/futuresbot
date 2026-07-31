@@ -51,6 +51,14 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
     else:
         lines.append(f"Trial: <b>0/{trial_target}</b> convex trades since the rule started")
 
+    # TP completion (trial 4): the 3.0xATR stop doubled the price move +5R needs
+    # (~75%). If completions collapse, the stop/TP pairing is too demanding and
+    # the fix is scaling TP down at wide stops — not reverting the stop.
+    kinds = [r.get("exit_kind") for r in trial if r.get("exit_kind")]
+    if kinds:
+        tp = kinds.count("TP"); stop = kinds.count("STOP"); other = kinds.count("OTHER")
+        lines.append(f"Exits: TP <b>{tp}</b> ({100 * tp / len(kinds):.0f}%) | stop {stop} | other {other}")
+
     ranked = rank_conditions(store_rows, default_conditions(), min_n=6) if store_rows else []
     actionable = [p for p in ranked if p["verdict"] in ("AVOID", "FAVOR")][:3]
     if actionable:

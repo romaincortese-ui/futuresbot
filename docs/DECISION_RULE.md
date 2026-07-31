@@ -22,6 +22,25 @@ rather than extending.
    FUTURES_WILDCARD_MAX_CANDIDATES=3). Two effects: fewer wasted scans, and the
    external gate finally gets MEASURED on real alts.
 
+## WATCH ITEM — TP completion rate (added 2026-07-31)
+Widening the stop to 3.0xATR doubled the price move that +5R requires: median 1R
+is now ~15.0% of price, so TP needs a ~75% move (it was ~37.6% at 1.5xATR).
+Only ~10% of rolling 7d windows in the band produce a 5R-sized move
+(unconditional; higher conditional on a signal firing). The grid still favoured
+TP5R at this stop width in BOTH windows (+35.8 in-sample, +18.7 OOS), so the
+pairing is tested — but the mechanism is stretched.
+
+TRACKING: every closed trade now records `exit_kind` (TP / STOP / OTHER),
+classified from realised R (TP >= 4.5R; STOP <= -0.85R; else OTHER) because
+exit_reason is usually EXCHANGE_CLOSE and cannot tell the two apart. The weekly
+digest reports "Exits: TP n (x%) | stop n | other n".
+
+TRIPWIRE: if TP completions are <10% of closes over >=15 trades AND OTHER
+(timeout/mid-flight) dominates, the 3.0xATR stop + 5R target is too demanding.
+The fix is then to scale TP DOWN at wide stops (TP3R scored +19.9 in-sample /
++10.9 OOS at 2.0x stop, second-best in both) — NOT to revert the stop, which is
+supported independently in both windows and by 13-of-16 live rebounds.
+
 ## External gate: reviewed and DELIBERATELY NOT CHANGED
 The "+2.00R mean on vetoed candidates" signal does NOT survive inspection. All 4
 ref_not_listed vetoes are SYNTHETIC products (SKHYSTOCK, SPCXSTOCK, USOIL,

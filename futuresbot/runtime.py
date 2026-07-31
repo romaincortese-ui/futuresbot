@@ -2942,6 +2942,19 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — feature store never breaks a close
             log.debug("feature store append failed: %s", exc)
 
+    @staticmethod
+    def _classify_exit_kind(r_multiple: float | None, tp_r: float = 5.0) -> str | None:
+        """TP / STOP / OTHER from the realised R. Tolerances absorb fees and the
+        stop overshoot we measured live (losers land -1.0 to -1.3R, e.g. BTW
+        -1.65R on a gap). OTHER = timeout, manual or exchange-side close."""
+        if r_multiple is None:
+            return None
+        if r_multiple >= tp_r * 0.9:
+            return "TP"
+        if r_multiple <= -0.85:
+            return "STOP"
+        return "OTHER"
+
     def _trade_attribution_tags(self, position: "FuturesPosition", trade: dict[str, Any]) -> dict[str, Any]:
         """Stage-1 post-trade tagger: deterministic conditional features written
         to every closed trade so the daily routine can run win/loss CONDITIONAL-
@@ -2975,6 +2988,12 @@ class FuturesRuntime:
                 "regime_size_mult": mf("regime_size_multiplier") or 1.0,
                 "fee_share_of_gross": round(abs(fees / gross), 3) if abs(gross) > 1e-9 else None,
                 "exit_reason": trade.get("exit_reason"),
+                # exit_reason is usually EXCHANGE_CLOSE (the server-side TPSL
+                # fires without telling us WHICH side), so classify by R instead.
+                # Trial 4 watches TP completion: widening the stop to 3.0xATR
+                # doubled the price move +5R requires (~75%), so if completions
+                # collapse the stop/TP pairing is too demanding.
+                "exit_kind": self._classify_exit_kind(pnl_pct / sl if sl and sl > 0 else None),
             }
         except Exception:  # pragma: no cover — tagging must never break a close
             return {}
