@@ -22,6 +22,29 @@ rather than extending.
    FUTURES_WILDCARD_MAX_CANDIDATES=3). Two effects: fewer wasted scans, and the
    external gate finally gets MEASURED on real alts.
 
+## WHEN DOES A CHANGE RESET THE TRIAL? (standard, set 2026-07-31)
+Test: does the change alter what the bot DOES, or only what it RECORDS?
+
+RESETS the trial (treatment change) — entry logic, exit logic, sizing/leverage,
+slot counts, gates/filters/thresholds, or anything that alters which trades are
+taken or how they are managed.
+
+DOES NOT reset (measurement change) — feature-store columns, tagger fields,
+telemetry, logging, Telegram/report wording, tests, docs, or tooling. These
+touch only post-close/observational code paths.
+
+Applied 2026-07-31: TP-completion tracking (exit_kind) and the sizing-telemetry
+fix (intended_margin_usdt, streak_multiplier, size_efficiency) landed AFTER
+trial 4 began. Both touch only _trade_attribution_tags (post-close),
+_classify_exit_kind (pure helper) and learning_digest (reporting). Trial 4
+therefore CONTINUES; its treatment (2 wildcard slots + candidate fallthrough)
+and pass criteria are unchanged.
+KNOWN LIMITATION: trades closed before those deploys lack the new columns, so
+trial 4's ledger has partial telemetry coverage on size_efficiency/exit_kind.
+This does not affect the R-based pass criteria.
+Note also: each deploy restarts the bot (open positions survive on server-side
+stops). Batch measurement changes where possible rather than deploying singly.
+
 ## WATCH ITEM — TP completion rate (added 2026-07-31)
 Widening the stop to 3.0xATR doubled the price move that +5R requires: median 1R
 is now ~15.0% of price, so TP needs a ~75% move (it was ~37.6% at 1.5xATR).
