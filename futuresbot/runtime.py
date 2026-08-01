@@ -2986,6 +2986,17 @@ class FuturesRuntime:
                 "is_wildcard": bool(md.get("wildcard")),
                 "entry_3h_roc_pct": round(abs(roc) * 100.0, 1) if roc is not None else None,
                 "regime_size_mult": mf("regime_size_multiplier") or 1.0,
+                # Sizing telemetry: these were written to position metadata but
+                # never copied here, so the undersizing question could not be
+                # measured (actual risk is ~0.4% of equity vs 1.8-2.4% intended).
+                "intended_margin_usdt": mf("intended_margin_usdt"),
+                "streak_multiplier": mf("streak_multiplier") or 1.0,
+                "loss_streak_at_entry": mf("loss_streak_at_entry") or 0.0,
+                # actual/intended margin: 1.0 = full size, 0.25 = quartered.
+                "size_efficiency": (
+                    round(float(trade.get("margin_usdt") or 0.0) / mf("intended_margin_usdt"), 3)
+                    if mf("intended_margin_usdt") else None
+                ),
                 "fee_share_of_gross": round(abs(fees / gross), 3) if abs(gross) > 1e-9 else None,
                 "exit_reason": trade.get("exit_reason"),
                 # exit_reason is usually EXCHANGE_CLOSE (the server-side TPSL

@@ -91,3 +91,36 @@ def test_streak_multiplier_halves_and_floors():
     assert _rt(losses[:3])._convex_streak_multiplier()[0] == 0.25
     assert _rt(losses[:6])._convex_streak_multiplier()[0] == 0.25   # floored
     assert _rt(losses[:6], flag=False)._convex_streak_multiplier()[0] == 1.0  # default off
+
+
+def test_tagger_surfaces_sizing_telemetry():
+    # intended_margin/streak/size_efficiency were written to position metadata
+    # but never copied into the feature-store row, making the undersizing
+    # question unmeasurable. They must now appear on every close.
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    pos = SimpleNamespace(metadata={
+        "wildcard": 1.0, "sl_margin_pct": 15.0,
+        "regime_size_multiplier": 0.25, "intended_margin_usdt": 16.0,
+        "streak_multiplier": 0.5, "loss_streak_at_entry": 2.0,
+    })
+    trade = {"pnl_usdt": -2.0, "fees_usdt": 0.05, "pnl_pct": -15.0, "margin_usdt": 4.0,
+             "entry_time": "2026-07-31T10:00:00+00:00", "exit_time": "2026-07-31T11:00:00+00:00",
+             "exit_reason": "EXCHANGE_CLOSE"}
+    t = rt._trade_attribution_tags(pos, trade)
+    assert t["intended_margin_usdt"] == 16.0
+    assert t["regime_size_mult"] == 0.25
+    assert t["streak_multiplier"] == 0.5
+    assert t["loss_streak_at_entry"] == 2.0
+    assert t["size_efficiency"] == 0.25       # 4.0 actual / 16.0 intended
+    assert t["exit_kind"] == "STOP"
+
+
+def test_size_efficiency_absent_without_intended():
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    t = rt._trade_attribution_tags(SimpleNamespace(metadata={"sl_margin_pct": 15.0}),
+                                   {"pnl_usdt": 1.0, "fees_usdt": 0.0, "pnl_pct": 15.0})
+    assert t["size_efficiency"] is None
