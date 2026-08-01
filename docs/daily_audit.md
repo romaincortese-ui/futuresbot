@@ -1,3 +1,126 @@
+# Daily Audit — 2026-08-01
+
+---
+
+## Automated Assessment (UTC ~16:20)
+
+### 1. Trades (last 24h, since 07-31 16:20 UTC)
+
+**1 closed trade** (feature store 40→41 rows, matches):
+
+1. **BANK_USDT LONG SQUEEZE x2** — opened 07-31 19:38 UTC, closed 07-31
+   21:45 UTC via `EXCHANGE_CLOSE` (exit_kind=STOP, r=-1.05). **-$0.46
+   (-14.96% of margin)**, held 126.6min. `regime_size_mult=0.25` (heavily
+   trimmed). On-model: hit the -1R stop exactly as designed, no bug.
+
+### 1-OPEN. Open positions
+
+**None.** MEXC API + `futures_runtime_status.json` agree: 0 open (PMT 0/2,
+WC 0/2, SQ 0/1). Equity **$138.59**, available $138.59.
+
+### 2. Champion vs Shadow
+
+Champion: widest log pull yet via `railway logs --since 24h -n 3000`
+(~2769 lines) — covers 08-01 10:07 UTC (container restart, cause not
+visible in logs, 0 Tracebacks/exceptions either side of it) through now.
+0 Tracebacks, 0 order-reject codes (5003/2015) in the covered window.
+**Shadow: stale, comparison suppressed pending resync** (standing 07-23
+action item, unchanged).
+
+### 3. Trial 4 status (see docs/DECISION_RULE.md)
+
+Trial 4 (2nd wildcard slot + candidate fallthrough, live since 07-31): **1
+genuine trial-4 trade** — BANK_USDT SQUEEZE above (opened/closed entirely
+after the 07-31 redeploy, unambiguous unlike the 07-31 NIL_USDT edge case).
+Too few to judge.
+
+Decision-rule ledger (all convex since PMT decommission 2026-07-13, n=22,
+feature store): **netR -1.81, ex-best netR -6.90** (still driven by the
+single +5.09R ESPORTS trade), **max drawdown 11.98R** (unchanged from
+07-31 — BANK_USDT's -1.05R didn't set a new cumulative-R trough), win rate
+27.3%. Progress reporting only (n=22 < 30-trade / 90-day gate).
+
+### 4. Learning loop
+
+**(a) Feature store:** 41 rows (was 40). `learn_from_trades.py` over all
+41 — same pattern as 07-31, no new signal: `hold>=120min` FAVOR (n=24/17,
+gap +$2.24), `regime_trimmed(mult<1)`/`chop_regime` AVOID (n=24/17, gap
+-$0.77), `regime_trimmed_hard(<0.5)` AVOID (n=14/27, gap -$0.73).
+`leverage>=7` still reads "weak"/not OOS-confirmed (n=16/25, gap -$0.38) —
+consistent with 07-31, not restating as settled.
+
+**(b) Shadow ledger:** 23 rows (+1). `slot_occupied`: **all 16 now
+resolved** (+2 vs 07-31's 14 — JIMOTHY_USDT -1.0R, SOXS_USDT -0.23R
+resolved this window). Net **+2.77R** (down from +4.0R on 07-31 as the 2
+new resolutions were both losers). Split by sleeve: **wildcard n=10,
+net +2.77R** — crosses the n>=10 bar for the first time, but **all 10 rows
+predate the 07-31 2nd-slot shipment** (07-23 to 07-30) — this is the same
+evidence window that already motivated shipping the 2nd slot, not fresh
+post-shipment data. No new wildcard `slot_occupied` rows have appeared
+since 07-31 (consistent with 2 slots reducing collisions). **Squeeze n=6,
+net +0.0R** — unchanged, still below the n>=10 bar, no action.
+`veto:ref_not_listed` n=5 (+1, KOMA_USDT unresolved), resolved n=4 net
++13.0R — unchanged reading (all 4 resolved are synthetics inside the
+fee-doomed bucket per DECISION_RULE.md, not proposing a change).
+`min_vol_skip` n=1, `veto:move_not_corroborated` n=1 — unchanged.
+
+**(c) Scan telemetry** (aggregated across the ~6h log window, 24
+scan cycles each sleeve — the widest sample yet): **wildcard** 190
+movers scanned, histogram `roc_below_min` 126 (66%), `no_pullback_resume`
+49, `low_volume_z` 10, `climax_wick` 3, `vertical_blowoff` 1. **squeeze**
+720 scanned (universe ~80-81), histogram `no_active_coil` 545 (76%),
+`no_range_break` 98, `coil_too_short` 72, `low_volume_z` 4,
+`fee_doomed_thin_stop` 1. Consistent with a quiet/choppy regime — correct
+dormancy, no gate loosening proposed.
+
+**(d) Decision rule:** see §3. `USE_DRAWDOWN_KILL=1`/`DRAWDOWN_HALT_PCT=0.95`
+unchanged.
+
+### 5. Wildcard/squeeze diagnose
+
+Both sleeves correctly idle in a quiet market; the 1 trade that did fire
+(squeeze BANK_USDT) resolved exactly on-model via its -1R stop. No
+execution failures (5003/2015) in the covered window. Not proposing any
+gate loosening.
+
+### 6. Diagnose — lever for next 24h
+
+**No strategy parameter change proposed.** Thin sample (n=1 close), no bug
+evidence, scans show correct dormancy. The 07-30 reconcile-drop bug fix
+(2-pass grace window) remains proposed-not-applied (operator-gated,
+unchanged from 07-31).
+
+### 7. Validate
+
+No code change proposed — `pytest` not run this pass.
+
+### 8. Deploy
+
+**None.**
+
+### 9. Summary
+
+- Equity: $138.59 (-0.32% vs 07-31's $139.03 mark; not a P&L statement)
+- Trades: 1 close — BANK_USDT LONG SQUEEZE, -$0.46, -1.05R, hit -1R stop
+  (EXCHANGE_CLOSE), 126.6min hold — clean on-model exit
+- Open: none
+- Trial 4: 1 genuine trade so far (BANK_USDT, too early to judge)
+- Convex ledger since 07-13: n=22, netR -1.81, ex-best -6.90R, maxDD
+  11.98R, win 27.3%
+- Slot cost: wildcard 10/10 resolved net +2.77R (pre-07-31 evidence,
+  already actioned via the shipped 2nd slot — not new); squeeze 6/6
+  resolved net +0.0R (<10, no action)
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy; one container restart 08-01 10:07 UTC, cause not visible
+  in available logs, resumed cleanly with no Tracebacks either side
+- Outstanding: reconcile-drop 2-pass-grace fix still proposed, not applied
+  (operator-gated); local working tree also has uncommitted, undeployed
+  WIP (key_health.py + marketdata.py/runtime.py) from a prior session —
+  noted for awareness, not evaluated this run
+
+---
+
 # Daily Audit — 2026-07-31
 
 ---
