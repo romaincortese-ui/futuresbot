@@ -88,6 +88,9 @@ from futuresbot.config import DEFAULT_FUTURES_SYMBOLS, FuturesConfig
 from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lock_tick, evaluate_no_progress_loss_exit, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
+from futuresbot.accounts import Account
+from futuresbot.events import Event, EventBus, EventKind, Severity, TelegramChannel
+from futuresbot.key_health import build_auth_failure_message, build_key_expiry_message, key_expiry_alert, parse_warn_days, redact, resolve_key_expiry
 from futuresbot.marketdata import MexcApiError, MexcFuturesClient
 from futuresbot.models import FuturesPosition
 from futuresbot.review import load_daily_review
@@ -101,6 +104,7 @@ from futuresbot.opportunity_score import opportunity_balance_fraction, opportuni
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
+from futuresbot.sniper import detect_sniper_signal, sniper_enabled, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, symbol_allowed
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
@@ -136,12 +140,25 @@ class FuturesRuntime:
         self.config = config
         self.client = client
         self.telegram = TelegramClient(config.telegram_token, config.telegram_chat_id)
+        # Phase 1/5 (docs/MULTI_ACCOUNT_DESIGN.md): the account this runtime
+        # serves, resolved from the same env the config came from. For the
+        # existing deployment this is `main` and nothing about it changes.
+        self.account = Account.from_env(config=config)
         self._state_path = Path(self.config.runtime_state_file)
         # Stage-2 feature store: one row per close, on the same persistent volume
         # as the state file (survives redeploys), for conditional-expectancy.
+        # Path now comes from the account so it is declared rather than derived.
         self._feature_store_path = Path(
-            os.environ.get("FUTURES_FEATURE_STORE_FILE") or (self._state_path.parent / "futures_feature_store.jsonl")
+            self.account.paths.feature_store_file if self.account.paths
+            else (os.environ.get("FUTURES_FEATURE_STORE_FILE") or (self._state_path.parent / "futures_feature_store.jsonl"))
         )
+        # Phase 3: typed events fan out to channels. Telegram is one channel, not
+        # the interface — a web channel subscribes here without touching strategy.
+        self.events = EventBus([TelegramChannel(
+            self.telegram,
+            mute=(self.account.channel("telegram").mute if self.account.channel("telegram") else frozenset()),
+            label="" if self.account.is_default else self.account.label,
+        )])
         # Multi-position state (keyed by symbol). Insertion order is preserved so
         # the "primary" position visible to legacy single-position display code is
         # deterministic (first opened or first loaded from state).
@@ -158,6 +175,14 @@ class FuturesRuntime:
         self._last_telegram_update = 0
         self._last_telegram_poll_log_ts = 0.0
         self._telegram_alert_timestamps: dict[str, float] = {}
+        # API-key health. The hook fires from inside the client the moment a
+        # private call is rejected for an auth reason, so a dead key alerts
+        # immediately instead of at the next heartbeat (up to 6h away).
+        self.client.auth_error_hook = self._on_auth_failure
+        self.client.auth_error_codes = tuple(
+            code.strip() for code in os.environ.get("MEXC_AUTH_ERROR_CODES", "").split(",") if code.strip()
+        )
+        self._last_key_expiry_check_at = 0.0
         self._btc_trend_cache: dict[str, float] = {"1h": 0.0, "24h": 0.0}
         self._paused = False
         self._recent_activity: deque[str] = deque(maxlen=RECENT_ACTIVITY_LIMIT)
@@ -195,6 +220,8 @@ class FuturesRuntime:
         self._last_prophet_archive_at = 0.0
         self._last_wildcard_scan_at = 0.0
         self._last_squeeze_scan_at = 0.0
+        self._last_sniper_scan_at = 0.0
+        self._sniper_last_signal_at: dict[tuple[str, str], float] = {}
         self._pending_entry_lateness: float | None = None
         self._last_shadow_resolve_at = 0.0
         self._last_prophet_archive_error_at = 0.0
@@ -764,8 +791,92 @@ class FuturesRuntime:
         self._telegram_alert_timestamps[key] = now_ts
         self._notify(message, parse_mode=parse_mode)
 
+    def _on_auth_failure(self, reason: str, path: str, detail: str, streak: int) -> None:
+        """Client hook: MEXC rejected our credentials.
+
+        The bot cannot open, manage, or close anything in this state, so this is
+        the loudest alert it emits. Keyed by reason (not by endpoint) so a
+        cascade across many endpoints still produces one message per window.
+        """
+
+        cooldown = int(self._env_float("FUTURES_AUTH_ALERT_COOLDOWN_SECONDS", 1800))
+        self._record_activity(f"AUTH FAILURE ({reason}) on {path}")
+        safe_detail = redact(detail, (self.config.api_key, self.config.api_secret))
+        self.emit(Event(
+            account_id=self.account.id,
+            kind=EventKind.AUTH_FAILURE,
+            severity=Severity.CRITICAL,
+            at=time.time(),
+            data={"reason": reason, "endpoint": path, "detail": safe_detail, "consecutive": streak},
+            text=build_auth_failure_message(reason, path=path, detail=safe_detail, consecutive=streak),
+            dedupe_key=f"auth_failure:{reason}",
+            cooldown_seconds=cooldown,
+        ))
+
+    def _key_expiry_timestamp(self) -> float | None:
+        return resolve_key_expiry(
+            expires_at=os.environ.get("MEXC_API_KEY_EXPIRES_AT"),
+            created_at=os.environ.get("MEXC_API_KEY_CREATED_AT"),
+            validity_days=int(self._env_float("MEXC_API_KEY_VALIDITY_DAYS", 90)),
+        )
+
+    def _maybe_warn_key_expiry(self) -> None:
+        """Count down to the 90-day MEXC key expiry. Silent unless configured.
+
+        No expiry date configured means no guess and no alert — a wrong date
+        would train the operator to ignore the one message that matters.
+        """
+
+        now_ts = time.time()
+        interval = max(60.0, self._env_float("FUTURES_KEY_EXPIRY_CHECK_SECONDS", 3600))
+        if now_ts - self._last_key_expiry_check_at < interval:
+            return
+        self._last_key_expiry_check_at = now_ts
+        expiry_ts = self._key_expiry_timestamp()
+        if expiry_ts is None:
+            return
+        alert = key_expiry_alert(
+            expiry_ts=expiry_ts,
+            now_ts=now_ts,
+            warn_days=parse_warn_days(os.environ.get("FUTURES_KEY_EXPIRY_WARN_DAYS")),
+        )
+        if alert is None:
+            return
+        self.emit(Event(
+            account_id=self.account.id,
+            kind=EventKind.KEY_EXPIRY,
+            severity=Severity.CRITICAL if alert["expired"] else Severity.WARN,
+            at=now_ts,
+            data={"days_left": round(float(alert["days_left"]), 2),
+                  "expired": alert["expired"], "renewable": alert["renewable"],
+                  "expires_at": expiry_ts},
+            text=build_key_expiry_message(alert, expiry_ts),
+            dedupe_key=str(alert["key"]),
+            cooldown_seconds=int(self._env_float("FUTURES_KEY_EXPIRY_ALERT_COOLDOWN_SECONDS", 72000)),
+        ))
+
+    def emit(self, event: Event) -> int:
+        """Publish a typed event to every channel.
+
+        Honours the same dedupe/cooldown bookkeeping ``_notify_once`` uses, so a
+        migrated call site behaves identically to the one it replaced.
+        """
+
+        if event.dedupe_key:
+            now_ts = time.time()
+            cooldown = event.cooldown_seconds
+            if cooldown is None:
+                cooldown = TELEGRAM_ALERT_COOLDOWN_SECONDS
+            if now_ts - self._telegram_alert_timestamps.get(event.dedupe_key, 0.0) < cooldown:
+                return 0
+            self._telegram_alert_timestamps[event.dedupe_key] = now_ts
+        return self.events.emit(event)
+
     def _mode_label(self) -> str:
-        return "📝 PAPER" if self.config.paper_trade else "💰 LIVE"
+        base = "📝 PAPER" if self.config.paper_trade else "💰 LIVE"
+        # Identity is invisible today: two accounts' chats would be
+        # indistinguishable. No-op for the pre-existing single-account setup.
+        return base if self.account.is_default else f"{base} · {self.account.label}"
 
     def _universe_label(self, symbols: list[str] | tuple[str, ...] | None = None) -> str:
         active = tuple(str(sym).upper() for sym in (symbols or self._active_symbols or self.config.symbols))
@@ -2930,6 +3041,9 @@ class FuturesRuntime:
                 ts = time.time()
             md = position.metadata or {}
             row = {
+                # Attribution must exist BEFORE a second account does: commingled
+                # rows cannot be separated retroactively.
+                "account": self.account.id,
                 "ts": round(ts), "symbol": trade.get("symbol"), "side": trade.get("side"), "kind": kind,
                 "leverage": trade.get("leverage"), "pnl_usdt": trade.get("pnl_usdt"), "pnl_pct": trade.get("pnl_pct"),
                 "sl_margin_pct": md.get("sl_margin_pct"), "setup_regime": trade.get("setup_regime"),
@@ -3634,7 +3748,8 @@ class FuturesRuntime:
         if now_t - self._last_squeeze_scan_at < interval:
             return
         self._last_squeeze_scan_at = now_t
-        self._resolve_shadow_ledger()  # piggyback the 15m cadence; throttled internally
+        # (shadow-ledger resolution is hoisted into the main cycle — it must not
+        # depend on any one sleeve being enabled)
         # Scan even when the sleeve's slot is full, so the untaken candidate is
         # logged + resolved as a counterfactual (see _maybe_scan_wildcard).
         slot_blocked = self._convex_open_count("SQUEEZE") >= squeeze_max_positions()
@@ -3780,7 +3895,7 @@ class FuturesRuntime:
             from futuresbot import shadow_ledger as shadow
             from futuresbot.learning_digest import build_learning_digest, load_jsonl
             store_rows = load_jsonl(self._feature_store_path)
-            shadow_rows = load_jsonl(shadow.ledger_path(str(self._feature_store_path.parent)))
+            shadow_rows = load_jsonl(self._shadow_ledger_path())
             self._notify(build_learning_digest(store_rows, shadow_rows))
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(str(now_t), encoding="utf-8")
@@ -3796,7 +3911,7 @@ class FuturesRuntime:
         self._last_shadow_resolve_at = time.time()
         try:
             from futuresbot import shadow_ledger as shadow
-            path = shadow.ledger_path(str(self._feature_store_path.parent))
+            path = self._shadow_ledger_path()
             rows = shadow.load_rows(path)
             pending = [r for r in rows if r.get("outcome") is None]
             if not pending:
@@ -3824,12 +3939,95 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — never disturbs trading
             log.debug("shadow ledger resolve failed: %s", exc)
 
+    def _maybe_scan_sniper(self) -> None:
+        """Sniper sleeve — short-horizon continuation on LIQUID pairs.
+
+        SHADOW-ONLY by default: every signal is logged to the shadow ledger and
+        resolved counterfactually at its own +R target, and nothing is ever
+        opened. It has to earn live capital with its own record — PMT's majors
+        history is confounded by exit machinery, not a clean refutation.
+
+        Deliberately does NOT prune the universe by ``sym in self.open_positions``
+        (the bug in the other two scans, where one sleeve's holdings delete
+        symbols from another's view) and does not abort on zero balance, since a
+        shadow scan needs no balance at all.
+        """
+
+        if not sniper_enabled() or self._paused:
+            return
+        now_t = time.time()
+        if now_t - self._last_sniper_scan_at < sniper_scan_interval_seconds():
+            return
+        self._last_sniper_scan_at = now_t
+        try:
+            tickers = self.client.get_all_tickers() or []
+            floor = sniper_min_turnover_usdt()
+            liquid = []
+            for t in tickers:
+                sym = str(t.get("symbol") or "")
+                if not sym.endswith("_USDT") or not symbol_allowed(sym):
+                    continue
+                turn = float(t.get("amount24") or 0.0)
+                if turn >= floor:
+                    liquid.append((turn, sym))
+            liquid.sort(reverse=True)
+            hist: dict[str, int] = {}
+            scanned = 0
+            found: list[Any] = []
+            scan_end = int(now_t)
+            max_scan = int(self._env_float("FUTURES_SNIPER_MAX_SCAN", 25))
+            for _turn, sym in liquid[:max_scan]:
+                try:
+                    df = self.client.get_klines(sym, interval="Min15",
+                                                start=scan_end - 110 * 900, end=scan_end)
+                except Exception:
+                    hist["kline_error"] = hist.get("kline_error", 0) + 1
+                    continue
+                scanned += 1
+                reasons: list[str] = []
+                sig = detect_sniper_signal(df, sym, reasons)
+                for r in reasons:
+                    hist[r] = hist.get(r, 0) + 1
+                if sig is not None:
+                    found.append(sig)
+            log.info("[SNIPER_SCAN_SUMMARY] universe=%d scanned=%d histogram=%s signals=%s mode=%s",
+                     len(liquid), scanned, hist or "{}",
+                     ",".join(s.symbol for s in found) or "none",
+                     "shadow" if sniper_shadow_only() else "live")
+            if not found:
+                return
+            self._pending_entry_lateness = None  # not meaningful for this sleeve
+            rearm = sniper_rearm_seconds()
+            for sig in found:
+                key = (sig.symbol, sig.side)
+                if now_t - self._sniper_last_signal_at.get(key, 0.0) < rearm:
+                    continue  # same setup re-qualifying bar after bar
+                self._sniper_last_signal_at[key] = now_t
+                self._shadow_log_untaken(sig, "SNIPER", "shadow_only")
+                log.info("[SNIPER_SIGNAL] %s %s entry=%s sl=%s tp=%s lev=%sx "
+                         "move=%.2f%% 4h_range=%.2f%% sl_margin=%.1f%% rsi=%.0f",
+                         sig.symbol, sig.side, self._format_price(sig.entry_price),
+                         self._format_price(sig.sl_price), self._format_price(sig.tp_price),
+                         sig.leverage, 100 * sig.roc_pct, 100 * sig.atr_pct,
+                         sig.sl_margin_pct, sig.rsi)
+        except Exception as exc:  # pragma: no cover — a shadow sleeve never breaks the cycle
+            log.warning("[SNIPER] scan failed: %s", exc)
+
+    def _shadow_ledger_path(self) -> str:
+        """Declared per account (phase 5), with the old derivation as fallback."""
+
+        if self.account.paths is not None:
+            return self.account.paths.shadow_ledger_file
+        from futuresbot import shadow_ledger as shadow
+
+        return shadow.ledger_path(str(self._feature_store_path.parent))
+
     def _shadow_log_untaken(self, sig: Any, kind: str, reject_reason: str) -> None:
         """Record a signal that was produced but NOT taken (veto/sizing/slot) so
         the conditional-expectancy engine can evaluate entry gates counterfactually."""
         try:
             from futuresbot import shadow_ledger as shadow
-            path = shadow.ledger_path(str(self._feature_store_path.parent))
+            path = self._shadow_ledger_path()
             shadow.append_row(path, shadow.candidate_row(
                 sig, sleeve=kind, reject_reason=reject_reason, lateness=self._pending_entry_lateness,
             ))
@@ -7777,6 +7975,9 @@ class FuturesRuntime:
             try:
                 log.info("Beginning futures cycle")
                 self._handle_telegram_commands()
+                # Early in the cycle, before any MEXC private call: an already
+                # expired key would raise below and this warning would never run.
+                self._maybe_warn_key_expiry()
                 self._archive_prophet_prediction_odds()
                 self._validate_symbols()
                 self.refresh_calibration()
@@ -7812,6 +8013,11 @@ class FuturesRuntime:
                 # Best-effort; never affects the PMT path. Off unless enabled.
                 self._maybe_scan_wildcard()
                 self._maybe_scan_squeeze()  # Coiled-Spring (off unless FUTURES_SQUEEZE_ENABLED=1)
+                self._maybe_scan_sniper()   # liquid-pair continuation, SHADOW-only by default
+                # Counterfactual resolution belongs to the CYCLE, not to a sleeve:
+                # it lived inside the squeeze scan, so disabling that sleeve
+                # silently froze every pending row at outcome=None.
+                self._resolve_shadow_ledger()  # throttled internally (hourly)
                 self._maybe_send_learning_digest()  # weekly propose-only self-report
                 self._write_status(signal=signal, price=current_price)
                 self._publish_runtime_status(signal=signal, price=current_price)
