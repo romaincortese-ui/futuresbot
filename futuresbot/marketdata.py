@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 
 from futuresbot.config import FuturesConfig
+from futuresbot.key_health import classify_auth_failure
 
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,12 @@ def build_contract_frame(payload: dict[str, Any]) -> pd.DataFrame:
 class MexcFuturesClient:
     def __init__(self, config: FuturesConfig):
         self.config = config
+        # Auth-failure alerting. An expired/IP-blocked key otherwise raises deep
+        # inside the cycle loop and the bot goes dark with no Telegram message.
+        # The runtime installs the hook; the client stays usable without one.
+        self.auth_error_hook: Any = None
+        self.auth_error_codes: tuple[str, ...] = ()
+        self.auth_error_streak = 0
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -102,6 +109,23 @@ class MexcFuturesClient:
             "Content-Type": "application/json",
         }
 
+    def _note_private_failure(self, path: str, error: Exception) -> None:
+        """Escalate an auth-class private-call failure; ignore ordinary errors."""
+
+        reason = classify_auth_failure(error, extra_codes=self.auth_error_codes)
+        if reason is None:
+            return
+        self.auth_error_streak += 1
+        log.error("[AUTH_FAILURE] reason=%s path=%s streak=%s err=%s",
+                  reason, path, self.auth_error_streak, str(error)[:200])
+        hook = self.auth_error_hook
+        if hook is None:
+            return
+        try:
+            hook(reason, path, str(error), self.auth_error_streak)
+        except Exception:  # pragma: no cover - alerting must never break trading
+            log.exception("auth-failure hook raised")
+
     def private_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         last_error: Exception | None = None
         filtered_params = {key: value for key, value in (params or {}).items() if value is not None}
@@ -117,6 +141,7 @@ class MexcFuturesClient:
                 payload = response.json()
                 if isinstance(payload, dict) and payload.get("success") is False:
                     raise MexcApiError(f"MEXC futures private GET failed for {path}: {payload}", path=path, payload=payload)
+                self.auth_error_streak = 0
                 return payload
             except (requests.RequestException, ValueError, RuntimeError) as exc:
                 last_error = exc
@@ -124,6 +149,7 @@ class MexcFuturesClient:
                     break
                 time.sleep(_HTTP_RETRY_SLEEP_SECONDS * (attempt + 1))
         assert last_error is not None
+        self._note_private_failure(path, last_error)
         raise last_error
 
     def private_post(self, path: str, body: dict[str, Any] | list[Any] | None = None) -> Any:
@@ -147,6 +173,7 @@ class MexcFuturesClient:
                 payload = response.json()
                 if isinstance(payload, dict) and payload.get("success") is False:
                     raise MexcApiError(f"MEXC futures private POST failed for {path}: {payload}", path=path, payload=payload)
+                self.auth_error_streak = 0
                 return payload
             except (requests.RequestException, ValueError, RuntimeError) as exc:
                 last_error = exc
@@ -154,6 +181,7 @@ class MexcFuturesClient:
                     break
                 time.sleep(_HTTP_RETRY_SLEEP_SECONDS * (attempt + 1))
         assert last_error is not None
+        self._note_private_failure(path, last_error)
         raise last_error
 
     def get_contract_detail(self, symbol: str) -> dict[str, Any]:
