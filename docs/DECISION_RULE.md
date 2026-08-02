@@ -99,10 +99,19 @@ window is recoverable rather than contaminated. Zero affected trades had
 occurred when the tag shipped — the entire trial-4 population to date predates
 the change.
 
-OPEN: revert to `REQUIRE_LISTED=1` (restores the pre-registered state, costs
-nothing since no affected trade exists yet) or keep it relaxed and score both
-ways at n=30. Recommendation: revert. A pre-registered rule that gets relaxed
-on re-presented evidence is not pre-registered.
+RESOLVED same day: **reverted to `REQUIRE_LISTED=1`** and verified inside the
+running container. Net effect on trial 4: **zero** — the relaxation was live for
+roughly 8 hours during a market drought in which no wildcard signal fired, so no
+trade was taken under the altered rules and the trial-4 population is entirely
+pre-change. The `ref_listed` tag stays: it is useful telemetry regardless, and it
+is what made the revert a free choice rather than a judgement call.
+
+Standing rule reaffirmed: a pre-registered threshold is not satisfied by
+recomputing evidence the same document already inspected and rejected. The
+adjudication bar for this gate remains **>=10 resolved REAL-ALT veto rows**
+(currently 1 logged — KOMA_USDT — 0 resolved). The instrumentation fix that
+logs every candidate rather than only the top-ranked one is working and will
+accumulate those rows on its own.
 
 ## Pass criteria (unchanged, evaluated at 30 convex trades or 90 days)
 1. **Net R > 0** after fees across the window (feature-store `r_multiple`).
