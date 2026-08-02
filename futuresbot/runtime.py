@@ -3990,10 +3990,15 @@ class FuturesRuntime:
                     hist[r] = hist.get(r, 0) + 1
                 if sig is not None:
                     found.append(sig)
-            log.info("[SNIPER_SCAN_SUMMARY] universe=%d scanned=%d histogram=%s signals=%s mode=%s",
+            # Mode is ALWAYS shadow in this build: the live entry path does not
+            # exist yet, so logging "live" off the flag would claim trading that
+            # is not happening (the inert-flag confusion, inverted).
+            if not sniper_shadow_only():
+                log.warning("[SNIPER] FUTURES_SNIPER_SHADOW_ONLY=0 set but live entries "
+                            "are not implemented in this build — still shadow-logging only")
+            log.info("[SNIPER_SCAN_SUMMARY] universe=%d scanned=%d histogram=%s signals=%s mode=shadow",
                      len(liquid), scanned, hist or "{}",
-                     ",".join(s.symbol for s in found) or "none",
-                     "shadow" if sniper_shadow_only() else "live")
+                     ",".join(s.symbol for s in found) or "none")
             if not found:
                 return
             self._pending_entry_lateness = None  # not meaningful for this sleeve
