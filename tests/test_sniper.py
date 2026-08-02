@@ -325,3 +325,83 @@ def test_stop_still_wins_ties_against_the_target():
     row = candidate_row(_Sig(), sleeve="SNIPER", reject_reason="shadow_only")
     out = resolve_outcome(row, [(row["ts"] + 900, 103.5, 98.5)], row["ts"] + 3600)
     assert out["outcome"] == -1.0
+
+
+# --------------------------------------------------------------------------
+# operator visibility: /status and the learning digest must show the study
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def runtime(tmp_path, monkeypatch):
+    import json
+    from dataclasses import replace
+    from unittest.mock import MagicMock
+
+    from futuresbot.config import FuturesConfig
+    from futuresbot.runtime import FuturesRuntime
+
+    monkeypatch.setenv("MEXC_API_KEY", "k")
+    monkeypatch.setenv("MEXC_API_SECRET", "s")
+    monkeypatch.setenv("FUTURES_SNIPER_ENABLED", "1")
+    monkeypatch.delenv("FUTURES_SHADOW_LEDGER_FILE", raising=False)
+    cfg = replace(
+        FuturesConfig.from_env(),
+        symbol="BTC_USDT", symbols=("BTC_USDT",),
+        runtime_state_file=str(tmp_path / "rt.json"),
+        status_file=str(tmp_path / "st.json"),
+        telegram_token="", telegram_chat_id="",
+    )
+    rt = FuturesRuntime(cfg, MagicMock())
+    rt._ledger_write = lambda rows: open(rt._shadow_ledger_path(), "w", encoding="utf-8").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+    return rt
+
+
+def _ledger_rows(ts=1_000_000):
+    return [
+        {"ts": ts, "symbol": "AVAX_USDT", "side": "LONG", "sleeve": "SNIPER",
+         "reject_reason": "shadow_only", "entry": 20.0, "sl": 19.7, "tp": 20.9,
+         "leverage": 7, "sl_margin_pct": 10.5, "roc_pct": 0.068, "rsi": 71.0,
+         "tp_r": 3.0, "outcome": 3.0, "outcome_kind": "tp"},
+        {"ts": ts + 1, "symbol": "SOL_USDT", "side": "SHORT", "sleeve": "SNIPER",
+         "reject_reason": "shadow_only", "entry": 73.0, "sl": 74.1, "tp": 69.7,
+         "leverage": 6, "sl_margin_pct": 9.0, "roc_pct": -0.031, "rsi": 30.0,
+         "tp_r": 3.0, "outcome": None},
+        {"ts": ts + 2, "symbol": "ON_USDT", "side": "LONG", "sleeve": "WILDCARD",
+         "reject_reason": "slot_occupied", "entry": 1.0, "sl": 0.9, "tp": 1.5,
+         "leverage": 5, "sl_margin_pct": 15.0, "roc_pct": 0.1, "rsi": 60.0,
+         "outcome": 5.0, "outcome_kind": "tp"},
+    ]
+
+
+def test_status_shows_the_would_be_entries(runtime):
+    runtime._ledger_write(_ledger_rows())
+    text = "\n".join(runtime._sniper_shadow_status_lines())
+    assert "SHADOW" in text and "never trades" in text
+    assert "2</b> entries" in text          # sniper rows only, wildcard excluded
+    assert "cfR <b>+3.0</b>" in text
+    assert "AVAX_USDT LONG" in text and "+3.0R (tp)" in text
+    assert "SOL_USDT SHORT" in text and "open" in text
+
+
+def test_status_line_present_but_quiet_before_any_signal(runtime):
+    lines = runtime._sniper_shadow_status_lines()
+    assert len(lines) == 1
+    assert "no signals yet" in lines[0]
+
+
+def test_status_says_nothing_when_sniper_is_disabled(runtime, monkeypatch):
+    monkeypatch.setenv("FUTURES_SNIPER_ENABLED", "0")
+    assert runtime._sniper_shadow_status_lines() == []
+
+
+def test_digest_gives_sniper_its_own_section():
+    from futuresbot.learning_digest import build_learning_digest
+
+    msg = build_learning_digest([], _ledger_rows())
+    assert "Sniper SHADOW (would-be trades): 2 logged, 1 resolved" in msg
+    assert "cfR <b>+3.0</b>" in msg
+    assert "tp 1 stop 0 timeout 0" in msg
+    # ...and the generic scorecard no longer swallows them as "shadow_only"
+    assert "shadow_only" not in msg
+    assert "slot_occupied: n=1 cfR +5.0" in msg

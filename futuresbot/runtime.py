@@ -104,7 +104,7 @@ from futuresbot.opportunity_score import opportunity_balance_fraction, opportuni
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
-from futuresbot.sniper import detect_sniper_signal, sniper_enabled, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, symbol_allowed
+from futuresbot.sniper import detect_sniper_signal, sniper_enabled, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
@@ -1764,6 +1764,52 @@ class FuturesRuntime:
                 lines.append(f"<b>{html.escape(sym)}</b>: diagnosis failed ({html.escape(str(exc)[:60])})")
         return "\n".join(lines)
 
+    def _sniper_shadow_status_lines(self) -> list[str]:
+        """The Sniper's would-be record, for /status.
+
+        The sleeve trades nothing, so without this the only trace of it is a
+        log line on Railway — invisible from Telegram. Shows what it WOULD have
+        entered and how each entry resolved counterfactually, clearly labelled
+        as shadow so nobody mistakes it for live exposure.
+        """
+
+        if not sniper_enabled():
+            return []
+        try:
+            from futuresbot import shadow_ledger as shadow
+
+            rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
+                    if str(r.get("sleeve")) == "SNIPER"]
+        except Exception:  # pragma: no cover — status must render regardless
+            return []
+        uni = len(sniper_universe())
+        head = f"🎯 Sniper <b>SHADOW</b> (logs would-be entries, never trades) | {uni or 'liquid'} pairs"
+        if not rows:
+            return [head + " | no signals yet"]
+        resolved = [r for r in rows if r.get("outcome") is not None]
+        net = sum(float(r.get("outcome") or 0.0) for r in resolved)
+        wins = sum(1 for r in resolved if float(r.get("outcome") or 0.0) > 0)
+        summary = f"  would-be: <b>{len(rows)}</b> entries | resolved {len(resolved)} | cfR <b>{net:+.1f}</b>"
+        if resolved:
+            summary += f" | win {100 * wins / len(resolved):.0f}%"
+        lines = [head, summary]
+        for r in rows[-3:]:  # newest are appended last
+            try:
+                if r.get("outcome") is None:
+                    age_h = max(0.0, (time.time() - float(r.get("ts") or 0.0)) / 3600.0)
+                    out = f"⏳ open {age_h:.0f}h"
+                else:
+                    kind = str(r.get("outcome_kind") or "")
+                    icon = "✅" if float(r["outcome"]) > 0 else "❌"
+                    out = f"{icon} {float(r['outcome']):+.1f}R ({kind})"
+                lines.append(
+                    f"  • {html.escape(str(r.get('symbol') or '?'))} {r.get('side')} "
+                    f"x{int(r.get('leverage') or 0)} @{self._format_price(float(r.get('entry') or 0.0))} → {out}"
+                )
+            except (TypeError, ValueError):
+                continue
+        return lines
+
     def _build_status_message(self, *, price: float | None = None, signal: dict[str, Any] | None = None, heartbeat: bool = False) -> str:
         title = "💓 <b>Heartbeat</b>" if heartbeat else "📋 <b>Status</b>"
         current_price = price if price and price > 0 else None
@@ -1789,6 +1835,7 @@ class FuturesRuntime:
                f"stop {self._env_float('FUTURES_WILDCARD_SL_ATR_MULT', 1.5):.1f}xATR"] if wildcard_enabled() else []),
             *([f"🌀 Squeeze hunts top-{int(self._env_float('FUTURES_SQUEEZE_MAX_SCAN', 30.0))} liquid | "
                f"min 1R {self._env_float('FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT', 0.0):.0f}% margin"] if squeeze_enabled() else []),
+            *self._sniper_shadow_status_lines(),
             self._btc_trend_line(),
             f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
             self._prediction_overlay_status_line(),

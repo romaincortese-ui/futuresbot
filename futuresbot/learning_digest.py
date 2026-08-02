@@ -69,8 +69,29 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
     else:
         lines.append("Engine: no OOS-consistent findings yet")
 
-    resolved = [r for r in shadow_rows if r.get("outcome") is not None]
-    if shadow_rows:
+    # The Sniper's rows are a deliberate shadow STUDY, not vetoed near-misses —
+    # folded into the generic scorecard they would render as a cryptic
+    # "shadow_only: n=8". Split them out and answer the actual question:
+    # what would this sleeve have done if it were live?
+    sniper = [r for r in shadow_rows if str(r.get("sleeve")) == "SNIPER"]
+    other = [r for r in shadow_rows if str(r.get("sleeve")) != "SNIPER"]
+    if sniper:
+        res = [r for r in sniper if r.get("outcome") is not None]
+        net = sum(float(r.get("outcome") or 0) for r in res)
+        wins = sum(1 for r in res if float(r.get("outcome") or 0) > 0)
+        kinds: dict[str, int] = {}
+        for r in res:
+            k = str(r.get("outcome_kind") or "?")
+            kinds[k] = kinds.get(k, 0) + 1
+        line = (f"🎯 Sniper SHADOW (would-be trades): {len(sniper)} logged, {len(res)} resolved "
+                f"| cfR <b>{net:+.1f}</b>")
+        if res:
+            line += (f" | win {100 * wins / len(res):.0f}% "
+                     f"| tp {kinds.get('tp', 0)} stop {kinds.get('stop', 0)} timeout {kinds.get('timeout', 0)}")
+        lines.append(line)
+
+    resolved = [r for r in other if r.get("outcome") is not None]
+    if other:
         by: dict[str, list[float]] = {}
         for r in resolved:
             key = str(r.get("reject_reason") or "?")
@@ -78,7 +99,7 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
             agg[0] += 1
             agg[1] += float(r.get("outcome") or 0)
         parts = " | ".join(f"{k}: n={int(n)} cfR {tot:+.1f}" for k, (n, tot) in sorted(by.items()))
-        lines.append(f"Shadow: {len(shadow_rows)} logged, {len(resolved)} resolved" + (f" — {parts}" if parts else ""))
+        lines.append(f"Shadow: {len(other)} logged, {len(resolved)} resolved" + (f" — {parts}" if parts else ""))
     else:
         lines.append("Shadow: no vetoed/near-miss signals logged yet")
     lines.append("<i>counterfactuals are directional-only; nothing here auto-applies</i>")
