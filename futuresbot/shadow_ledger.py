@@ -27,6 +27,23 @@ def ledger_path(state_dir: str) -> str:
     return os.environ.get("FUTURES_SHADOW_LEDGER_FILE") or os.path.join(state_dir, "futures_shadow_ledger.jsonl")
 
 
+def signal_tp_r(sig: Any) -> float:
+    """Target R implied by a signal's own geometry.
+
+    Not every sleeve targets +5R — the Sniper aims at +2R/+3R. Deriving it from
+    (tp - entry) / (entry - sl) means the ledger scores each sleeve at ITS OWN
+    target instead of crediting every TP hit as +5R, which would silently
+    inflate the counterfactual for any short-target sleeve.
+    """
+
+    try:
+        entry = float(sig.entry_price); sl = float(sig.sl_price); tp = float(sig.tp_price)
+        one_r = abs(entry - sl)
+        return round(abs(tp - entry) / one_r, 3) if one_r > 0 else TP_R
+    except (TypeError, ValueError, AttributeError):
+        return TP_R
+
+
 def candidate_row(sig: Any, *, sleeve: str, reject_reason: str, lateness: float | None = None) -> dict[str, Any]:
     return {
         "ts": round(time.time()),
@@ -35,8 +52,9 @@ def candidate_row(sig: Any, *, sleeve: str, reject_reason: str, lateness: float 
         "entry": float(sig.entry_price), "sl": float(sig.sl_price), "tp": float(sig.tp_price),
         "leverage": int(sig.leverage), "sl_margin_pct": float(sig.sl_margin_pct),
         "roc_pct": round(float(sig.roc_pct), 4), "rsi": float(sig.rsi),
+        "tp_r": signal_tp_r(sig),
         "entry_lateness": round(lateness, 3) if lateness is not None else None,
-        "outcome": None,  # resolved later: -1.0 stop / +5.0 tp / timeout mark
+        "outcome": None,  # resolved later: -1.0 stop / +tp_r tp / timeout mark
     }
 
 
@@ -82,7 +100,9 @@ def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], n
             return {**row, "outcome": -1.0, "outcome_kind": "stop", "resolved_ts": ts}
         tp_hit = (hi >= tp) if sgn > 0 else (lo <= tp)
         if tp_hit:
-            return {**row, "outcome": TP_R, "outcome_kind": "tp", "resolved_ts": ts}
+            # Credit the signal's OWN target, not a global +5R (rows written
+            # before tp_r existed fall back to it).
+            return {**row, "outcome": float(row.get("tp_r") or TP_R), "outcome_kind": "tp", "resolved_ts": ts}
         last_mid = (hi + lo) / 2.0
     if now_ts - float(row["ts"]) >= RESOLVE_HORIZON_S:
         mark_r = (last_mid - entry) * sgn / one_r if seen else 0.0
