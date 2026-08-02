@@ -395,6 +395,75 @@ def test_status_says_nothing_when_sniper_is_disabled(runtime, monkeypatch):
     assert runtime._sniper_shadow_status_lines() == []
 
 
+# --------------------------------------------------------------------------
+# trial-4 provenance: ref_listed tag (2026-08-02 gate relaxation)
+# --------------------------------------------------------------------------
+
+class _VetoSig:
+    symbol = "KOMA_USDT"; side = "LONG"; entry_price = 1.0
+    sl_price = 0.98; tp_price = 1.10; leverage = 5
+    sl_margin_pct = 10.0; roc_pct = 0.09; rsi = 65.0
+
+
+def _veto(runtime, monkeypatch, *, listed, require_listed="0"):
+    import futuresbot.external_gate as gate
+
+    monkeypatch.setenv("FUTURES_EXTERNAL_GATE_REQUIRE_LISTED", require_listed)
+    monkeypatch.setattr(gate, "fetch_reference",
+                        lambda sym, timeout=0.6: (listed, 0.05, 0.0001, 5_000_000.0))
+    return runtime._external_entry_veto(_VetoSig(), "WILDCARD")
+
+
+def test_veto_records_corroborated_listing(runtime, monkeypatch):
+    allow, _ = _veto(runtime, monkeypatch, listed=True)
+    assert allow is True
+    assert runtime._pending_ref_listed is True
+
+
+def test_relaxed_gate_admits_mexc_only_but_tags_it(runtime, monkeypatch):
+    # The 2026-08-02 relaxation: the trade is now allowed, but the provenance
+    # must survive so trial 4 can be scored with and without this population.
+    allow, _ = _veto(runtime, monkeypatch, listed=False, require_listed="0")
+    assert allow is True
+    assert runtime._pending_ref_listed is False
+
+
+def test_strict_gate_still_vetoes_mexc_only(runtime, monkeypatch):
+    allow, reason = _veto(runtime, monkeypatch, listed=False, require_listed="1")
+    assert allow is False
+    assert reason == "ref_not_listed"
+
+
+def test_failed_fetch_leaves_provenance_unknown(runtime, monkeypatch):
+    import futuresbot.external_gate as gate
+
+    runtime._pending_ref_listed = True  # stale value from a previous candidate
+    def boom(sym, timeout=0.6):
+        raise TimeoutError("venue down")
+    monkeypatch.setattr(gate, "fetch_reference", boom)
+    allow, reason = runtime._external_entry_veto(_VetoSig(), "WILDCARD")
+    assert allow is True and reason == "failopen"
+    assert runtime._pending_ref_listed is None  # unknown, not inherited
+
+
+def test_feature_store_row_carries_ref_listed(runtime, tmp_path):
+    import json
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    position = SimpleNamespace(
+        entry_signal="WILDCARD_LONG",
+        metadata={"sl_margin_pct": 12.0, "entry_lateness": 0.4, "ref_listed": 0.0},
+    )
+    trade = {"symbol": "KOMA_USDT", "side": "LONG", "leverage": 5,
+             "pnl_usdt": -1.0, "pnl_pct": -10.0, "setup_regime": "OTHER_LONG",
+             "exit_time": datetime.now(timezone.utc).isoformat()}
+    runtime._append_feature_store(trade, position)
+    row = json.loads(open(runtime._feature_store_path, encoding="utf-8").read().strip())
+    assert row["ref_listed"] == 0.0
+    assert row["kind"] == "WILDCARD"
+
+
 def test_digest_gives_sniper_its_own_section():
     from futuresbot.learning_digest import build_learning_digest
 

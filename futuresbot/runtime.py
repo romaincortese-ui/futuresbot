@@ -223,6 +223,7 @@ class FuturesRuntime:
         self._last_sniper_scan_at = 0.0
         self._sniper_last_signal_at: dict[tuple[str, str], float] = {}
         self._pending_entry_lateness: float | None = None
+        self._pending_ref_listed: bool | None = None
         self._last_shadow_resolve_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
@@ -3095,6 +3096,10 @@ class FuturesRuntime:
                 "leverage": trade.get("leverage"), "pnl_usdt": trade.get("pnl_usdt"), "pnl_pct": trade.get("pnl_pct"),
                 "sl_margin_pct": md.get("sl_margin_pct"), "setup_regime": trade.get("setup_regime"),
                 "entry_lateness": md.get("entry_lateness"),
+                # 1.0 corroborated cross-venue / 0.0 MEXC-only / None unknown —
+                # lets trial 4 be scored with and without the population the
+                # 2026-08-02 gate relaxation admitted.
+                "ref_listed": md.get("ref_listed"),
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4089,6 +4094,7 @@ class FuturesRuntime:
     def _external_entry_veto(self, sig: Any, kind: str) -> tuple[bool, str]:
         """Fail-OPEN reality check vs a second venue (Bybit/OKX): veto MEXC-only /
         uncorroborated pumps and entries into the crowded side. Any error -> allow."""
+        self._pending_ref_listed = None  # unknown until the fetch says otherwise
         try:
             from futuresbot.external_gate import decide_cross_exchange, decide_funding_crowding, fetch_reference
             timeout = self._env_float("FUTURES_EXTERNAL_GATE_TIMEOUT", 0.6)
@@ -4096,6 +4102,11 @@ class FuturesRuntime:
             min_turn = self._env_float("FUTURES_EXTERNAL_GATE_MIN_REF_TURNOVER", 500000.0)
             if listed and turn > 0 and turn < min_turn:
                 listed = False  # dead reference listing != real corroboration
+            # Trial-4 provenance: REQUIRE_LISTED was relaxed mid-trial (2026-08-02,
+            # at n=5 counterfactual evidence vs the pre-registered n=10), which
+            # admits MEXC-only listings the original rules vetoed. Tag every entry
+            # so the trial can be scored with and without that subpopulation.
+            self._pending_ref_listed = bool(listed)
             mexc_move = float(sig.roc_pct) if kind == "WILDCARD" else 0.0  # squeeze: existence-only
             allow_x, rx = decide_cross_exchange(
                 mexc_move, ref_roc, listed,
@@ -4182,6 +4193,11 @@ class FuturesRuntime:
             metadata["squeeze"] = 1.0
         if self._pending_entry_lateness is not None:
             metadata["entry_lateness"] = round(float(self._pending_entry_lateness), 3)
+        # 1.0 = corroborated on Bybit/OKX, 0.0 = MEXC-only (admitted only since the
+        # 2026-08-02 gate relaxation), absent = gate off or fetch failed (unknown).
+        if self._pending_ref_listed is not None:
+            metadata["ref_listed"] = 1.0 if self._pending_ref_listed else 0.0
+        self._pending_ref_listed = None  # consumed — never leak across candidates
         if self.config.paper_trade:
             position = FuturesPosition(
                 symbol=symbol, side=side_name, entry_price=sig.entry_price, contracts=contracts,

@@ -78,6 +78,32 @@ would be vetoed — but never appeared in the ledger because only the top-ranked
 candidate per scan was logged. Change #2 fixes exactly that blind spot.
 DECISION: instrument now, adjudicate at >=10 resolved REAL-ALT veto rows.
 
+### 2026-08-02 — the gate WAS relaxed, contradicting the decision above
+`FUTURES_EXTERNAL_GATE_REQUIRE_LISTED=0` was set on Railway and deployed. The
+justification given at the time was a shadow-ledger read-out showing
+`veto:ref_not_listed  resolved=4  cfR +8.00`.
+
+That is the SAME +2.00R-mean signal this section had already inspected and
+rejected, recomputed and re-presented as if new. The four rows are the synthetic
+products named above — the fee-doomed bucket the squeeze filter blocks
+independently. Adjudication threshold at the moment of the change: **>=10
+resolved real-alt rows required, 1 logged (KOMA_USDT, still unresolved), 0
+resolved.** The change was made at effectively zero of the evidence its own
+pre-registered rule demanded.
+
+Mitigation shipped the same day: every convex entry now carries a `ref_listed`
+tag (1.0 corroborated / 0.0 MEXC-only / absent = gate off or fetch failed),
+written to position metadata and to the feature-store row. Trial 4 can therefore
+be scored **with and without** the population the relaxation admits, so the
+window is recoverable rather than contaminated. Zero affected trades had
+occurred when the tag shipped — the entire trial-4 population to date predates
+the change.
+
+OPEN: revert to `REQUIRE_LISTED=1` (restores the pre-registered state, costs
+nothing since no affected trade exists yet) or keep it relaxed and score both
+ways at n=30. Recommendation: revert. A pre-registered rule that gets relaxed
+on re-presented evidence is not pre-registered.
+
 ## Pass criteria (unchanged, evaluated at 30 convex trades or 90 days)
 1. **Net R > 0** after fees across the window (feature-store `r_multiple`).
 2. **Outlier-robust:** net R still > 0 after dropping the single best trade.
