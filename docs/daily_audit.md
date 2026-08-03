@@ -1,3 +1,116 @@
+# Daily Audit — 2026-08-03
+
+---
+
+## Automated Assessment (UTC ~18:10)
+
+### 1. Trades (last 24h)
+
+**0 closed trades.** Verified via full-history MEXC pull (empty-symbol
+`get_historical_positions`, 297 rows). Max `updateTime` across all rows is
+still 2026-07-31T21:45:30Z (the BANK_USDT close) — unchanged for the 3rd
+consecutive audit. `get_open_positions()` confirms 0 open.
+
+### 1-OPEN. Open positions
+
+**None.** Live `[ACCOUNT]` log line agrees: equity **$138.59**, available
+$138.59, open_margin $0.00, positions=0 (flat vs 08-02, not a P&L statement).
+
+### 2. Champion vs Shadow
+
+**Shadow: stale, comparison suppressed pending resync** (standing 07-23
+action item, unchanged).
+
+### 3. Trial 4 / config status
+
+**External-gate item CLOSED.** `docs/DECISION_RULE.md` (edited 08-02) shows
+the 08-02 `FUTURES_EXTERNAL_GATE_REQUIRE_LISTED=0` relaxation was reverted to
+`1` the same day, live-confirmed just now (`railway variables`). Net effect
+on trial 4: zero (relaxation window had no wildcard signal). No longer an
+open item.
+
+**Still open, unchanged:** `FUTURES_SQUEEZE_ENABLED=0` — squeeze sleeve
+remains fully off at the config level; no new explanation found in commits
+or docs since 08-02. Confirmed again live. Operator confirm still needed:
+intentional or re-enable.
+
+**Noted, not new:** `USE_DRAWDOWN_KILL=1` / `DRAWDOWN_HALT_PCT=0.95` —
+this was already surfaced 07-26/07-27 as a live operator-side change from the
+documented `0` override; functionally inert at a 95% halt threshold either
+way. Unchanged since, no action.
+
+With 0 closed trades this window, all ledger/slot-cost/learning numbers are
+unchanged from 08-02: convex ledger n=22, netR -1.81, ex-best -6.90R, maxDD
+11.98R, win 27.3%; slot cost wildcard 10/10 resolved net +2.77R
+(pre-2nd-slot-shipment evidence, already actioned), squeeze 6/6 net +0.0R
+(<10, no action). Feature store 41 rows / shadow ledger 23 rows, both
+unchanged row-for-row (`railway ssh wc -l`).
+
+**Exits (feature store `exit_kind`):** TP 0 | stop 1 | other 0 (MISSING 40).
+40 of 41 rows predate the exit_kind column (added 07-31/08-01) — only 1 row
+has coverage. Too little data for the TP<10%-at-n>=15 watch item; no action.
+
+### 4. Learning loop
+
+No new rows since 08-02 — see §3. `learn_from_trades.py` not re-run
+(identical input reproduces identical output).
+
+**New since 08-02:** Sniper sleeve now ships two shadow variants side by side
+(`FAST_TRIGGER`, `FAST` — commit `b82a026`). Confirmed shadow-mode in the
+~1h log window (`mode=shadow`, never `live`), universe 11, dominant reject
+`move_below_min`, 0 signals either variant. No live risk.
+
+### 5. Wildcard/squeeze diagnose
+
+**Wildcard:** active, 5 scans across a ~1h log window (railway logs' buffer
+is shorter today — no 5+h window available), 4/5 zero-mover, 1/5 one mover
+rejected on `no_pullback_resume` — correct dormancy for a quiet market, no
+gate loosening proposed. 0 order-reject codes (5003/2015), 0 Tracebacks.
+
+**Squeeze:** disabled at config level — see §3, not a scan/gate issue.
+
+### 6. Diagnose — lever for next 24h
+
+**No strategy parameter change proposed.** Zero new trades, wildcard
+dormancy correct-for-regime, no execution bugs, no fresh ledger evidence to
+act on. Open items are both operator-decision, not levers: squeeze
+re-enable/confirm, and the standing reconcile-drop 2-pass-grace fix
+(proposed 07-30, still unapplied).
+
+### 7. Validate
+
+`pytest -q`: **700 passed** (was 692 on 08-02; +8 from the Sniper-variant and
+ref_listed test additions, both already committed).
+
+### 8. Deploy
+
+**None.** Local `main` is 8 commits ahead of `origin/main` (through
+`b82a026`), working tree clean, tests green — no push/deploy this run since
+no change is being promoted today.
+
+### 9. Summary
+
+- Equity: $138.59 (flat vs 08-02; not a P&L statement)
+- Trades: 0 closed, 0 open — 3rd straight dormant day
+- Trial 4: unchanged (1 genuine trade so far); the 08-02 gate-relaxation
+  scare is resolved/closed, zero effect on the trial
+- Convex ledger since 07-13: n=22, netR -1.81, ex-best -6.90R, maxDD
+  11.98R, win 27.3% (unchanged, no new data)
+- Slot cost: wildcard 10/10 net +2.77R (pre-shipment evidence); squeeze 6/6
+  net +0.0R (<10, no action)
+- Exits: TP 0 | stop 1 | other 0 (40/41 rows lack exit_kind coverage yet)
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy, 0 Tracebacks/errors in the available log window, 700/700
+  tests pass locally
+- **Action items for operator:** (1) `FUTURES_SQUEEZE_ENABLED=0` — confirm
+  intentional or re-enable (unchanged from 08-02); (2) reconcile-drop
+  2-pass-grace fix still outstanding (unchanged from 07-30); (3) 8 local
+  commits sit unpushed to origin — push/deploy whenever convenient, nothing
+  urgent in them
+
+---
+
 # Daily Audit — 2026-08-02
 
 ---
