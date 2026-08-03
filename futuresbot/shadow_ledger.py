@@ -79,7 +79,8 @@ def load_rows(path: str) -> list[dict[str, Any]]:
     return rows
 
 
-def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], now_ts: float) -> dict[str, Any] | None:
+def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], now_ts: float,
+                    horizon_s: float = RESOLVE_HORIZON_S) -> dict[str, Any] | None:
     """Walk (ts, high, low) bars after the candidate ts under the convex exit:
     -1R stop before +5R TP wins (adverse-first within a bar), +5R TP, or timeout
     at the horizon (marked at the final bar's midpoint R). Returns the updated
@@ -104,7 +105,7 @@ def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], n
             # before tp_r existed fall back to it).
             return {**row, "outcome": float(row.get("tp_r") or TP_R), "outcome_kind": "tp", "resolved_ts": ts}
         last_mid = (hi + lo) / 2.0
-    if now_ts - float(row["ts"]) >= RESOLVE_HORIZON_S:
+    if now_ts - float(row["ts"]) >= horizon_s:
         mark_r = (last_mid - entry) * sgn / one_r if seen else 0.0
         return {**row, "outcome": round(mark_r, 2), "outcome_kind": "timeout", "resolved_ts": round(now_ts)}
     return None

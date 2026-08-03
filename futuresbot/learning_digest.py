@@ -73,22 +73,28 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
     # folded into the generic scorecard they would render as a cryptic
     # "shadow_only: n=8". Split them out and answer the actual question:
     # what would this sleeve have done if it were live?
-    sniper = [r for r in shadow_rows if str(r.get("sleeve")) == "SNIPER"]
-    other = [r for r in shadow_rows if str(r.get("sleeve")) != "SNIPER"]
+    sniper = [r for r in shadow_rows if str(r.get("sleeve") or "").startswith("SNIPER")]
+    other = [r for r in shadow_rows if not str(r.get("sleeve") or "").startswith("SNIPER")]
     if sniper:
-        res = [r for r in sniper if r.get("outcome") is not None]
-        net = sum(float(r.get("outcome") or 0) for r in res)
-        wins = sum(1 for r in res if float(r.get("outcome") or 0) > 0)
-        kinds: dict[str, int] = {}
-        for r in res:
-            k = str(r.get("outcome_kind") or "?")
-            kinds[k] = kinds.get(k, 0) + 1
-        line = (f"🎯 Sniper SHADOW (would-be trades): {len(sniper)} logged, {len(res)} resolved "
-                f"| cfR <b>{net:+.1f}</b>")
-        if res:
-            line += (f" | win {100 * wins / len(res):.0f}% "
-                     f"| tp {kinds.get('tp', 0)} stop {kinds.get('stop', 0)} timeout {kinds.get('timeout', 0)}")
-        lines.append(line)
+        by_variant: dict[str, list[dict]] = {}
+        for r in sniper:
+            sleeve = str(r.get("sleeve") or "SNIPER")
+            by_variant.setdefault(sleeve.split("_", 1)[1] if "_" in sleeve else "SWING", []).append(r)
+        lines.append("🎯 Sniper SHADOW (would-be trades, never traded):")
+        for name, rows in sorted(by_variant.items()):
+            res = [r for r in rows if r.get("outcome") is not None]
+            net = sum(float(r.get("outcome") or 0) for r in res)
+            wins = sum(1 for r in res if float(r.get("outcome") or 0) > 0)
+            kinds: dict[str, int] = {}
+            for r in res:
+                k = str(r.get("outcome_kind") or "?")
+                kinds[k] = kinds.get(k, 0) + 1
+            line = f"• <b>{name}</b>: {len(rows)} logged, {len(res)} resolved | cfR <b>{net:+.1f}</b>"
+            if res:
+                line += (f" | win {100 * wins / len(res):.0f}% "
+                         f"| tp {kinds.get('tp', 0)} stop {kinds.get('stop', 0)} timeout {kinds.get('timeout', 0)}")
+            lines.append(line)
+        lines.append("<i>counterfactuals are fee-free — FAST is not viable at taker fees</i>")
 
     resolved = [r for r in other if r.get("outcome") is not None]
     if other:

@@ -104,7 +104,7 @@ from futuresbot.opportunity_score import opportunity_balance_fraction, opportuni
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
-from futuresbot.sniper import detect_sniper_signal, sniper_enabled, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
+from futuresbot.sniper import VARIANTS, active_variants, detect_sniper_signal, sniper_enabled, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
@@ -221,7 +221,7 @@ class FuturesRuntime:
         self._last_wildcard_scan_at = 0.0
         self._last_squeeze_scan_at = 0.0
         self._last_sniper_scan_at = 0.0
-        self._sniper_last_signal_at: dict[tuple[str, str], float] = {}
+        self._sniper_last_signal_at: dict[tuple[str, str, str], float] = {}
         self._pending_entry_lateness: float | None = None
         self._pending_ref_listed: bool | None = None
         self._last_shadow_resolve_at = 0.0
@@ -1779,22 +1779,33 @@ class FuturesRuntime:
         try:
             from futuresbot import shadow_ledger as shadow
 
-            rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
-                    if str(r.get("sleeve")) == "SNIPER"]
+            all_rows = shadow.load_rows(self._shadow_ledger_path())
         except Exception:  # pragma: no cover — status must render regardless
             return []
         uni = len(sniper_universe())
         head = f"🎯 Sniper <b>SHADOW</b> (logs would-be entries, never trades) | {uni or 'liquid'} pairs"
-        if not rows:
-            return [head + " | no signals yet"]
-        resolved = [r for r in rows if r.get("outcome") is not None]
-        net = sum(float(r.get("outcome") or 0.0) for r in resolved)
-        wins = sum(1 for r in resolved if float(r.get("outcome") or 0.0) > 0)
-        summary = f"  would-be: <b>{len(rows)}</b> entries | resolved {len(resolved)} | cfR <b>{net:+.1f}</b>"
-        if resolved:
-            summary += f" | win {100 * wins / len(resolved):.0f}%"
-        lines = [head, summary]
-        for r in rows[-3:]:  # newest are appended last
+        lines = [head]
+        for variant in active_variants():
+            sleeve = f"SNIPER_{variant.name}"
+            rows = [r for r in all_rows if str(r.get("sleeve")) == sleeve]
+            note = "" if variant.economically_viable else " ⚠️ signal-study only"
+            if not rows:
+                lines.append(f"  <b>{variant.name}</b>{note}: no signals yet")
+                continue
+            resolved = [r for r in rows if r.get("outcome") is not None]
+            net = sum(float(r.get("outcome") or 0.0) for r in resolved)
+            wins = sum(1 for r in resolved if float(r.get("outcome") or 0.0) > 0)
+            summary = (f"  <b>{variant.name}</b>{note}: {len(rows)} would-be | "
+                       f"resolved {len(resolved)} | cfR <b>{net:+.1f}</b>")
+            if resolved:
+                summary += f" | win {100 * wins / len(resolved):.0f}%"
+            lines.append(summary)
+            lines.extend(self._sniper_row_lines(rows[-2:]))
+        return lines
+
+    def _sniper_row_lines(self, rows: list[dict[str, Any]]) -> list[str]:
+        lines: list[str] = []
+        for r in rows:  # newest are appended last
             try:
                 if r.get("outcome") is None:
                     age_h = max(0.0, (time.time() - float(r.get("ts") or 0.0)) / 3600.0)
@@ -3970,18 +3981,25 @@ class FuturesRuntime:
                 return
             now_ts = time.time()
             resolved = 0
-            by_symbol: dict[str, list] = {}
+            # Group by (symbol, granularity): a 30-minute FAST trade replayed on
+            # 15m bars would be decided by one bar's high/low, and adverse-first
+            # tie-breaking means the stop wins almost every time — a systematic
+            # bias toward losses that has nothing to do with the signal.
+            by_key: dict[tuple[str, str], list] = {}
             for row in pending:
-                by_symbol.setdefault(str(row.get("symbol")), []).append(row)
-            for sym, sym_rows in by_symbol.items():
+                by_key.setdefault((str(row.get("symbol")), self._row_resolve_interval(row)), []).append(row)
+            _SECONDS = {"Min1": 60, "Min5": 300, "Min15": 900, "Min60": 3600}
+            for (sym, interval), sym_rows in by_key.items():
                 start = min(int(r["ts"]) for r in sym_rows)
+                bar_s = _SECONDS.get(interval, 900)
                 try:
-                    df = self.client.get_klines(sym, interval="Min15", start=start - 900, end=int(now_ts))
+                    df = self.client.get_klines(sym, interval=interval, start=start - bar_s, end=int(now_ts))
                     bars = [(int(t.timestamp()), float(h), float(lo)) for t, h, lo in zip(df.index, df["high"], df["low"])]
                 except Exception:
                     continue
                 for row in sym_rows:
-                    out = shadow.resolve_outcome(row, bars, now_ts)
+                    out = shadow.resolve_outcome(row, bars, now_ts,
+                                                 horizon_s=self._row_resolve_horizon(row))
                     if out is not None:
                         rows[rows.index(row)] = out
                         resolved += 1
@@ -4023,52 +4041,86 @@ class FuturesRuntime:
                 if turn >= floor:
                     liquid.append((turn, sym))
             liquid.sort(reverse=True)
-            hist: dict[str, int] = {}
-            scanned = 0
-            found: list[Any] = []
             scan_end = int(now_t)
             max_scan = int(self._env_float("FUTURES_SNIPER_MAX_SCAN", 25))
-            for _turn, sym in liquid[:max_scan]:
-                try:
-                    df = self.client.get_klines(sym, interval="Min15",
-                                                start=scan_end - 110 * 900, end=scan_end)
-                except Exception:
-                    hist["kline_error"] = hist.get("kline_error", 0) + 1
-                    continue
-                scanned += 1
-                reasons: list[str] = []
-                sig = detect_sniper_signal(df, sym, reasons)
-                for r in reasons:
-                    hist[r] = hist.get(r, 0) + 1
-                if sig is not None:
-                    found.append(sig)
+            _SECONDS = {"Min1": 60, "Min5": 300, "Min15": 900, "Min60": 3600}
+            for variant in active_variants():
+                hist: dict[str, int] = {}
+                scanned = 0
+                found: list[Any] = []
+                bar_s = _SECONDS.get(variant.interval, 900)
+                span = (variant.bars_needed + 20) * bar_s
+                for _turn, sym in liquid[:max_scan]:
+                    try:
+                        df = self.client.get_klines(sym, interval=variant.interval,
+                                                    start=scan_end - span, end=scan_end)
+                    except Exception:
+                        hist["kline_error"] = hist.get("kline_error", 0) + 1
+                        continue
+                    scanned += 1
+                    reasons: list[str] = []
+                    sig = detect_sniper_signal(df, sym, reasons, variant=variant)
+                    for r in reasons:
+                        hist[r] = hist.get(r, 0) + 1
+                    if sig is not None:
+                        found.append(sig)
+                self._log_sniper_variant(variant, liquid, scanned, hist, found, now_t)
+            return
+        except Exception as exc:  # pragma: no cover — a shadow sleeve never breaks the cycle
+            log.warning("[SNIPER] scan failed: %s", exc)
+
+    def _log_sniper_variant(self, variant: Any, liquid: list[Any], scanned: int,
+                            hist: dict[str, int], found: list[Any], now_t: float) -> None:
+        """Shadow-log one variant's signals under its own sleeve label."""
+
+        try:
+            sleeve = f"SNIPER_{variant.name}"
             # Mode is ALWAYS shadow in this build: the live entry path does not
             # exist yet, so logging "live" off the flag would claim trading that
             # is not happening (the inert-flag confusion, inverted).
             if not sniper_shadow_only():
                 log.warning("[SNIPER] FUTURES_SNIPER_SHADOW_ONLY=0 set but live entries "
                             "are not implemented in this build — still shadow-logging only")
-            log.info("[SNIPER_SCAN_SUMMARY] universe=%d scanned=%d histogram=%s signals=%s mode=shadow",
-                     len(liquid), scanned, hist or "{}",
-                     ",".join(s.symbol for s in found) or "none")
+            log.info("[SNIPER_SCAN_SUMMARY] variant=%s universe=%d scanned=%d histogram=%s "
+                     "signals=%s mode=shadow%s",
+                     variant.name, len(liquid), scanned, hist or "{}",
+                     ",".join(s.symbol for s in found) or "none",
+                     "" if variant.economically_viable else " (SIGNAL-STUDY ONLY: not viable at taker fees)")
             if not found:
                 return
             self._pending_entry_lateness = None  # not meaningful for this sleeve
             rearm = sniper_rearm_seconds()
             for sig in found:
-                key = (sig.symbol, sig.side)
+                key = (variant.name, sig.symbol, sig.side)
                 if now_t - self._sniper_last_signal_at.get(key, 0.0) < rearm:
                     continue  # same setup re-qualifying bar after bar
                 self._sniper_last_signal_at[key] = now_t
-                self._shadow_log_untaken(sig, "SNIPER", "shadow_only")
-                log.info("[SNIPER_SIGNAL] %s %s entry=%s sl=%s tp=%s lev=%sx "
-                         "move=%.2f%% 4h_range=%.2f%% sl_margin=%.1f%% rsi=%.0f",
-                         sig.symbol, sig.side, self._format_price(sig.entry_price),
+                self._shadow_log_untaken(sig, sleeve, "shadow_only")
+                log.info("[SNIPER_SIGNAL] variant=%s %s %s entry=%s sl=%s tp=%s lev=%sx "
+                         "move=%.2f%% range=%.2f%% sl_margin=%.1f%% rsi=%.0f",
+                         variant.name, sig.symbol, sig.side, self._format_price(sig.entry_price),
                          self._format_price(sig.sl_price), self._format_price(sig.tp_price),
                          sig.leverage, 100 * sig.roc_pct, 100 * sig.atr_pct,
                          sig.sl_margin_pct, sig.rsi)
         except Exception as exc:  # pragma: no cover — a shadow sleeve never breaks the cycle
-            log.warning("[SNIPER] scan failed: %s", exc)
+            log.warning("[SNIPER] variant %s log failed: %s", getattr(variant, "name", "?"), exc)
+
+    @staticmethod
+    def _row_variant(row: dict[str, Any]) -> Any | None:
+        """The Sniper variant a shadow row belongs to, or None for other sleeves."""
+
+        sleeve = str(row.get("sleeve") or "")
+        return VARIANTS.get(sleeve.split("_", 1)[1]) if sleeve.startswith("SNIPER_") else None
+
+    def _row_resolve_interval(self, row: dict[str, Any]) -> str:
+        variant = self._row_variant(row)
+        return variant.resolve_interval if variant is not None else "Min15"
+
+    def _row_resolve_horizon(self, row: dict[str, Any]) -> float:
+        from futuresbot.shadow_ledger import RESOLVE_HORIZON_S
+
+        variant = self._row_variant(row)
+        return variant.resolve_horizon_h * 3600.0 if variant is not None else float(RESOLVE_HORIZON_S)
 
     def _shadow_ledger_path(self) -> str:
         """Declared per account (phase 5), with the old derivation as fallback."""

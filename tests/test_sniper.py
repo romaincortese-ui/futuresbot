@@ -37,7 +37,10 @@ def _frame(closes, *, wick=0.001, vol=1000.0):
                          "close": closes, "volume": [vol] * len(closes)}, index=idx)
 
 
-def _zigzag(n=90, up=0.0025, dn=0.0015, cycle=3, start=100.0):
+def _zigzag(n=131, up=0.0025, dn=0.0015, cycle=3, start=100.0):
+    # n-1 must not be divisible by `cycle`, or the series ends on a DOWN bar and
+    # _frame puts the close at the wrong end of the final candle, tripping the
+    # climax-wick guard for reasons that have nothing to do with the test.
     """Net-uptrending series with real pullbacks, so RSI lands in a plausible
     band instead of pinning at 100 the way a monotonic ramp does."""
     closes = [start]
@@ -46,11 +49,11 @@ def _zigzag(n=90, up=0.0025, dn=0.0015, cycle=3, start=100.0):
     return closes
 
 
-def _trending(n=90, up=0.0025, dn=0.0015, wick=0.0015):
+def _trending(n=131, up=0.0025, dn=0.0015, wick=0.0015):
     return _frame(_zigzag(n, up, dn), wick=wick)
 
 
-def _falling(n=90, wick=0.0015):
+def _falling(n=131, wick=0.0015):
     return _frame([1.0 / x * 10000 for x in _zigzag(n)], wick=wick)
 
 
@@ -110,7 +113,7 @@ def test_cost_drag_is_leverage_independent_and_explodes_on_thin_stops():
 def _thin(monkeypatch):
     """Qualifying move, but a range so small the stop cannot pay for fees."""
     monkeypatch.setenv("FUTURES_SNIPER_MIN_MOVE", "0.005")
-    return _frame(_zigzag(90, up=0.0005, dn=0.0003), wick=0.0002)
+    return _frame(_zigzag(131, up=0.0005, dn=0.0003), wick=0.0002)
 
 
 def test_fee_doomed_setup_is_refused(monkeypatch):
@@ -226,7 +229,7 @@ def test_realised_range_is_none_on_a_short_frame():
 
 def test_flat_market_produces_no_signal():
     reasons = []
-    assert detect_sniper_signal(_frame([100.0] * 90), "BTC_USDT", reasons) is None
+    assert detect_sniper_signal(_frame([100.0] * 130), "BTC_USDT", reasons) is None
     assert "move_below_min" in reasons or "flat_window" in reasons
 
 
@@ -241,7 +244,7 @@ def test_retraced_move_is_refused(monkeypatch):
     # window's range — the move happened and is already half given back. This is
     # the case a naive ROC filter would take and the position gate must refuse.
     monkeypatch.setenv("FUTURES_SNIPER_TRIGGER_ATR_MULT", "0.1")
-    closes = [100.0] * 41
+    closes = [100.0] * 81
     closes += [100.0 * (1 + 0.10 * i / 30) for i in range(1, 31)]   # rally to 110
     closes += [110.0 - 6.0 * i / 18 for i in range(1, 19)]          # give back to 104
     reasons = []
@@ -251,7 +254,7 @@ def test_retraced_move_is_refused(monkeypatch):
 
 def test_unconfirmed_move_is_refused():
     # Uptrend intact over 12h, but the most recent hour has turned down.
-    closes = _zigzag(86)
+    closes = _zigzag(126)
     closes += [closes[-1] * (0.998 ** i) for i in range(1, 5)]
     reasons = []
     assert detect_sniper_signal(_frame(closes), "BTC_USDT", reasons) is None
@@ -270,7 +273,7 @@ def test_blow_off_bar_is_refused(monkeypatch):
     # RSI relaxed so this isolates the vertical guard rather than tripping the
     # exhaustion gate first (a blow-off raises both).
     monkeypatch.setenv("FUTURES_SNIPER_RSI_MAX", "99")
-    closes = _zigzag(89)
+    closes = _zigzag(129)
     closes.append(closes[-1] * 1.02)          # > 0.5 x the 4h range in one bar
     reasons = []
     assert detect_sniper_signal(_frame(closes), "BTC_USDT", reasons) is None
@@ -359,14 +362,18 @@ def runtime(tmp_path, monkeypatch):
 
 def _ledger_rows(ts=1_000_000):
     return [
-        {"ts": ts, "symbol": "AVAX_USDT", "side": "LONG", "sleeve": "SNIPER",
+        {"ts": ts, "symbol": "AVAX_USDT", "side": "LONG", "sleeve": "SNIPER_SWING",
          "reject_reason": "shadow_only", "entry": 20.0, "sl": 19.7, "tp": 20.9,
          "leverage": 7, "sl_margin_pct": 10.5, "roc_pct": 0.068, "rsi": 71.0,
          "tp_r": 3.0, "outcome": 3.0, "outcome_kind": "tp"},
-        {"ts": ts + 1, "symbol": "SOL_USDT", "side": "SHORT", "sleeve": "SNIPER",
+        {"ts": ts + 1, "symbol": "SOL_USDT", "side": "SHORT", "sleeve": "SNIPER_SWING",
          "reject_reason": "shadow_only", "entry": 73.0, "sl": 74.1, "tp": 69.7,
          "leverage": 6, "sl_margin_pct": 9.0, "roc_pct": -0.031, "rsi": 30.0,
          "tp_r": 3.0, "outcome": None},
+        {"ts": ts + 2, "symbol": "BTC_USDT", "side": "SHORT", "sleeve": "SNIPER_FAST",
+         "reject_reason": "shadow_only", "entry": 63000.0, "sl": 63230.0, "tp": 62540.0,
+         "leverage": 13, "sl_margin_pct": 4.7, "roc_pct": -0.006, "rsi": 28.0,
+         "tp_r": 2.0, "outcome": -1.0, "outcome_kind": "stop"},
         {"ts": ts + 2, "symbol": "ON_USDT", "side": "LONG", "sleeve": "WILDCARD",
          "reject_reason": "slot_occupied", "entry": 1.0, "sl": 0.9, "tp": 1.5,
          "leverage": 5, "sl_margin_pct": 15.0, "roc_pct": 0.1, "rsi": 60.0,
@@ -374,20 +381,32 @@ def _ledger_rows(ts=1_000_000):
     ]
 
 
-def test_status_shows_the_would_be_entries(runtime):
+def test_status_shows_the_would_be_entries(runtime, monkeypatch):
+    monkeypatch.setenv("FUTURES_SNIPER_VARIANTS", "SWING,FAST")
     runtime._ledger_write(_ledger_rows())
     text = "\n".join(runtime._sniper_shadow_status_lines())
     assert "SHADOW" in text and "never trades" in text
-    assert "2</b> entries" in text          # sniper rows only, wildcard excluded
-    assert "cfR <b>+3.0</b>" in text
+    # each variant scored separately — never pooled
+    assert "<b>SWING</b>: 2 would-be" in text and "cfR <b>+3.0</b>" in text
+    assert "<b>FAST</b>" in text and "cfR <b>-1.0</b>" in text
     assert "AVAX_USDT LONG" in text and "+3.0R (tp)" in text
     assert "SOL_USDT SHORT" in text and "open" in text
 
 
+def test_status_flags_the_variant_that_is_not_economically_viable(runtime, monkeypatch):
+    monkeypatch.setenv("FUTURES_SNIPER_VARIANTS", "SWING,FAST")
+    runtime._ledger_write(_ledger_rows())
+    text = "\n".join(runtime._sniper_shadow_status_lines())
+    swing_line = next(l for l in text.split("\n") if "SWING" in l)
+    fast_line = next(l for l in text.split("\n") if "FAST" in l)
+    assert "signal-study only" in fast_line
+    assert "signal-study only" not in swing_line
+
+
 def test_status_line_present_but_quiet_before_any_signal(runtime):
     lines = runtime._sniper_shadow_status_lines()
-    assert len(lines) == 1
-    assert "no signals yet" in lines[0]
+    assert len(lines) == 2                      # header + one active variant
+    assert "no signals yet" in lines[1]
 
 
 def test_status_says_nothing_when_sniper_is_disabled(runtime, monkeypatch):
@@ -464,13 +483,90 @@ def test_feature_store_row_carries_ref_listed(runtime, tmp_path):
     assert row["kind"] == "WILDCARD"
 
 
-def test_digest_gives_sniper_its_own_section():
+def test_digest_scores_each_variant_separately():
     from futuresbot.learning_digest import build_learning_digest
 
     msg = build_learning_digest([], _ledger_rows())
-    assert "Sniper SHADOW (would-be trades): 2 logged, 1 resolved" in msg
-    assert "cfR <b>+3.0</b>" in msg
-    assert "tp 1 stop 0 timeout 0" in msg
+    assert "Sniper SHADOW (would-be trades, never traded):" in msg
+    assert "<b>SWING</b>: 2 logged, 1 resolved | cfR <b>+3.0</b>" in msg
+    assert "<b>FAST</b>: 1 logged, 1 resolved | cfR <b>-1.0</b>" in msg
+    assert "tp 1 stop 0 timeout 0" in msg      # SWING
+    assert "tp 0 stop 1 timeout 0" in msg      # FAST
+    assert "not viable at taker fees" in msg   # the caveat travels with the number
     # ...and the generic scorecard no longer swallows them as "shadow_only"
     assert "shadow_only" not in msg
     assert "slot_occupied: n=1 cfR +5.0" in msg
+
+
+# --------------------------------------------------------------------------
+# variants
+# --------------------------------------------------------------------------
+
+def test_bars_needed_covers_the_range_median_not_just_the_lookback():
+    # Sizing this as move_bars + range_block made FAST_TRIGGER (6-bar look-back,
+    # 48-bar block) fetch 56 bars while realised_range_pct needs >= 96, so it
+    # returned 'no_range' on every symbol in a live scan.
+    from futuresbot.sniper import FAST_TRIGGER, VARIANTS, realised_range_pct
+
+    for v in VARIANTS.values():
+        assert v.bars_needed >= v.range_block * 2, v.name
+        assert v.bars_needed >= v.move_bars + 2, v.name
+    frame = _frame(_zigzag(FAST_TRIGGER.bars_needed))
+    assert realised_range_pct(frame, block=FAST_TRIGGER.range_block,
+                              blocks=FAST_TRIGGER.range_blocks) is not None
+
+
+def test_variants_differ_where_it_matters():
+    from futuresbot.sniper import FAST, FAST_TRIGGER, SWING
+
+    # FAST_TRIGGER: fast signal, SLOW stop -> cost-viable at taker fees today.
+    assert FAST_TRIGGER.interval == "Min5" and FAST_TRIGGER.move_bars == 6   # 30 min
+    assert FAST_TRIGGER.range_block == 48                                    # 4h stop
+    assert FAST_TRIGGER.economically_viable is True
+    assert FAST_TRIGGER.min_sl_pct == 1.5
+
+    # FAST: fast signal AND fast stop -> signal study only, cost gates disabled.
+    assert FAST.interval == "Min1" and FAST.move_bars == 30                  # 30 min
+    assert FAST.range_block == 30                                            # 30 min stop
+    assert FAST.economically_viable is False
+    assert FAST.min_sl_pct == 0.0 and FAST.max_cost_drag >= 1.0
+
+    # the shipped swing variant is untouched
+    assert SWING.move_bars == 48 and SWING.range_block == 16
+
+
+def test_default_variant_reproduces_the_shipped_behaviour():
+    from futuresbot.sniper import SWING, active_variants
+    assert active_variants() == (SWING,)
+
+
+def test_variants_are_selectable_by_env(monkeypatch):
+    from futuresbot.sniper import FAST, FAST_TRIGGER, active_variants
+    monkeypatch.setenv("FUTURES_SNIPER_VARIANTS", "FAST_TRIGGER,FAST")
+    assert active_variants() == (FAST_TRIGGER, FAST)
+
+
+def test_unknown_variant_names_fall_back_rather_than_crash(monkeypatch):
+    from futuresbot.sniper import SWING, active_variants
+    monkeypatch.setenv("FUTURES_SNIPER_VARIANTS", "NONSENSE")
+    assert active_variants() == (SWING,)
+
+
+def test_resolver_uses_finer_bars_and_shorter_horizon_for_fast(runtime):
+    # A 30-minute trade replayed on 15m bars is decided by one bar, and
+    # adverse-first means the stop wins nearly every time.
+    fast = {"sleeve": "SNIPER_FAST"}
+    swing = {"sleeve": "SNIPER_SWING"}
+    other = {"sleeve": "WILDCARD"}
+    assert runtime._row_resolve_interval(fast) == "Min1"
+    assert runtime._row_resolve_interval(swing) == "Min15"
+    assert runtime._row_resolve_interval(other) == "Min15"
+    assert runtime._row_resolve_horizon(fast) == 6 * 3600
+    assert runtime._row_resolve_horizon(other) == 48 * 3600
+
+
+def test_rearm_is_per_variant_not_per_symbol():
+    # SWING and FAST can legitimately fire on the same symbol at the same time;
+    # a shared re-arm key would silently drop one of the two studies.
+    from futuresbot.sniper import FAST, SWING
+    assert (SWING.name, "BTC_USDT", "LONG") != (FAST.name, "BTC_USDT", "LONG")

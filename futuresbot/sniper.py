@@ -142,10 +142,85 @@ def symbol_allowed(symbol: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class SniperReject:
-    """Why a candidate was refused — populated into the reasons histogram."""
+class SniperVariant:
+    """One Sniper configuration. Several run side by side in shadow.
 
-    tag: str
+    The point of separating these is that "how fast is the signal" and "how wide
+    is the stop" are INDEPENDENT choices, and conflating them is what produced
+    the first version. You can have a 30-minute signal; you cannot have a
+    30-minute stop, because a 0.36% stop on BTC hands ~50% of every 1R to fees.
+    """
+
+    name: str
+    interval: str            # kline granularity the scan fetches
+    move_bars: int           # look-back for "a significant move", in bars
+    confirm_bars: int
+    range_block: int         # bars per block for the realised-range stop
+    range_blocks: int = 12
+    sl_range_mult: float = 1.5
+    trigger_mult: float = 2.0    # required move, as a multiple of the range block
+    min_move: float = 0.015
+    min_sl_pct: float = 1.5      # stop-width floor, % of price
+    max_cost_drag: float = 0.20
+    tp_r: float = 3.0
+    max_leverage: int = 13
+    resolve_interval: str = "Min15"   # granularity the shadow resolver replays
+    resolve_horizon_h: float = 48.0
+    economically_viable: bool = True  # False = signal study only, see FAST
+
+    @property
+    def bars_needed(self) -> int:
+        """Bars the scan must fetch.
+
+        Must cover BOTH the look-back AND enough blocks for a stable range
+        median — `realised_range_pct` returns None below `range_block * 2`, and
+        a median over 2 blocks is noise. FAST_TRIGGER (6-bar look-back, 48-bar
+        block) is dominated entirely by the second term; sizing this as
+        move_bars + range_block returned `no_range` on every symbol.
+        """
+
+        return max(self.move_bars + 2, self.range_block * min(self.range_blocks, 6))
+
+
+# Today's shipped behaviour: 12h look-back, 4h-range stop, hours-to-days hold.
+SWING = SniperVariant(
+    name="SWING", interval="Min15", move_bars=48, confirm_bars=4, range_block=16,
+)
+
+# Option #2 — FAST TRIGGER, SLOW STOP. Detects a 30-minute impulse but sizes the
+# stop off the 4h range, so it is cost-viable at taker fees TODAY (BTC ~1.14%
+# stop, ~16% drag). The trade resolves over hours, not minutes. Requiring a 30min
+# move >= 1.0x the 4h range makes this a dislocation detector: it should fire
+# rarely, and that is the intended behaviour rather than a bug.
+FAST_TRIGGER = SniperVariant(
+    name="FAST_TRIGGER", interval="Min5", move_bars=6, confirm_bars=2,
+    range_block=48, trigger_mult=1.0, min_move=0.006,
+    resolve_interval="Min5", resolve_horizon_h=24.0,
+)
+
+# Option #3 — GENUINELY FAST. 30-minute look-back, 30-minute-range stop, ~30min
+# hold. NOT economically viable at taker fees: a 0.36% BTC stop is ~50% cost
+# drag, worse than PMT (which ran ~0.6% stops and lost 63% of gross to fees).
+# It runs with the cost gates DISABLED on purpose, because shadow counterfactuals
+# are fee-free: this variant measures ONLY whether a 30-minute impulse continues.
+# A positive result here does NOT imply live profitability — it would additionally
+# require maker execution at a maker rate nobody has verified (MEXC's API claims
+# makerFeeRate=0 while misreporting the taker rate by 4x).
+FAST = SniperVariant(
+    name="FAST", interval="Min1", move_bars=30, confirm_bars=5, range_block=30,
+    trigger_mult=2.0, min_move=0.002, min_sl_pct=0.0, max_cost_drag=1.0,
+    tp_r=2.0, resolve_interval="Min1", resolve_horizon_h=6.0,
+    economically_viable=False,
+)
+
+VARIANTS: dict[str, SniperVariant] = {v.name: v for v in (SWING, FAST_TRIGGER, FAST)}
+
+
+def active_variants() -> tuple[SniperVariant, ...]:
+    raw = os.environ.get("FUTURES_SNIPER_VARIANTS", "SWING")
+    picked = [VARIANTS[n.strip().upper()] for n in raw.split(",")
+              if n.strip().upper() in VARIANTS]
+    return tuple(picked) or (SWING,)
 
 
 def _rej(reasons, tag):
@@ -203,7 +278,8 @@ def cost_drag(sl_frac: float, *, fee: float = TAKER_FEE, slippage: float = DEFAU
 
 
 def detect_sniper_signal(frame: pd.DataFrame, symbol: str,
-                         reasons: list[str] | None = None) -> WildcardSignal | None:
+                         reasons: list[str] | None = None,
+                         variant: SniperVariant = SWING) -> WildcardSignal | None:
     """Continuation on a liquid pair after a significant recent move.
 
     Gates, all on completed bars:
@@ -218,18 +294,18 @@ def detect_sniper_signal(frame: pd.DataFrame, symbol: str,
 
     if not symbol_allowed(symbol):
         return _rej(reasons, "symbol_excluded")
-    need = MOVE_BARS + RANGE_BLOCK + 2
+    need = variant.bars_needed
     if frame is None or "close" not in frame or len(frame) < need:
         return _rej(reasons, "short_frame")
 
     c = frame["close"].astype(float)
     h = frame["high"].astype(float); l = frame["low"].astype(float)
     cur = float(c.iloc[-1])
-    base = float(c.iloc[-(MOVE_BARS + 1)])
+    base = float(c.iloc[-(variant.move_bars + 1)])
     if cur <= 0 or base <= 0:
         return _rej(reasons, "bad_price")
 
-    rng_pct = realised_range_pct(frame)
+    rng_pct = realised_range_pct(frame, block=variant.range_block, blocks=variant.range_blocks)
     if rng_pct is None or rng_pct <= 0:
         return _rej(reasons, "no_range")
 
@@ -243,8 +319,8 @@ def detect_sniper_signal(frame: pd.DataFrame, symbol: str,
     #    ends up wider than the move that triggered it.
     roc = cur / base - 1.0
     trigger = max(
-        _f("FUTURES_SNIPER_MIN_MOVE", 0.015),
-        _f("FUTURES_SNIPER_TRIGGER_ATR_MULT", 2.0) * rng_pct,
+        _f("FUTURES_SNIPER_MIN_MOVE", variant.min_move),
+        _f("FUTURES_SNIPER_TRIGGER_ATR_MULT", variant.trigger_mult) * rng_pct,
     )
     if abs(roc) < trigger:
         return _rej(reasons, "move_below_min")
@@ -253,7 +329,7 @@ def detect_sniper_signal(frame: pd.DataFrame, symbol: str,
 
     # 2. still in force: price should sit near the extreme of the move, not have
     #    round-tripped back to where it started.
-    window = c.iloc[-(MOVE_BARS + 1):]
+    window = c.iloc[-(variant.move_bars + 1):]
     hi_w = float(window.max()); lo_w = float(window.min())
     span = hi_w - lo_w
     if span <= 0:
@@ -270,7 +346,7 @@ def detect_sniper_signal(frame: pd.DataFrame, symbol: str,
         return _rej(reasons, "rsi_exhausted")
 
     # 3. short-window confirmation
-    recent = float(c.iloc[-1]) / float(c.iloc[-(CONFIRM_BARS + 1)]) - 1.0
+    recent = float(c.iloc[-1]) / float(c.iloc[-(variant.confirm_bars + 1)]) - 1.0
     if (s > 0 and recent <= 0) or (s < 0 and recent >= 0):
         return _rej(reasons, "not_confirmed")
 
@@ -285,15 +361,15 @@ def detect_sniper_signal(frame: pd.DataFrame, symbol: str,
             return _rej(reasons, "climax_wick")
 
     # ---- geometry: stop first, leverage second -----------------------------
-    sl_frac = _f("FUTURES_SNIPER_SL_RANGE_MULT", 1.5) * rng_pct
-    tp_r = _f("FUTURES_SNIPER_TP_R", 3.0)
+    sl_frac = _f("FUTURES_SNIPER_SL_RANGE_MULT", variant.sl_range_mult) * rng_pct
+    tp_r = _f("FUTURES_SNIPER_TP_R", variant.tp_r)
 
     # 5. cost gate — the XAU lesson, applied to the stop DISTANCE not the margin.
     # 20% budget => a ~0.9% minimum viable stop. Refuses the XAU pattern (0.28%
     # stop = 64% drag) while admitting BTC (1.26% stop = 14% drag). At the budget
     # a +3R gross target nets roughly +2.4R.
     drag = cost_drag(sl_frac, slippage=_f("FUTURES_SNIPER_SLIPPAGE", DEFAULT_SLIPPAGE))
-    if drag > _f("FUTURES_SNIPER_MAX_COST_DRAG", 0.20):
+    if drag > _f("FUTURES_SNIPER_MAX_COST_DRAG", variant.max_cost_drag):
         return _rej(reasons, "fee_doomed")
 
     # A minimum stop WIDTH is the same rule as a maximum leverage (20/1.5 = 13x)
@@ -302,12 +378,12 @@ def detect_sniper_signal(frame: pd.DataFrame, symbol: str,
     # books MEXC lists — but its 4h range is 0.67%, so any percentage stop is
     # small in absolute terms and the fixed fee dominates it. The failure mode
     # is "thin stop on a LOW-VOLATILITY instrument", not "thin book".
-    min_sl_pct = _f("FUTURES_SNIPER_MIN_SL_PRICE_PCT", 1.5) / 100.0
+    min_sl_pct = _f("FUTURES_SNIPER_MIN_SL_PRICE_PCT", variant.min_sl_pct) / 100.0
     if sl_frac < min_sl_pct:
         return _rej(reasons, "stop_too_thin")
 
     max_sl_margin = _f("FUTURES_WILDCARD_MAX_SL_MARGIN_PCT", 20.0)
-    lev_cap = int(_f("FUTURES_SNIPER_MAX_LEVERAGE", 13))
+    lev_cap = int(_f("FUTURES_SNIPER_MAX_LEVERAGE", variant.max_leverage))
     leverage = max(1, min(lev_cap, int(max_sl_margin / (sl_frac * 100.0)))) if sl_frac > 0 else 1
     if leverage < int(_f("FUTURES_SNIPER_MIN_LEVERAGE", 3)):
         # Too volatile for this sleeve: the stop the range demands would need

@@ -1,3 +1,137 @@
+# Daily Audit — 2026-08-02
+
+---
+
+## Automated Assessment (UTC ~16:20)
+
+### 1. Trades (last 24h, since 08-01 16:20 UTC)
+
+**0 closed trades.** Verified via full-history MEXC pull (empty-symbol
+`get_historical_positions`, 301 rows total since 2026-05-04) — max
+`updateTime` across all 301 rows is 2026-07-31T21:45:30Z (the BANK_USDT
+close reported 08-01). Nothing has closed since.
+
+### 1-OPEN. Open positions
+
+**None.** `get_open_positions()` + live `[ACCOUNT]` log line agree: equity
+**$138.59**, available $138.59, open_margin $0.00, positions=0.
+
+### 2. Champion vs Shadow
+
+**Shadow: stale, comparison suppressed pending resync** (standing 07-23
+action item, unchanged).
+
+### 3. Trial 4 status (see docs/DECISION_RULE.md) — TOP FINDING
+
+**`FUTURES_EXTERNAL_GATE_REQUIRE_LISTED` is live-set to `0`** (was `1`).
+Confirmed via `railway variables`. This was NOT done by this run. The local
+working tree carries uncommitted, undeployed instrumentation
+(`futuresbot/runtime.py` + `tests/test_sniper.py`, 85 lines, all 692 tests
+pass) whose own comments date the change: *"REQUIRE_LISTED was relaxed
+mid-trial (2026-08-02, at n=5 counterfactual evidence vs the pre-registered
+n=10)"*.
+
+This contradicts the checked-in `docs/DECISION_RULE.md` (last edited 08-01
+11:17, unchanged since), which explicitly states under "External gate:
+reviewed and DELIBERATELY NOT CHANGED": *"DECISION: instrument now,
+adjudicate at >=10 resolved REAL-ALT veto rows."* The live shadow-ledger
+`veto:ref_not_listed` count is n=5 (4 resolved net +13.0R, all synthetics;
+1 unresolved KOMA_USDT) — below the doc's own n=10 bar.
+
+Per the doc's own "WHEN DOES A CHANGE RESET THE TRIAL?" standard (also
+08-01), a gate/threshold change is explicitly listed as a trial-resetting
+treatment change, not a measurement change. **Trial 4's clean-treatment
+window is therefore compromised as documented** — this needs the operator's
+call, not a silent continuation. PROPOSING (not applying) one of: (a)
+revert `FUTURES_EXTERNAL_GATE_REQUIRE_LISTED` to `1` to preserve trial 4
+integrity until the n=10 bar is met, or (b) formally supersede with a
+"trial 5" entry in DECISION_RULE.md acknowledging the relaxation with a
+fresh trade-count clock. Not self-applying either — this is a LOCKED
+gate/threshold per the scheduled-task rules.
+
+Separately: **`FUTURES_SQUEEZE_ENABLED` is live-set to `0`** — the squeeze
+sleeve is fully OFF, not merely dormant. Confirmed by log absence: zero
+`SQUEEZE_SCAN_SUMMARY` lines across the full ~5.5h log window (container
+restarted 08-02 10:41:37 UTC — cause not visible in logs, 0
+Tracebacks/errors either side, consistent with an env-var-triggered
+Railway auto-redeploy rather than a crash), where the 900s scan interval
+implies ~22 expected scans. This diverges from the standing design (2
+wildcard + 1 squeeze slots, shipped 07-31). Not clear whether this was
+intentional (e.g. isolating wildcard-only data during the gate-relaxation
+work) or accidental — flagging for operator confirmation, not reverting.
+
+With 0 closed trades this window, all trial-4/ledger/slot-cost/learning
+numbers are **unchanged from 08-01**: convex ledger n=22, netR -1.81,
+ex-best -6.90R, maxDD 11.98R, win 27.3%; slot cost wildcard 10/10 resolved
+net +2.77R (pre-2nd-slot-shipment evidence, already actioned), squeeze 6/6
+net +0.0R (<10, no action). Feature store 41 rows / shadow ledger 23 rows,
+both unchanged row-for-row (confirmed via `railway ssh wc -l` and a ledger
+tail).
+
+### 4. Learning loop
+
+No new rows since 08-01 — see §3. `learn_from_trades.py` not re-run
+(identical input would reproduce identical output; token-uneconomical to
+repeat).
+
+**New since 08-01:** Sniper sleeve shipped shadow-only (commits `cd6c994`,
+`484a6f2`, `ad6280f`). Confirmed shadow-mode in logs (`mode=shadow`, never
+`live`) — scanning normally, universe 11-12, dominant reject
+`move_below_min`, 0 signals in the window. No live risk; not evaluated
+further.
+
+### 5. Wildcard/squeeze diagnose
+
+**Wildcard:** active, ~28 scans across the 5.5h window, dominant reject
+`roc_below_min` (quiet market, movers found but under the ROC floor) —
+correct dormancy, no gate loosening proposed. 0 order-reject codes
+(5003/2015), 0 Tracebacks.
+
+**Squeeze:** see §3 — disabled at the config level, not a scan/gate issue.
+
+### 6. Diagnose — lever for next 24h
+
+**No strategy parameter change proposed.** Zero new trades, wildcard
+dormancy is correct-for-regime, no execution bugs. The two config-state
+findings in §3 (external-gate relaxation vs. documented decision rule;
+squeeze fully disabled) are the material items this run — both are
+operator-decision items, reported not acted on. Reconcile-drop 2-pass-grace
+fix (found 07-30) remains proposed-not-applied, unchanged.
+
+### 7. Validate
+
+`pytest -q`: **692 passed** (local working tree, includes the uncommitted
+`ref_listed` instrumentation — does not break anything, still undeployed).
+
+### 8. Deploy
+
+**None.**
+
+### 9. Summary
+
+- Equity: $138.59 (flat vs 08-01's $138.59; not a P&L statement)
+- Trades: 0 closed, 0 open
+- Trial 4: unchanged (1 genuine trade so far) — **but see the
+  REQUIRE_LISTED finding above: trial integrity is in question as of
+  today**
+- Convex ledger since 07-13: n=22, netR -1.81, ex-best -6.90R, maxDD
+  11.98R, win 27.3% (unchanged, no new data)
+- Slot cost: unchanged from 08-01 (wildcard 10/10 net +2.77R pre-shipment;
+  squeeze 6/6 net +0.0R)
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run
+- Bot: healthy, one clean container restart 08-02 10:41 UTC (no
+  Tracebacks), 692/692 tests pass locally
+- **Action items for operator:** (1) `FUTURES_EXTERNAL_GATE_REQUIRE_LISTED=0`
+  contradicts the documented n>=10 adjudication bar in DECISION_RULE.md —
+  decide revert vs. formal trial-5 supersession; (2)
+  `FUTURES_SQUEEZE_ENABLED=0` — confirm intentional or re-enable; (3)
+  uncommitted `ref_listed` provenance-tagging WIP (runtime.py +
+  test_sniper.py) ready to commit/deploy once (1) is resolved; (4)
+  reconcile-drop 2-pass-grace fix still outstanding (unchanged from 07-30)
+
+---
+
 # Daily Audit — 2026-08-01
 
 ---
