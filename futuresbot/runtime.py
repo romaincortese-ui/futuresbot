@@ -220,7 +220,7 @@ class FuturesRuntime:
         self._last_prophet_archive_at = 0.0
         self._last_wildcard_scan_at = 0.0
         self._last_squeeze_scan_at = 0.0
-        self._last_sniper_scan_at = 0.0
+        self._last_sniper_scan_at: dict[str, float] = {}
         self._sniper_last_signal_at: dict[tuple[str, str, str], float] = {}
         self._pending_entry_lateness: float | None = None
         self._pending_ref_listed: bool | None = None
@@ -4026,9 +4026,16 @@ class FuturesRuntime:
         if not sniper_enabled() or self._paused:
             return
         now_t = time.time()
-        if now_t - self._last_sniper_scan_at < sniper_scan_interval_seconds():
+        # Per-variant cadence: a 30-minute signal gated on one hourly timer is
+        # invisible (measured: FAST would fire 47x/30h, an hourly scan catches
+        # ~0.8). The outer guard is the FASTEST variant's interval.
+        due = [v for v in active_variants()
+               if now_t - self._last_sniper_scan_at.get(v.name, 0.0)
+               >= self._env_float(f"FUTURES_SNIPER_{v.name}_SCAN_SECONDS", v.scan_interval_s)]
+        if not due:
             return
-        self._last_sniper_scan_at = now_t
+        for v in due:
+            self._last_sniper_scan_at[v.name] = now_t
         try:
             tickers = self.client.get_all_tickers() or []
             floor = sniper_min_turnover_usdt()
@@ -4044,7 +4051,7 @@ class FuturesRuntime:
             scan_end = int(now_t)
             max_scan = int(self._env_float("FUTURES_SNIPER_MAX_SCAN", 25))
             _SECONDS = {"Min1": 60, "Min5": 300, "Min15": 900, "Min60": 3600}
-            for variant in active_variants():
+            for variant in due:
                 hist: dict[str, int] = {}
                 scanned = 0
                 found: list[Any] = []
@@ -4089,7 +4096,10 @@ class FuturesRuntime:
             if not found:
                 return
             self._pending_entry_lateness = None  # not meaningful for this sleeve
-            rearm = sniper_rearm_seconds()
+            # Re-arm is per-variant: a 12h cooldown on a 30-minute strategy caps
+            # it at 2 signals/symbol/day, so n=60 would take weeks.
+            rearm = self._env_float(f"FUTURES_SNIPER_{variant.name}_REARM_HOURS",
+                                    variant.rearm_h) * 3600.0
             for sig in found:
                 key = (variant.name, sig.symbol, sig.side)
                 if now_t - self._sniper_last_signal_at.get(key, 0.0) < rearm:

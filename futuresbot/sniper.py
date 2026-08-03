@@ -78,7 +78,14 @@ def sniper_max_positions() -> int:
 
 
 def sniper_scan_interval_seconds() -> int:
-    return max(60, int(_f("FUTURES_SNIPER_SCAN_INTERVAL_SECONDS", 3600)))
+    """Outer guard only — the real cadence is per-variant (see scan_interval_s).
+
+    Must be no slower than the fastest active variant, or the per-variant timers
+    never get a chance to fire.
+    """
+
+    fastest = min((v.scan_interval_s for v in active_variants()), default=3600)
+    return max(60, int(_f("FUTURES_SNIPER_SCAN_INTERVAL_SECONDS", fastest)))
 
 
 def sniper_rearm_seconds() -> float:
@@ -167,6 +174,12 @@ class SniperVariant:
     resolve_interval: str = "Min15"   # granularity the shadow resolver replays
     resolve_horizon_h: float = 48.0
     economically_viable: bool = True  # False = signal study only, see FAST
+    # Scan cadence MUST track the look-back. A 30-minute signal scanned hourly is
+    # invisible: measured on real data, FAST would have fired 47 times in 30h but
+    # an hourly scan samples ~1/60th of the windows, so the expected catch was
+    # 0.8 — and we logged 0. Rule of thumb: >=6 samples per look-back window.
+    scan_interval_s: int = 3600
+    rearm_h: float = 12.0             # must exceed the hold, or one impulse logs twice
 
     @property
     def bars_needed(self) -> int:
@@ -196,6 +209,7 @@ FAST_TRIGGER = SniperVariant(
     name="FAST_TRIGGER", interval="Min5", move_bars=6, confirm_bars=2,
     range_block=48, trigger_mult=1.0, min_move=0.006,
     resolve_interval="Min5", resolve_horizon_h=24.0,
+    scan_interval_s=300, rearm_h=6.0,     # 30min look-back -> 6 samples per window
 )
 
 # Option #3 — GENUINELY FAST. 30-minute look-back, 30-minute-range stop, ~30min
@@ -211,6 +225,7 @@ FAST = SniperVariant(
     trigger_mult=2.0, min_move=0.002, min_sl_pct=0.0, max_cost_drag=1.0,
     tp_r=2.0, resolve_interval="Min1", resolve_horizon_h=6.0,
     economically_viable=False,
+    scan_interval_s=300, rearm_h=2.0,     # ~30min hold -> 2h re-arm is 4x the hold
 )
 
 VARIANTS: dict[str, SniperVariant] = {v.name: v for v in (SWING, FAST_TRIGGER, FAST)}

@@ -565,6 +565,37 @@ def test_resolver_uses_finer_bars_and_shorter_horizon_for_fast(runtime):
     assert runtime._row_resolve_horizon(other) == 48 * 3600
 
 
+def test_scan_cadence_tracks_the_lookback_window():
+    # A 30-minute signal scanned hourly is invisible. Measured on real data:
+    # FAST would have fired 47x in 30h, but an hourly scan samples ~1/60th of
+    # the windows, so the expected catch was 0.8 and we logged 0.
+    from futuresbot.sniper import VARIANTS
+
+    _BAR_S = {"Min1": 60, "Min5": 300, "Min15": 900}
+    for v in VARIANTS.values():
+        lookback_s = v.move_bars * _BAR_S[v.interval]
+        samples = lookback_s / v.scan_interval_s
+        assert samples >= 5.0, f"{v.name}: only {samples:.1f} scans per look-back window"
+
+
+def test_rearm_exceeds_the_hold_but_does_not_starve_the_study():
+    from futuresbot.sniper import FAST, FAST_TRIGGER, SWING
+
+    # Re-arm must exceed the hold (or one impulse logs twice)...
+    assert FAST.rearm_h * 3600 > FAST.move_bars * 60
+    # ...but a 12h cooldown on a 30-minute strategy caps it at 2 signals per
+    # symbol per day, which would take weeks to reach n=60.
+    assert FAST.rearm_h < SWING.rearm_h
+    assert FAST_TRIGGER.rearm_h < SWING.rearm_h
+
+
+def test_outer_scan_guard_is_no_slower_than_the_fastest_variant(monkeypatch):
+    from futuresbot.sniper import FAST, sniper_scan_interval_seconds
+    monkeypatch.delenv("FUTURES_SNIPER_SCAN_INTERVAL_SECONDS", raising=False)
+    monkeypatch.setenv("FUTURES_SNIPER_VARIANTS", "SWING,FAST")
+    assert sniper_scan_interval_seconds() <= FAST.scan_interval_s
+
+
 def test_rearm_is_per_variant_not_per_symbol():
     # SWING and FAST can legitimately fire on the same symbol at the same time;
     # a shared re-arm key would silently drop one of the two studies.
