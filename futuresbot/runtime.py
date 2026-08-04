@@ -104,7 +104,7 @@ from futuresbot.opportunity_score import opportunity_balance_fraction, opportuni
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
-from futuresbot.sniper import VARIANTS, active_variants, detect_sniper_signal, sniper_enabled, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
+from futuresbot.sniper import VARIANTS, active_variants, capped_available, detect_sniper_signal, sniper_enabled, sniper_live_variants, sniper_max_notional_pct, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
@@ -4128,6 +4128,7 @@ class FuturesRuntime:
                     continue  # same setup re-qualifying bar after bar
                 self._sniper_last_signal_at[key] = now_t
                 self._shadow_log_untaken(sig, sleeve, "shadow_only")
+                self._maybe_open_sniper_live(sig, variant)
                 log.info("[SNIPER_SIGNAL] variant=%s %s %s entry=%s sl=%s tp=%s lev=%sx "
                          "move=%.2f%% range=%.2f%% sl_margin=%.1f%% rsi=%.0f",
                          variant.name, sig.symbol, sig.side, self._format_price(sig.entry_price),
@@ -4136,6 +4137,50 @@ class FuturesRuntime:
                          sig.sl_margin_pct, sig.rsi)
         except Exception as exc:  # pragma: no cover — a shadow sleeve never breaks the cycle
             log.warning("[SNIPER] variant %s log failed: %s", getattr(variant, "name", "?"), exc)
+
+    def _maybe_open_sniper_live(self, sig: Any, variant: Any) -> None:
+        """Place a REAL sniper order, hard-capped by notional. No-op by default.
+
+        Requires BOTH an explicit per-variant opt-in (FUTURES_SNIPER_LIVE_VARIANTS)
+        AND FUTURES_SNIPER_SHADOW_ONLY=0, so neither switch alone can start
+        trading. Every signal is shadow-logged first regardless, so the study
+        continues uninterrupted whether or not the live leg fires.
+
+        The cap is on NOTIONAL, not risk: FAST's shadow +R figures are fee-free
+        and its stops are 0.45-0.86% wide (20-40% cost drag), so its real edge is
+        unproven. This exists to buy fill/slippage data cheaply, not to profit.
+        """
+
+        if sniper_shadow_only() or variant.name.upper() not in sniper_live_variants():
+            return
+        try:
+            snapshot = self._account_snapshot(self._get_reference_price())
+            equity = float(snapshot.get("equity_usdt", 0.0) or 0.0)
+            available = float(snapshot.get("available_usdt", 0.0) or 0.0)
+            if equity <= 0 or available <= 0:
+                return
+            if self._convex_open_count("SNIPER") >= int(self._env_float("FUTURES_SNIPER_MAX_POSITIONS", 1)):
+                self._shadow_log_untaken(sig, f"SNIPER_{variant.name}", "slot_occupied")
+                return
+            budget = capped_available(equity=equity, balance_fraction=sig.balance_fraction,
+                                      leverage=sig.leverage)
+            if budget <= 0:
+                return
+            # Never hand the sizer more than the account actually has.
+            budget = min(budget, available)
+            cap_notional = equity * sniper_max_notional_pct() / 100.0
+            log.info("[SNIPER_LIVE] %s %s attempting: equity=%.2f cap_notional=%.2f "
+                     "sized_from=%.4f lev=%sx", variant.name, sig.symbol, equity,
+                     cap_notional, budget, sig.leverage)
+            opened = self._open_wildcard_position(sig, budget, kind="SNIPER", veto_checked=True)
+            if not opened:
+                # Most likely the exchange minimum contract exceeds the cap. That
+                # is a correct refusal, not a failure - do not widen the cap to
+                # force a fill.
+                log.info("[SNIPER_LIVE] %s %s not opened (likely min-contract > cap %.2f)",
+                         variant.name, sig.symbol, cap_notional)
+        except Exception as exc:  # pragma: no cover — live leg never breaks the scan
+            log.warning("[SNIPER_LIVE] %s failed: %s", getattr(sig, "symbol", "?"), exc)
 
     @staticmethod
     def _row_variant(row: dict[str, Any]) -> Any | None:

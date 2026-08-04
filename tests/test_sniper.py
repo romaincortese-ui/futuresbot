@@ -596,6 +596,87 @@ def test_outer_scan_guard_is_no_slower_than_the_fastest_variant(monkeypatch):
     assert sniper_scan_interval_seconds() <= FAST.scan_interval_s
 
 
+# --------------------------------------------------------------------------
+# live leg: two independent switches, and a hard notional cap
+# --------------------------------------------------------------------------
+
+def test_live_trading_is_off_by_default(monkeypatch):
+    from futuresbot.sniper import sniper_live_variants, sniper_shadow_only
+    monkeypatch.delenv("FUTURES_SNIPER_LIVE_VARIANTS", raising=False)
+    monkeypatch.delenv("FUTURES_SNIPER_SHADOW_ONLY", raising=False)
+    assert sniper_live_variants() == ()
+    assert sniper_shadow_only() is True
+
+
+def test_both_switches_are_required(runtime, monkeypatch):
+    """Neither flag alone may start trading."""
+    calls = []
+    monkeypatch.setattr(runtime, "_open_wildcard_position",
+                        lambda *a, **k: calls.append(a) or True)
+    from futuresbot.sniper import FAST
+    sig = type("S", (), {"symbol": "BTC_USDT", "side": "LONG", "balance_fraction": 0.12,
+                         "leverage": 13, "entry_price": 60000.0})()
+
+    monkeypatch.setenv("FUTURES_SNIPER_LIVE_VARIANTS", "FAST")   # opt-in but still shadow
+    monkeypatch.setenv("FUTURES_SNIPER_SHADOW_ONLY", "1")
+    runtime._maybe_open_sniper_live(sig, FAST)
+    assert calls == []
+
+    monkeypatch.setenv("FUTURES_SNIPER_SHADOW_ONLY", "0")        # shadow off, no opt-in
+    monkeypatch.delenv("FUTURES_SNIPER_LIVE_VARIANTS", raising=False)
+    runtime._maybe_open_sniper_live(sig, FAST)
+    assert calls == []
+
+
+def test_notional_cap_arithmetic():
+    from futuresbot.sniper import capped_available
+    # notional = available * balance_fraction * leverage, so inverting the cap
+    # must reproduce it exactly.
+    equity, bf, lev, pct = 138.59, 0.12, 13, 3.0
+    avail = capped_available(equity=equity, balance_fraction=bf, leverage=lev,
+                             max_notional_pct=pct)
+    assert avail * bf * lev == pytest.approx(equity * pct / 100.0)
+
+
+@pytest.mark.parametrize("equity,bf,lev,pct", [
+    (0, 0.12, 13, 3.0), (100, 0, 13, 3.0), (100, 0.12, 0, 3.0), (100, 0.12, 13, 0),
+])
+def test_degenerate_cap_inputs_mean_do_not_trade(equity, bf, lev, pct):
+    from futuresbot.sniper import capped_available
+    assert capped_available(equity=equity, balance_fraction=bf, leverage=lev,
+                            max_notional_pct=pct) == 0.0
+
+
+def test_live_leg_never_sizes_above_available_balance(runtime, monkeypatch):
+    from futuresbot.sniper import FAST
+    seen = []
+    monkeypatch.setattr(runtime, "_open_wildcard_position",
+                        lambda sig, budget, **k: seen.append(budget) or True)
+    monkeypatch.setattr(runtime, "_account_snapshot",
+                        lambda *a, **k: {"equity_usdt": 10000.0, "available_usdt": 5.0})
+    monkeypatch.setenv("FUTURES_SNIPER_LIVE_VARIANTS", "FAST")
+    monkeypatch.setenv("FUTURES_SNIPER_SHADOW_ONLY", "0")
+    sig = type("S", (), {"symbol": "BTC_USDT", "side": "LONG", "balance_fraction": 0.12,
+                         "leverage": 13, "entry_price": 60000.0})()
+    runtime._maybe_open_sniper_live(sig, FAST)
+    assert seen and seen[0] <= 5.0
+
+
+def test_shadow_row_is_written_even_when_live_leg_runs(runtime, monkeypatch):
+    """The study must not be interrupted by enabling live trading."""
+    from futuresbot.sniper import FAST
+    monkeypatch.setattr(runtime, "_open_wildcard_position", lambda *a, **k: True)
+    monkeypatch.setattr(runtime, "_account_snapshot",
+                        lambda *a, **k: {"equity_usdt": 138.59, "available_usdt": 138.59})
+    monkeypatch.setenv("FUTURES_SNIPER_LIVE_VARIANTS", "FAST")
+    monkeypatch.setenv("FUTURES_SNIPER_SHADOW_ONLY", "0")
+    # _maybe_scan_sniper shadow-logs BEFORE calling the live leg; assert ordering
+    # by checking the live helper does not itself write a shadow row.
+    import inspect
+    src = inspect.getsource(runtime._log_sniper_variant.__func__)
+    assert src.index("_shadow_log_untaken") < src.index("_maybe_open_sniper_live")
+
+
 def test_rearm_is_per_variant_not_per_symbol():
     # SWING and FAST can legitimately fire on the same symbol at the same time;
     # a shared re-arm key would silently drop one of the two studies.

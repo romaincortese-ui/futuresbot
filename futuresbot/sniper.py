@@ -88,6 +88,48 @@ def sniper_scan_interval_seconds() -> int:
     return max(60, int(_f("FUTURES_SNIPER_SCAN_INTERVAL_SECONDS", fastest)))
 
 
+def sniper_live_variants() -> tuple[str, ...]:
+    """Variants permitted to place REAL orders. Empty by default.
+
+    Opting in is per-variant and explicit: shadow mode is the default state and
+    a variant has to be named here to trade. FAST is marked
+    economically_viable=False, so naming it is a deliberate act of accepting
+    that its shadow +R figures are fee-free and its real edge is unproven.
+    """
+
+    raw = os.environ.get("FUTURES_SNIPER_LIVE_VARIANTS", "")
+    return tuple(s.strip().upper() for s in raw.split(",") if s.strip())
+
+
+def sniper_max_notional_pct() -> float:
+    """Hard cap on position NOTIONAL as a percent of equity.
+
+    Not a risk percent and not a margin percent — notional, the full exposure.
+    At 3% of a £138 account that is ~£4 of exposure, so a -1R stop at 0.6%
+    costs about 2.5p. The point is not profit; it is to buy REAL FILL AND
+    SLIPPAGE DATA, which shadow mode structurally cannot produce, at a cost
+    that cannot matter if the sleeve turns out to be noise.
+    """
+
+    return max(0.0, _f("FUTURES_SNIPER_MAX_NOTIONAL_PCT", 3.0))
+
+
+def capped_available(*, equity: float, balance_fraction: float, leverage: int,
+                     max_notional_pct: float | None = None) -> float:
+    """Balance to hand the sizer so the resulting NOTIONAL respects the cap.
+
+    The entry primitive computes notional = available * balance_fraction *
+    leverage, so invert that. Returns 0.0 when the cap or inputs are degenerate,
+    which the caller must treat as "do not trade" rather than "use everything".
+    """
+
+    pct = sniper_max_notional_pct() if max_notional_pct is None else max_notional_pct
+    if equity <= 0 or balance_fraction <= 0 or leverage <= 0 or pct <= 0:
+        return 0.0
+    cap_notional = equity * pct / 100.0
+    return cap_notional / (balance_fraction * float(leverage))
+
+
 def sniper_rearm_seconds() -> float:
     """Per (symbol, side) cooldown between logged signals.
 
