@@ -3740,14 +3740,32 @@ class FuturesRuntime:
             # small cap it's the beginning. Top-turnover names stay squeeze turf.
             exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 30.0))
             majors = self._top_turnover_symbols(tickers, exclude_top)
+            # Funnel telemetry. A 92h replay of the SAME detector over the SAME
+            # band found 48 full signals while the live scan reported
+            # candidates=0 on every pass, so we count survivors at each stage
+            # rather than guessing which one is eating them.
+            funnel = {"usdt": 0, "in_band": 0, "turnover_ok": 0, "move_24h_ok": 0}
             movers = []
             for t in tickers:
                 sym = str(t.get("symbol") or "")
-                if not sym.endswith("_USDT") or sym in self.open_positions or sym in majors:
+                if not sym.endswith("_USDT"):
                     continue
+                funnel["usdt"] += 1
+                if sym in self.open_positions or sym in majors:
+                    continue
+                funnel["in_band"] += 1
                 turn = float(t.get("amount24") or 0.0)
                 chg = abs(float(t.get("riseFallRate") or 0.0))
-                if turn >= floor and chg >= min_move:
+                if turn < floor:
+                    continue
+                funnel["turnover_ok"] += 1
+                # NOTE: riseFallRate is the 24-HOUR change, but the detector
+                # triggers on a 3-HOUR ROC. A symbol that runs +8% in 3h and
+                # retraces to +3% on the day never reaches the detector. This
+                # pre-filter is screening a different quantity from the one it
+                # feeds — see FUTURES_WILDCARD_MIN_24H_MOVE.
+                if chg >= min_move:
+                    funnel["move_24h_ok"] += 1
                     movers.append((chg, sym))
             movers.sort(reverse=True)
             cands: list = []
@@ -3771,6 +3789,10 @@ class FuturesRuntime:
             cands.sort(key=lambda x: x[0], reverse=True)
             best = cands[0][1] if cands else None
             best_lateness = cands[0][2] if cands else None
+            log.info("[WILDCARD_FUNNEL] usdt=%d -> in_band=%d -> turnover>=%.0f:%d -> "
+                     "move24h>=%.0f%%:%d -> scanned=%d -> candidates=%d",
+                     funnel["usdt"], funnel["in_band"], floor, funnel["turnover_ok"],
+                     min_move * 100, funnel["move_24h_ok"], scanned, len(cands))
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d histogram=%s signal=%s",
                      len(movers), scanned, len(cands), hist or "{}", best.symbol if best else "none")
             if best is None:
