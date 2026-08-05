@@ -17,12 +17,23 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 # 15m bars
 ROC_BARS = 12          # 3h look-back for the "extreme move"
 ATR_PERIOD = 14
 RSI_PERIOD = 14
+
+# Sigma-normalised trigger (trial 6). A FIXED 8%/3h threshold is a ~1.0-sigma
+# event on the band's most volatile names and a ~17-sigma event on its quietest
+# — a 10-32x spread in rarity, measured across turnover rank 30-90. The sleeve
+# therefore samples a completely different population per symbol while believing
+# it applies one rule, and its signal is dominated by a handful of high-vol names
+# where 8% is routine (BTW breached 8% on 19.2% of ALL its 3h bars).
+ROC_SIGMA_LAMBDA = 0.94        # RiskMetrics EWMA
+ROC_SIGMA_MIN_SAMPLES = 96     # >= 24h of trailing 3h returns before we trust it
+ROC_SIGMA_FLOOR = 0.010        # a dead symbol must not trigger on 1% noise
 
 
 def _f(name: str, default: float) -> float:
@@ -64,6 +75,29 @@ def wildcard_min_turnover_usdt() -> float:
     return _f("FUTURES_WILDCARD_MIN_TURNOVER_USDT", 3_000_000.0)
 
 
+def wildcard_sigma_trigger_enabled() -> bool:
+    """Trial 6, default OFF. Arm only with a shadow comparison in hand.
+
+    Pre-registration: switching this on should produce roughly 3x FEWER fires on
+    roughly the SAME names (the gain measured offline came from raising the bar
+    on the vol-leaders the sleeve already trades, NOT from broadening the
+    universe). If shadow instead shows migration to low-vol names, the mechanism
+    finding is wrong and this must be switched back off."""
+    return _b("FUTURES_WILDCARD_SIGMA_TRIGGER", False)
+
+
+def wildcard_long_only() -> bool:
+    """Trial 6, default ON. The convex -1R/+5R design is a LONG-side design.
+
+    A short's payoff is bounded at 1/sl_frac (price cannot go below zero), so at
+    the live 3.0xATR stop a +5R short needs a ~60% collapse against a long's
+    ~60% rally — 1.7x further in log space — and 21% of short signals were being
+    handed a target at or below zero. Measured ladder is monotone UP in target
+    for longs and monotone DOWN for shorts. Shorts are still DETECTED and shadow
+    -logged so the question stays answerable; they are simply not taken."""
+    return _b("FUTURES_WILDCARD_LONG_ONLY", True)
+
+
 @dataclass(frozen=True, slots=True)
 class WildcardSignal:
     symbol: str
@@ -78,6 +112,8 @@ class WildcardSignal:
     tp_margin_pct: float
     balance_fraction: float
     rsi: float
+    roc_z: float | None = None          # trigger in the symbol's own sigma
+    sl_frac_designed: float | None = None   # pre-margin-cap stop distance
 
 
 def _atr_pct(frame: pd.DataFrame) -> float | None:
@@ -98,6 +134,27 @@ def _rsi(frame: pd.DataFrame) -> float:
     if loss == 0:
         return 100.0
     return 100.0 - 100.0 / (1.0 + gain / loss)
+
+
+def _roc_sigma(frame: pd.DataFrame) -> float | None:
+    """EWMA sigma of this symbol's own trailing 3h log returns.
+
+    STRICTLY TRAILING: the final ROC_BARS returns are dropped because they
+    overlap the trigger bar itself — including them would let the move being
+    tested inflate its own yardstick.
+    """
+    c = frame["close"].astype(float)
+    ratio = c / c.shift(ROC_BARS)
+    r = np.log(ratio.where(ratio > 0)).dropna()
+    if len(r) <= ROC_BARS:
+        return None
+    r = r.iloc[:-ROC_BARS]                      # drop the overlap with the trigger
+    if len(r) < ROC_SIGMA_MIN_SAMPLES:
+        return None
+    var = r.pow(2).ewm(alpha=1.0 - ROC_SIGMA_LAMBDA, adjust=False).mean().iloc[-1]
+    if not np.isfinite(var) or var <= 0:
+        return None
+    return max(float(var) ** 0.5, ROC_SIGMA_FLOOR)
 
 
 def _rej(reasons, tag):
@@ -126,7 +183,15 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
     if cur <= 0 or base <= 0:
         return _rej(reasons, "bad_price")
     roc = cur / base - 1.0
-    if abs(roc) < _f("FUTURES_WILDCARD_MIN_ROC", 0.08):
+    roc_z = None
+    if wildcard_sigma_trigger_enabled():
+        sigma = _roc_sigma(frame)
+        if sigma is None:
+            return _rej(reasons, "no_roc_sigma")
+        roc_z = float(np.log(cur / base)) / sigma
+        if abs(roc_z) < _f("FUTURES_WILDCARD_MIN_ROC_Z", 4.0):
+            return _rej(reasons, "roc_z_below_min")
+    elif abs(roc) < _f("FUTURES_WILDCARD_MIN_ROC", 0.08):
         return _rej(reasons, "roc_below_min")
     side = "LONG" if roc > 0 else "SHORT"
     s = 1 if side == "LONG" else -1
@@ -162,6 +227,7 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
 
     leverage = int(min(10.0, max(5.0, _f("FUTURES_WILDCARD_LEVERAGE", 7.0))))
     sl_frac = _f("FUTURES_WILDCARD_SL_ATR_MULT", 1.5) * atr_pct
+    sl_frac_designed = sl_frac          # pre-cap, volatility-derived stop distance
     tp_r = _f("FUTURES_WILDCARD_TP_R", 5.0)
     # Hard cap on per-trade stop-loss (margin %). A 1.5xATR stop on a high-ATR
     # alt at x5-10 can lose 60-70% of margin (SIREN 2026-06-15 = -68.8%). Cap it
@@ -176,11 +242,29 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
     sl_margin = sl_frac * leverage * 100.0
     tp_margin = tp_r * sl_margin
     sl_price = cur * (1 - sl_frac) if s > 0 else cur * (1 + sl_frac)
-    tp_price = cur * (1 + sl_frac * tp_r) if s > 0 else cur * (1 - sl_frac * tp_r)
+    # Target distance. Optionally anchored to the volatility-DESIGNED stop rather
+    # than the margin-capped one, so the cap sizes risk without also relocating a
+    # price target (it binds ~9% of signals at 3.0xATR). Default OFF: it breaks
+    # the identity target == tp_r x realised-R, which every R-based report assumes.
+    tp_base = sl_frac
+    if _b("FUTURES_WILDCARD_TP_FROM_DESIGNED_STOP", False) and sl_frac_designed > 0:
+        tp_base = sl_frac_designed
+    tp_dist = tp_base * tp_r
+    # SHORTS ARE BOUNDED: price cannot go below zero, so tp_dist >= 1.0 puts the
+    # target at or through zero — a mathematically unreachable order. Measured at
+    # the live 3.0xATR stop this hit 21% of short signals, silently converting
+    # them into stop-or-nothing positions. Clamp and record it.
+    if s < 0 and tp_dist >= _f("FUTURES_WILDCARD_MAX_SHORT_TP_DIST", 0.50):
+        tp_dist = _f("FUTURES_WILDCARD_MAX_SHORT_TP_DIST", 0.50)
+        if reasons is not None:
+            reasons.append("short_tp_clamped")
+    tp_price = cur * (1 + tp_dist) if s > 0 else cur * (1 - tp_dist)
     return WildcardSignal(
         symbol=symbol.upper(), side=side, entry_price=cur, leverage=leverage,
         roc_pct=roc, atr_pct=atr_pct, sl_price=sl_price, tp_price=tp_price,
         sl_margin_pct=round(sl_margin, 4), tp_margin_pct=round(tp_margin, 4),
         balance_fraction=min(0.15, max(0.05, _f("FUTURES_WILDCARD_BALANCE_PCT", 0.12))),
         rsi=round(rsi, 1),
+        roc_z=(round(roc_z, 3) if roc_z is not None else None),
+        sl_frac_designed=round(sl_frac_designed, 6),
     )

@@ -105,7 +105,7 @@ from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
 from futuresbot.sniper import VARIANTS, active_variants, capped_available, detect_sniper_signal, sniper_enabled, sniper_live_variants, sniper_max_notional_pct, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
-from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
+from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_long_only, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
@@ -1085,6 +1085,44 @@ class FuturesRuntime:
         return stop_risk / position.margin_usdt * 100.0
 
     @staticmethod
+    def _sleeve_of(position: FuturesPosition | None) -> str:
+        """Which sleeve opened this position. Written at close, trial 6.
+
+        Previously unrecoverable: the ledger carried no sleeve field, so every
+        per-sleeve P&L attribution in this project was an inference from symbol
+        names and leverage. Order matters — squeeze and sniper both set their own
+        marker, wildcard is the fallback for convex positions.
+        """
+        md = (position.metadata or {}) if position else {}
+        for key, name in (("squeeze", "SQUEEZE"), ("sniper", "SNIPER"), ("wildcard", "WILDCARD")):
+            if md.get(key):
+                variant = md.get(f"{key}_variant") or md.get("variant")
+                return f"{name}:{variant}" if variant else name
+        return "PMT"
+
+    @staticmethod
+    def _hold_hours(position: FuturesPosition | None) -> float | None:
+        opened = getattr(position, "opened_at", None) if position else None
+        if not opened:
+            return None
+        try:
+            return round((datetime.now(timezone.utc) - opened).total_seconds() / 3600.0, 3)
+        except (TypeError, ValueError):
+            return None
+
+    def _last_known_equity(self) -> float | None:
+        """Equity snapshot at close. Every percent-of-equity and annualised-burn
+        figure in this project was anchored on today's balance rather than the
+        balance at the time of the trade; the account was materially larger
+        earlier in the window, so those figures were on a wrong denominator."""
+        try:
+            snap = self._account_snapshot(self._get_reference_price())
+            eq = float(snap.get("equity_usdt") or snap.get("available_usdt") or 0.0)
+            return round(eq, 4) if eq > 0 else None
+        except Exception:
+            return None
+
+    @staticmethod
     def _metadata_float(metadata: dict[str, Any], key: str) -> float | None:
         try:
             value = float(metadata.get(key, 0.0) or 0.0)
@@ -1505,6 +1543,83 @@ class FuturesRuntime:
         if changed:
             self._save_state()
         return False
+
+    def _convex_time_stop_exit(self, position: FuturesPosition, current_price: float,
+                               now: datetime | None = None) -> bool:
+        """Hard clock on convex positions. Trial 6.
+
+        The wildcard's measured edge half-life is ~4h and it crosses zero at ~8h;
+        holding 48-72h with a stop and no profit-take loses -0.26R (t_day -2.07)
+        — the ONE result in the programme that survived era-split, LOSO and a
+        top-3-trade haircut. Live median hold was ~11h, i.e. the sleeve was
+        routinely paying to hold positions whose edge had expired.
+
+        Also the cheapest capacity lever: at 2 slots, hold-to-stop blocked 39% of
+        incoming signals; a 6h cap blocks ~10%, at zero extra capital.
+        """
+        if not self._is_wildcard_convex(position):
+            return False
+        hours = max(0.0, self._env_float("FUTURES_CONVEX_TIME_STOP_HOURS", 6.0))
+        if hours <= 0:
+            return False
+        opened = getattr(position, "opened_at", None)
+        if not opened:
+            return False
+        now = now or datetime.now(timezone.utc)
+        try:
+            held_h = (now - opened).total_seconds() / 3600.0
+        except (TypeError, ValueError):
+            return False
+        if held_h < hours:
+            return False
+        log.warning("[CONVEX_TIME_STOP] symbol=%s side=%s held=%.1fh limit=%.1fh price=%s",
+                    position.symbol, position.side, held_h, hours,
+                    self._format_price(current_price))
+        return self._close_position_for_exit(position, current_price=current_price,
+                                             reason="CONVEX_TIME_STOP")
+
+    def _convex_runner_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
+        """Arm at +1R, give back 1R. Trial 6. A CAPACITY change, not an edge claim.
+
+        Measured expectancy-neutral (paired -0.035R, t=-0.35) but it moves win
+        rate 22.8% -> 51.6%, median trade -1.02R -> +0.05R and mean hold 27.3h ->
+        8.5h, which is ~2.5x return per slot-day after a top-3 haircut. With 2
+        slots, slot-time is the binding resource. It does not bank early and it
+        does not cap the runner, so the convex thesis is intact — it only stops a
+        position that already earned 1R from round-tripping to the stop.
+        """
+        if not self._is_wildcard_convex(position):
+            return False
+        if not self._flag("FUTURES_CONVEX_RUNNER_TRAIL", default=True):
+            return False
+        md = position.metadata or {}
+        # R denominator taken from the LIVE stop distance rather than metadata,
+        # so a position whose stop was moved still measures R correctly.
+        risk_pct = self._position_stop_risk_pct_of_margin(position)
+        if not risk_pct or risk_pct <= 0:
+            risk_pct = self._metadata_float(md, "sl_margin_pct") or 0.0
+        if risk_pct <= 0:
+            return False
+        gross = self._position_pnl_pct(position, current_price)
+        if gross is None:
+            return False
+        r_now = gross / risk_pct
+        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
+        give_r = max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 1.0))
+        peak_r = self._metadata_float(md, "convex_peak_r") or 0.0
+        if r_now > peak_r:
+            position.metadata["convex_peak_r"] = round(r_now, 4)
+            self._save_state()
+            return False
+        if peak_r < arm_r:
+            return False
+        if r_now > peak_r - give_r:
+            return False
+        log.warning("[CONVEX_RUNNER_TRAIL] symbol=%s side=%s peak=%.2fR now=%.2fR giveback=%.1fR price=%s",
+                    position.symbol, position.side, peak_r, r_now, give_r,
+                    self._format_price(current_price))
+        return self._close_position_for_exit(position, current_price=current_price,
+                                             reason="CONVEX_RUNNER_TRAIL")
 
     def _micro_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if self._is_wildcard_convex(position):
@@ -3031,6 +3146,17 @@ class FuturesRuntime:
                 "fees_usdt": fees,
                 "pnl_usdt": pnl,
                 "pnl_pct": (pnl / position.margin_usdt * 100.0) if position.margin_usdt > 0 else 0.0,
+                # --- trial-6 attribution (measurement only, does not reset a trial) ---
+                # Five separate analyses have had to INFER which sleeve produced a
+                # trade from six symbol names, and not one of 226 live ledger rows
+                # recorded which exit rule fired. Both are now written at close.
+                "sleeve": self._sleeve_of(position),
+                "exit_rule": reason,
+                "hold_hours": self._hold_hours(position),
+                "equity_at_close_usdt": self._last_known_equity(),
+                "roc_z": (position.metadata or {}).get("roc_z"),
+                "sl_frac_designed": (position.metadata or {}).get("sl_frac_designed"),
+                "peak_r": (position.metadata or {}).get("convex_peak_r"),
             }
         )
         # Fold in any +1R/+2R partial banks so the trade reflects TOTAL realized
@@ -3280,6 +3406,15 @@ class FuturesRuntime:
                 )
                 return self._close_position_for_exit(position, current_price=current_price, reason="MARGIN_LOSS_EXIT")
         if self._profit_lock_exit(position, current_price):
+            return True
+        # Convex exits run BEFORE the margin-% lock stack. Those locks are
+        # denominated in percent-of-margin, which at x15-20 is a ~0.10-0.13%
+        # price move against a ~0.16% break-even — they fire inside the fee.
+        # They are already disabled for convex positions; these two replace them
+        # with a clock and a giveback rule denominated in R.
+        if self._convex_runner_trail_exit(position, current_price):
+            return True
+        if self._convex_time_stop_exit(position, current_price, now=now):
             return True
         if self._micro_lock_exit(position, current_price):
             return True
@@ -3782,7 +3917,13 @@ class FuturesRuntime:
             scan_end = int(now_t)
             for _chg, sym in movers[: int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))]:
                 try:
-                    df = self.client.get_klines(sym, interval="Min15", start=scan_end - 60 * 900, end=scan_end)
+                    # 7d of 15m bars (was 60 bars = 15h). The detector reads only
+                    # the tail, so the SIGNAL is unchanged — but the sigma-
+                    # normalised trigger needs >=96 trailing 3h returns before it
+                    # will emit a value, and 60 bars can never supply them.
+                    lookback_bars = int(self._env_float("FUTURES_WILDCARD_SCAN_BARS", 672))
+                    df = self.client.get_klines(sym, interval="Min15",
+                                                start=scan_end - lookback_bars * 900, end=scan_end)
                 except Exception:
                     hist["kline_error"] = hist.get("kline_error", 0) + 1
                     continue
@@ -3795,14 +3936,32 @@ class FuturesRuntime:
                     lat = self._entry_lateness(df, sig.side)
                     cands.append((self._wildcard_rank_key(sig, lat), sig, lat))
             cands.sort(key=lambda x: x[0], reverse=True)
+            # LONG-ONLY (trial 6). Filtered HERE, after cands is built, and never
+            # inside detect_wildcard_signal: _shadow_log_untaken only fires on
+            # objects that reached this list, so rejecting the side in the
+            # detector would produce zero shadow rows and destroy the question
+            # permanently. Shorts are detected, logged, and simply not taken —
+            # the ledger keeps accruing ~3.8x faster than the book would.
+            shorts_blocked = 0
+            if wildcard_long_only():
+                kept = []
+                for key, sig, lat in cands:
+                    if sig.side == "SHORT":
+                        shorts_blocked += 1
+                        self._shadow_log_untaken(sig, "WILDCARD", "side_disabled")
+                    else:
+                        kept.append((key, sig, lat))
+                cands = kept
             best = cands[0][1] if cands else None
             best_lateness = cands[0][2] if cands else None
             log.info("[WILDCARD_FUNNEL] usdt=%d -> in_band=%d -> turnover>=%.0f:%d -> "
                      "move24h>=%.0f%%:%d -> scanned=%d -> candidates=%d",
                      funnel["usdt"], funnel["in_band"], floor, funnel["turnover_ok"],
                      min_move * 100, funnel["move_24h_ok"], scanned, len(cands))
-            log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d histogram=%s signal=%s",
-                     len(movers), scanned, len(cands), hist or "{}", best.symbol if best else "none")
+            log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d shorts_blocked=%d "
+                     "histogram=%s signal=%s",
+                     len(movers), scanned, len(cands), shorts_blocked, hist or "{}",
+                     best.symbol if best else "none")
             if best is None:
                 return
             if slot_blocked:
@@ -4340,6 +4499,13 @@ class FuturesRuntime:
             "intended_margin_usdt": round(float(intended_margin), 4),
             "streak_multiplier": round(float(streak_mult), 4),
             "loss_streak_at_entry": float(loss_streak),
+            # Trial 6: the trigger expressed in the symbol's OWN sigma, and the
+            # pre-margin-cap stop distance. Logged even when the sigma trigger is
+            # OFF, so the conditional-expectancy engine can settle
+            # roc-in-sigma vs roc-in-percent from REAL fills instead of a backtest.
+            "roc_z": getattr(sig, "roc_z", None),
+            "sl_frac_designed": getattr(sig, "sl_frac_designed", None),
+            "equity_at_open_usdt": self._last_known_equity(),
         }
         if kind == "SQUEEZE":
             metadata["squeeze"] = 1.0

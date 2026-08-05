@@ -1,4 +1,161 @@
-# Pre-registered decision rule — CONVEX TRIAL 5 (from 2026-08-05)
+# Pre-registered decision rule — CONVEX TRIAL 6 (from 2026-08-05)
+
+Trial 5 CLOSED the same day it opened, at **n=0 closed trades**. Not a
+performance verdict — a structural one. Five defects were measured during it
+that make its premise untestable, so continuing would have spent weeks
+generating data about a mis-specified sleeve. See the closure record below.
+
+## Trial 5 closure record
+
+**Result: n=0 closed. 2 open at closure, both LONG, both in profit.**
+
+| symbol | side | lev | entry | last | move | held | unrealised |
+|--------|------|-----|-------|------|------|------|------------|
+| BTW_USDT | LONG | x2 | 0.1475 | 0.15895 | +7.76% | 10.4h | +$1.109 on $7.39 margin (+15.0%) |
+| BICO_USDT | LONG | x2 | 0.02352 | 0.02756 | +17.18% | 16.3h | +$1.306 on $4.16 margin (+31.4%) |
+
+Account at closure: equity $140.93, margin at risk $11.55, unrealised +$2.397
+(+20.8% on margin at risk). Feature store last written 2026-07-31, confirming no
+trial-5 trade ever closed.
+
+**Why it was closed early — measured, in order of severity:**
+
+1. **The trigger is not a trigger.** `|3h ROC| >= 8%` is a FIXED percent, so it
+   spans **~10-32x in event rarity** across turnover rank 30-90 (1.04 sigma on
+   BTW, 33.6 sigma on SPY; ~10.1x crypto-only). **24% of band symbols never
+   breached 8% in 83 days** — they cannot fire. **5 symbols supply 50% of all
+   band signal**, and on those 8% is 1.0-1.3 sigma, i.e. routine: BTW breached
+   8%/3h on **19.2% of ALL its 3h bars**. Both trial-5 positions were opened on
+   such symbols. The sleeve believes it applies one rule; it samples a different
+   population per symbol.
+2. **21% of short signals had a mathematically unreachable target.** At the
+   deployed 3.0xATR stop, `tp = entry*(1 - sl_frac*5)` with `sl_frac >= 0.20`
+   puts the short's take-profit at or below **price zero**, silently converting
+   those trades to stop-or-nothing.
+3. **The clock was wrong.** Edge half-life ~4h, zero-crossing ~8h, and
+   **-0.263R at 72h (day-clustered t -2.07)** — the ONLY result in the whole
+   programme that survived era-split, leave-one-symbol-out AND a top-3-trade
+   haircut. Live median hold was ~11h, so the sleeve routinely paid to hold
+   positions whose edge had expired. Both open positions were past it.
+4. **Slot starvation was a hold problem, not a slot problem.** Hold-to-stop
+   blocked **39%** of incoming signals; a 6h cap blocks ~10%, at zero capital.
+5. **The ledger could not identify its own trades.** No sleeve tag, and **0 of
+   226 rows** recorded which exit rule fired. Every per-sleeve attribution in
+   this project has been an inference from six symbol names.
+
+**Corrections recorded (things this project believed that are false):**
+
+- `1/(1+k)` is the WRONG null for this bracket. Arithmetic barriers are
+  asymmetric in log space and a finite horizon truncates far-target hits: the
+  true driftless null at +5R is **8.25%**, not 16.7%. Measured hit rate 14.9%.
+  Every "below fair value" statement scored against 16.7% was scored against a
+  null roughly double the correct one.
+- Break-even at +5R is **16.98%** with the corrected cost, not 16.7%.
+- `contract/detail` reports `takerFeeRate = 0` on 56/73 band symbols. **False** —
+  realised fills pay 1.00x listed, **0.0672%/side**. `cost_drag = 0.190%/sl_frac`.
+- "0 of 65 wildcard shorts ever completed +5R" — **false**. `daily_audit.md:597`
+  NIL_USDT +5.06R; `daily_audit.md:1472` BILL_USDT +4.43R.
+- "A random entry beats the wildcard signal" — **false**, a look-ahead artifact.
+  Controls drawn from bars BEFORE the signal bar beat it by +1.624R (t +15.66);
+  controls drawn AFTER it are a dead heat (-0.025R, t -0.26).
+- "Cap leverage at 6 to cut fees" — **withdrawn**. `fee/margin == 2*rate*lev` is
+  an identity (R^2 = 1.0000), not a finding, and capping 20->6 would silently
+  TRIPLE every margin-%-denominated exit threshold. If less risk is wanted, cut
+  `balance_fraction` and say so.
+
+## Changes under test in trial 6
+
+**Treatment changes (these are why the trial resets):**
+
+1. **`FUTURES_WILDCARD_LONG_ONLY=1` (new, default ON).** Shorts are still
+   DETECTED and shadow-logged as `side_disabled`; they are simply not taken.
+   Filtered AFTER the candidate list is built, never inside the detector —
+   `_shadow_log_untaken` only fires on objects that reached that list, so a
+   detector-level reject would produce zero shadow rows and destroy the question
+   permanently. Rationale: a short's payoff is bounded at `1/sl_frac` (price
+   cannot go below zero) so the convex +5R design is structurally a LONG-side
+   design; the measured target ladder is monotone UP in k for longs
+   (+0.021 -> +0.250) and monotone DOWN for shorts (+0.077 -> +0.020). The
+   shadow ledger accrues ~3.8x faster than the book, cutting the horizon to
+   settle the short question from ~6.7 years to ~1.8.
+2. **`FUTURES_CONVEX_TIME_STOP_HOURS=6` (new).** Hard clock on convex positions,
+   per defect 3. Pre-registered as **removal of a measured negative tail and a
+   throughput gain, NOT as an edge claim** — expected value ~$38/yr.
+3. **`FUTURES_CONVEX_RUNNER_TRAIL=1` (new, default ON), arm +1R / give back 1R.**
+   A CAPACITY change: measured expectancy-neutral (paired -0.035R, t -0.35) but
+   win rate 22.8% -> 51.6%, median trade -1.02R -> +0.05R, mean hold 27.3h ->
+   8.5h, ~2.5x return per slot-day after a top-3 haircut. It does not bank early
+   and does not cap the runner.
+4. **Short take-profit clamped** (`FUTURES_WILDCARD_MAX_SHORT_TP_DIST=0.50`), per
+   defect 2. Inert while long-only is on; correctness fix regardless.
+
+**Available but DEFAULT OFF (arm only with a shadow comparison in hand):**
+
+5. **`FUTURES_WILDCARD_SIGMA_TRIGGER=0`** — replaces the fixed 8% with
+   `|ln(1+roc)| / EWMA(0.94) sigma_3h >= FUTURES_WILDCARD_MIN_ROC_Z` (4.0),
+   sigma floored at 1.0% and computed STRICTLY TRAILING (the final 12 returns
+   are dropped so the move cannot inflate its own yardstick).
+6. **`FUTURES_WILDCARD_TP_FROM_DESIGNED_STOP=0`** — anchors the target to the
+   pre-margin-cap stop distance. Off by default because it breaks the identity
+   `target == tp_r x realised-R` that every R-based report assumes.
+
+**Measurement only (does NOT reset a trial, per the 2026-07-31 standard):**
+
+7. `sleeve`, `exit_rule`, `hold_hours`, `equity_at_close_usdt`, `roc_z`,
+   `sl_frac_designed` and `peak_r` recorded on every close; `roc_z`,
+   `sl_frac_designed` and `equity_at_open_usdt` recorded at open. `roc_z` is
+   logged **even while the sigma trigger is OFF**, so the conditional-expectancy
+   engine can settle roc-in-sigma vs roc-in-percent from REAL fills rather than
+   from anyone's backtest.
+8. Wildcard scan fetches 7d of 15m bars instead of 15h (`FUTURES_WILDCARD_SCAN_BARS=672`).
+   The detector reads only the tail, so the SIGNAL is unchanged — but the sigma
+   estimator needs >=96 trailing 3h returns and 60 bars can never supply them.
+
+## Pass criteria (evaluated at 30 WILDCARD trades or 90 days)
+
+Scored per sleeve, never blended.
+
+1. **Net R > 0** after fees.
+2. **Outlier-robust:** net R still > 0 after dropping the single best trade.
+3. **Max drawdown** from the window's peak **< 30%**, flow-adjusted.
+4. **Every close attributable to a named exit rule** — now actually checkable,
+   because `exit_rule` is recorded.
+
+Pass -> fund to a size where the edge pays for the effort.
+Fail -> shut the sleeve down. No extending the window to chase a verdict.
+
+## Watch items for trial 6
+
+- **Shorts blocked**: `shorts_blocked` in `[WILDCARD_SCAN_SUMMARY]` and
+  `side_disabled` rows in the shadow ledger. If blocked shorts resolve clearly
+  positive over >=20 rows, long-only is wrong and must be revisited.
+- **Time-stop bite rate**: what fraction of closes are `CONVEX_TIME_STOP`. If it
+  is >70%, 6h is too tight for the fills actually being taken.
+- **Trail vs stop**: `CONVEX_RUNNER_TRAIL` closes should REPLACE stop-outs, not
+  take-profits. If TP completion falls, the trail is capping runners and the
+  giveback must widen.
+- **`roc_z` distribution at entry**: if live entries cluster below z=4, the fixed
+  trigger is admitting near-noise and the sigma trigger should be armed.
+
+## HONEST LIMITS OF THIS TRIAL (recorded up front)
+
+- **Nothing here is an edge claim.** Wildcard LONG is +0.224R at day-clustered
+  t **+1.67**; its best searched cell fails a family-wise null at p=0.144. Across
+  ~517 cells searched this session the largest |t| found anywhere was **2.24**
+  against a null E[max|t|] of **3.25** — the whole search produced less apparent
+  signal than chance would on random data.
+- **Validatability is the binding constraint.** Establishing the live
+  configuration's own +0.179R at t=2.8 needs ~2,100 trades ≈ **7.2 years** at
+  0.8 closes/day. Trial 6 is expected to make the sleeve CHEAPER and its records
+  READABLE. It is not expected to prove anything.
+- **Unresolved and gating:** what actually closes live wildcard positions has
+  never been reconciled (one study measured a 0.2h median live hold against the
+  ~11h established elsewhere). Until `exit_rule` accumulates, the SIGN of the
+  sleeve's replay expectancy is not established.
+
+---
+
+# ARCHIVED — Pre-registered decision rule, CONVEX TRIAL 5 (from 2026-08-05)
 
 Trial 4 (07-13 -> 08-05) CLOSED at n=22. Not extended: the wildcard sleeve was
 structurally unable to fire for its final ~106 hours (see defect #1 below), so
