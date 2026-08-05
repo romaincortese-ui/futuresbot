@@ -1,4 +1,89 @@
-# Pre-registered decision rule — CONVEX TRIAL 4 (from 2026-07-31)
+# Pre-registered decision rule — CONVEX TRIAL 5 (from 2026-08-05)
+
+Trial 4 (07-13 -> 08-05) CLOSED at n=22. Not extended: the wildcard sleeve was
+structurally unable to fire for its final ~106 hours (see defect #1 below), so
+further waiting would have added time without adding evidence.
+
+## Trial 4 result and what it taught
+
+n=22, netR **-1.81**, $+4.53. Split by sleeve, which is the whole lesson:
+
+| sleeve   | n  | netR  | win | TP completion | verdict |
+|----------|----|-------|-----|---------------|---------|
+| WILDCARD | 12 | +4.49 | 25% | 25% (3/12)    | keep    |
+| SQUEEZE  | 10 | -6.30 | 30% | 0% (0/10)     | DISABLED |
+
+1. **The TP watch item fired on a blended number and the blend was misleading.**
+   Trial 4 pre-registered "<10% TP completion over >=15 trades -> scale TP down".
+   Measured 9.1% and it triggered. But that is 25% for wildcard (above the 16.7%
+   break-even at +5R/-1R) and 0% for squeeze. The correct response was to remove
+   the squeeze sleeve, NOT to lower the wildcard's target. **The wildcard's +5R
+   TP is retained for trial 5.** A watch item computed across heterogeneous
+   sleeves can point the wrong way; trial 5 scores per sleeve.
+2. **Squeeze was anti-convex**: 3 wins of +0.34/+2.53/+1.70R against losses to
+   -3.79R. It won small and lost large, the inverse of the design. Disabled.
+3. **Dollar P&L and netR disagreed in sign** (+$4.53 vs -1.81R). Size scaling put
+   more capital behind winners. Encouraging but n=22 with two dominant trades.
+4. **Process failure, recorded honestly**: the external gate was relaxed mid-trial
+   on re-presented evidence and reverted the same day (see 2026-08-02 below). Net
+   effect on trial 4 was zero — it was live ~8h during a drought with no signal —
+   but the discipline lapse is the more important finding.
+
+## Changes under test in trial 5
+
+**Defect fixes (not strategy changes) — these close gaps trial 4 exposed:**
+
+1. **`FUTURES_WILDCARD_MIN_24H_MOVE` 0.08 -> 0.03.** The pre-filter admitted a
+   symbol only if its 24-HOUR change exceeded 8%, then handed it to a detector
+   that triggers on a 3-HOUR ROC of 8%. A coin that runs +8% in 3h and retraces
+   to +3% on the day never reached the detector. Measured live over ~45 scans:
+   948 USDT pairs -> 917 in band -> ~72 pass turnover -> **7-10 pass this gate**
+   -> 0 candidates, with `roc_below_min` the DOMINANT detector reject — i.e. the
+   gate was admitting the wrong symbols. An independent 92h replay of the same
+   detector over the same band found **48 full signals** while the live scan
+   produced zero. The detector's 8%/3h trigger and all pattern gates are
+   UNCHANGED; only the pre-filter widens.
+2. **Atomic `_save_state`.** Was a bare `write_text` on the authoritative
+   open-positions ledger, rewritten every cycle. A container kill mid-write
+   truncated it, and `_load_state` cannot tell "empty" from "wrong" — the bot
+   would boot with zero positions against real ones on MEXC.
+3. **`_record_fill` wired into the convex entry path.** It existed since Sprint 3
+   but was only ever called from the decommissioned PMT path, so the convex
+   sleeves have NEVER measured a fill. This is why every capacity and cost-drag
+   figure in this project rests on an assumed impact coefficient. Write-only.
+4. **Equity-drawdown brake wired to the convex path**, behind
+   `FUTURES_CONVEX_DRAWDOWN_BRAKE` (**default OFF**). `_drawdown_size_multiplier`
+   was likewise PMT-only, so the convex sleeves ran all of trial 4 with no
+   drawdown protection — the streak throttle counts consecutive losses, which is
+   not the same thing as being deep in an equity hole. Observe first, arm later.
+
+**Carried forward unchanged from trial 4:** 2 wildcard slots, 3.0xATR stop, +5R
+TP, -20% margin cap, external gate at `REQUIRE_LISTED=1` (the pre-registered
+state), squeeze disabled.
+
+## Pass criteria (evaluated at 30 WILDCARD trades or 90 days)
+
+Scored **per sleeve**, never blended — see lesson 1.
+
+1. **Net R > 0** after fees.
+2. **Outlier-robust:** net R still > 0 after dropping the single best trade.
+3. **Max drawdown** from the window's peak **< 30%**, flow-adjusted.
+4. **No unexplained behaviour:** every close attributable to a designed exit.
+
+Pass -> fund to a size where the edge pays for the effort.
+Fail -> shut the sleeve down. No extending the window to chase a verdict.
+
+## Watch items for trial 5
+
+- **Fill slippage** (newly measurable): if realised slippage exceeds ~10bp per
+  side, the cost model behind every capacity estimate needs re-deriving.
+- **Funnel counts**: `move24h_ok` should rise materially from 7-10. If candidates
+  remain 0 at the looser gate, the leak is downstream and this fix was wrong.
+- **Drawdown brake**: shadow-observe for 2 weeks before arming.
+
+---
+
+# ARCHIVED — Pre-registered decision rule, CONVEX TRIAL 4 (from 2026-07-31)
 
 Trial 3 (07-29 -> 07-31) archived. It produced one closed trade (NIL_USDT
 +5.06R / +$9.83, full TP after 82h) — too few to judge, so trial 4 supersedes it

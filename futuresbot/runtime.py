@@ -2653,7 +2653,15 @@ class FuturesRuntime:
             "last_telegram_update": self._last_telegram_update,
             "last_heartbeat_at": self._last_heartbeat_at,
         }
-        self._state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # Atomic write. This file is the authoritative open_positions map and is
+        # rewritten every cycle; a bare write_text truncates it if the container
+        # is killed mid-write (every deploy restarts the bot). _load_state cannot
+        # distinguish "empty file" from "wrong file", so the bot would boot with
+        # zero positions while real positions sit on MEXC with no exit management.
+        # shadow_ledger.py already uses this pattern.
+        tmp = self._state_path.with_name(f"{self._state_path.name}.tmp.{os.getpid()}")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, self._state_path)
 
     def refresh_calibration(self, *, force: bool = False) -> None:
         now_ts = time.time()
@@ -4285,6 +4293,21 @@ class FuturesRuntime:
             log.warning("[STREAK_THROTTLE] %s losing streak=%d -> size x%.2f (margin %.2f -> %.2f)",
                         kind, loss_streak, streak_mult, margin, margin * streak_mult)
             margin *= streak_mult
+        # Equity-drawdown brake. _drawdown_size_multiplier has existed since
+        # Sprint 1 but is only reachable from _enter_trade (the decommissioned
+        # PMT path), so the convex sleeves have had NO drawdown protection at
+        # all -- the streak throttle counts consecutive losses, which is a
+        # different thing from being deep in an equity hole. Default OFF for
+        # trial 5's first weeks so it can be shadow-observed before it bites.
+        if self._flag("FUTURES_CONVEX_DRAWDOWN_BRAKE", default=False):
+            dd_mult = self._drawdown_size_multiplier()
+            if dd_mult < 0.999:
+                log.warning("[DRAWDOWN_BRAKE] %s %s size x%.2f (margin %.2f -> %.2f)",
+                            kind, symbol, dd_mult, margin, margin * dd_mult)
+                margin *= dd_mult
+            if dd_mult <= 0.0:
+                log.warning("[DRAWDOWN_BRAKE] %s %s entry BLOCKED by drawdown halt", kind, symbol)
+                return False
         if regime_mult < 0.999:
             log.info("[SIZE_TRIM] %s %s regime_mult=%.2f margin %.2f -> %.2f (intended %.0f%% of balance)",
                      kind, symbol, regime_mult, intended_margin, margin, sig.balance_fraction * 100)
@@ -4359,6 +4382,16 @@ class FuturesRuntime:
                     fill = float(d.get("dealAvgPrice") or sig.entry_price)
             except Exception:  # pragma: no cover
                 pass
+        # Slippage attribution. _record_fill existed since Sprint 3 but was only
+        # ever called from _enter_trade (the decommissioned PMT path), so the
+        # convex sleeves have NEVER measured a fill. That gap is why every
+        # capacity and cost-drag estimate this project has produced rests on an
+        # assumed impact coefficient rather than a measured one. Write-only.
+        try:
+            self._record_fill(symbol=symbol, side=side_name, quoted_price=float(sig.entry_price),
+                              fill_price=float(fill), maker=False, leverage=int(sig.leverage))
+        except Exception:  # pragma: no cover — telemetry never blocks an entry
+            pass
         # Resolve the REAL exchange position id (NOT the order id) so the reconcile
         # can match it — EVAA 2026-06-14 was orphaned because position_id was set
         # to the order id (821...) while the live position id was 1417108026.
