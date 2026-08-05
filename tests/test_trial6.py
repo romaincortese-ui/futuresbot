@@ -266,6 +266,31 @@ def test_trail_lets_a_runner_run(rt, monkeypatch):
 # sleeve attribution
 # --------------------------------------------------------------------------
 
+def test_convex_exits_are_reachable_under_the_live_pmt_strategy_mode():
+    """REGRESSION. Shipped once and was silently dead: _hourly_exit RETURNS
+    inside `if pmt_strategy_enabled():`, and live runs FUTURES_STRATEGY_MODE=
+    pmt_threshold. Placing the convex exits after that branch made them
+    unreachable in production while every unit test still passed. A wildcard
+    position is not a PMT position and must not be gated on the PMT flag.
+    """
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._hourly_exit)
+    convex = src.index("_convex_time_stop_exit")
+    pmt = src.index("if pmt_strategy_enabled():")
+    assert convex < pmt, "convex exits must run BEFORE the PMT early-return branch"
+
+
+def test_convex_time_stop_fires_even_when_pmt_mode_is_on(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    seen = {}
+    monkeypatch.setattr(rt, "_close_position_for_exit",
+                        lambda p, **k: seen.update(reason=k.get("reason")) or True)
+    assert rt._hourly_exit(_pos(hours_held=9.0), 100.0) is True
+    assert seen["reason"] == "CONVEX_TIME_STOP"
+
+
 def test_sleeve_tag_distinguishes_the_sleeves(rt):
     assert rt._sleeve_of(_pos()) == "WILDCARD"
     p = _pos(); p.metadata = {"squeeze": 1.0}

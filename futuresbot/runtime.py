@@ -3390,6 +3390,15 @@ class FuturesRuntime:
             return False
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
+        # CONVEX EXITS FIRST — before the PMT branch below, which RETURNS and
+        # would otherwise make these unreachable whenever FUTURES_STRATEGY_MODE
+        # is pmt_threshold (it is, live). A wildcard position is not a PMT
+        # position; its clock and giveback rule must not be gated on the PMT
+        # strategy flag. Both are no-ops for non-convex positions.
+        if self._convex_runner_trail_exit(position, current_price):
+            return True
+        if self._convex_time_stop_exit(position, current_price, now=now):
+            return True
         if pmt_strategy_enabled():
             if self._profit_lock_exit(position, current_price):
                 return True
@@ -3406,15 +3415,6 @@ class FuturesRuntime:
                 )
                 return self._close_position_for_exit(position, current_price=current_price, reason="MARGIN_LOSS_EXIT")
         if self._profit_lock_exit(position, current_price):
-            return True
-        # Convex exits run BEFORE the margin-% lock stack. Those locks are
-        # denominated in percent-of-margin, which at x15-20 is a ~0.10-0.13%
-        # price move against a ~0.16% break-even — they fire inside the fee.
-        # They are already disabled for convex positions; these two replace them
-        # with a clock and a giveback rule denominated in R.
-        if self._convex_runner_trail_exit(position, current_price):
-            return True
-        if self._convex_time_stop_exit(position, current_price, now=now):
             return True
         if self._micro_lock_exit(position, current_price):
             return True
