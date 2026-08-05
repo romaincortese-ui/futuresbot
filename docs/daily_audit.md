@@ -1,3 +1,180 @@
+# Daily Audit — 2026-08-05
+
+---
+
+## Automated Assessment (UTC ~16:30)
+
+### 1. Trades (last 24h)
+
+**0 closed trades.** Verified via full-history MEXC pull, empty-symbol
+`history_positions`, 293 rows across 3 pages. Max `updateTime` is still
+2026-07-31T21:45:30Z (BANK_USDT) — dormancy continues on the closed-trade
+side even though TRIAL 5 opened two new positions today (below).
+
+### 1-OPEN. Open positions
+
+TRIAL 5 (`7cd4b96`, "open TRIAL 5 - four defect fixes from trial 4's
+evidence") is live and deployed — both wildcard slots are filled with its
+first two trades, both still open, neither has touched TP or SL:
+
+- **BICO_USDT LONG x2**, held 11h16m, **+0.16R** (peak **+2.54R** at
+  08:xx, giveback from peak **-2.38R** — round-tripped from deep in TP
+  territory through breakeven to -0.87R trough and back to flat). TP
+  +39.8% away, SL -9.6% away. entry_lateness=1.00 (vertical entry, not a
+  deep pullback).
+- **BTW_USDT LONG x2**, held 5h21m, **~0.00R** (peak **+0.17R**, giveback
+  negligible). TP +45.3% away, SL -9.2% away. entry_lateness=1.00.
+
+**Sizing check:** BICO's actual margin ($4.15) matches its
+regime-scaled intended margin ($4.16, mult=0.25) almost exactly —
+contract_size=1 gives fine-grained sizing. BTW's actual margin ($7.38) is
+**38% short of its regime-scaled intended margin** ($11.91, mult=0.74)
+because BTW_USDT's contract_size=100 forces integer-contract rounding
+(needed ~1.6 contracts, got 1). Not a bug in the regime scaler — a
+lot-size quantization gap on coarse-lot symbols. Flagging as a candidate
+for a future bounded fix (round-to-nearest-viable instead of always-down);
+not proposing today, not sized to matter much on a $7 position.
+
+### 2. Champion vs Shadow
+
+**Shadow: stale, comparison suppressed pending resync** (standing 07-23
+action item, unchanged — Futures-shadow logs still show PMT-only
+`pmt-scan`/`no_mental_threshold_cross` cycles, no wildcard/squeeze/convex
+activity, confirming it has not been resynced to champion HEAD).
+
+### 3. Trial 5 / config status
+
+Live `railway variables` confirmed the four TRIAL 5 changes are actually
+in effect: `FUTURES_WILDCARD_MIN_24H_MOVE=0.03` (was 0.08),
+`FUTURES_EXTERNAL_GATE_REQUIRE_LISTED=1`, `FUTURES_SQUEEZE_ENABLED=0`,
+`FUTURES_WILDCARD_MAX_POSITIONS=2`, `FUTURES_WILDCARD_MAX_SL_MARGIN_PCT=20`,
+`FUTURES_WILDCARD_SL_ATR_MULT=3.0`, `FUTURES_ENTRY_MIN_SCORE=1000` (PMT
+still decommissioned). `FUTURES_CONVEX_DRAWDOWN_BRAKE` unset (default off,
+shadow-observe per plan). Local repo and `origin/main` are now in sync at
+`7cd4b96` (the 10 commits that were unpushed as of 08-04 have landed and
+deployed) — nothing outstanding to push today.
+
+**Note:** `USE_DRAWDOWN_KILL=1` live. The scheduled-task brief's standing
+note says this was operator-set to 0 on 07-17; current value contradicts
+that note. Not touching it (kill-switch ON is the safer default) — flagging
+the stale doc/live mismatch for the operator to reconcile, not treating it
+as a bug.
+
+**Funnel fix confirmation:** `MIN_24H_MOVE` 0.08->0.03 is doing what trial
+5 intended — `movers` per wildcard scan is now ~22-25 (was 7-10 pre-fix).
+Aggregated across 31 scans since this morning's deploy: `roc_below_min`
+575 (82%), `no_pullback_resume` 107 (15%), rest single digits. The
+3h-ROC-8% detector remains the dominant, unchanged gate — correct, matches
+the design (only the pre-filter was meant to widen).
+
+**Entry execution:** 0 order-reject codes (5003/2015), 0 Tracebacks in the
+available log window (since ~08:20 deploy). Both BICO and BTW entries
+filled clean.
+
+### 4. Learning loop
+
+Feature store still 41 rows (0 new closes). Re-ran
+`learn_from_trades.py` anyway since trial 5 changed nothing about the
+historical corpus — same output as prior runs, restated for the record:
+- **FAVOR: `hold>=120min`** — n=24 mean +$1.13 (win 62.5%) vs n=17 mean
+  -$1.11 (win 5.9%), OOS-consistent. Positions that get stopped inside 2h
+  are overwhelmingly losers; this is mechanical (convex needs time for a
+  5R move) rather than a new insight, but it's now OOS-confirmed.
+- **AVOID: `regime_trimmed(mult<1)` / `chop_regime`** (same underlying
+  flag) — n=24 mean -$0.12 (win 33%) vs n=17 mean +$0.65 (win 47%),
+  OOS-consistent. `regime_trimmed_hard(mult<0.5)` shows the same direction
+  on a smaller n=14 slice.
+- `leverage>=7` (previously flagged informally as "reliably loses") is now
+  only **weak** with more data (n=16, not OOS-consistent both ways) — do
+  not keep citing it as a settled finding.
+- Propose-only, nothing applied.
+
+**Shadow ledger** grew 27 -> 33 rows (+6, all from today's scan activity).
+Slot-cost split (WILDCARD only, squeeze now irrelevant/disabled):
+n=10 resolved, netR **+2.77** (mean +0.28R) — unchanged from 08-04, no new
+resolutions this window; still the number that justified the 2nd slot,
+both slots are now occupied by live trial-5 trades so this isn't actionable
+today. One new unresolved row: HEI_USDT (blocked by `slot_occupied` at
+12:58, lateness=1.00).
+
+**Veto gate correction:** prior daily reports (through 08-04) quoted
+`ref_not_listed` net R **blended across synthetic and real-alt rows**
+(e.g. "+8.94R/6"), but DECISION_RULE.md's own adjudication bar is
+explicitly **real-alt rows only** (synthetics are independently blocked by
+the squeeze fee filter and don't inform this gate's cost on real alts).
+Re-split today: **real-alt `ref_not_listed`, n=3 resolved: KOMA_USDT
++1.94R, SKYAI_USDT -1.00R, CATE_USDT -1.00R (new today), net -0.06R** —
+roughly flat, which *reverses* the "trending net-positive" framing carried
+in prior reports. Synthetic-only (SKHYSTOCK/USOIL/SPCXSTOCK/SNDKSTOCK):
+n=4, net +8.00R, correctly excluded from adjudication. Still far below the
+n>=10 real-alt bar (3 resolved) — no gate-tuning proposal, but flagging the
+correction so future reports don't keep citing the blended number.
+
+### 5. Wildcard/squeeze diagnose
+
+**Wildcard:** active and correctly widened (see §3 funnel note). 2
+candidates fired since this morning's deploy: BTW_USDT (took it, 2nd slot
+was open) and HEI_USDT at 12:58 (blocked, both slots already full —
+shadow-logged). Dormancy on the closed-trade side is a slot/hold-time
+story, not a scan-gate story: both slots have been continuously occupied
+since 11:09.
+
+**Squeeze:** disabled at config level, per trial 4/5 design (not a
+scan/gate issue). Operator confirmation of "intentional, permanent" vs
+"re-enable" is still an open item (unchanged since 08-02).
+
+### 6. Diagnose — lever for next 24h
+
+**No change proposed.** Today is trial 5's first live day — both slots
+are occupied by its first two trades, zero closes yet to judge anything
+against the new pass criteria. The only candidate levers on the table
+(veto-gate tuning, 3rd wildcard slot) both sit below their evidence bars
+(n=3 and n=10 respectively, need 10 and a fresh justification). Correct
+move is to let trial 5 accumulate trades.
+
+### 7. Validate
+
+`pytest -q`: **721 passed** locally at `7cd4b96` (up from 08-04's 703 —
+trial 5's four defect-fix commits added coverage). No code change this
+run, so no replay/MC/shadow-staging gate needed.
+
+### 8. Deploy
+
+**None.** Already deployed (trial 5 shipped before this run); local/origin
+in sync; working tree clean.
+
+### 9. Summary
+
+- Equity: $138.43 (flat vs 08-04's $138.59; not a P&L statement, unrealized
+  -$0.12 across the 2 open positions)
+- Trades: 0 closed; 2 open (BICO_USDT +0.16R, BTW_USDT ~0.00R) — trial 5's
+  first two trades, both wildcard
+- Open: BICO_USDT LONG x2, held 11h16m, +0.16R (peak +2.54R, giveback
+  -2.38R), TP +39.8%/SL -9.6% away
+- Open: BTW_USDT LONG x2, held 5h21m, +0.00R (peak +0.17R, giveback
+  -0.17R), TP +45.3%/SL -9.2% away; sized 38% under regime target due to
+  coarse contract_size=100 lot rounding (flagged, not fixed)
+- Slot cost: WILDCARD blocked candidates net +2.77R over 10 resolved rows
+  (unchanged, both slots occupied so not actionable today)
+- Trial 5: day 1, 0/? convex trades closed, netR 0 (too early to score)
+- Veto gate: real-alt `ref_not_listed` corrected to n=3 resolved, net
+  -0.06R (reverses prior blended "+8.94R" framing) — still <10, no action
+- Exits (all-time convex, reconstructed from r_multiple since exit_kind is
+  new): WILDCARD 16 trades, TP 4 (25%), STOP 11, OTHER 1 — above the 16.7%
+  breakeven, tripwire not triggered
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: none this run (trial 5 already live)
+- Bot: healthy, 0 Tracebacks/order-reject errors, 721/721 tests pass
+- **Action items for operator:** (1) `FUTURES_SQUEEZE_ENABLED=0` — confirm
+  intentional or re-enable (unchanged since 08-02); (2) reconcile-drop
+  2-pass-grace fix still outstanding (unchanged from 07-30); (3)
+  `USE_DRAWDOWN_KILL=1` live vs the scheduled-task brief's note that it was
+  set to 0 — doc/live mismatch, please reconcile which is correct; (4)
+  BTW_USDT-style lot-size undersizing on coarse contract_size symbols is a
+  candidate future fix, not urgent
+
+---
+
 # Daily Audit — 2026-08-04
 
 ---
