@@ -7,16 +7,28 @@ generating data about a mis-specified sleeve. See the closure record below.
 
 ## Trial 5 closure record
 
-**Result: n=0 closed. 2 open at closure, both LONG, both in profit.**
+**Result: n=2, both LONG, both profitable. Net +$2.101.**
 
-| symbol | side | lev | entry | last | move | held | unrealised |
-|--------|------|-----|-------|------|------|------|------------|
-| BTW_USDT | LONG | x2 | 0.1475 | 0.15895 | +7.76% | 10.4h | +$1.109 on $7.39 margin (+15.0%) |
-| BICO_USDT | LONG | x2 | 0.02352 | 0.02756 | +17.18% | 16.3h | +$1.306 on $4.16 margin (+31.4%) |
+Both positions were still open when the trial was called; both were then closed
+by the bot's own new 6h clock on the first monitor cycle after the trial-6
+deploy (2026-08-05 22:25 UTC). No position was closed by hand.
 
-Account at closure: equity $140.93, margin at risk $11.55, unrealised +$2.397
-(+20.8% on margin at risk). Feature store last written 2026-07-31, confirming no
-trial-5 trade ever closed.
+| symbol | lev | entry | exit | held | gross | fees | **net** | on margin |
+|--------|-----|-------|------|------|-------|------|---------|-----------|
+| BICO_USDT | x2 | 0.02352 | 0.02734 | 17.2h | +$1.348 | $0.014 | **+$1.334** | +32.14% |
+| BTW_USDT | x2 | 0.1475 | 0.15541 | 11.3h | +$0.791 | $0.024 | **+$0.767** | +10.40% |
+| | | | | | **+$2.139** | **$0.038** | **+$2.101** | |
+
+Account after: equity **$140.65**, available $140.65, open margin $0.00,
+positions 0. Both closes recorded `exit_reason=CONVEX_TIME_STOP`.
+
+Two things this tiny sample illustrates rather than proves. **(a)** Both winners
+were on symbols where the fixed 8% trigger is near-noise (BTW is the band's most
+extreme case at ~1.0 sigma), so trial 5's two profitable trades are not evidence
+the trigger works — they are evidence the sleeve can profit *despite* it.
+**(b)** BTW was +7.76% when the trial was called and +5.36% when the clock
+closed it ~2h later; the giveback is exactly the behaviour the 6h clock exists
+to bound. n=2 either way — do not read either as a result.
 
 **Why it was closed early — measured, in order of severity:**
 
