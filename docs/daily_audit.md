@@ -1,3 +1,217 @@
+# Daily Audit — 2026-08-06
+
+---
+
+## Automated Assessment (UTC ~16:30)
+
+### 1. Trades (last 24h)
+
+**5 closed trades, net +$2.051.** Full-history MEXC pull (empty-symbol
+`history_positions`, 297 rows total). Note on coverage: the container
+restarted mid-audit (16:23 UTC, cause unclear — not triggered by this
+session's `railway run`/`ssh` calls, which don't restart the service);
+Railway CLI `logs --since` in this environment only reaches back to the
+current process's start, so live-log corroboration below covers ~11:24-16:25
+UTC, not the full 24h. Where a trade fell outside that window, attribution
+is from the feature-store row instead (still ground-truth, just not
+cross-checked against a live cycle log).
+
+| symbol | side | kind | lev | held | r_multiple | pnl | exit_reason |
+|---|---|---|---|---|---|---|---|
+| BICO_USDT | LONG | WILDCARD | x2 | 17.2h | +1.93R | +$1.334 | CONVEX_TIME_STOP |
+| BTW_USDT | LONG | WILDCARD | x2 | 11.3h | +0.57R | +$0.767 | CONVEX_TIME_STOP |
+| XRP_USDT | SHORT | SNIPER (FAST, live leg) | x13 | 11.1min | +1.20R | +$0.024 | EXCHANGE_CLOSE (TP) |
+| AVAX_USDT | SHORT | SNIPER (FAST, live leg) | x13 | 12.0min | -1.27R | -$0.051 | EXCHANGE_CLOSE (STOP) |
+| HFT_USDT | LONG | WILDCARD | x1 | 3.0h | +0.01R | +$0.011 | CONVEX_RUNNER_TRAIL |
+
+BICO/BTW are TRIAL 5's closure (both closed by trial 6's new 6h clock on the
+first cycle after the 08-05 22:25 UTC deploy) — already recorded in
+DECISION_RULE.md's trial-5 closure record, not double-counted into trial 6's
+ledger here. HFT_USDT is trial 6's **first fully in-trial WILDCARD trade**
+(opened 12:13, closed 15:14) and its `CONVEX_RUNNER_TRAIL` exit is the
+**first live fire of the runner-trail rule** since the 08-05 fix
+(`6d8d016`) made it reachable — confirms the fix works: armed at peak
++1.07R, gave back to +0.03R, closed net flat. Working as designed.
+
+**New this run — SNIPER FAST live leg has traded for the first time.**
+`FUTURES_SNIPER_LIVE_VARIANTS=FAST` / `FUTURES_SNIPER_SHADOW_ONLY=0` have
+been live since 08-04 (`3247faf`) but hadn't fired until today. XRP_USDT and
+AVAX_USDT (both outside the live-log window, confirmed via feature-store
+rows instead) are its first two real orders: notional-capped as designed
+(~$0.54 intended margin each), net -$0.028 combined — exactly the
+"buy fill/slippage data cheaply, not to profit" behaviour the code comment
+describes. Not a performance signal at n=2; flagging only because it's new.
+
+**Bug found and fixed:** `_append_feature_store` tags a row's `kind` by
+matching the `entry_signal` prefix (`SQUEEZE`/`WILDCARD`/else `PMT`) — it
+never checked for `SNIPER`, so both live sniper closes were silently filed
+under `kind=PMT`. Harmless to real P&L (MEXC and the audit trail have the
+correct numbers) but it corrupts the `kind=PMT` bucket that
+`learn_from_trades.py` treats as "should be empty since decommission", and
+would have kept misattributing every future sniper close the same way.
+Fixed in `futuresbot/runtime.py` (added a `SNIPER` branch), regression test
+added in `tests/test_sniper.py` pinning `kind=="SNIPER"` for a
+`SNIPER_SHORT` entry_signal. 745/745 tests pass (was 744). This is a
+labelling-only fix — no trading behaviour changed — so shipped directly
+rather than gated (mirrors the 08-05 precedent of shipping a caught bug same
+day). Existing PMT-mislabeled rows in the feature store are left as-is
+(2 rows, immaterial, not worth a backfill).
+
+**Secondary, not fixed:** `_convex_loss_streak` (the cold-streak throttle's
+input) only counts `WILDCARD`/`SQUEEZE` entry_signal prefixes toward the
+streak — a SNIPER loss (e.g. today's AVAX) doesn't feed the throttle, and a
+SNIPER position's own sizing is throttled only by wildcard/squeeze's streak,
+never its own. Written before SNIPER existed as a live sleeve. Low stakes
+today (SNIPER is hard-notional-capped regardless), but flagging as a
+scope gap for whoever next touches the streak throttle — not proposing a
+change, this is a risk-sizing scope question for the operator, not a typo.
+
+### 1-OPEN. Open positions
+
+**None.** `get_open_positions()` returns `[]`; account line agrees:
+equity $140.6368, available $140.6368, open_margin $0.00, positions=0.
+
+### 2. Champion vs Shadow
+
+**Shadow: stale, comparison suppressed pending resync** (standing 07-23
+action item, unchanged — Futures-shadow logs still show PMT-only
+`pmt-scan`/`no_mental_threshold_cross` cycles).
+
+### 3. Learning loop
+
+Feature store 41 -> 46 rows (+5, matches today's closes).
+`learn_from_trades.py` re-run on the updated corpus (n=46):
+- **FAVOR: `hold>=120min`** — n=27 mean +$1.079 (win 66.7%) vs n=19
+  mean -$0.999 (win 10.5%), OOS-consistent. Unchanged conclusion, now on
+  6 more rows.
+- **AVOID: `regime_trimmed(mult<1)` / `chop_regime`** — n=27 mean -$0.029
+  (win 40.7%) vs n=19 mean +$0.576 (win 47.4%), OOS-consistent. Unchanged.
+- Everything else remains weak/insufficient, including `leverage>=7`
+  (n=18, still not OOS-consistent — do not cite as settled). Note `kind=PMT`
+  (n=14) is now known to include the 2 mislabeled sniper rows fixed above;
+  a rerun after more sniper closes accumulate under the corrected label may
+  shift this cell slightly. Propose-only, nothing applied.
+
+**Shadow ledger** grew 33 -> 51 rows (+18). Slot-cost split (WILDCARD only):
+n=11 resolved (was 10), **netR +7.77 (mean +0.71R)** — jumped this run
+because the previously-unresolved HEI_USDT (08-05's 12:58 blocked
+candidate) resolved **+5.0R (TP)**. This now clears the n>=10 evidence bar
+with a materially stronger number than 08-05's +2.77R — worth the operator
+weighing a 3rd wildcard slot against capacity/complexity; proposing, not
+applying (slot counts are operator-tuned per the standing rule).
+
+Veto-gate `ref_not_listed`, real-alt rows: n=4 resolved (KOMA +1.94R, SKYAI
+-1.00R x2, CATE -1.00R), net **-1.06R** (mean -0.27R) — still <10, still
+roughly flat/mildly protective, no action.
+
+`side_disabled` (trial 6's long-only block on shorts): n=1 resolved,
+QBTSSTOCK_USDT would have been -1.00R — first data point, and it points the
+direction long-only intends (blocking saved a loss), but n=1 is nowhere
+near the >=20 watch-item bar.
+
+SNIPER shadow (FAST + FAST_TRIGGER combined, all `shadow_only`/`slot_occupied`):
+n=20 resolved, netR +0.22 (mean +0.01R) — consistent with the documented
+"not viable at taker fees" caveat (this is the fee-free counterfactual;
+today's 2 real fills, net -$0.028, are directionally consistent with
+breakeven-ish once real costs apply).
+
+### 4. Wildcard/squeeze/sniper diagnose
+
+**Wildcard**, partial-window telemetry (~11:24-16:25 UTC, see coverage note
+above): 20 scans, movers=665, scanned=458, candidates=2, shorts_blocked=1.
+Reject histogram: `roc_below_min` 351 (77%), `no_pullback_resume` 85 (19%),
+`low_volume_z` 15, `climax_wick` 2, `rsi_exhausted` 2 — the 3h-ROC gate
+remains dominant, correct per design. 0 order-reject codes (5003/2015), 0
+Tracebacks in the covered window.
+
+**Squeeze:** still disabled at config level (trial 4/5 design). Operator
+confirmation of "intentional, permanent" vs "re-enable" still open
+(unchanged since 08-02).
+
+**Sniper:** both live variants scanning every cycle (FAST_TRIGGER,
+FAST); in-window histogram dominated by `move_below_min` (1317) — expected,
+FAST's trigger is tight by design. First live fills discussed in §1.
+
+### 5. Trial 6 decision-rule progress
+
+Trial 6 opened 2026-08-05 22:25 UTC. Scored per DECISION_RULE.md's own
+convention (BICO/BTW attributed to trial 5's closure, not trial 6):
+**n=1 WILDCARD trade fully inside trial 6** (HFT_USDT, +0.01R). Net R
++0.01, ex-best is undefined at n=1, no drawdown yet (no losses). Day 2 of a
+30-trade/90-day window — far too early to read anything into it; the
+runner-trail firing correctly (§1) is the only thing worth noting.
+
+`exit_kind` (new in trial 6, only populated on trial-6-tagged closes):
+BICO/BTW/HFT all show `OTHER` — correct, since `CONVEX_TIME_STOP` and
+`CONVEX_RUNNER_TRAIL` are neither TP nor STOP by construction. **Re-reading
+the standing TRIAL-4 watch item** ("if OTHER dominates, propose scaling TP
+down"): that heuristic predates these two new exit rules and would now
+misfire — OTHER is *expected* to dominate under trial 6 whenever the trail
+or clock does its job. Not proposing a TP-scale change off this; the
+heuristic itself needs updating to split `OTHER` into
+`TIME_STOP`/`RUNNER_TRAIL`/unexplained before it's useful again as a bug
+tripwire. Flagging as a future telemetry polish item, not urgent.
+
+### 6. Diagnose — lever for next 24h
+
+**Shipped:** the SNIPER `kind` mislabeling fix (§1) — correctness-only,
+no trading behaviour change, tests green.
+
+**No trading-parameter change proposed.** Trial 6 is on day 2 with n=1
+in-trial WILDCARD close; nothing has had time to earn or fail evidence yet.
+The one lever with real evidence behind it (3rd wildcard slot, off the
++7.77R/11 slot-cost number) is a capacity/operator-tuned decision, not a
+tunable this process self-applies — surfaced as an action item below.
+
+### 7. Validate
+
+`pytest -q`: **745 passed** (was 744; +1 new regression test for the
+SNIPER kind-labelling fix). No other code changes this run.
+
+### 8. Deploy
+
+**Shipped:** SNIPER feature-store `kind` labelling fix. `git pull` (already
+up to date) -> commit -> push -> `railway up --service Futures-bot --detach`
+-> polled to SUCCESS -> verified `[ACCOUNT]` line present, no Traceback. No
+open position at deploy time (0 open, safe window).
+
+### 9. Summary
+
+- Equity: $140.6368 (vs 08-05's $138.43; **+$2.05 is realized P&L from
+  today's 5 closes, not a capital flow** — no deposit/withdrawal today)
+- Trades: 5 closed, net +$2.051 — BICO +$1.334, BTW +$0.767 (both trial-5
+  closure), XRP +$0.024, AVAX -$0.051 (sniper FAST live, first-ever),
+  HFT +$0.011 (trial 6's first in-trial WILDCARD close)
+- Open: none
+- New development: SNIPER FAST live leg fired for the first time (2 trades,
+  net -$0.028, notional-capped as designed — not a performance signal)
+- Bug fixed + deployed: SNIPER closes were mislabeled `kind=PMT` in the
+  feature store (learning-corpus attribution only, no P&L impact)
+- Slot cost: WILDCARD blocked candidates net +7.77R over 11 resolved rows
+  (up from +2.77R/10) — now a clear bar-clearing number, proposing a 3rd
+  slot for operator consideration, not applying
+- Trial 6: day 2, n=1 in-trial WILDCARD close (+0.01R) — runner-trail fired
+  correctly on its first live opportunity
+- Veto gate: real-alt `ref_not_listed` n=4 resolved, net -1.06R — still <10
+- Shadow: stale, comparison suppressed pending resync
+- Deploy: SNIPER kind-labelling fix shipped; 745/745 tests pass
+- Bot: healthy, 0 Tracebacks/order-reject errors in the covered log window
+- **Action items for operator:** (1) consider a 3rd wildcard slot — slot-cost
+  evidence now +7.77R/11 resolved, above the standard bar (capacity/ops
+  decision, not self-applied); (2) `FUTURES_SQUEEZE_ENABLED=0` — confirm
+  intentional or re-enable (unchanged since 08-02); (3) reconcile-drop
+  2-pass-grace fix still outstanding (unchanged from 07-30); (4)
+  `USE_DRAWDOWN_KILL=1` live vs the scheduled-task brief's note that it was
+  set to 0 — still unreconciled; (5) new `DRAWDOWN_HALT_PCT=0.95` /
+  `DRAWDOWN_HALT_WINDOW_DAYS=30` vars are live and not documented in the
+  scheduled-task brief — worth a one-line confirmation of what they do and
+  whether the brief should be updated; (6) BTW-style lot-size undersizing
+  on coarse contract_size symbols remains a candidate future fix, not
+  urgent; (7) `_convex_loss_streak` scope gap re: SNIPER (§1) — a sizing
+  design question, not urgent.
+
+---
+
 # Daily Audit — 2026-08-05
 
 ---

@@ -483,6 +483,23 @@ def test_feature_store_row_carries_ref_listed(runtime, tmp_path):
     assert row["kind"] == "WILDCARD"
 
 
+def test_feature_store_row_tags_sniper_kind(runtime):
+    import json
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    position = SimpleNamespace(
+        entry_signal="SNIPER_SHORT",
+        metadata={"sl_margin_pct": 4.04, "entry_lateness": None},
+    )
+    trade = {"symbol": "XRP_USDT", "side": "SHORT", "leverage": 13,
+             "pnl_usdt": 0.02, "pnl_pct": 4.86, "setup_regime": "OTHER_SHORT",
+             "exit_time": datetime.now(timezone.utc).isoformat()}
+    runtime._append_feature_store(trade, position)
+    row = json.loads(open(runtime._feature_store_path, encoding="utf-8").read().strip())
+    assert row["kind"] == "SNIPER"  # previously fell through to the "PMT" default
+
+
 def test_digest_scores_each_variant_separately():
     from futuresbot.learning_digest import build_learning_digest
 

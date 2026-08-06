@@ -3227,7 +3227,8 @@ class FuturesRuntime:
         (Stage-2 conditional-expectancy corpus). Best-effort; never breaks a close."""
         try:
             es = str(trade.get("entry_signal") or getattr(position, "entry_signal", "") or "")
-            kind = "SQUEEZE" if es.startswith("SQUEEZE") else "WILDCARD" if es.startswith("WILDCARD") else "PMT"
+            kind = ("SQUEEZE" if es.startswith("SQUEEZE") else "WILDCARD" if es.startswith("WILDCARD")
+                    else "SNIPER" if es.startswith("SNIPER") else "PMT")
             try:
                 ts = datetime.fromisoformat(trade["exit_time"]).timestamp()
             except Exception:
