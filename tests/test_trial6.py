@@ -291,6 +291,33 @@ def test_convex_time_stop_fires_even_when_pmt_mode_is_on(rt, monkeypatch):
     assert seen["reason"] == "CONVEX_TIME_STOP"
 
 
+def test_wildcard_scan_excludes_tokenised_equities():
+    """Confirmed live on trial-6 day 1: QBTSSTOCK_USDT SHORT reached the wildcard
+    candidate list. universe.py has carried this filter all along and the sniper
+    excludes these by category; only the wildcard scan never applied it."""
+    import inspect
+
+    from futuresbot.universe import _is_crypto_usdt_symbol
+
+    assert _is_crypto_usdt_symbol("QBTSSTOCK_USDT", None) is False
+    assert _is_crypto_usdt_symbol("NVIDIA_USDT", None) is False
+    assert _is_crypto_usdt_symbol("BTW_USDT", None) is True
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert "_is_crypto_usdt_symbol" in src, "wildcard scan still admits non-crypto"
+
+
+def test_feature_store_row_carries_the_trial6_columns():
+    """REGRESSION. The trial-6 columns were added to the trade-history record and
+    never reached the feature store, because that row is built field by field
+    rather than from the trade dict — so the Stage-2 learning corpus, the file
+    that actually gets analysed, never saw them."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._append_feature_store)
+    for col in ('"roc_z"', '"sl_frac_designed"', '"peak_r"', '"hold_hours"'):
+        assert col in src, f"{col} missing from the feature store row"
+
+
 def test_sleeve_tag_distinguishes_the_sleeves(rt):
     assert rt._sleeve_of(_pos()) == "WILDCARD"
     p = _pos(); p.metadata = {"squeeze": 1.0}

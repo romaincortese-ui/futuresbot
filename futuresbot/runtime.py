@@ -112,7 +112,7 @@ from futuresbot.sharp_opportunity import (
     evaluate_sharp_opportunity_overlay,
     sharp_event_margin_multiplier,
 )
-from futuresbot.universe import select_major_usdt_symbols
+from futuresbot.universe import _is_crypto_usdt_symbol, select_major_usdt_symbols
 from futuresbot.websocket import FuturesFairPriceMonitor
 
 
@@ -3245,6 +3245,21 @@ class FuturesRuntime:
                 # lets trial 4 be scored with and without the population the
                 # 2026-08-02 gate relaxation admitted.
                 "ref_listed": md.get("ref_listed"),
+                # Trial-6 columns. These were added to the trade-history record
+                # first and did NOT reach here, because this row is built field
+                # by field rather than from the trade dict — so the learning
+                # corpus (the file Stage-2 actually reads) never saw them.
+                # NOTE: `kind` above already carries the sleeve and `exit_reason`
+                # already carries the exit rule; the gap was only ever in the raw
+                # MEXC position export, which is the exchange's schema and cannot
+                # carry them. Genuinely new here are roc_z, sl_frac_designed,
+                # peak_r and the equity snapshots.
+                "roc_z": md.get("roc_z"),
+                "sl_frac_designed": md.get("sl_frac_designed"),
+                "peak_r": md.get("convex_peak_r"),
+                "equity_at_open_usdt": md.get("equity_at_open_usdt"),
+                "equity_at_close_usdt": trade.get("equity_at_close_usdt"),
+                "hold_hours": trade.get("hold_hours"),
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3894,6 +3909,16 @@ class FuturesRuntime:
                 if not sym.endswith("_USDT"):
                     continue
                 funnel["usdt"] += 1
+                # Crypto only. universe.py has carried this filter all along and
+                # the sniper excludes these BY CATEGORY (sniper.py:162-187), but
+                # the wildcard scan never applied it — so tokenised equities were
+                # in its tradeable set. Confirmed live on trial-6 day 1:
+                # QBTSSTOCK_USDT SHORT reached the candidate list. These gap
+                # across equity-market closes and weekends, which is a different
+                # instrument class from a 24/7 perp, and their ATR-derived stops
+                # are meaningless against that gap risk.
+                if not _is_crypto_usdt_symbol(sym, None):
+                    continue
                 if sym in self.open_positions or sym in majors:
                     continue
                 funnel["in_band"] += 1
