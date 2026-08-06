@@ -212,20 +212,25 @@ def test_time_stop_is_inert_on_non_convex_positions(rt, monkeypatch):
     assert rt._convex_time_stop_exit(_pos(hours_held=99.0), 100.0) is False
 
 
-def test_time_stop_holds_inside_the_edge_half_life(rt, monkeypatch):
+def test_time_stop_default_is_24h_not_6h(rt, monkeypatch):
+    """TRIAL 6.5. The 6h default was sized on a stop-only/no-take-profit decay
+    curve — a policy the bot does not run. With the live +5R bracket attached,
+    the same signals IMPROVE monotonically out to 24h+ (6h +0.139R -> 24h
+    +0.214R, 72h-6h +0.103R at t_day +2.00, 0/12 LOMO flips). 6h captured only
+    23% of eventual +5R completions; 24h captures 54%."""
     monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
     monkeypatch.setattr(rt, "_close_position_for_exit", lambda *a, **k: True)
-    assert rt._convex_time_stop_exit(_pos(hours_held=3.0), 100.0) is False
+    # inside the clock: held 7h would have fired under trial 6's 6h default
+    assert rt._convex_time_stop_exit(_pos(hours_held=7.0), 100.0) is False
+    assert rt._convex_time_stop_exit(_pos(hours_held=23.0), 100.0) is False
 
 
-def test_time_stop_fires_past_the_zero_crossing(rt, monkeypatch):
-    """Half-life ~4h, zero-crossing ~8h, -0.263R by 72h (t_day -2.07) — the one
-    result that survived era-split, LOSO and a top-3 haircut."""
+def test_time_stop_fires_at_24h(rt, monkeypatch):
     monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
     seen = {}
     monkeypatch.setattr(rt, "_close_position_for_exit",
                         lambda p, **k: seen.update(reason=k.get("reason")) or True)
-    assert rt._convex_time_stop_exit(_pos(hours_held=7.0), 100.0) is True
+    assert rt._convex_time_stop_exit(_pos(hours_held=25.0), 100.0) is True
     assert seen["reason"] == "CONVEX_TIME_STOP"
 
 
@@ -237,19 +242,31 @@ def test_trail_does_not_arm_below_one_r(rt, monkeypatch):
     assert rt._convex_runner_trail_exit(p, 103.0) is False       # gave back, still unarmed
 
 
-def test_trail_exits_after_giving_back_one_r_from_the_peak(rt, monkeypatch):
-    """Expectancy-neutral (-0.035R, t=-0.35) but ~2.5x return per slot-day. It
-    does not bank early and does not cap the runner — it only stops a position
-    that already earned 1R from round-tripping to the stop."""
+def test_trail_giveback_is_2r_and_marginal_peaks_are_left_alone(rt, monkeypatch):
+    """TRIAL 6.5. At giveback=1R, a trade arming at exactly +1R had its trail
+    level at exactly 0R — the live HFT trade (+1.07R peak -> +0.03R exit) was
+    that mechanical floor case, and the trail cut +5R completions from 121/598
+    to 50/598. At giveback=2R the trail is inert below a +2R peak: it protects a
+    genuine runner and never scratches a marginal one. Tightening instead was
+    measured to HALVE mean R."""
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    monkeypatch.setattr(rt, "_close_position_for_exit", lambda *a, **k: True)
+    # the HFT case: peak +1.07R then fade — must NOT fire at giveback 2R
+    p = _pos()
+    assert rt._convex_runner_trail_exit(p, 110.7) is False       # peak +1.07R, arms
+    assert rt._convex_runner_trail_exit(p, 100.3) is False       # +0.03R: trial-6 scratched here
+
+
+def test_trail_exits_after_giving_back_two_r_from_the_peak(rt, monkeypatch):
     monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
     seen = {}
     monkeypatch.setattr(rt, "_close_position_for_exit",
                         lambda p, **k: seen.update(reason=k.get("reason")) or True)
     p = _pos()
-    assert rt._convex_runner_trail_exit(p, 125.0) is False       # +2.5R, arms, records peak
-    assert p.metadata["convex_peak_r"] == pytest.approx(2.5, abs=0.05)
-    assert rt._convex_runner_trail_exit(p, 120.0) is False       # -0.5R off peak, holds
-    assert rt._convex_runner_trail_exit(p, 114.0) is True        # -1.1R off peak, exits
+    assert rt._convex_runner_trail_exit(p, 135.0) is False       # +3.5R, arms, records peak
+    assert p.metadata["convex_peak_r"] == pytest.approx(3.5, abs=0.05)
+    assert rt._convex_runner_trail_exit(p, 120.0) is False       # -1.5R off peak, holds
+    assert rt._convex_runner_trail_exit(p, 114.0) is True        # -2.1R off peak, exits
     assert seen["reason"] == "CONVEX_RUNNER_TRAIL"
 
 
@@ -287,7 +304,7 @@ def test_convex_time_stop_fires_even_when_pmt_mode_is_on(rt, monkeypatch):
     seen = {}
     monkeypatch.setattr(rt, "_close_position_for_exit",
                         lambda p, **k: seen.update(reason=k.get("reason")) or True)
-    assert rt._hourly_exit(_pos(hours_held=9.0), 100.0) is True
+    assert rt._hourly_exit(_pos(hours_held=25.0), 100.0) is True
     assert seen["reason"] == "CONVEX_TIME_STOP"
 
 

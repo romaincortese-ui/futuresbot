@@ -1546,20 +1546,40 @@ class FuturesRuntime:
 
     def _convex_time_stop_exit(self, position: FuturesPosition, current_price: float,
                                now: datetime | None = None) -> bool:
-        """Hard clock on convex positions. Trial 6.
+        """Hard clock on convex positions. 24h since trial 6.5 (was 6h).
 
-        The wildcard's measured edge half-life is ~4h and it crosses zero at ~8h;
-        holding 48-72h with a stop and no profit-take loses -0.26R (t_day -2.07)
-        — the ONE result in the programme that survived era-split, LOSO and a
-        top-3-trade haircut. Live median hold was ~11h, i.e. the sleeve was
-        routinely paying to hold positions whose edge had expired.
+        CORRECTION (2026-08-06). This shipped at 6h on the strength of a decay
+        curve reading "-0.26R at 48-72h, t_day -2.07". That figure is REAL and
+        reproduces to 3dp — but it measures a STOP-ONLY, NO-TAKE-PROFIT policy,
+        which is not the policy this bot runs. Score the identical signals with
+        the live +5R bracket attached and the same 72h horizon is +0.123R. The
+        parameter was sized on the wrong policy.
 
-        Also the cheapest capacity lever: at 2 slots, hold-to-stop blocked 39% of
-        incoming signals; a 6h cap blocks ~10%, at zero extra capital.
+        Measured on the live stack (598 LONG signals, 346d, detector validated
+        7022/7022 bar-for-bar, trail on): mean net R rises monotonically with the
+        horizon — 6h +0.139, 24h +0.214, 48h +0.223, 72h +0.242. 72h-6h is
+        +0.103R at day-clustered t +2.00 (family-wise p 0.059), surviving 0/12
+        leave-one-month-out sign flips, 0/126 leave-one-symbol-out, and a
+        top-3-trade haircut. Dropping June 2026 makes it LARGER.
+
+        Why 24h and not 48h/72h/none: R keeps improving but DOLLARS do not. On
+        the realistic 2-slot book with the streak throttle live, 48h is -$5.1 and
+        72h +$3.4 against 24h's +$24.0, because the throttle downsizes exactly
+        the clustered trades a longer hold rescues. R is not the unit the account
+        is denominated in. 24h is the middle of a broad R plateau where the
+        dollar reading is least hostile.
+
+        A finite clock is retained deliberately: it is the only backstop against
+        a stale position, a dropped stop order or a halted market, none of which
+        a kline replay can model.
+
+        NOT AN EDGE CLAIM. Family-wise p for this cell is 0.29-0.49 and the
+        dollar CI is [-$106, +$159]. This retires an unsupported number; it does
+        not establish its replacement.
         """
         if not self._is_wildcard_convex(position):
             return False
-        hours = max(0.0, self._env_float("FUTURES_CONVEX_TIME_STOP_HOURS", 6.0))
+        hours = max(0.0, self._env_float("FUTURES_CONVEX_TIME_STOP_HOURS", 24.0))
         if hours <= 0:
             return False
         opened = getattr(position, "opened_at", None)
@@ -1579,14 +1599,29 @@ class FuturesRuntime:
                                              reason="CONVEX_TIME_STOP")
 
     def _convex_runner_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
-        """Arm at +1R, give back 1R. Trial 6. A CAPACITY change, not an edge claim.
+        """Arm at +1R, give back 2R. Giveback widened 1R -> 2R at trial 6.5.
 
-        Measured expectancy-neutral (paired -0.035R, t=-0.35) but it moves win
-        rate 22.8% -> 51.6%, median trade -1.02R -> +0.05R and mean hold 27.3h ->
-        8.5h, which is ~2.5x return per slot-day after a top-3 haircut. With 2
-        slots, slot-time is the binding resource. It does not bank early and it
-        does not cap the runner, so the convex thesis is intact — it only stops a
-        position that already earned 1R from round-tripping to the stop.
+        CORRECTION (2026-08-06). At arm=1R/giveback=1R the trail level for a
+        trade that arms at exactly +1.0R sits at exactly 0R — so anything peaking
+        in [1R, 2R] was banked at ~breakeven BY CONSTRUCTION. The live HFT_USDT
+        trade (peak +1.07R -> exit +0.03R) is that mechanical floor case.
+
+        The instinctive fix — tighten the giveback to bank sooner — is measurably
+        BACKWARDS: 0.5R HALVES mean R (0.185 -> 0.096). The giveback sweep is
+        monotone in the other direction across a 221-cell surface (0.25R $93.5,
+        1.0R $152.7, 2.0R $228.7 throttled). Widening exits LOWER on the trades
+        where it fires, but fires far less often, and the trades it stops
+        interrupting are the ones that reach +5R.
+
+        The trail — not the clock — was the dominant truncator of the convex
+        tail: switching it on cut +5R completions from 121/598 to 50/598 (59% of
+        the tail) against the 6h clock's 23%. At giveback 2.0 with arm 1.0 the
+        trail is effectively inert below a +2R peak, which is the intended
+        behaviour: protect a genuine runner, never scratch a marginal one.
+
+        The two levers are SUBSTITUTES, not complements — clock alone +$15.8,
+        giveback alone +$19.3, both +$24.7 (sub-additive). Do not model as
+        stacking. NOT AN EDGE CLAIM (family-wise p 0.43 across the surface).
         """
         if not self._is_wildcard_convex(position):
             return False
@@ -1605,7 +1640,7 @@ class FuturesRuntime:
             return False
         r_now = gross / risk_pct
         arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
-        give_r = max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 1.0))
+        give_r = max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 2.0))
         peak_r = self._metadata_float(md, "convex_peak_r") or 0.0
         if r_now > peak_r:
             position.metadata["convex_peak_r"] = round(r_now, 4)

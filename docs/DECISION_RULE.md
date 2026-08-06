@@ -1,4 +1,100 @@
-# Pre-registered decision rule — CONVEX TRIAL 6 (from 2026-08-05)
+# Pre-registered decision rule — CONVEX TRIAL 6.5 (from 2026-08-06)
+
+Trial 6 amended on day 2 at n=1. Same treatment structure, two exit VALUES
+corrected: `FUTURES_CONVEX_TIME_STOP_HOURS` 6 -> **24** and
+`FUTURES_CONVEX_TRAIL_GIVEBACK_R` 1.0 -> **2.0**. Everything else unchanged
+(long-only, trail arm +1R, short-TP clamp, crypto-only scan, sigma trigger
+still default-OFF). Called 6.5 rather than 7: the treatment is the same
+mechanism set with different constants, and the amendment happened before the
+trial accumulated a scoreable sample.
+
+## Why the amendment — recorded meticulously
+
+**The 6h clock was sized on the wrong policy.** The justification written into
+`_convex_time_stop_exit` was the decay-curve result "-0.26R at 48-72h, t_day
+-2.07". That figure is real and reproduces to 3 decimal places — but it scores a
+STOP-ONLY, NO-TAKE-PROFIT position, which this bot has never held. Scoring the
+IDENTICAL signals with the live +5R bracket attached flips the same 72h horizon
+to **+0.123R**. Both prior "opposing facts" were true; they measured different
+policies.
+
+**Measured on the live stack** (598 LONG full-stack signals, 346d PIT band,
+detector validated 7022/7022 bar-for-bar against `detect_wildcard_signal`,
+trail on): mean net R by clock — 6h +0.139, 24h +0.214, 48h +0.223, 72h +0.242.
+The 72h-6h difference is +0.103R at day-clustered t **+2.00** (family-wise
+p 0.059 — the strongest inferential result this project has produced), with
+0/12 leave-one-month-out sign flips, 0/126 leave-one-symbol-out, surviving a
+top-3-trade haircut, and LARGER with June 2026 removed.
+
+**Tail destruction as shipped:** TP completion 19.6% (hold-to-stop) -> 1.8%
+(trial-6 stack). Of 121 eventual +5R completions the shipped stack booked 11.
+The 6h clock captured 23% of +5R completions; 24h captures 54%.
+
+**Why 24h and not 48h/72h/none:** R keeps improving with horizon but DOLLARS do
+not — on the realistic 2-slot book with the streak throttle live, 48h is -$5.1
+and 72h +$3.4 vs 24h +$24.0, because the throttle downsizes exactly the
+clustered trades a longer hold rescues. 24h is the middle of a broad R plateau
+where the dollar reading is least hostile. A finite clock is retained as the
+backstop against stale positions / dropped stops / halts, which replay cannot
+model.
+
+**The giveback was the bigger lever and the instinctive fix was backwards.** At
+arm=1R/give=1R, a trade arming at exactly +1R trails at exactly 0R by
+construction — the live HFT trade (+1.07R peak -> +0.03R exit) was that floor
+case, not an anomaly. Tightening to 0.5R HALVES mean R (0.185 -> 0.096);
+widening is monotone-better across a 221-cell surface (0.25R $93.5 / 1.0R
+$152.7 / 2.0R $228.7, throttled). The trail, not the clock, was the dominant
+tail-truncator: it cut +5R completions from 121/598 to 50/598 (59% of the tail)
+vs the clock's 23%. At give=2R the trail is inert below a +2R peak — protects a
+genuine runner, never scratches a marginal one.
+
+**The two levers are SUBSTITUTES** (clock alone +$15.8, giveback alone +$19.3,
+both +$24.7 — sub-additive). Expected joint effect ~+$25/346d at $140.64, CI
+[-$106, +$159]. **NOT AN EDGE CLAIM** — family-wise p for the chosen cells is
+0.29-0.49. This retires an unsupported number; it does not establish its
+replacement.
+
+**Corrections to trial-6 claims, recorded:** "0 of 100 +5R captured at 6h" did
+NOT replicate (three independent replays: 19-24% captured; earliest touch
+1.0-1.5h, not 8h). "85% of +5R in June 2026" did NOT replicate (14-31%).
+The trail is NOT a scratch machine in general (median trail exit +0.68 to
++0.84R net; only 1-12% at/below zero) — the HFT case was the parameterisation's
+floor, now removed.
+
+## Pre-registered expectations for trial 6.5 (write-down before looking)
+
+- Exit mix near **7-11% TP / 49-60% stop / ~30% trail-or-clock**; mean hold
+  ~8.4h; slot blocking ~11%.
+- If live TP completion stays under ~4% over 20+ closes, the trail is firing far
+  more aggressively than replay models and the giveback change did not take.
+- If the exit mix shows >70% CONVEX_TIME_STOP, 24h is too tight for the fills
+  actually taken.
+
+## FREEZE
+
+This is the FOURTH treatment change in six days (trial 5 -> 6 -> 6.5). The
+convex sleeve is now **frozen for the full trial window** — 30 wildcard closes
+or 90 days, whichever first, per the unchanged pass criteria below. Known
+remaining defects (SOXS/EWY in the band via the blocklist gap; the $75
+margin-budget fallback; hard dollar loss-limits parsed but unenforced) are
+measurement/correctness items that may ship WITHOUT resetting the trial only if
+they do not alter which trades are taken or how they are managed; the SOXS/EWY
+universe fix DOES alter the tradeable set and therefore WAITS for the trial
+boundary unless a position in an affected symbol actually opens.
+
+## Open data-integrity item (gating future horizon work, not this trial)
+
+Two replays of the identical no-TP policy return -0.266R (n=277, 70 symbols)
+and +0.389R (n=598, 144 symbols) — 0.65R apart on the same claimed detector.
+Density checks favour the larger panel, arrival-rate checks favour the smaller.
+Until one signal stream is rebuilt and reconciled against the live entry log,
+every horizon-level number above is provisional; the DIRECTION of the 6.5
+changes does not depend on which stream is right (the ordering 6h-worst holds
+in both), but the magnitudes do.
+
+---
+
+# ARCHIVED — Pre-registered decision rule, CONVEX TRIAL 6 (from 2026-08-05)
 
 Trial 5 CLOSED the same day it opened, at **n=0 closed trades**. Not a
 performance verdict — a structural one. Five defects were measured during it
