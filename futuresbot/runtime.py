@@ -4297,17 +4297,26 @@ class FuturesRuntime:
 
         try:
             sleeve = f"SNIPER_{variant.name}"
-            # Mode is ALWAYS shadow in this build: the live entry path does not
-            # exist yet, so logging "live" off the flag would claim trading that
-            # is not happening (the inert-flag confusion, inverted).
-            if not sniper_shadow_only():
-                log.warning("[SNIPER] FUTURES_SNIPER_SHADOW_ONLY=0 set but live entries "
-                            "are not implemented in this build — still shadow-logging only")
+            # The live entry path DOES exist (the live-open helper is called at
+            # the end of this function) and fires whenever SHADOW_ONLY=0 AND this
+            # variant is in FUTURES_SNIPER_LIVE_VARIANTS. NOTE: do not name that
+            # helper in this comment — test_shadow_row_is_written_even_when_live_leg_runs
+            # asserts source ordering by raw string index. This block hard-coded
+            # "mode=shadow" and warned that live entries were "not implemented",
+            # which stayed in the code after the live leg landed in 3247faf. It
+            # then reported shadow-only while the sleeve opened real positions
+            # (XRP_USDT and AVAX_USDT, 2026-08-06). A log that misstates whether
+            # the bot is risking money is worse than no log: report the truth.
+            is_live = (not sniper_shadow_only()) and variant.name.upper() in sniper_live_variants()
             log.info("[SNIPER_SCAN_SUMMARY] variant=%s universe=%d scanned=%d histogram=%s "
-                     "signals=%s mode=shadow%s",
+                     "signals=%s mode=%s%s",
                      variant.name, len(liquid), scanned, hist or "{}",
                      ",".join(s.symbol for s in found) or "none",
+                     "LIVE" if is_live else "shadow",
                      "" if variant.economically_viable else " (SIGNAL-STUDY ONLY: not viable at taker fees)")
+            if is_live and found:
+                log.warning("[SNIPER] variant=%s is LIVE (notional-capped) and has %d signal(s) "
+                            "this scan — real orders may be placed", variant.name, len(found))
             if not found:
                 return
             self._pending_entry_lateness = None  # not meaningful for this sleeve

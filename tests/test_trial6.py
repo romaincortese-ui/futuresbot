@@ -318,6 +318,22 @@ def test_feature_store_row_carries_the_trial6_columns():
         assert col in src, f"{col} missing from the feature store row"
 
 
+def test_sniper_scan_log_does_not_claim_shadow_while_trading_live():
+    """REGRESSION, operator safety. The scan summary hard-coded `mode=shadow`
+    and warned that live entries were "not implemented in this build" — text
+    left behind when the live leg landed in 3247faf. It therefore reported
+    shadow-only on the very scans where the sleeve opened real positions
+    (XRP_USDT and AVAX_USDT, 2026-08-06). A log that misstates whether real
+    money is at risk is worse than no log.
+    """
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._log_sniper_variant)
+    assert "not implemented in this build" not in src, "stale shadow-only claim is back"
+    assert "mode=shadow%s" not in src, "mode is hard-coded to shadow again"
+    assert "sniper_live_variants()" in src, "mode is not derived from the live gate"
+
+
 def test_sleeve_tag_distinguishes_the_sleeves(rt):
     assert rt._sleeve_of(_pos()) == "WILDCARD"
     p = _pos(); p.metadata = {"squeeze": 1.0}
