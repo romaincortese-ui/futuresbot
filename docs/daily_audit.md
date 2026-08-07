@@ -1,3 +1,238 @@
+# Daily Audit — 2026-08-07
+
+---
+
+## Automated Assessment (UTC ~16:20)
+
+### 1. Trades (last 24h)
+
+**0 closed trades** in the 08-06 16:00 -> 08-07 16:00 UTC window. Full MEXC
+history pull (empty-symbol `history_positions`, 291 rows). The two closes
+inside a 30h lookback — AVAX_USDT (08-06 10:20) and HFT_USDT (08-06 15:14) —
+both fall **before** the window and were already reviewed in the 08-06 entry.
+Not re-counted.
+
+Feature store is **46 rows, unchanged**, mtime 08-06 15:14 — exactly consistent
+with zero closes. Ledger and exchange agree; no reconciliation gap.
+
+**Scan context.** The wildcard did fire once in the window (BICO_USDT, 08:52
+UTC) and that position is still open — see 1-OPEN. Otherwise the band was
+quiet: last three `[WILDCARD_SCAN_SUMMARY]` lines show movers 25/28/1,
+candidates 0, dominant reject `roc_below_min` (19 of 25, 16 of 28), then
+`no_pullback_resume` (4, 8) and `low_volume_z` (2, 1). No entry failures — zero
+`5003`/`2015` order rejects, zero tracebacks in the log window. Correct
+dormancy, not an execution block.
+
+One anomaly worth a note, not a fix: the 16:02 scan reported `movers=1
+scanned=1` against 25-28 on the two prior cycles. A transient universe-fetch
+dip; the next cycles recovered. Flagging so a pattern is recognisable if it
+repeats — a single cycle is not evidence.
+
+**SNIPER** (FAST live leg) produced no orders in the window:
+`[SNIPER_SCAN_SUMMARY]` histogram is `move_below_min: 11` on every cycle for
+both variants. The log line still self-describes as
+"SIGNAL-STUDY ONLY: not viable at taker fees" — see the ledger read in 1a(b).
+
+### 1-OPEN. Open positions
+
+**BICO_USDT LONG x1 — WILDCARD, opened 2026-08-07 08:52:28 UTC, held ~7.4h.**
+
+| field | value |
+|---|---|
+| entry / current | 0.04735 / 0.0516 |
+| TP (+5R) / SL (-1R) | 0.085997 / 0.039609 |
+| 1R (`sl_margin_pct`) | 16.33% of margin |
+| margin | $16.857 (intended $16.876) |
+| unrealised | +$1.52 (+9.04% on margin) |
+| **current R** | **+0.55R** |
+| **peak R** (`convex_peak_r`) | **+1.098R** |
+| **giveback from peak** | **-0.55R** |
+| distance to TP | **+66.7%** of price |
+| distance to SL | **-23.2%** of price |
+| time-stop | 24h clock -> ~16.6h remaining |
+
+Sizing is clean: `regime_size_multiplier=1.0`, `streak_multiplier=1.0`,
+`loss_streak_at_entry=0`, actual/intended margin **99.88%**. No undersizing,
+no `[SIZE_TRIM]` lines in the window.
+
+Trail state is correct for trial 6.5: peak +1.098R has **armed** the trail
+(arm=+1R) but at `giveback=2R` the trail floor sits at -0.90R, i.e. *below*
+the -1R stop is not reached but the trail is effectively inert until peak
+exceeds +2R. This is exactly the behaviour the 6.5 amendment was made to
+produce — the trial-6 parameterisation (give=1R) would have closed this trade
+at ~0.098R on the current pullback. First live instance of the amendment
+mattering. n=1, unrealised, not a result.
+
+Honest mark against intent: **`entry_lateness = 1.0`** — the `at_extreme
+(lat>=0.99)` bucket, the opposite of the preferred deep-pullback 0.50-0.70.
+Entered on a 16.4% 3h ROC at RSI 73.3. It is cross-venue corroborated
+(`ref_listed=1.0`), liquid, not a MEXC-only pump. The trade is currently
+green, but the entry is not the mid-path entry the sleeve is designed to take.
+Lateness is a standing conditional-expectancy question, not a same-day lever.
+
+Note also the leverage: the -20% margin SL cap re-derived x5 down to **x1** to
+hold the 3.0xATR stop, so 1R is 16.35% of *price*. +5R therefore requires an
+**+81.7% price move** — the trial-4 TP-completion watch item in its most
+extreme live form to date.
+
+### 2. Champion vs Shadow
+
+**Shadow: stale, comparison suppressed pending resync.** Verified again this
+run — `Futures-shadow` cycle 100789 is still `symbols=6`,
+`no_mental_threshold_cross pmt:5`, i.e. the PMT-only 06-14 build. Standing
+operator-gated action item (raised 07-23): `railway up --service
+Futures-shadow` — paper, env-only, zero live risk. Not self-applied.
+
+### 3. Learning loop
+
+**(a) Feature store.** 46 rows, unchanged since 08-06 15:14, matching zero
+closes. `learn_from_trades.py` was **not re-run**: it is a deterministic
+function of an unchanged corpus and would reproduce the 08-06 output
+bit-for-bit. Standing conclusions from that run (n=46) carry unchanged —
+FAVOR `hold>=120min`; AVOID `regime_trimmed(mult<1)`; `leverage>=7` still not
+OOS-consistent, do not cite as settled. Propose-only, nothing applied.
+
+**(b) Shadow ledger** — 57 rows. Split by sleeve *and* reason, because the
+blended reads have pointed the wrong way twice in this project:
+
+| sleeve | reason | n | resolved | netR | meanR |
+|---|---|---|---|---|---|
+| WILDCARD | slot_occupied | 11 | 11 | **+7.77** | +0.706 |
+| WILDCARD | veto:ref_not_listed | 5 | 4 | **-1.06** | **-0.265** |
+| WILDCARD | side_disabled (shorts) | 4 | 2 | +1.50 | +0.750 |
+| WILDCARD | veto:move_not_corroborated | 1 | 1 | +5.00 | +5.000 |
+| WILDCARD | min_vol_skip | 1 | 1 | -1.00 | -1.000 |
+| SQUEEZE | veto:ref_not_listed | 4 | 4 | +8.00 | +2.000 |
+| SQUEEZE | slot_occupied | 6 | 6 | +0.00 | +0.000 |
+| SNIPER_FAST | shadow_only | 19 | 17 | **-0.52** | **-0.031** |
+| SNIPER | min_vol_skip | 4 | 4 | +2.00 | +0.500 |
+
+**The external gate has flipped sign on real alts, and this is the finding of
+the day.** The 08-02 relaxation was justified on `ref_not_listed resolved=4
+cfR +8.00`. Those four rows are, and always were, the SQUEEZE synthetics
+(SKHYSTOCK, SPCXSTOCK, USOIL, SNDKSTOCK) — every one with 1R between 1.19%
+and 3.22% of margin, i.e. the fee-doomed bucket, on a sleeve that is now
+disabled. The real-alt rows the DECISION_RULE said to wait for have since
+accrued: KOMA +1.94, SKYAI -1, CATE -1, SKYAI -1 = **-1.06R over 4 resolved,
+mean -0.265R**. On real alts the gate is currently **saving** money.
+
+That is **4 of the required >=10 resolved real-alt rows** — under the bar, and
+I am not proposing a change on it. The point is the direction: the number that
+motivated relaxing the gate now has an opposing real-alt counterpart, and the
+pre-registered instinct to wait was right. SYN_USDT (08-07 13:58, 16.60%
+margin 1R) is a fifth real-alt row, unresolved.
+
+**Slot cost.** Wildcard `slot_occupied` is **+7.77R over 11 resolved**
+(3 x +5R, 7 x -1R, 1 timeout -0.23). Read it with the era caveat: 10 of the 11
+rows predate the 07-31 second-slot deploy, so this is largely the same
+evidence that already bought slot #2, not new evidence for slot #3. Only
+HEI_USDT (08-05, +5R) is 2-slot-era. Lateness on the blocked wildcard
+candidates clusters at **1.0** (8 of 11) — the same at-extreme profile as the
+live BICO entry, not the costly deep-pullback misses. SQUEEZE
+`slot_occupied` is exactly 0.00R over 6 and moot (sleeve disabled).
+
+**Shorts (long-only watch item).** 4 blocked, 2 resolved, +1.50R
+(QBTSSTOCK -1R, HFT +2.5R). Bar is >=20 rows. Nowhere near adjudication —
+recording only.
+
+**SNIPER.** 17 resolved shadow rows at **-0.031R mean, -0.52R net**, plus the
+live leg's -$0.028 over its 2 real orders. Seventeen rows of approximately
+nothing is consistent with the code's own "not viable at taker fees"
+self-description. Not yet a disable case (the sleeve is hard notional-capped
+and explicitly buying fill data), but it should be held to a stated stop:
+recommend a decision at 30 resolved rows.
+
+**(c) Scan telemetry.** Covered in section 1. No `[SIZE_TRIM]` lines; no
+entry failures.
+
+**(d) Decision rule — CONVEX TRIAL 6.5.**
+
+| criterion | status |
+|---|---|
+| wildcard closes | **0 / 30** |
+| net R | n/a (no closes) |
+| net R ex-best | n/a |
+| max drawdown (flow-adj.) | 0% — no closed R curve yet |
+| every close attributable | n/a |
+
+Trial 6.5 opened 08-06. The only wildcard close since is HFT_USDT (+0.01R,
+`CONVEX_RUNNER_TRAIL`), which closed **under trial-6** parameters (give=1R) at
+15:14 on 08-06 and belongs to trial 6. BICO is the trial's first in-window
+position and is open. **90-day horizon; 0 of 30.**
+
+`USE_DRAWDOWN_KILL` now reads **1** on Railway (was an explicit operator
+override at 0, surfaced 07-17). Re-armed by the operator; noting the change,
+not touching it. Equity $142.78, no drawdown condition.
+
+### 4. Diagnose — one lever
+
+**PROPOSED, NOT APPLIED: compute `roc_z` unconditionally in
+`futuresbot/wildcard.py`.**
+
+Trial 6 pre-registered measurement item #7 in `docs/DECISION_RULE.md`:
+
+> `roc_z` is logged **even while the sigma trigger is OFF**, so the conditional-
+> expectancy engine can settle roc-in-sigma vs roc-in-percent from REAL fills
+> rather than from anyone's backtest.
+
+It is not. `wildcard.py:186-196` computes `roc_z` **inside**
+`if wildcard_sigma_trigger_enabled():` — and that flag defaults False and is
+unset on Railway. Measured today:
+
+- shadow ledger: `roc_z` present on **0 of 57** rows;
+- feature store: no `roc_z` column on any row written before the 08-06 deploy,
+  and the column the writer now emits (`runtime.py:3302`) reads from position
+  metadata that is `None`;
+- the live BICO position carries `"roc_z": null` in its metadata.
+
+So trial 6's single most-cited structural defect — "the trigger is not a
+trigger; a fixed 8% spans ~10-32x in event rarity across the band" — is
+accumulating **zero** evidence, and will still have zero at the end of the
+90-day window. The sigma trigger cannot be armed on data, because there is no
+data.
+
+Shape of the fix: compute `sigma`/`roc_z` unconditionally, wrapped so a `None`
+sigma yields `roc_z = None` instead of the `no_roc_sigma` reject, and keep the
+`roc_z_below_min` reject strictly inside the `if` branch. Which trades are
+taken and how they are managed is then **unchanged** — this is a measurement
+change under the 07-31 standard and may ship inside the freeze without
+resetting trial 6.5.
+
+**Not deployed today, for two reasons:** BICO is open (step-5 rule — deploys
+restart the container), and this is a code change to the live scan path rather
+than a label fix, so it wants a green `pytest` and a clean window. Operator
+gate. Recommend shipping at the next flat moment.
+
+Rejected as today's lever: anything on slots, gates, or exit parameters — the
+sleeve is frozen for trial 6.5 and every one of those is a treatment change.
+
+### 5. Validate
+
+No gate run. No candidate change to score — the proposed lever is measurement
+only, so `replay_exits.py` / `mc_ledger.py` have nothing to price, and the
+V-stack does not apply.
+
+### 6. Deploy
+
+**None.** Zero commits, zero Railway variable changes, zero redeploys. Bot
+healthy: continuous `[ACCOUNT]` lines, 1 position, no tracebacks.
+
+### 7. Verdict on recent changes (7d)
+
+- **Trial 6.5 exit constants (24h clock / 2R giveback, 08-06)** — first live
+  case is BICO, currently held through a -0.55R giveback that the trial-6
+  parameterisation would have closed at ~+0.10R. Earning its keep so far;
+  n=1 unrealised, not a result.
+- **`kind=SNIPER` feature-store label fix (08-06)** — no closes since, so
+  untested in production. Regression test holds it.
+- **Second wildcard slot (07-31)** — one 2-slot-era blocked candidate since
+  (HEI, +5R). Still thin.
+- **External gate at `REQUIRE_LISTED=1` (reverted 08-02)** — vindicated on
+  real alts this run (-0.265R mean on 4 resolved vetoes). Keep.
+
+**Verdict: no change. 0 closes, 1 healthy open convex position, one measurement
+defect found and proposed.**
+
 # Daily Audit — 2026-08-06
 
 ---
