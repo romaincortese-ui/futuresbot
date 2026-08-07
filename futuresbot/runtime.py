@@ -1579,7 +1579,13 @@ class FuturesRuntime:
         ALREADY full Kelly, and the edge fails a family-wise null.
         """
         legacy = max(0.0, sig.balance_fraction * available_balance)
-        if not self._flag("FUTURES_WILDCARD_RISK_TARGETED", default=False):
+        # Default ON since trial 7 (bundled with the retention trail): the owner
+        # reads P&L in dollars, and with risk equalised at ~1.87% per trade the
+        # retention floor becomes a DOLLAR floor (1R ~ $2.66) instead of landing
+        # anywhere in a ~4x range from sizing noise. Median-neutral by
+        # construction; attribution stays clean because the exit rule is
+        # R-denominated and unaffected by sizing.
+        if not self._flag("FUTURES_WILDCARD_RISK_TARGETED", default=True):
             return legacy
         sl_margin_pct = float(getattr(sig, "sl_margin_pct", 0.0) or 0.0)
         if sl_margin_pct <= 0 or available_balance <= 0:
@@ -1661,29 +1667,34 @@ class FuturesRuntime:
                                              reason="CONVEX_TIME_STOP")
 
     def _convex_runner_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
-        """Arm at +1R, give back 2R. Giveback widened 1R -> 2R at trial 6.5.
+        """Proportional retention (trial 7): arm at +1R, floor = 0.30 x peak R.
 
-        CORRECTION (2026-08-06). At arm=1R/giveback=1R the trail level for a
-        trade that arms at exactly +1.0R sits at exactly 0R — so anything peaking
-        in [1R, 2R] was banked at ~breakeven BY CONSTRUCTION. The live HFT_USDT
-        trade (peak +1.07R -> exit +0.03R) is that mechanical floor case.
+        DESIGN INVARIANT (owner-specified, 2026-08-07): once a trade has built
+        profit, it must never give back more than 100% of it. The trial-6.5 rule
+        (exit = peak - 2R) violated that for every peak under 2R: a trade
+        peaking +1.46R had its exit at -0.54R and a fade to zero banked nothing
+        (the live BICO case, and 20.7% of all armed trades). A retention floor
+        exit = retain x peak satisfies the invariant BY CONSTRUCTION: once
+        armed, the floor is always >= +0.3R.
 
-        The instinctive fix — tighten the giveback to bank sooner — is measurably
-        BACKWARDS: 0.5R HALVES mean R (0.185 -> 0.096). The giveback sweep is
-        monotone in the other direction across a 221-cell surface (0.25R $93.5,
-        1.0R $152.7, 2.0R $228.7 throttled). Widening exits LOWER on the trades
-        where it fires, but fires far less often, and the trades it stops
-        interrupting are the ones that reach +5R.
+        Measured (444 identical Min15 entries, adversarially re-simulated to 4
+        decimals; independent Min60 proxy agrees): the invariant is FREE at
+        retain=0.30 — dead-zone trades go from -0.20R to +0.43R banked, TP
+        completion holds (7.4% -> 7.0%), P(armed exit <= 0) falls 35.6% -> 0.5%,
+        net +0.030R/trade vs the giveback rule (t_day 0.83 = statistically
+        ZERO; family-wise p 0.55). Ship as a DESIGN FIX, not an edge claim.
 
-        The trail — not the clock — was the dominant truncator of the convex
-        tail: switching it on cut +5R completions from 121/598 to 50/598 (59% of
-        the tail) against the 6h clock's 23%. At giveback 2.0 with arm 1.0 the
-        trail is effectively inert below a +2R peak, which is the intended
-        behaviour: protect a genuine runner, never scratch a marginal one.
+        retain is deliberately LOW: every +0.10 of retention above 0.30 is
+        monotonically worse (0.70 collapses TP completion to 0.9%) because
+        runners (28.6% of trades) outnumber dead-zoners (20.7%) 1.4:1 — the
+        giveback-sweep prior "looser is better" reproduces inside the
+        proportional family. 0.25-0.50 is one statistical plateau; 0.30 is
+        pre-registered, 0.25 is the fallback if live TP completion collapses
+        (only after >=100 closes, per DECISION_RULE.md).
 
-        The two levers are SUBSTITUTES, not complements — clock alone +$15.8,
-        giveback alone +$19.3, both +$24.7 (sub-additive). Do not model as
-        stacking. NOT AN EDGE CLAIM (family-wise p 0.43 across the surface).
+        Positions open across the deploy keep their persisted convex_peak_r and
+        are tagged trail_migrated=1 the first time this code touches them —
+        excluded from the trial-7 scoreboard.
         """
         if not self._is_wildcard_convex(position):
             return False
@@ -1702,21 +1713,41 @@ class FuturesRuntime:
             return False
         r_now = gross / risk_pct
         arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
-        give_r = max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 2.0))
+        retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
         peak_r = self._metadata_float(md, "convex_peak_r") or 0.0
+        if peak_r > 0 and "trail_migrated" not in md and "trail_mode" not in md:
+            # Position opened under the giveback rule (trial <= 6.5); the new
+            # floor applies to it retroactively. Mark it so the trial-7
+            # scoreboard can exclude it.
+            position.metadata["trail_migrated"] = 1.0
+            position.metadata["trail_mode"] = "retention"
+            self._save_state()
+        elif "trail_mode" not in md:
+            position.metadata["trail_mode"] = "retention"
         if r_now > peak_r:
             position.metadata["convex_peak_r"] = round(r_now, 4)
             self._save_state()
             return False
         if peak_r < arm_r:
             return False
-        if r_now > peak_r - give_r:
+        if retain > 0:
+            # trial 7: retention floor. Ratchet-only by construction (retain is
+            # constant and peak only rises), and always >= retain x arm > 0.
+            exit_level = retain * peak_r
+        else:
+            # legacy giveback, kept reachable for rollback via env
+            give_r = max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 2.0))
+            exit_level = peak_r - give_r
+        if r_now > exit_level:
             return False
-        log.warning("[CONVEX_RUNNER_TRAIL] symbol=%s side=%s peak=%.2fR now=%.2fR giveback=%.1fR price=%s",
-                    position.symbol, position.side, peak_r, r_now, give_r,
-                    self._format_price(current_price))
+        log.warning("[CONVEX_RUNNER_TRAIL] symbol=%s side=%s peak=%.2fR now=%.2fR "
+                    "floor=%.2fR mode=%s migrated=%s price=%s",
+                    position.symbol, position.side, peak_r, r_now, exit_level,
+                    "retention" if retain > 0 else "giveback",
+                    bool(md.get("trail_migrated")), self._format_price(current_price))
         return self._close_position_for_exit(position, current_price=current_price,
-                                             reason="CONVEX_RUNNER_TRAIL")
+                                             reason="CONVEX_RETENTION_TRAIL" if retain > 0
+                                             else "CONVEX_RUNNER_TRAIL")
 
     def _micro_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if self._is_wildcard_convex(position):

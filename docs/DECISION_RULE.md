@@ -1,4 +1,93 @@
-# Pre-registered decision rule — CONVEX TRIAL 6.5 (from 2026-08-06)
+# Pre-registered decision rule — CONVEX TRIAL 7 (from 2026-08-07)
+
+Trial 6.5 CLOSED at **n=0 in-trial closes** after ~20h. Not a performance
+verdict: a DESIGN defect was identified in its own trail rule by the live
+BICO_USDT trade, the owner ruled ("giving back more than 100% of the built
+profit is not a good design"), and the fix is a treatment change. One position
+(BICO_USDT LONG, opened 08-07 08:52, peak +1.46R) migrates into trial 7 tagged
+`trail_migrated=1` and is EXCLUDED from trial-7 scoreboard statistics.
+
+## The trial-6.5 lesson (why the giveback rule died)
+
+`exit = peak - 2R` puts the exit BELOW ZERO for every peak under 2R. Measured on
+the replay panel, 20.7% of armed trades peak in [1R, 2R) — that entire cohort
+could build profit and hand back >100% of it (mean banked: **-0.20R**). The live
+BICO trade is the exact shape: peak +1.46R (~+$4), trail level -0.54R, a fade to
+the 24h clock banks $0.
+
+## Changes under test in trial 7
+
+**Treatment (the reset):**
+
+1. **Retention trail** replaces the giveback: arm at +1R (unchanged), exit floor
+   = `FUTURES_CONVEX_TRAIL_RETAIN_FRAC x peak_R` (default **0.30**), ratchet-
+   only. Exit reason `CONVEX_RETENTION_TRAIL`. Legacy giveback reachable for
+   rollback via `FUTURES_CONVEX_TRAIL_RETAIN_FRAC=0`.
+   INVARIANT, by construction: once armed, an exit is never below +0.3R —
+   a trade can never give back more than 70% of its best profit.
+   Measured price of the invariant (444 identical entries, adversarially
+   re-simulated to 4 decimals; independent Min60 proxy agrees): **zero** —
+   +0.030R/trade vs giveback (t_day 0.83, family-wise p 0.55 = noise), TP
+   completion 7.4% -> 7.0%, dead-zone banking -0.20R -> +0.43R,
+   P(armed exit <= 0) 35.6% -> 0.5% (residual = gap-throughs).
+   0.30 is PRE-REGISTERED, not measured-optimal: 0.25-0.50 is one statistical
+   plateau (one panel picks 0.30, another 0.50). Fallback 0.25 ONLY if
+   tripwire 3 fires at n>=100. Every retain >= 0.35 measured monotonically
+   worse (0.70 collapses TP completion to 0.9%): runners outnumber dead-zoners
+   1.4:1, so "keep more" measurably backfires. DO NOT RAISE RETAIN ON A FADE.
+2. **`FUTURES_WILDCARD_RISK_TARGETED` default ON** (was default OFF, shipped
+   2026-08-07): every wildcard trade risks ~1.87% of balance, making $ = R x
+   ~$2.66. Median-neutral dispersion fix (CV 19.5% -> 4.8%); bundled so the
+   owner's dollar framing and the R machinery become the same number. The exit
+   rule is R-denominated, so trail attribution is unaffected by this bundling.
+
+**Rejected in the same investigation (do not resurrect without new evidence):**
+
+- Record lock ("best 3 in history"): harmful at every window (N=10: -62R,
+  t -2.32); at the real history size (~9-16 closes) the 3rd-best threshold is
+  <= 0 with 37% probability. The de-noised +3R bank FLIPPED NEGATIVE cross-panel
+  (-0.058R, t -1.42) — a sweep-max artifact. Retest only past ~100 same-regime
+  closes; peak_r/exit_rule/pnl are already logged per close for exactly that.
+- Average-arm: trailing form death-spirals (the rule's own scratches drag the
+  average down); fixed arm=2R breaks the invariant on the BICO shape itself.
+- Market-trend / time-ramp overlays: 20 pre-registered cells, all between
+  -0.045 and +0.007R; the three trend definitions disagree on SIGN; fourth
+  consecutive regime-conditioning null in this project (prior fw p 0.988).
+  The 23h59 fade nightmare is already fixed by the floor.
+
+**Carried forward unchanged:** long-only, 2 slots, 3.0xATR stop capped at 20%
+of margin, +5R TP, 24h convex time stop (trail checks before clock), crypto-only
+band, sigma trigger OFF.
+
+## Pass criteria (30 WILDCARD closes or 90 days; migrated positions excluded)
+
+1. **Net R > 0** after fees. 2. **Still > 0 after dropping the best trade.**
+3. **Max drawdown < 30%**, flow-adjusted. 4. **Every close names its exit rule.**
+
+## Watch items / tripwires (error rates stated, per the trial-6.5 critique)
+
+| # | metric | expect | tripwire | false-alarm | miss |
+|---|---|---|---|---|---|
+| 1 | armed close <= $0 net, no gap flag | ~0 by construction | any single occurrence -> bug, halt | ~0% | ~0% (tests code, not edge) |
+| 2 | retention-exit net bank | >= +0.15R each | any below without gap flag -> fill quality | ~0% | ~0% |
+| 3 | TP completion | ~7% | 0 TPs in 30 closes -> NOTE only; decisive at n~100 | 11% | ~45% vs true 2% — weak, indicative |
+| 4 | arm rate | 40-50% of closes | < 25% at n=30 -> entry stream differs from replay | ~1.5% | ~25% vs true 20% |
+| 5 | gap-through share of armed exits | 0.5-8% | > 3 of first 20 -> move floor server-side |
+| 6 | retain | 0.30 fixed | no retuning before 50 closes; 0.25 only via tripwire 3 at n>=100 |
+
+## Honest limits
+
+- Nothing here is an edge claim. The retention rule's +0.030R is family-wise
+  noise; it ships because the INVARIANT is owner-specified and measured free.
+- Replay panels run 6-10x live signal density on a survivorship-biased
+  universe: only DIFFERENCES and path-shape properties transfer, never levels.
+- BICO at deploy: floor becomes 0.30 x 1.4558 = +0.437R (~+$1.2-1.4 banked on
+  a full fade vs $0 under trial 6.5). No instant close unless price is already
+  below +0.44R at deploy. Tagged migrated; excluded from the scoreboard.
+
+---
+
+# ARCHIVED — Pre-registered decision rule, CONVEX TRIAL 6.5 (from 2026-08-06)
 
 Trial 6 amended on day 2 at n=1. Same treatment structure, two exit VALUES
 corrected: `FUTURES_CONVEX_TIME_STOP_HOURS` 6 -> **24** and

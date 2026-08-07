@@ -242,32 +242,61 @@ def test_trail_does_not_arm_below_one_r(rt, monkeypatch):
     assert rt._convex_runner_trail_exit(p, 103.0) is False       # gave back, still unarmed
 
 
-def test_trail_giveback_is_2r_and_marginal_peaks_are_left_alone(rt, monkeypatch):
-    """TRIAL 6.5. At giveback=1R, a trade arming at exactly +1R had its trail
-    level at exactly 0R — the live HFT trade (+1.07R peak -> +0.03R exit) was
-    that mechanical floor case, and the trail cut +5R completions from 121/598
-    to 50/598. At giveback=2R the trail is inert below a +2R peak: it protects a
-    genuine runner and never scratches a marginal one. Tightening instead was
-    measured to HALVE mean R."""
-    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
-    monkeypatch.setattr(rt, "_close_position_for_exit", lambda *a, **k: True)
-    # the HFT case: peak +1.07R then fade — must NOT fire at giveback 2R
-    p = _pos()
-    assert rt._convex_runner_trail_exit(p, 110.7) is False       # peak +1.07R, arms
-    assert rt._convex_runner_trail_exit(p, 100.3) is False       # +0.03R: trial-6 scratched here
-
-
-def test_trail_exits_after_giving_back_two_r_from_the_peak(rt, monkeypatch):
+def test_retention_floor_banks_the_dead_zone(rt, monkeypatch):
+    """TRIAL 7. The invariant: once armed, never exit below 0.30 x peak. The
+    BICO shape — peak +1.46R then a full fade — banked $0 under the giveback
+    rule (exit level -0.54R); the retention floor banks +0.44R (~+$1.2-1.4).
+    Dead-zone trades ([1R,2R) peaks, 20.7% of the panel) go from -0.20R to
+    +0.43R mean banked; measured cost of the invariant: +0.030R/trade
+    (t_day 0.83 = zero). Design fix, not an edge claim."""
     monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
     seen = {}
     monkeypatch.setattr(rt, "_close_position_for_exit",
                         lambda p, **k: seen.update(reason=k.get("reason")) or True)
     p = _pos()
-    assert rt._convex_runner_trail_exit(p, 135.0) is False       # +3.5R, arms, records peak
-    assert p.metadata["convex_peak_r"] == pytest.approx(3.5, abs=0.05)
-    assert rt._convex_runner_trail_exit(p, 120.0) is False       # -1.5R off peak, holds
-    assert rt._convex_runner_trail_exit(p, 114.0) is True        # -2.1R off peak, exits
+    assert rt._convex_runner_trail_exit(p, 114.6) is False       # peak +1.46R, arms
+    assert p.metadata["convex_peak_r"] == pytest.approx(1.46, abs=0.05)
+    # floor = 0.30 x 1.46 = +0.438R -> price 104.38. Above it: hold.
+    assert rt._convex_runner_trail_exit(p, 105.0) is False       # +0.50R, holds
+    # fade through the floor: exits POSITIVE, never gives back everything
+    assert rt._convex_runner_trail_exit(p, 104.0) is True        # +0.40R < floor
+    assert seen["reason"] == "CONVEX_RETENTION_TRAIL"
+
+
+def test_retention_floor_ratchets_with_the_peak(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    seen = {}
+    monkeypatch.setattr(rt, "_close_position_for_exit",
+                        lambda p, **k: seen.update(reason=k.get("reason")) or True)
+    p = _pos()
+    assert rt._convex_runner_trail_exit(p, 135.0) is False       # +3.5R, floor 1.05R
+    assert rt._convex_runner_trail_exit(p, 120.0) is False       # +2.0R, above floor
+    assert rt._convex_runner_trail_exit(p, 110.0) is True        # +1.0R < 1.05R floor
+    assert seen["reason"] == "CONVEX_RETENTION_TRAIL"
+
+
+def test_legacy_giveback_is_reachable_for_rollback(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", "0")
+    seen = {}
+    monkeypatch.setattr(rt, "_close_position_for_exit",
+                        lambda p, **k: seen.update(reason=k.get("reason")) or True)
+    p = _pos()
+    assert rt._convex_runner_trail_exit(p, 135.0) is False       # peak 3.5R
+    assert rt._convex_runner_trail_exit(p, 114.0) is True        # -2.1R off peak
     assert seen["reason"] == "CONVEX_RUNNER_TRAIL"
+
+
+def test_position_open_across_the_deploy_is_tagged_migrated(rt, monkeypatch):
+    """BICO-at-deploy: peak_r persisted under the old rule -> tag it so the
+    trial-7 scoreboard can exclude it."""
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    monkeypatch.setattr(rt, "_close_position_for_exit", lambda *a, **k: True)
+    p = _pos()
+    p.metadata["convex_peak_r"] = 1.4558          # persisted by trial 6.5
+    rt._convex_runner_trail_exit(p, 108.5)        # +0.85R, above floor 0.437
+    assert p.metadata.get("trail_migrated") == 1.0
+    assert p.metadata.get("trail_mode") == "retention"
 
 
 def test_trail_lets_a_runner_run(rt, monkeypatch):
@@ -433,12 +462,17 @@ class _Sig:
     balance_fraction = 0.12; tp_margin_pct = 81.85; symbol = "FOO_USDT"
 
 
-def test_risk_dial_defaults_off_and_sizing_is_unchanged(rt, monkeypatch):
-    """The refactor must be inert until deliberately switched on — trial 6.5 is
-    frozen, so a sizing change now would reset it."""
+def test_risk_dial_defaults_ON_since_trial_7(rt, monkeypatch):
+    """Bundled with the retention trail: $ becomes proportional to R, so the
+    owner's dollar floor and the bot's R floor are the same number. Median-
+    neutral by construction (risk_pct default = today's measured effective)."""
     monkeypatch.delenv("FUTURES_WILDCARD_RISK_TARGETED", raising=False)
-    m = rt._entry_margin(_Sig(), 140.0)
-    assert m == pytest.approx(0.12 * 140.0), "default path is no longer balance_fraction x available"
+    s = _Sig(); s.sl_margin_pct = 15.6            # the median: sizing unchanged
+    assert rt._entry_margin(s, 140.0) == pytest.approx(0.12 * 140.0, rel=0.03)
+    s.sl_margin_pct = 20.0                        # wide stop: sized DOWN now
+    assert rt._entry_margin(s, 140.0) < 0.12 * 140.0
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "0")   # rollback path
+    assert rt._entry_margin(s, 140.0) == pytest.approx(0.12 * 140.0)
 
 
 def test_risk_dial_targets_a_constant_fraction_of_the_account(rt, monkeypatch):
