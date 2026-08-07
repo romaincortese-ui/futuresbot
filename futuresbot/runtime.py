@@ -222,6 +222,11 @@ class FuturesRuntime:
         self._last_squeeze_scan_at = 0.0
         self._last_sniper_scan_at: dict[str, float] = {}
         self._sniper_last_signal_at: dict[tuple[str, str, str], float] = {}
+        # Candidates already shadow-logged during the CURRENT slot-blocked
+        # episode. Prevents the 15-min scan re-logging the same blocked signal
+        # once per pass (up to 96x at the 24h clock), which would swamp the
+        # slot_occupied population that any slot-count decision rests on.
+        self._wildcard_block_logged: set[tuple[str, str]] = set()
         self._pending_entry_lateness: float | None = None
         self._pending_ref_listed: bool | None = None
         self._last_shadow_resolve_at = 0.0
@@ -1543,6 +1548,63 @@ class FuturesRuntime:
         if changed:
             self._save_state()
         return False
+
+    def _entry_margin(self, sig: Any, available_balance: float, *,
+                      kind: str = "WILDCARD", symbol: str = "") -> float:
+        """Margin for a convex entry. Two schemes; the second is DEFAULT OFF.
+
+        LEGACY (default): margin = balance_fraction x available. Risk is then an
+        EMERGENT PRODUCT — balance_fraction x sl_margin_pct — not a parameter
+        anybody set. Because integer leverage makes sl_margin_pct land anywhere
+        in (10%, 20%], two identical-looking trades risk between 1.2% and 2.4%
+        of the account. Measured dispersion: CV 19.5%, p95/p5 = 1.88x.
+
+        RISK-TARGETED (FUTURES_WILDCARD_RISK_TARGETED=1): solve for the margin
+        that makes a stop-out lose exactly FUTURES_WILDCARD_RISK_PCT of the
+        balance, whatever the stop happens to be:
+
+            risk$   = margin x sl_margin_pct/100        (definition)
+            margin  = risk_pct x available x 100 / sl_margin_pct
+
+        This is the SAME median risk, not more — it removes the sawtooth, it
+        does not raise the dial. Measured at constant median risk: CV
+        19.5% -> 4.8%, p95/p5 1.88x -> 1.17x, P(1yr DD>50%) 9.8% -> 5.8%.
+
+        NOT a size increase and NOT an edge claim. Every sizing scheme tested
+        returned an identical 118.2 R/yr — sizing moves the multiplier on an
+        edge, never the edge. The default risk_pct (1.9%) is today's measured
+        effective level, so switching this on should leave median size alone.
+        Raising it is a separate, deliberate decision: full Kelly on the point
+        estimate is 7.7%, but at 25% of the measured edge today's 1.9% is
+        ALREADY full Kelly, and the edge fails a family-wise null.
+        """
+        legacy = max(0.0, sig.balance_fraction * available_balance)
+        if not self._flag("FUTURES_WILDCARD_RISK_TARGETED", default=False):
+            return legacy
+        sl_margin_pct = float(getattr(sig, "sl_margin_pct", 0.0) or 0.0)
+        if sl_margin_pct <= 0 or available_balance <= 0:
+            return legacy                      # cannot solve; fail to the old path
+        # 0.0187 = 0.12 balance_fraction x 15.6% median sl_margin, i.e. TODAY'S
+        # measured effective risk. Chosen so switching this on leaves MEDIAN
+        # size unchanged and only removes the dispersion around it.
+        risk_pct = max(0.0, self._env_float("FUTURES_WILDCARD_RISK_PCT", 0.0187))
+        if risk_pct <= 0:
+            return legacy
+        margin = risk_pct * available_balance * 100.0 / sl_margin_pct
+        # Bound the MARGIN, not to stop equalisation, but to bound gap risk.
+        # Equalising necessarily sizes UP when the stop is tight (a tighter stop
+        # needs more margin to lose the same dollars) and DOWN when it is wide —
+        # capping at 1.0x would block one half and turn the fix into a one-sided
+        # haircut, which an earlier version of this did. The realistic sl_margin
+        # range (11%-20%) spans 0.79x-1.44x legacy, so 1.5x permits full
+        # equalisation while still bounding the tail case where a stop gaps
+        # through and the loss exceeds the modelled 1R.
+        cap_mult = max(1.0, self._env_float("FUTURES_WILDCARD_RISK_MARGIN_CAP_MULT", 1.5))
+        margin = min(margin, legacy * cap_mult)
+        log.info("[RISK_TARGETED] %s %s sl_margin=%.2f%% risk_pct=%.3f%% "
+                 "margin %.2f -> %.2f (risk $%.2f)", kind, symbol, sl_margin_pct,
+                 risk_pct * 100, legacy, margin, margin * sl_margin_pct / 100.0)
+        return margin
 
     def _convex_time_stop_exit(self, position: FuturesPosition, current_price: float,
                                now: datetime | None = None) -> bool:
@@ -3947,7 +4009,8 @@ class FuturesRuntime:
             # band found 48 full signals while the live scan reported
             # candidates=0 on every pass, so we count survivors at each stage
             # rather than guessing which one is eating them.
-            funnel = {"usdt": 0, "in_band": 0, "turnover_ok": 0, "move_24h_ok": 0}
+            funnel = {"usdt": 0, "non_crypto": 0, "symbol_open": 0, "major_excl": 0,
+                      "in_band": 0, "turnover_ok": 0, "move_24h_ok": 0}
             movers = []
             for t in tickers:
                 sym = str(t.get("symbol") or "")
@@ -3963,8 +4026,18 @@ class FuturesRuntime:
                 # instrument class from a 24/7 perp, and their ATR-derived stops
                 # are meaningless against that gap risk.
                 if not _is_crypto_usdt_symbol(sym, None):
+                    funnel["non_crypto"] += 1
                     continue
-                if sym in self.open_positions or sym in majors:
+                # Capacity telemetry: these two were collapsed into one skip, so
+                # "symbol already open" — a real capacity cost that rises with
+                # hold length — was indistinguishable from "is a major", which
+                # is a permanent universe choice. At the 24h clock the first one
+                # matters far more than it did at 6h.
+                if sym in self.open_positions:
+                    funnel["symbol_open"] += 1
+                    continue
+                if sym in majors:
+                    funnel["major_excl"] += 1
                     continue
                 funnel["in_band"] += 1
                 turn = float(t.get("amount24") or 0.0)
@@ -3981,11 +4054,13 @@ class FuturesRuntime:
                     funnel["move_24h_ok"] += 1
                     movers.append((chg, sym))
             movers.sort(reverse=True)
+            max_scan = int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))
+            scan_capped = max(0, len(movers) - max_scan)   # silently dropped before
             cands: list = []
             hist: dict[str, int] = {}
             scanned = 0
             scan_end = int(now_t)
-            for _chg, sym in movers[: int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))]:
+            for _chg, sym in movers[:max_scan]:
                 try:
                     # 7d of 15m bars (was 60 bars = 15h). The detector reads only
                     # the tail, so the SIGNAL is unchanged — but the sigma-
@@ -4024,10 +4099,12 @@ class FuturesRuntime:
                 cands = kept
             best = cands[0][1] if cands else None
             best_lateness = cands[0][2] if cands else None
-            log.info("[WILDCARD_FUNNEL] usdt=%d -> in_band=%d -> turnover>=%.0f:%d -> "
-                     "move24h>=%.0f%%:%d -> scanned=%d -> candidates=%d",
-                     funnel["usdt"], funnel["in_band"], floor, funnel["turnover_ok"],
-                     min_move * 100, funnel["move_24h_ok"], scanned, len(cands))
+            log.info("[WILDCARD_FUNNEL] usdt=%d -> (non_crypto -%d, symbol_open -%d, "
+                     "major -%d) in_band=%d -> turnover>=%.0f:%d -> move24h>=%.0f%%:%d "
+                     "-> scan_capped -%d -> scanned=%d -> candidates=%d",
+                     funnel["usdt"], funnel["non_crypto"], funnel["symbol_open"],
+                     funnel["major_excl"], funnel["in_band"], floor, funnel["turnover_ok"],
+                     min_move * 100, funnel["move_24h_ok"], scan_capped, scanned, len(cands))
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d shorts_blocked=%d "
                      "histogram=%s signal=%s",
                      len(movers), scanned, len(cands), shorts_blocked, hist or "{}",
@@ -4036,9 +4113,23 @@ class FuturesRuntime:
                 return
             if slot_blocked:
                 self._pending_entry_lateness = best_lateness
-                self._shadow_log_untaken(best, "WILDCARD", "slot_occupied")
-                log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied candidate=%s open=%d", best.symbol, self._convex_open_count("WILDCARD"))
+                # Log each blocked candidate ONCE per blocking episode. The scan
+                # runs every 15 min, so a candidate that stays top-ranked while a
+                # slot is held was re-logged on every pass — at the 6h clock that
+                # was up to 24 duplicate rows for one signal, and at trial 6.5's
+                # 24h clock it is up to 96. The slot_occupied population IS the
+                # evidence base for any future slot decision, so duplicates would
+                # silently weight one lucky candidate ~100x. Cleared below the
+                # moment the block lifts.
+                key = (best.symbol, best.side)
+                if key not in self._wildcard_block_logged:
+                    self._wildcard_block_logged.add(key)
+                    self._shadow_log_untaken(best, "WILDCARD", "slot_occupied")
+                log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied candidate=%s open=%d "
+                         "episode_logged=%d", best.symbol,
+                         self._convex_open_count("WILDCARD"), len(self._wildcard_block_logged))
                 return
+            self._wildcard_block_logged.clear()   # block lifted: start a fresh episode
             # Rank-ordered fallthrough: a vetoed top candidate no longer wastes the
             # whole scan — we log it (so the external gate finally gets measured on
             # REAL alts, not just synthetics) and try the next-best candidate.
@@ -4528,7 +4619,7 @@ class FuturesRuntime:
             return False
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         min_vol = int(float(contract.get("minVol", 1) or 1))
-        margin = max(0.0, sig.balance_fraction * available_balance)
+        margin = max(0.0, self._entry_margin(sig, available_balance, kind=kind, symbol=symbol))
         intended_margin = margin
         regime_mult = self._regime_size_multiplier(symbol)  # chop -> floor, clean trend -> full
         margin *= regime_mult

@@ -422,3 +422,73 @@ def test_status_sniper_header_is_derived_from_the_live_gate():
     src = inspect.getsource(FuturesRuntime._sniper_shadow_status_lines)
     assert "sniper_live_variants()" in src, "status mode is not derived from the live gate"
     assert 'f"🎯 Sniper <b>SHADOW</b> (logs would-be entries, never trades)' not in src
+
+
+# --------------------------------------------------------------------------
+# risk dial (default OFF) + capacity instrumentation
+# --------------------------------------------------------------------------
+
+class _Sig:
+    side = "LONG"; entry_price = 1.0; leverage = 1; sl_margin_pct = 16.37
+    balance_fraction = 0.12; tp_margin_pct = 81.85; symbol = "FOO_USDT"
+
+
+def test_risk_dial_defaults_off_and_sizing_is_unchanged(rt, monkeypatch):
+    """The refactor must be inert until deliberately switched on — trial 6.5 is
+    frozen, so a sizing change now would reset it."""
+    monkeypatch.delenv("FUTURES_WILDCARD_RISK_TARGETED", raising=False)
+    m = rt._entry_margin(_Sig(), 140.0)
+    assert m == pytest.approx(0.12 * 140.0), "default path is no longer balance_fraction x available"
+
+
+def test_risk_dial_targets_a_constant_fraction_of_the_account(rt, monkeypatch):
+    """The whole point: risk becomes a PARAMETER, not the emergent product of
+    balance_fraction x sl_margin_pct (which lands anywhere in 1.2%-2.4%)."""
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0187")
+    for sl_margin in (11.0, 15.6, 20.0):
+        s = _Sig(); s.sl_margin_pct = sl_margin
+        m = rt._entry_margin(s, 140.0)
+        realised_risk = m * sl_margin / 100.0
+        assert realised_risk == pytest.approx(0.0187 * 140.0, rel=0.02), (
+            f"risk not constant at sl_margin={sl_margin}: ${realised_risk:.3f}")
+
+
+def test_risk_dial_margin_is_bounded_on_a_pathologically_tight_stop(rt, monkeypatch):
+    """Equalising MUST be allowed to size up on a tight stop — that is the
+    mechanism. But an extreme stop would demand an unbounded position, and a
+    gap-through then loses far more than the modelled 1R, so the margin is
+    capped at 1.5x legacy."""
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0187")
+    s = _Sig(); s.sl_margin_pct = 4.0          # would want ~3.9x legacy
+    assert rt._entry_margin(s, 140.0) == pytest.approx(1.5 * 0.12 * 140.0)
+    s.sl_margin_pct = 11.0                     # realistic tight -> must be ALLOWED up
+    assert rt._entry_margin(s, 140.0) > 0.12 * 140.0
+
+
+def test_risk_dial_falls_back_when_it_cannot_solve(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
+    s = _Sig(); s.sl_margin_pct = 0.0
+    assert rt._entry_margin(s, 140.0) == pytest.approx(0.12 * 140.0)
+
+
+def test_blocked_candidate_is_logged_once_per_episode():
+    """REGRESSION. The 15-min scan re-logged the same blocked candidate every
+    pass — up to 96 duplicate rows for one signal at the 24h clock. The
+    slot_occupied population IS the evidence base for any slot decision."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert "_wildcard_block_logged" in src, "blocked candidates are re-logged every scan"
+    assert "self._wildcard_block_logged.clear()" in src, "episode never resets"
+
+
+def test_funnel_separates_the_capacity_terms():
+    """symbol_open is a capacity cost that RISES with hold length; major_excl is
+    a permanent universe choice. Collapsed together they were indistinguishable."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    for k in ('"symbol_open"', '"major_excl"', '"non_crypto"', "scan_capped"):
+        assert k in src, f"funnel does not count {k}"
