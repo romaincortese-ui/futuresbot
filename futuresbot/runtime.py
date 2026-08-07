@@ -1916,12 +1916,17 @@ class FuturesRuntime:
         return "\n".join(lines)
 
     def _sniper_shadow_status_lines(self) -> list[str]:
-        """The Sniper's would-be record, for /status.
+        """The Sniper's record, for /status.
 
-        The sleeve trades nothing, so without this the only trace of it is a
-        log line on Railway — invisible from Telegram. Shows what it WOULD have
-        entered and how each entry resolved counterfactually, clearly labelled
-        as shadow so nobody mistakes it for live exposure.
+        Without this the only trace of the sleeve is a Railway log line —
+        invisible from Telegram.
+
+        The header is DERIVED from the live gate, never hard-coded. It used to
+        read "never trades" unconditionally; that text predated the live leg
+        (3247faf) and was still being sent while SNIPER FAST held real positions
+        in XRP_USDT and AVAX_USDT (2026-08-06). Commit 2225084 fixed the same
+        stale claim in the scan log and missed this surface. A status message
+        that misstates whether real money is at risk is worse than none.
         """
 
         if not sniper_enabled():
@@ -1933,12 +1938,16 @@ class FuturesRuntime:
         except Exception:  # pragma: no cover — status must render regardless
             return []
         uni = len(sniper_universe())
-        head = f"🎯 Sniper <b>SHADOW</b> (logs would-be entries, never trades) | {uni or 'liquid'} pairs"
-        lines = [head]
+        live_names = sniper_live_variants() if not sniper_shadow_only() else ()
+        mode = (f"<b>LIVE</b> ({','.join(sorted(live_names))}, notional-capped)"
+                if live_names else "<b>SHADOW</b> (logs would-be entries, never trades)")
+        lines = [f"🎯 Sniper {mode} | {uni or 'liquid'} pairs"]
         for variant in active_variants():
             sleeve = f"SNIPER_{variant.name}"
             rows = [r for r in all_rows if str(r.get("sleeve")) == sleeve]
             note = "" if variant.economically_viable else " ⚠️ signal-study only"
+            if variant.name.upper() in live_names:
+                note += " 💰 LIVE"
             if not rows:
                 lines.append(f"  <b>{variant.name}</b>{note}: no signals yet")
                 continue
@@ -4397,7 +4406,16 @@ class FuturesRuntime:
             if equity <= 0 or available <= 0:
                 return
             if self._convex_open_count("SNIPER") >= int(self._env_float("FUTURES_SNIPER_MAX_POSITIONS", 1)):
-                self._shadow_log_untaken(sig, f"SNIPER_{variant.name}", "slot_occupied")
+                # DO NOT shadow-log here. The caller already wrote this exact
+                # signal as "shadow_only" one line before calling us, with
+                # identical entry/sl/tp — a second row is the SAME signal counted
+                # twice. It inflated SNIPER_FAST's ledger to 21 rows for 17
+                # distinct signals (19%), double-weighted those 4 in the cfR and
+                # win% on /status, and rendered the same DOGE_USDT candidate as
+                # two identical lines. The shadow_only row resolves identically,
+                # so nothing is lost by recording this in the log instead.
+                log.info("[SNIPER_LIVE_SKIP] variant=%s %s %s reason=slot_occupied open=%d",
+                         variant.name, sig.symbol, sig.side, self._convex_open_count("SNIPER"))
                 return
             budget = capped_available(equity=equity, balance_fraction=sig.balance_fraction,
                                       leverage=sig.leverage)

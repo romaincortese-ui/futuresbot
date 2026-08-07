@@ -369,3 +369,56 @@ def test_close_record_carries_sleeve_and_exit_rule():
     src = inspect.getsource(FuturesRuntime._close_history_trade)
     for field in ('"sleeve"', '"exit_rule"', '"hold_hours"', '"equity_at_close_usdt"'):
         assert field in src, f"{field} not recorded at close"
+
+
+# --------------------------------------------------------------------------
+# shadow-ledger double-write (trial 6.5 follow-up, measurement only)
+# --------------------------------------------------------------------------
+
+def test_sniper_live_skip_does_not_write_a_second_shadow_row():
+    """REGRESSION. _log_sniper_variant writes every signal as `shadow_only`,
+    then calls the live opener — which used to write the SAME signal AGAIN as
+    `slot_occupied`. That inflated SNIPER_FAST to 21 rows for 17 distinct
+    signals, double-weighted 4 of them in the /status cfR and win%, and
+    rendered DOGE_USDT as two identical lines."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_open_sniper_live)
+    assert '_shadow_log_untaken' not in src, "live sniper path re-logs an already-logged signal"
+    assert "SNIPER_LIVE_SKIP" in src, "slot-occupied skip is no longer recorded anywhere"
+
+
+def test_load_rows_collapses_same_signal_written_twice(tmp_path):
+    """Four such pairs are already on the /data volume, so the READER must
+    dedupe or every consumer keeps double-counting them."""
+    import json as _json
+
+    from futuresbot.shadow_ledger import load_rows
+
+    p = tmp_path / "shadow.jsonl"
+    base = {"sleeve": "SNIPER_FAST", "symbol": "DOGE_USDT", "side": "LONG",
+            "entry": 0.0699, "sl": 0.0702, "tp": 0.0693}
+    rows = [
+        {**base, "ts": 1786022584, "reject_reason": "shadow_only"},
+        {**base, "ts": 1786022585, "reject_reason": "slot_occupied"},   # duplicate
+        {**base, "ts": 1786022584 + 7200, "reject_reason": "shadow_only"},  # genuine re-fire
+        {"sleeve": "WILDCARD", "symbol": "AKE_USDT", "side": "LONG", "entry": 1.0,
+         "sl": 0.9, "tp": 1.5, "ts": 1786022584, "reject_reason": "slot_occupied"},
+    ]
+    p.write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
+    out = load_rows(str(p))
+    assert len(out) == 3, f"expected the 1s-apart pair collapsed, got {len(out)}"
+    assert out[0]["reject_reason"] == "shadow_only", "kept the wrong row of the pair"
+    assert sum(1 for r in out if r["sleeve"] == "SNIPER_FAST") == 2
+    assert sum(1 for r in out if r["sleeve"] == "WILDCARD") == 1, "unrelated sleeve dropped"
+
+
+def test_status_sniper_header_is_derived_from_the_live_gate():
+    """REGRESSION, operator safety. The header read 'never trades'
+    unconditionally while SNIPER FAST held real XRP/AVAX positions. 2225084
+    fixed the identical stale claim in the scan log and missed this surface."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._sniper_shadow_status_lines)
+    assert "sniper_live_variants()" in src, "status mode is not derived from the live gate"
+    assert 'f"🎯 Sniper <b>SHADOW</b> (logs would-be entries, never trades)' not in src

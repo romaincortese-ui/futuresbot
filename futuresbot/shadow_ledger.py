@@ -64,7 +64,24 @@ def append_row(path: str, row: dict[str, Any]) -> None:
         fh.write(json.dumps(row, default=str) + "\n")
 
 
+DEDUPE_WINDOW_S = 90
+
+
 def load_rows(path: str) -> list[dict[str, Any]]:
+    """Read the ledger, collapsing rows that record the SAME signal twice.
+
+    The sniper live path used to write a second row (`slot_occupied`) for a
+    signal the caller had already written as `shadow_only` one line earlier —
+    same symbol, side, entry, sl and tp, ~1s apart. That writer is fixed, but
+    four such pairs are already on the /data volume and every consumer of this
+    file (status, learning digest, any counterfactual analysis) would keep
+    double-counting them. Deduping on read makes the historical rows correct
+    without rewriting the ledger.
+
+    Keyed on the signal's identity, not its reject reason: two rows describing
+    one candidate resolve identically, so counting both overstates the sample
+    and double-weights that candidate in cfR and win rate.
+    """
     if not os.path.exists(path):
         return []
     rows = []
@@ -76,7 +93,20 @@ def load_rows(path: str) -> list[dict[str, Any]]:
                     rows.append(json.loads(line))
                 except Exception:
                     pass
-    return rows
+    seen: dict[tuple, float] = {}
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        key = (r.get("sleeve"), r.get("symbol"), r.get("side"), r.get("entry"), r.get("sl"))
+        try:
+            ts = float(r.get("ts") or 0.0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        prev = seen.get(key)
+        if prev is not None and abs(ts - prev) <= DEDUPE_WINDOW_S:
+            continue          # same candidate, same scan — already recorded
+        seen[key] = ts
+        out.append(r)
+    return out
 
 
 def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], now_ts: float,

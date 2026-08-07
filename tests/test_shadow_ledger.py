@@ -56,8 +56,12 @@ def test_short_side_resolution():
 
 def test_append_load_rewrite_roundtrip(tmp_path):
     p = str(tmp_path / "shadow.jsonl")
+    # Two DISTINCT candidates. This previously appended the same row twice 1s
+    # apart, which load_rows now collapses as a double-write of one signal —
+    # that pattern is the real bug it dedupes (sniper wrote each blocked signal
+    # twice), not something the roundtrip is meant to assert.
     append_row(p, _row(ts=1))
-    append_row(p, _row(ts=2))
+    append_row(p, _row(ts=2, symbol="BAR_USDT"))
     rows = load_rows(p)
     assert len(rows) == 2
     rows[0]["outcome"] = -1.0
