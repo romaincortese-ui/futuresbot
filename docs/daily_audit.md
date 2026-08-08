@@ -1,3 +1,209 @@
+# Daily Audit — 2026-08-08
+
+---
+
+## Automated Assessment (UTC ~17:30)
+
+### 1. Trades (last 24h: 08-07 17:24 -> 08-08 17:24 UTC)
+
+**6 closed trades.** Exchange `history_positions` (100-row pull) returns exactly
+6 in-window closes; the feature store grew 46 -> **52 rows**. Ledger and
+exchange **reconcile 6-for-6**, no gap.
+
+| # | time | symbol | sleeve | side | lev | 1R (%margin) | R | net $ | exit reason |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 01:09 | BICO_USDT | WILDCARD | LONG | x1 | 16.33 | **+0.42** | +1.168 | CONVEX_RETENTION_TRAIL |
+| 2 | 03:21 | BTW_USDT | WILDCARD | LONG | x3 | 17.02 | **+0.53** | +0.646 | CONVEX_RETENTION_TRAIL |
+| 3 | 04:03 | SOL_USDT | SNIPER | LONG | x13 | 4.49 | +1.32 | +0.034 | EXCHANGE_CLOSE (tp) |
+| 4 | 11:24 | SUI_USDT | SNIPER | LONG | x13 | 8.30 | **-1.45** | -0.096 | EXCHANGE_CLOSE (stop) |
+| 5 | 15:03 | DOGE_USDT | SNIPER | LONG | x13 | 3.59 | **-1.64** | -0.032 | EXCHANGE_CLOSE (stop) |
+| 6 | 15:33 | SOL_USDT | SNIPER | LONG | x13 | 8.00 | **-1.11** | -0.052 | EXCHANGE_CLOSE (stop) |
+
+Net **+$1.668**, 3W/3L. Split by sleeve: **WILDCARD +$1.814 / +0.95R (2-for-2)**,
+**SNIPER -$0.147 / -2.88R (1W/3L)**. PMT: 0, still decommissioned
+(`entries_disabled (FUTURES_ENTRY_MIN_SCORE>=999)` on every cycle).
+
+**Exchange-vs-store $ deltas:** BICO 1.2059 vs 1.1682, BTW 0.6225 vs 0.6460.
+Sub-4c, opposite signs — fee-attribution timing, not a reconciliation failure.
+
+**Finding of the day: the trial-7 retention trail did exactly what it was
+built to do, twice, on its first live day.**
+
+- **BICO** peak +1.4558R -> floor `0.30 x peak` = **+0.437R**, exited **+0.42R**
+  (+$1.17). Under the trial-6.5 rule this identical path banked **$0** (trail
+  level -0.54R, fade into the 24h clock). This is the exact trade that killed
+  6.5, and the replacement rule paid on it. Migrated position
+  (`trail_migrated`), **excluded from the trial-7 scoreboard**.
+- **BTW** peak +1.9816R -> floor **+0.594R**, exited **+0.53R** (+$0.65).
+  In-trial. Also in the [1R, 2R) dead-zone cohort that used to bank negative.
+
+**Both exits landed slightly BELOW the nominal floor** (-0.017R BICO,
+-0.064R BTW; -3.9% / -10.7% of the floor). Cause is fee + market-exit slippage
+between the trail trigger and the fill (fee_share 2.3% / 5.1% of gross), not a
+rule breach: the invariant is "never below +0.3 x peak, never below zero", and
+both banked comfortably positive. Recording it because the size of the BTW gap
+is the number that would matter if it grew — at a peak near arm (+1.0R) a 10%
+shortfall still banks ~+0.27R, so the invariant has margin. **Watch, do not
+act.**
+
+**Tripwires (trial 7):** #1 armed close <= $0 — **0 occurrences, PASS**.
+#2 retention bank >= +0.15R each — **+0.42R, +0.53R, PASS**. #3 TP completion —
+0 TPs at n=1, non-informative. #4 arm rate — 2/2 armed, n far too small.
+#5 gap-throughs — 0.
+
+**SNIPER (live micro leg) — first real ledger.** 4 closes, **-2.88R**, but only
+**-$0.147** because margin is ~$0.82/trade (the ~$0.03/R meter). The
+informative part is not the dollars: **all three losses closed BEYOND -1R**
+(-1.45, -1.64, -1.11), i.e. the x13 stops slip 11-64% past the intended risk on
+a fast leg, and fees ran 21-54% of gross. Its own log line already
+self-describes as "SIGNAL-STUDY ONLY: not viable at taker fees" — the live R
+ledger now agrees. DOGE is the sharp case: built **+0.81R peak** and closed
+**-1.64R**; the retention invariant covers the convex sleeve only, and the
+sniper has no equivalent. Not proposing a change (the leg is deliberately
+sized as a meter, and n=4), but the R-cost is now on the record.
+
+### 1-OPEN. Open positions
+
+**None.** `open_positions` returns 0; `[ACCOUNT] equity=142.32 available=142.32
+open_margin=0.00 unrealized=0.00 positions=0` on every cycle for the last hour.
+Book is flat — first run in a while with nothing to mark.
+
+### 2. Champion vs Shadow
+
+**Shadow: stale, comparison suppressed pending resync.** Unchanged standing
+action item (raised 07-23): `railway up --service Futures-shadow` — paper,
+env-only, zero live risk. Operator-gated, not self-applied.
+
+### 3. Learning loop
+
+**(a) Feature store** — 52 rows, +6, reconciled above. `learn_from_trades.py`
+re-run on the fresh corpus (n=52, window 06-27..08-08, overall mean **+$0.227**,
+meanR +0.242, win 44.2%). OOS-consistent verdicts:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold>=120min | **FAVOR** | +1.893 | 30 / +$1.028 / 66.7% | 22 / -$0.865 / 13.6% |
+| regime_trimmed(mult<1) | AVOID | -0.533 | 27 / -$0.029 | 25 / +$0.504 |
+| regime_trimmed_hard(<0.5) | AVOID | -0.561 | 16 / -$0.161 | 36 / +$0.400 |
+| leverage<=4 | FAVOR | +0.147 | 20 / +$0.318 | 32 / +$0.171 |
+| leverage>=7 | AVOID | -0.451 | 22 / -$0.033 | 30 / +$0.418 |
+| fee_heavy>=30pct | AVOID | -0.275 | 10 / +$0.005 | 42 / +$0.280 |
+| side=LONG | AVOID | -0.830 | 34 / -$0.060 | 18 / +$0.770 |
+
+`hold>=120min` remains the single strongest and most stable signal in the
+corpus and is the direct justification of the 24h clock. `side=LONG AVOID` is
+**not** actionable: the sleeve is long-only by design and the 18 "SHORT" rows
+are legacy PMT/sniper, so the split is a sleeve proxy, not a side edge. Same
+for `leverage>=7` — it now separates SNIPER (x13) from WILDCARD, a sleeve
+label wearing a leverage costume. Propose-only, nothing applied.
+
+**Zero deep-pullback entries, still.** `deep_pullback(lat 0.50-0.70)` is
+**n=0 in 52 rows**, while `at_extreme(lat>=0.99)` is n=10. Both of this
+window's wildcard entries were `entry_lateness = 1.0`. The "deep-pullback
+candidates ranked first" design has never once produced a live entry. This is
+now a 52-trade structural fact, not a coincidence — the ranking preference
+cannot express itself because such candidates are not surviving the gates in
+the first place. Standing question for a trial boundary, not a live lever.
+
+**(b) Shadow ledger** — 68 rows (+11):
+
+| sleeve | reason | n | resolved | netR | meanR |
+|---|---|---|---|---|---|
+| SNIPER_FAST | shadow_only | 27 | 26 | +1.83 | +0.070 |
+| WILDCARD | slot_occupied | 11 | 11 | +7.77 | +0.706 |
+| SQUEEZE | slot_occupied | 6 | 6 | +0.00 | +0.000 |
+| WILDCARD | veto:ref_not_listed | 5 | 5 | **-2.06** | **-0.412** |
+| SNIPER | min_vol_skip | 5 | 4 | +2.00 | +0.500 |
+| SQUEEZE | veto:ref_not_listed | 4 | 4 | +8.00 | +2.000 |
+| WILDCARD | side_disabled | 4 | 3 | +0.50 | +0.167 |
+| SNIPER_FAST_TRIGGER | shadow_only | 3 | 1 | -0.10 | -0.100 |
+
+**Slot cost — the answer changed, and the honest read is "already spent".**
+The +7.77R over 11 resolved looks like a standing case for more slots, but the
+timestamps say otherwise: **10 of 11 rows pre-date the 07-31 two-slot move**
+(07-23 x4, 07-28, 07-29, 07-30 x4). Exactly **one** row is post-2-slot
+(08-05 HEI, +5R). That +7.77R is the evidence that already bought the second
+slot; re-quoting it as a case for a third would be double-counting. **Post-2-slot
+sample: n=1. No slot proposal.**
+
+**External gate on real alts consolidates as protective.** `veto:ref_not_listed`
+is now **-2.06R over 5 resolved, mean -0.412R** (was -1.06R / 4): SYN_USDT
+resolved -1R on 08-07. Every real-alt row except KOMA has resolved to a stop.
+The +8.00R SQUEEZE rows remain the fee-doomed synthetics on a disabled sleeve
+and must not be blended in. **5 of the required >=10** — direction is now four
+consecutive confirmations, but I am not proposing a gate change under the bar.
+
+`SNIPER_FAST shadow_only` flipped sign (-0.52R/17 -> **+1.83R/26**) on a 2R-TP
+paper bracket with no fees modelled. Mean +0.070R is inside noise, and the LIVE
+sniper ledger over the same period is -2.88R/4. Treat the shadow number as
+unfunded; the live one is the measurement.
+
+**(c) Scan telemetry.** No `[SIZE_TRIM]` lines, **zero** tracebacks, **zero**
+5003/2015 order rejects in the log window — no execution block. Wildcard
+histograms this hour: `movers=7 candidates=0 {no_pullback_resume: 6,
+roc_below_min: 1}` and `movers=6 candidates=0 {roc_below_min: 5,
+no_pullback_resume: 1}`. Sniper: `move_below_min: 11` on all 11 symbols, both
+variants, every cycle. Squeeze produced no summary lines (sleeve disabled).
+Correct dormancy in a quiet band — no gate loosening proposed.
+
+**(d) Decision rule (trial 7, from 2026-08-07 19:21 UTC deploy).**
+
+| criterion | now |
+|---|---|
+| wildcard closes | **1 / 30** (BTW; BICO excluded as migrated) |
+| net R | **+0.53** |
+| net R ex-best | **0.00** (n=1) |
+| max drawdown, flow-adjusted | **-0.41%** from the $142.898 close-equity peak |
+| every close names its exit rule | **yes** — 2/2 `CONVEX_RETENTION_TRAIL` |
+
+Day 1 of 30-closes-or-90-days. Nothing here is a result.
+
+Longer convex context (unchanged framing, since 07-13): n=27, netR +1.65,
+**ex-best -3.44**, net +$8.45, 11 wins.
+
+`USE_DRAWDOWN_KILL=0` remains the operator override; equity drawdown 0.41%,
+nowhere near the 20% flag.
+
+### 1b. Wildcard — diagnose
+
+Two entries, two wins, both banked by the new trail; no dormancy problem to
+explain today. The one standing diagnostic is the lateness result above
+(n=0 deep-pullback in 52). Both entries were `ref_listed=1.0` — liquid and
+cross-venue corroborated, not MEXC-only pumps. Sizing clean:
+`regime_size_mult=1.0`, `streak_multiplier=1.0`, size_efficiency 0.999 (BICO)
+and 0.528 (BTW — the 20%-margin SL cap re-deriving leverage, by design).
+
+### 4-5. Validate / Deploy
+
+**No change proposed, no deploy.** The convex sleeve is under the trial-7
+FREEZE (30 wildcard closes or 90 days) and is on close 1 of 30. Every
+observation above is either a tripwire pass, a sub-threshold shadow count
+(5/10 on the veto, 1 post-2-slot row), or a measurement note. `pytest` not run:
+no candidate change to gate.
+
+### 6. Measurement item (not a config change)
+
+The feature store carries **no `trail_migrated` field**, so the trial-7
+exclusion of BICO exists only in `DECISION_RULE.md` prose and in this audit.
+At n=1 that is trivially manageable; by close 10 it is a silent
+scoreboard-contamination risk. Suggest the flag be persisted on the row.
+Reporting-only, does not alter which trades are taken — but it is a code
+change, so it is flagged for the operator, not self-applied.
+
+### 7. Verdict
+
+**+$1.67 on the day, 6 closes, no change deployed.** The retention trail
+banked money on both of its first two live opportunities, including the exact
+trade shape that ended trial 6.5. The sniper's live R ledger opened at -2.88R
+over 4 trades at a deliberate ~$0.03/R size, with all three stops overshooting
+-1R. Book is flat, ledger reconciles, no execution errors.
+
+**7-day verdict on recent changes:** retention trail (08-07) — **earning its
+keep, 2/2, first evidence**. Risk dial ON (08-07) — no dispersion read yet at
+n=2. Two-slot wildcard (07-31) — 1 post-change blocked candidate, no verdict.
+
+---
+
 # Daily Audit — 2026-08-07
 
 ---
