@@ -526,3 +526,61 @@ def test_funnel_separates_the_capacity_terms():
     src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
     for k in ('"symbol_open"', '"major_excl"', '"non_crypto"', "scan_capped"):
         assert k in src, f"funnel does not count {k}"
+
+
+# --------------------------------------------------------------------------
+# reporting fixes: sniper dashboard, risk$, record notification, status tidy
+# --------------------------------------------------------------------------
+
+def test_close_record_carries_the_dollar_value_of_one_r():
+    """A bare R invited a $0.03 sniper '+1.32R' to impersonate a $2.66-R
+    wildcard win. risk_usdt is the per-trade denomination."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._close_history_trade)
+    assert '"risk_usdt"' in src
+    fs = inspect.getsource(FuturesRuntime._append_feature_store)
+    assert '"risk_usdt"' in fs
+
+
+def test_record_peak_notification_fires_once_and_changes_no_orders(rt, monkeypatch):
+    """🏆 is INFORMATION ONLY: acting on it was measured at ~-$38/yr with TP
+    completions collapsing 17 -> 2 (the record-conditioned retention study,
+    2026-08-08). The ping goes to the human; the trail level does not move."""
+    sent = []
+    monkeypatch.setattr(rt, "_notify", lambda msg, **k: sent.append(msg))
+    monkeypatch.setattr(rt, "_best_weekly_close_usd", lambda: 1.33)
+    monkeypatch.setattr(rt, "_save_state", lambda: None)
+    p = _pos()
+    rt._maybe_record_peak_notify(p, 1.46)          # peak$ ~ 1.46 x $10 > $1.33
+    assert len(sent) == 1 and "🏆" in sent[0]
+    assert p.metadata.get("record_peak_notified") == 1.0
+    rt._maybe_record_peak_notify(p, 2.0)           # second ratchet: silent
+    assert len(sent) == 1
+
+
+def test_record_peak_notification_respects_the_weekly_best(rt, monkeypatch):
+    sent = []
+    monkeypatch.setattr(rt, "_notify", lambda msg, **k: sent.append(msg))
+    monkeypatch.setattr(rt, "_best_weekly_close_usd", lambda: 10_000.0)
+    p = _pos()
+    rt._maybe_record_peak_notify(p, 1.46)
+    assert not sent and "record_peak_notified" not in p.metadata
+
+
+def test_status_drops_resolved_sniper_samples_keeps_open_ones():
+    """Status tidy: resolved sample rows were 2 lines of stale history per
+    variant and once rendered the same DOGE candidate twice."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._sniper_shadow_status_lines)
+    assert 'r.get("outcome") is None' in src, "resolved rows are back in /status"
+    assert "_sniper_study_line" in src, "live variant has no study dashboard"
+
+
+def test_status_system_lines_are_merged():
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._build_status_message)
+    assert "Sys: calib" in src, "calibration/overlay/entries no longer merged"
+    assert '"Calibration: ' not in src

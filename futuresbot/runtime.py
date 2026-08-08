@@ -1726,6 +1726,10 @@ class FuturesRuntime:
             position.metadata["trail_mode"] = "retention"
         if r_now > peak_r:
             position.metadata["convex_peak_r"] = round(r_now, 4)
+            try:
+                self._maybe_record_peak_notify(position, r_now)
+            except Exception as exc:  # notification must never break the trail
+                log.debug("record-peak notify failed: %s", exc)
             self._save_state()
             return False
         if peak_r < arm_r:
@@ -2008,6 +2012,85 @@ class FuturesRuntime:
                 lines.append(f"<b>{html.escape(sym)}</b>: diagnosis failed ({html.escape(str(exc)[:60])})")
         return "\n".join(lines)
 
+    def _feature_rows_cached(self, max_age_s: float = 300.0) -> list[dict[str, Any]]:
+        """Feature-store rows with a small TTL cache. Status renders and peak
+        ratchets both read this; the file is ~50 rows so the read is cheap, but
+        peak updates can arrive every ~2s in a fast move — hence the TTL."""
+        now = time.time()
+        cache = getattr(self, "_feature_rows_cache", None)
+        if cache and now - cache[0] < max_age_s:
+            return cache[1]
+        rows: list[dict[str, Any]] = []
+        try:
+            with open(self._feature_store_path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        try:
+                            rows.append(json.loads(line))
+                        except Exception:
+                            pass
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            log.debug("feature store read failed: %s", exc)
+        self._feature_rows_cache = (now, rows)
+        return rows
+
+    def _best_weekly_close_usd(self) -> float | None:
+        """Best realized close P&L ($) in the trailing 7 days, for the record
+        notification. None when there are no closes in the window."""
+        cut = time.time() - 7 * 86400
+        vals = [float(r.get("pnl_usdt") or 0.0) for r in self._feature_rows_cached()
+                if float(r.get("ts") or 0) >= cut]
+        return max(vals) if vals else None
+
+    def _maybe_record_peak_notify(self, position: FuturesPosition, r_now: float) -> None:
+        """🏆 once per position: unrealized $ has exceeded every close of the
+        trailing week. INFORMATION ONLY — measured 2026-08-08: acting on this
+        signal (tightening the trail on 'record' trades) costs ~-$38/yr and
+        collapses TP completions 17 -> 2, because the condition fires on 70% of
+        armed trades and taxes exactly the runners that create record closes.
+        The human gets the ping; the orders do not change."""
+        md = position.metadata or {}
+        if md.get("record_peak_notified"):
+            return
+        risk_pct = self._position_stop_risk_pct_of_margin(position)
+        if not risk_pct or risk_pct <= 0:
+            return
+        one_r_usd = position.margin_usdt * risk_pct / 100.0
+        peak_usd = r_now * one_r_usd
+        best = self._best_weekly_close_usd()
+        if best is None or peak_usd <= best:
+            return
+        retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
+        floor_usd = max(0.0, retain * r_now) * one_r_usd if r_now >= 1.0 else 0.0
+        position.metadata["record_peak_notified"] = 1.0
+        self._notify(
+            f"🏆 <b>{html.escape(position.symbol)}</b> unrealized <b>${peak_usd:+.2f}</b> "
+            f"({r_now:+.2f}R) — above every close this week (best ${best:+.2f})."
+            + (f"\nFloor locked at <b>${floor_usd:+.2f}</b>." if floor_usd > 0
+               else "\nTrail arms at +1R.")
+        )
+
+    def _sniper_study_line(self, variant_name: str, target_fills: int = 25) -> str | None:
+        """The sniper live leg is a fill/slippage METER, not an earner — its 1R
+        is ~$0.03 by design (notional hard-capped at 5% of equity on 0.35-0.86%
+        stops). Without this line a +1.32R/$0.03 close reads like a win
+        comparable to a wildcard trade; the study's real progress is fills
+        collected toward its verdict."""
+        fills = [r for r in self._feature_rows_cached()
+                 if str(r.get("kind") or "").upper().startswith("SNIPER")]
+        if not fills:
+            return None
+        net = sum(float(r.get("pnl_usdt") or 0.0) for r in fills)
+        one_r = [abs(float(r["pnl_usdt"]) / float(r["r_multiple"]))
+                 for r in fills if r.get("r_multiple") and float(r.get("r_multiple") or 0) != 0
+                 and r.get("pnl_usdt") is not None]
+        one_r_txt = f" | 1R≈${sorted(one_r)[len(one_r)//2]:.2f}" if one_r else ""
+        return (f"  📐 study: <b>{len(fills)}/{target_fills}</b> fills | net ${net:+.2f}"
+                f"{one_r_txt} | verdict at {target_fills}")
+
     def _sniper_shadow_status_lines(self) -> list[str]:
         """The Sniper's record, for /status.
 
@@ -2052,7 +2135,16 @@ class FuturesRuntime:
             if resolved:
                 summary += f" | win {100 * wins / len(resolved):.0f}%"
             lines.append(summary)
-            lines.extend(self._sniper_row_lines(rows[-2:]))
+            # Status tidy (2026-08-08): resolved sample rows dropped — they were
+            # 2 lines per variant of stale history and once rendered the same
+            # DOGE candidate twice. OPEN rows stay (live-relevant); the study
+            # dashboard replaces history for the live leg.
+            open_rows = [r for r in rows if r.get("outcome") is None]
+            lines.extend(self._sniper_row_lines(open_rows[-2:]))
+            if variant.name.upper() in live_names:
+                study = self._sniper_study_line(variant.name)
+                if study:
+                    lines.append(study)
         return lines
 
     def _sniper_row_lines(self, rows: list[dict[str, Any]]) -> list[str]:
@@ -2092,7 +2184,7 @@ class FuturesRuntime:
             # What the bot ACTUALLY hunts. The old line listed only the 6 PMT
             # pairs, which since the 07-13 decommission is the one universe it
             # can NOT enter — the convex sleeves scan different bands entirely.
-            (f"PMT universe (⛔ entries off): {html.escape(', '.join(active_syms))}"
+            (f"PMT ⛔ decommissioned ({len(active_syms)} pairs)"
              if pmt_blocked else
              f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}): {html.escape(', '.join(active_syms))}"),
             *([f"🎲 Wildcard hunts small-caps (excl. top-{int(self._env_float('FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER', 30.0))} turnover) | "
@@ -2101,9 +2193,12 @@ class FuturesRuntime:
                f"min 1R {self._env_float('FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT', 0.0):.0f}% margin"] if squeeze_enabled() else []),
             *self._sniper_shadow_status_lines(),
             self._btc_trend_line(),
-            f"Calibration: {'✅ loaded' if self.calibration else '⛔ none'} | Review: {'✅ loaded' if self.daily_review else '⛔ none'}",
-            self._prediction_overlay_status_line(),
-            f"Entries: {entries_state}",
+            # One system line instead of three (calibration / overlay / entries):
+            # each was a full row of mostly-static state.
+            f"Sys: calib {'✅' if self.calibration else '⛔'} · review "
+            f"{'✅' if self.daily_review else '⛔'} · overlay "
+            f"{'on' if getattr(self.config, 'prediction_overlay_enabled', False) else 'off'}"
+            f" · entries {entries_state}",
             f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
             f"PMT positions: <b>{sum(1 for p in self.open_positions.values() if not self._is_wildcard_position(p))}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
             # Slots are PER-SLEEVE since 07-17: counting both sleeves against a
@@ -3289,6 +3384,10 @@ class FuturesRuntime:
                 # recorded which exit rule fired. Both are now written at close.
                 "sleeve": self._sleeve_of(position),
                 "exit_rule": reason,
+                "risk_usdt": round(position.margin_usdt
+                                   * (self._position_stop_risk_pct_of_margin(position)
+                                      or self._metadata_float(position.metadata or {}, "sl_margin_pct")
+                                      or 0.0) / 100.0, 4),
                 "hold_hours": self._hold_hours(position),
                 "equity_at_close_usdt": self._last_known_equity(),
                 "roc_z": (position.metadata or {}).get("roc_z"),
@@ -3393,6 +3492,7 @@ class FuturesRuntime:
                 # carry them. Genuinely new here are roc_z, sl_frac_designed,
                 # peak_r and the equity snapshots.
                 "roc_z": md.get("roc_z"),
+                "risk_usdt": trade.get("risk_usdt"),
                 "sl_frac_designed": md.get("sl_frac_designed"),
                 "peak_r": md.get("convex_peak_r"),
                 "equity_at_open_usdt": md.get("equity_at_open_usdt"),

@@ -389,7 +389,10 @@ def test_status_shows_the_would_be_entries(runtime, monkeypatch):
     # each variant scored separately — never pooled
     assert "<b>SWING</b>: 2 would-be" in text and "cfR <b>+3.0</b>" in text
     assert "<b>FAST</b>" in text and "cfR <b>-1.0</b>" in text
-    assert "AVAX_USDT LONG" in text and "+3.0R (tp)" in text
+    # Status tidy 2026-08-08 (operator request): RESOLVED sample rows are gone —
+    # they were two lines of stale history per variant and once rendered the
+    # same DOGE candidate twice. OPEN rows remain (live-relevant).
+    assert "AVAX_USDT LONG" not in text, "resolved sample rows are back in /status"
     assert "SOL_USDT SHORT" in text and "open" in text
 
 
