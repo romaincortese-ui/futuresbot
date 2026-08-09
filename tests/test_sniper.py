@@ -514,13 +514,14 @@ def test_feature_store_row_tags_sniper_kind(runtime):
 def test_digest_scores_each_variant_separately():
     from futuresbot.learning_digest import build_learning_digest
 
-    msg = build_learning_digest([], _ledger_rows())
+    msg = build_learning_digest([], _ledger_rows(), trial_start=0.0)
     assert "Sniper SHADOW (would-be trades, never traded):" in msg
     assert "<b>SWING</b>: 2 logged, 1 resolved | cfR <b>+3.0</b>" in msg
     assert "<b>FAST</b>: 1 logged, 1 resolved | cfR <b>-1.0</b>" in msg
     assert "tp 1 stop 0 timeout 0" in msg      # SWING
     assert "tp 0 stop 1 timeout 0" in msg      # FAST
-    assert "not viable at taker fees" in msg   # the caveat travels with the number
+    # The caveat travels with the number, and cfR now carries its cost twin.
+    assert "cfR is fee-free" in msg and "net of cost" in msg
     # ...and the generic scorecard no longer swallows them as "shadow_only"
     assert "shadow_only" not in msg
     assert "slot_occupied: n=1 cfR +5.0" in msg
@@ -590,7 +591,11 @@ def test_resolver_uses_finer_bars_and_shorter_horizon_for_fast(runtime):
     assert runtime._row_resolve_interval(swing) == "Min15"
     assert runtime._row_resolve_interval(other) == "Min15"
     assert runtime._row_resolve_horizon(fast) == 6 * 3600
-    assert runtime._row_resolve_horizon(other) == 48 * 3600
+    # 2026-08-09: convex sleeves resolve on the LIVE 24h clock. Giving the
+    # replay 48h let it book TP completions the bot could never reach.
+    assert runtime._row_resolve_horizon(other) == 24 * 3600
+    assert runtime._row_is_convex(other) is True
+    assert runtime._row_is_convex(fast) is False
 
 
 def test_scan_cadence_tracks_the_lookback_window():

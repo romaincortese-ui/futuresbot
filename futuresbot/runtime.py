@@ -4603,7 +4603,9 @@ class FuturesRuntime:
             from futuresbot import shadow_ledger as shadow
             from futuresbot.learning_digest import build_learning_digest, load_jsonl
             store_rows = load_jsonl(self._feature_store_path)
-            shadow_rows = load_jsonl(self._shadow_ledger_path())
+            # load_rows, not load_jsonl: the latter bypasses the ~90s duplicate
+            # collapse, so the digest was double-counting rows /status dedupes.
+            shadow_rows = shadow.load_rows(self._shadow_ledger_path())
             self._notify(build_learning_digest(store_rows, shadow_rows))
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(str(now_t), encoding="utf-8")
@@ -4620,7 +4622,22 @@ class FuturesRuntime:
         try:
             from futuresbot import shadow_ledger as shadow
             path = self._shadow_ledger_path()
-            rows = shadow.load_rows(path)
+            # RAW on the write path: load_rows() dedupes for analysis, and
+            # writing that collapsed list back would delete the duplicate rows
+            # from the only on-disk record.
+            rows = shadow.load_raw(path)
+            # One-shot migration: convex rows resolved under the retired 48h
+            # bracket are re-opened so they re-score under the live stack. The
+            # old value is preserved as `outcome_legacy` first — if the klines
+            # are no longer fetchable the row stays pending, but nothing is
+            # lost. Self-limiting: a re-resolved row carries `exit_policy`.
+            stale = [r for r in rows if shadow.needs_reresolve(r)]
+            if stale:
+                for r in stale:
+                    rows[rows.index(r)] = shadow.mark_for_reresolve(r)
+                shadow.rewrite(path, rows)
+                log.warning("[SHADOW_LEDGER] re-opened %d convex row(s) scored under the "
+                            "retired 48h bracket; legacy outcomes preserved", len(stale))
             pending = [r for r in rows if r.get("outcome") is None]
             if not pending:
                 return
@@ -4630,21 +4647,44 @@ class FuturesRuntime:
             # 15m bars would be decided by one bar's high/low, and adverse-first
             # tie-breaking means the stop wins almost every time — a systematic
             # bias toward losses that has nothing to do with the signal.
-            by_key: dict[tuple[str, str], list] = {}
+            # Bucketed by DAY as well as symbol: grouping a 23-day-old
+            # re-opened row with a fresh one produced a 23-day kline window,
+            # which both blows past any per-request bar cap and hands each row
+            # bars from far outside its own clock.
+            by_key: dict[tuple[str, str, int], list] = {}
             for row in pending:
-                by_key.setdefault((str(row.get("symbol")), self._row_resolve_interval(row)), []).append(row)
+                by_key.setdefault((str(row.get("symbol")), self._row_resolve_interval(row),
+                                   int(float(row.get("ts") or 0)) // 86400), []).append(row)
             _SECONDS = {"Min1": 60, "Min5": 300, "Min15": 900, "Min60": 3600}
-            for (sym, interval), sym_rows in by_key.items():
+            for (sym, interval, _day), sym_rows in by_key.items():
                 start = min(int(r["ts"]) for r in sym_rows)
                 bar_s = _SECONDS.get(interval, 900)
+                # Bound the END of the window, do not fetch to now. A row
+                # re-opened by the migration can be weeks old, and a kline API
+                # that caps its response drops the OLDEST bars — precisely the
+                # ones the counterfactual needs. Nothing past the row's own
+                # horizon can change its outcome anyway.
+                span_end = max(int(r["ts"]) + self._row_resolve_horizon(r) for r in sym_rows)
+                end = int(min(now_ts, span_end + 2 * bar_s))
                 try:
-                    df = self.client.get_klines(sym, interval=interval, start=start - bar_s, end=int(now_ts))
-                    bars = [(int(t.timestamp()), float(h), float(lo)) for t, h, lo in zip(df.index, df["high"], df["low"])]
+                    df = self.client.get_klines(sym, interval=interval, start=start - bar_s, end=end)
+                    bars = [(int(t.timestamp()), float(h), float(lo), float(cl))
+                            for t, h, lo, cl in zip(df.index, df["high"], df["low"], df["close"])]
                 except Exception:
+                    continue
+                # An empty frame is NOT an exception — build_contract_frame
+                # returns one for a delisted symbol or a window past kline
+                # retention. Without this the row resolved to a fabricated
+                # "timeout 0.0" and, being stamped with a policy, was frozen
+                # there forever in place of its real counterfactual.
+                if not bars:
+                    log.warning("[SHADOW_LEDGER] no bars for %s %s — %d row(s) left pending",
+                                sym, interval, len(sym_rows))
                     continue
                 for row in sym_rows:
                     out = shadow.resolve_outcome(row, bars, now_ts,
-                                                 horizon_s=self._row_resolve_horizon(row))
+                                                 horizon_s=self._row_resolve_horizon(row),
+                                                 convex=self._row_is_convex(row))
                     if out is not None:
                         rows[rows.index(row)] = out
                         resolved += 1
@@ -4838,7 +4878,19 @@ class FuturesRuntime:
         from futuresbot.shadow_ledger import RESOLVE_HORIZON_S
 
         variant = self._row_variant(row)
-        return variant.resolve_horizon_h * 3600.0 if variant is not None else float(RESOLVE_HORIZON_S)
+        if variant is not None:
+            return variant.resolve_horizon_h * 3600.0
+        if self._row_is_convex(row):
+            # The live convex clock, not the bracket's 48h hold. A replay given
+            # twice the horizon books TP completions the bot could never reach.
+            return max(0.0, self._env_float("FUTURES_CONVEX_TIME_STOP_HOURS", 24.0)) * 3600.0
+        return float(RESOLVE_HORIZON_S)
+
+    @staticmethod
+    def _row_is_convex(row: dict[str, Any]) -> bool:
+        from futuresbot.shadow_ledger import CONVEX_SLEEVES
+
+        return str(row.get("sleeve") or "") in CONVEX_SLEEVES
 
     def _shadow_ledger_path(self) -> str:
         """Declared per account (phase 5), with the old derivation as fallback."""
