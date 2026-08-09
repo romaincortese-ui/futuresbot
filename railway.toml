@@ -4,8 +4,10 @@ builder = "NIXPACKS"
 [deploy]
 startCommand = "python main.py"
 requiredMountPath = "/data"
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5
+# ALWAYS, not ON_FAILURE: with a 5-retry budget a burst of exchange errors
+# could exhaust it and leave the bot permanently dead with no signal. This is a
+# daemon — any exit is a fault, and it should always come back.
+restartPolicyType = "ALWAYS"
 # Deploy on any change in the repo. Without this, Railway may show deploys as
 # SKIPPED with "No changes to watched files" when its UI-configured watch
 # paths do not match the actual edit. The wildcard overrides those settings.

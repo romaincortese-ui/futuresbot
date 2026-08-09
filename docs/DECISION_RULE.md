@@ -146,6 +146,31 @@ Validated against the live book at deploy time:
   would confound the universe change under test. **Highest-priority candidate
   for trial 9**, to be replayed on the harness first.
 
+## Safety amendment 2026-08-09 — unattended operation
+
+Not a treatment change; recorded because one item can bind in the tail.
+
+| change | from | to | why |
+|---|---|---|---|
+| `FUTURES_HEARTBEAT_SECONDS` | 0 | 21600 | There was NO liveness signal. A dead bot was completely silent. 6h = 4 msgs/day; a missing one is the alarm. |
+| `restartPolicyType` | ON_FAILURE, 5 retries | ALWAYS | Five consecutive crashes — a MEXC outage burst would do it — left the bot permanently dead. |
+| `DRAWDOWN_HALT_PCT` | 0.95 | 0.25 | 0.95 is not protection. It was parked there when the window was 90d and still carried the PMT era. |
+
+**Verified before shipping, not assumed.** With the live `DRAWDOWN_HALT_WINDOW_DAYS=30`
+the bot reads `dd_30d = 0.1%` (NORMAL) — 0.25 cannot fire on deploy. The same
+curve on a 90d window reads `dd_90d = 48.4%` and WOULD halt instantly, which is
+exactly why 0.95 was parked there. PMT died 27 days ago, so 27 of the 30 window
+days are clean and the window self-cleans by 2026-08-12.
+
+At 1R ~ $2.66 and 2 slots, a 25% halt from $142.32 needs ~13R of drawdown — far
+outside normal variance, inside the range of a real defect.
+
+**Known gap, accepted in writing:** the convex exits are SOFTWARE. A process
+death with a position open leaves the exchange-side SL/TP (entries are
+stop-first, so loss stays bounded) but the 24h clock and the 0.30xpeak retention
+trail stop running, and the trade rides to -1R or +5R. The retention invariant
+does not survive process death.
+
 ## Scoring — unchanged bars
 
 30 WILDCARD closes or 90 days, whichever first. Tripwires, robustness bars
