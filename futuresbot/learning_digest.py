@@ -74,7 +74,8 @@ def load_jsonl(path) -> list[dict]:
 
 def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
                           trial_start: float = TRIAL_START,
-                          trial_target: int = TRIAL_TARGET_TRADES) -> str:
+                          trial_target: int = TRIAL_TARGET_TRADES,
+                          missed_lines: list[str] | None = None) -> str:
     # Trial 7 is scored on WILDCARD closes (docs/DECISION_RULE.md). Counting
     # SQUEEZE here made the digest disagree with /status on the same "n/30".
     convex = [r for r in store_rows if str(r.get("kind") or "").upper() == "WILDCARD"]
@@ -184,4 +185,7 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
                      f"net {sum(_net(r) for r in pooled):+.1f} — regimes and gate "
                      f"configs differ; not a verdict</i>")
     lines.append("<i>counterfactuals are directional-only; nothing here auto-applies</i>")
+    if missed_lines:
+        lines.append("━━━━━━━━━━━━━━━")
+        lines.extend(missed_lines)
     return "\n".join(lines)

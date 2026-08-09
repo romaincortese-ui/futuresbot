@@ -4278,7 +4278,22 @@ class FuturesRuntime:
                 return
             tickers = self.client.get_all_tickers() or []
             floor = wildcard_min_turnover_usdt()
-            min_move = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_MOVE", 0.08))
+            # PRE-FILTER, trial 8. It used to screen |24h CHANGE| >= 3% while the
+            # detector triggers on |3h ROC| >= 8% — a different quantity. A symbol
+            # that ran +30% in three hours and gave half back showed ~0% on the
+            # day and never reached the detector; on 2026-08-09 the filter
+            # admitted 8 symbols out of 970.
+            #
+            # The 24h RANGE is the right screen and it is LOSSLESS by
+            # construction: both ends of the trailing 3h window lie inside the
+            # trailing 24h window, so |3h ROC| >= X implies range24 >= X. Nothing
+            # that could fire the trigger can be filtered out. Measured live:
+            # pool 11 -> 20 symbols, zero dropped.
+            range_prefilter = self._flag("FUTURES_WILDCARD_RANGE_PREFILTER", default=True)
+            min_roc = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_ROC", 0.08))
+            min_move = (max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_RANGE", min_roc))
+                        if range_prefilter
+                        else max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_MOVE", 0.08)))
             # Band focus (backtested 60d+21d, outlier-robust): the wildcard's edge
             # lives in the SMALL-CAP band. On a major, +8% IS the move; on a
             # small cap it's the beginning. Top-turnover names stay squeeze turf.
@@ -4320,15 +4335,11 @@ class FuturesRuntime:
                     continue
                 funnel["in_band"] += 1
                 turn = float(t.get("amount24") or 0.0)
-                chg = abs(float(t.get("riseFallRate") or 0.0))
+                chg = (self._range_24h(t) if range_prefilter
+                       else abs(float(t.get("riseFallRate") or 0.0)))
                 if turn < floor:
                     continue
                 funnel["turnover_ok"] += 1
-                # NOTE: riseFallRate is the 24-HOUR change, but the detector
-                # triggers on a 3-HOUR ROC. A symbol that runs +8% in 3h and
-                # retraces to +3% on the day never reaches the detector. This
-                # pre-filter is screening a different quantity from the one it
-                # feeds — see FUTURES_WILDCARD_MIN_24H_MOVE.
                 if chg >= min_move:
                     funnel["move_24h_ok"] += 1
                     movers.append((chg, sym))
@@ -4388,10 +4399,11 @@ class FuturesRuntime:
                          if best is not None else None),
             }
             log.info("[WILDCARD_FUNNEL] usdt=%d -> (non_crypto -%d, symbol_open -%d, "
-                     "major -%d) in_band=%d -> turnover>=%.0f:%d -> move24h>=%.0f%%:%d "
+                     "major -%d) in_band=%d -> turnover>=%.0f:%d -> %s>=%.0f%%:%d "
                      "-> scan_capped -%d -> scanned=%d -> candidates=%d",
                      funnel["usdt"], funnel["non_crypto"], funnel["symbol_open"],
                      funnel["major_excl"], funnel["in_band"], floor, funnel["turnover_ok"],
+                     "range24" if range_prefilter else "move24h",
                      min_move * 100, funnel["move_24h_ok"], scan_capped, scanned, len(cands))
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d shorts_blocked=%d "
                      "histogram=%s signal=%s",
@@ -4546,6 +4558,17 @@ class FuturesRuntime:
             reverse=True,
         )
         return {sym for _turn, sym in ranked[:n]}
+
+    @staticmethod
+    def _range_24h(ticker: dict) -> float:
+        """(high24 - low24) / low24. Bounds the trailing 3h move from above, so
+        screening on it can never hide a candidate the detector would take."""
+        try:
+            hi = float(ticker.get("high24Price") or 0.0)
+            lo = float(ticker.get("lower24Price") or 0.0)
+            return (hi - lo) / lo if lo > 0 and hi > lo else 0.0
+        except (TypeError, ValueError):
+            return 0.0
 
     @staticmethod
     def _is_tradeable_crypto(symbol: str) -> bool:
@@ -4707,12 +4730,138 @@ class FuturesRuntime:
             # load_rows, not load_jsonl: the latter bypasses the ~90s duplicate
             # collapse, so the digest was double-counting rows /status dedupes.
             shadow_rows = shadow.load_rows(self._shadow_ledger_path())
-            self._notify(build_learning_digest(store_rows, shadow_rows))
+            try:
+                missed = self._missed_opportunity_lines()
+            except Exception:      # a forensic extra must never block the digest
+                missed = []
+            self._notify(build_learning_digest(store_rows, shadow_rows,
+                                               missed_lines=missed))
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(str(now_t), encoding="utf-8")
             log.info("[LEARNING_DIGEST] sent store=%d shadow=%d", len(store_rows), len(shadow_rows))
         except Exception as exc:  # pragma: no cover — digest never breaks the cycle
             log.debug("learning digest failed: %s", exc)
+
+    def _missed_opportunity_lines(self, top_n: int = 10) -> list[str]:
+        """Did the bot miss anything big in the last 24h? Answered, not guessed.
+
+        Takes the biggest movers in the tradeable band and, for each, replays
+        the SAME detector the live scan runs over the last 24h of 15m bars and
+        reports which of four things happened: traded / signalled but blocked
+        (with the reason) / no signal (with the blocker) / never scanned (with
+        the funnel stop). Built after 2026-08-09, when eight of that day's ten
+        biggest gainers went untaken and reconstructing why took a manual
+        forensic pass over four data sources.
+
+        Ranked on 24h RANGE, not 24h change: a symbol that spiked and retraced
+        is exactly the case the old screen hid.
+        """
+        from futuresbot.wildcard import detect_wildcard_signal
+
+        try:
+            tickers = self.client.get_all_tickers() or []
+        except Exception:
+            return []
+        exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0))
+        majors = self._major_symbols(tickers, exclude_top)
+        floor = wildcard_min_turnover_usdt()
+        min_roc = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_ROC", 0.08))
+
+        ranked = sorted(
+            ((self._range_24h(t), t) for t in tickers
+             if str(t.get("symbol") or "").endswith("_USDT")
+             and self._is_tradeable_crypto(str(t.get("symbol") or ""))),
+            key=lambda kv: kv[0], reverse=True)[:top_n]
+        if not ranked:
+            return []
+
+        traded = {str(r.get("symbol")) for r in self._feature_rows_cached()
+                  if float(r.get("ts") or 0.0) >= time.time() - 86400}
+        try:
+            from futuresbot import shadow_ledger as shadow
+
+            blocked = {str(r.get("symbol")): str(r.get("reject_reason") or "?")
+                       for r in shadow.load_rows(self._shadow_ledger_path())
+                       if float(r.get("ts") or 0.0) >= time.time() - 86400}
+        except Exception:
+            blocked = {}
+
+        lines = [f"🔎 <b>Missed-opportunity check</b> — top {len(ranked)} movers, 24h"]
+        thin: list[str] = []
+        for rng, t in ranked:
+            sym = str(t.get("symbol"))
+            chg = float(t.get("riseFallRate") or 0.0) * 100
+            turn = float(t.get("amount24") or 0.0)
+            head = (f"• <b>{html.escape(sym)}</b> {chg:+.1f}% "
+                    f"(range {rng * 100:.0f}%)")
+            if sym in traded:
+                lines.append(f"{head} — ✅ traded")
+                continue
+            if sym in blocked:
+                lines.append(f"{head} — ⛔ {html.escape(self._reject_label(blocked[sym]))}")
+                continue
+            # Funnel stops come BEFORE detection, so report them without a fetch.
+            if sym in majors:
+                lines.append(f"{head} — majors band")
+                continue
+            if turn < floor:
+                # Collapsed: on a busy day most of the top movers are illiquid
+                # micro-caps, and five identical "under the floor" rows bury the
+                # one line that needs acting on.
+                thin.append(f"{html.escape(sym)} ${turn / 1e6:.1f}M")
+                continue
+            lines.append(f"{head} — {self._replay_verdict(sym, min_roc)}")
+        if thin:
+            lines.append(f"• {len(thin)} under the ${floor / 1e6:.0f}M turnover floor: "
+                         + ", ".join(thin))
+        return lines
+
+    def _replay_verdict(self, symbol: str, min_roc: float) -> str:
+        """Replay the live detector over the last 24h of 15m bars.
+
+        Only bars whose 3h ROC already clears the trigger are worth a full
+        detector call — the other ~70% are decided by that one comparison — so
+        this costs a handful of evaluations per symbol, not 96."""
+        from futuresbot.wildcard import ROC_BARS, detect_wildcard_signal
+
+        try:
+            df = self.client.get_klines(symbol, interval="Min15",
+                                        start=int(time.time()) - 10 * 86400,
+                                        end=int(time.time()))
+            closes = [float(x) for x in df["close"]]
+        except Exception:
+            return "not checked (no bars)"
+        n = len(closes)
+        if n < 200:
+            return "not checked (short history)"
+        longs = shorts = 0
+        blockers: dict[str, int] = {}
+        triggers = 0
+        for i in range(max(200, n - 96), n + 1):
+            if i <= ROC_BARS:
+                continue
+            if abs(closes[i - 1] / closes[i - 1 - ROC_BARS] - 1.0) < min_roc:
+                continue
+            triggers += 1
+            reasons: list[str] = []
+            sig = detect_wildcard_signal(df.iloc[:i], symbol, reasons)
+            if sig is None:
+                for r in reasons:
+                    blockers[r] = blockers.get(r, 0) + 1
+            elif sig.side == "LONG":
+                longs += 1
+            else:
+                shorts += 1
+        if longs:
+            return (f"⚠️ <b>{longs} LONG signal(s)</b> and no position — "
+                    f"check slots and gates")
+        if shorts:
+            return f"{shorts} SHORT signal(s), shorts are off"
+        if not triggers:
+            return f"never cleared {min_roc * 100:.0f}%/3h"
+        top = sorted(blockers.items(), key=lambda kv: -kv[1])[:1]
+        return (f"{triggers} trigger bar(s), no signal"
+                + (f" — {top[0][0]} x{top[0][1]}" if top else ""))
 
     def _resolve_shadow_ledger(self) -> None:
         """Resolve pending shadow-ledger counterfactuals (throttled to hourly).

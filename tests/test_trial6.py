@@ -893,3 +893,95 @@ def test_the_exclusion_count_holds_the_treatment_constant(rt):
 
     src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
     assert 'FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0' in src
+
+
+# --------------------------------------------------------------------------
+# trial 8: the 24h pre-filter, and the missed-opportunity check
+# --------------------------------------------------------------------------
+
+def test_range_prefilter_cannot_hide_a_candidate_the_detector_would_take(rt):
+    """The screen used |24h CHANGE| while the detector triggers on |3h ROC| —
+    a different quantity. A symbol that ran +30% in 3h and gave it back showed
+    ~0% on the day and never reached the detector.
+
+    The 24h RANGE is a mathematical upper bound on the trailing 3h move (both
+    ends of the 3h window lie inside the 24h window), so screening on it is
+    LOSSLESS: nothing that could fire the trigger can be filtered out."""
+    spiked = {"symbol": "S_USDT", "riseFallRate": 0.004,      # flat on the day
+              "high24Price": 130.0, "lower24Price": 100.0}    # ...but +30% range
+    assert rt._range_24h(spiked) == 0.30
+    assert abs(float(spiked["riseFallRate"])) < 0.03          # old screen: dropped
+    assert rt._range_24h(spiked) >= 0.08                      # new screen: kept
+
+
+def test_range_is_zero_on_a_malformed_ticker(rt):
+    assert rt._range_24h({}) == 0.0
+    assert rt._range_24h({"high24Price": 100.0, "lower24Price": 0.0}) == 0.0
+    assert rt._range_24h({"high24Price": 1.0, "lower24Price": 2.0}) == 0.0
+    assert rt._range_24h({"high24Price": "x", "lower24Price": "y"}) == 0.0
+
+
+def test_prefilter_threshold_is_derived_from_the_trigger_not_set_apart(rt):
+    """The two drifted apart once and cost a day of signals; the default now
+    comes FROM the trigger so it cannot happen silently again."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert 'FUTURES_WILDCARD_MIN_24H_RANGE", min_roc' in src
+    assert "FUTURES_WILDCARD_RANGE_PREFILTER" in src, "no rollback path"
+
+
+def test_missed_check_names_the_reason_for_every_top_mover(rt, monkeypatch):
+    """2026-08-09: eight of the day's ten biggest gainers went untaken and
+    working out why took a manual pass over four data sources."""
+    ticks = [
+        {"symbol": "TRADED_USDT", "riseFallRate": 0.5, "amount24": 9e6,
+         "high24Price": 150.0, "lower24Price": 100.0},
+        {"symbol": "BLOCKED_USDT", "riseFallRate": 0.4, "amount24": 9e6,
+         "high24Price": 140.0, "lower24Price": 100.0},
+        {"symbol": "MAJOR_USDT", "riseFallRate": 0.3, "amount24": 9e6,
+         "high24Price": 135.0, "lower24Price": 100.0},
+        {"symbol": "THIN_USDT", "riseFallRate": 0.2, "amount24": 1e5,
+         "high24Price": 130.0, "lower24Price": 100.0},
+    ]
+    rt.client = MagicMock()
+    rt.client.get_all_tickers.return_value = ticks
+    monkeypatch.setattr(rt, "_major_symbols", lambda t, n: {"MAJOR_USDT"})
+    monkeypatch.setattr(rt, "_feature_rows_cached",
+                        lambda: [{"symbol": "TRADED_USDT", "ts": time.time()}])
+    monkeypatch.setattr(rt, "_replay_verdict", lambda sym, roc: "no signal")
+    import futuresbot.shadow_ledger as _sl
+    monkeypatch.setattr(_sl, "load_rows", lambda p: [
+        {"symbol": "BLOCKED_USDT", "ts": time.time(), "reject_reason": "slot_occupied"}])
+    monkeypatch.setattr(rt, "_shadow_ledger_path", lambda: "x")
+
+    text = "\n".join(rt._missed_opportunity_lines())
+    assert "TRADED_USDT" in text and "traded" in text
+    assert "no free slot" in text                      # plain English, not the enum
+    assert "MAJOR_USDT" in text and "majors band" in text
+    assert "THIN_USDT" in text and "floor" in text
+
+
+def test_missed_check_never_breaks_the_digest(rt):
+    rt.client = MagicMock()
+    rt.client.get_all_tickers.side_effect = RuntimeError("api down")
+    assert rt._missed_opportunity_lines() == []
+
+
+def test_replay_verdict_only_runs_the_detector_on_trigger_bars(rt):
+    """96 full detector calls per symbol per day is not worth paying when one
+    float comparison decides ~70% of them."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._replay_verdict)
+    assert "< min_roc" in src and "continue" in src
+    assert "detect_wildcard_signal" in src
+
+
+def test_digest_carries_the_missed_check_when_supplied():
+    from futuresbot.learning_digest import build_learning_digest
+
+    msg = build_learning_digest([], [], missed_lines=["🔎 x", "• Y_USDT — traded"])
+    assert "Y_USDT" in msg
+    assert "🔎 x" in msg
+    assert "Y_USDT" not in build_learning_digest([], [])

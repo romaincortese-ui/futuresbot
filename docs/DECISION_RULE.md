@@ -61,6 +61,32 @@ the top 30) consumed exclusion slots. "Top-30" never meant top-30 crypto.
    names. Ranking crypto-only at 30 would have silently WIDENED the exclusion
    and made BMT_USDT (+35.49% that day, raw rank 38) untradeable.
 
+4. **24h pre-filter replaced by the 24h RANGE.** The screen was
+   `|24h change| >= 3%` while the detector triggers on `|3h ROC| >= 8%` — a
+   different quantity. A symbol that ran +30% in three hours and gave half back
+   showed ~0% on the day and never reached the detector; on 2026-08-09 the
+   filter admitted **8 of 970 symbols**. The screen is now
+   `(high24 - low24) / low24 >= FUTURES_WILDCARD_MIN_ROC`, defaulted FROM the
+   trigger so the two cannot drift apart again.
+   **This is lossless by construction, not a tuned threshold:** both ends of
+   the trailing 3h window lie inside the trailing 24h window, so
+   `|3h ROC| >= X` implies `range24 >= X`. Nothing that could fire the trigger
+   can be screened out. Measured live at deploy: pool **11 -> 20** symbols,
+   **zero dropped**, and it admits exactly the two symbols that produced LONG
+   signals and went untaken on 08-09 (SAGA_USDT, IOTX_USDT).
+   Bundled into trial 8 at owner instruction. Recorded confound: trial 8 now
+   tests TWO universe changes at once (band ranking + pre-filter), so a
+   negative result cannot be attributed to one of them.
+   Rollback: `FUTURES_WILDCARD_RANGE_PREFILTER=0`.
+
+**Measurement added (no reset):** the learning digest now runs a
+**missed-opportunity check** — the top 10 movers by 24h range in the tradeable
+band, each classified as traded / blocked-with-reason / no-signal-with-blocker /
+never-scanned-with-funnel-stop, by replaying the live detector over the last 24h
+of 15m bars. Built because working out why eight of one day's ten biggest
+gainers went untaken took a manual pass over four data sources. Digest cadence
+moved to daily. Costs 10 kline fetches/day, ~15s, fail-soft.
+
 **Unchanged from trial 7:** retention trail (arm +1R, floor 0.30xpeak,
 ratchet-only, cost-floored), 24h convex clock, long-only, 2 slots, risk dial
 ON, +5R TP, 3.0xATR stop capped at 20% of margin.
