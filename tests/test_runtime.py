@@ -452,7 +452,13 @@ def test_build_status_message_includes_signal_context_and_btc_trends(tmp_path):
     assert "BTC: 1h" in message
     assert "Scanning <b>6</b> futures pairs (production pruned universe)" in message
     assert "Signal: <b>LONG</b> COIL_BREAKOUT_LONG | x32 | score 63.5 | cert 78%" in message
-    assert "Avail: <b>$123.45</b> | Equity: <b>$150.50</b> | Trades: <b>0</b>" in message
+    # 2026-08-09: "Trades: {len(trade_history)}" is gone — _save_state persists
+    # only trade_history[-200:], so past 200 lifetime closes it was pinned at
+    # 200 forever. Replaced by the trial scoreboard the decision rule is scored
+    # on. Avail shows only when it differs from equity.
+    assert "Equity: <b>$150.50</b> (free $123.45)" in message
+    assert "WC closes" in message and "netR" in message
+    assert "Trades:" not in message
 
 
 def test_status_message_flags_custom_symbol_override(tmp_path):

@@ -56,6 +56,53 @@ fill-quality evidence. Slot contention is a live confound on the wildcard arm
 for the pre-amendment window: whenever a sniper was open, capacity was 1/2 not
 2/2. Recorded, not corrected.
 
+### /status rewrite (same amendment, measurement-only — no reset)
+
+Nothing about the treatment changed. Four surfaces were reporting constants:
+
+- `Signal: none` was structurally guaranteed. The `/status` handler passed no
+  signal at all, and the signal it would have passed comes from the PMT scan,
+  which returns `None` while `FUTURES_ENTRY_MIN_SCORE>=999`. It read "none"
+  whether the bot had just vetoed a 24.3% mover (BTW_USDT, 2026-08-09 14:44,
+  `crowded_longs`) or seen nothing for two days. Replaced by the wildcard funnel
+  + reject histogram + last untaken candidate, all of which already existed and
+  only ever reached the Railway log.
+- `Trades: 200` was a saturated window, not a count: `_save_state` persists
+  `trade_history[-200:]`, so past 200 lifetime closes it is pinned forever.
+  Replaced by `Trial N: n/30 WC closes | netR | net $`, sourced from the
+  append-only feature store.
+- `TRIAL_START` in `learning_digest.py` was hardcoded to **trial 4**
+  (2026-07-13) and never moved through trials 5, 6, 6.5 and 7 — every `n/30`
+  the weekly digest reported counted four trials as one. Now
+  `FUTURES_TRIAL_START_TS` (epoch seconds); **bumping it IS the reset
+  operation**. Default 2026-08-07 19:22 UTC.
+- Slot counters: `SQ 0/1` rendered while `FUTURES_SQUEEZE_ENABLED=0`, `PMT 0/2`
+  was pinned at 0 by the score floor, and the only sleeve holding real money
+  (sniper) had no counter at all. One row now, per enabled sleeve.
+
+Also: sniper per-candidate rows are gone from `/status` — they were shadow
+counterfactuals drawn with side/leverage/entry exactly like real positions,
+directly above "No open positions.". Paper R and real-money $ are now on
+separate lines with the paper one labelled `paper (no fills/fees)`; "would-be"
+was factually wrong for a live variant, since every sniper signal is
+shadow-logged *before* the live order is attempted.
+
+**Top-30 turnover exclusion: KEPT, and the reason it is kept has changed.**
+Owner asked whether PMT's decommission frees the majors. It does not — the
+exclusion post-dates the decommission (`d4fbd06`, 2026-07-17; PMT died
+07-13) and never referenced PMT. Its actual rationale was a band split
+(+24.7R sub-top-30 vs -2.3R top-45) plus habitat allocation to SQUEEZE, and
+**both halves have decayed**: squeeze is live-set OFF, and the measurement
+exists only as a commit-message line — no output, doc or results file records
+it, the two arms overlap at ranks 31-45 so ranks 1-30 were never scored alone,
+and it was run at 1.5xATR / both sides / 1 slot. Recorded as **unverified**.
+It is nonetheless close to inert on arrival: on the repo's own cached 15m
+bars (18d), BTC, ETH and SOL breached |3h ROC| >= 8% **0 times in 1717
+windows** (max 4.23% / 5.51% / 5.41%), while band names fired routinely
+(ZEC 75/1717, ENA 32/1333). The live funnel agrees: `major_excl` removes 25
+of 674 in-band symbols, while turnover and 24h-move gates cut 674 -> 24.
+Revisit at the trial boundary, not before.
+
 ## Changes under test in trial 7
 
 **Treatment (the reset):**

@@ -2,7 +2,9 @@
 
 Each test pins a defect this session MEASURED, not one someone imagined.
 """
+import json
 import os
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -568,13 +570,15 @@ def test_record_peak_notification_respects_the_weekly_best(rt, monkeypatch):
     assert not sent and "record_peak_notified" not in p.metadata
 
 
-def test_status_drops_resolved_sniper_samples_keeps_open_ones():
-    """Status tidy: resolved sample rows were 2 lines of stale history per
-    variant and once rendered the same DOGE candidate twice."""
+def test_status_renders_no_per_candidate_sniper_rows():
+    """2026-08-09: ALL per-candidate rows are gone, open ones included. They
+    were counterfactuals drawn like real positions — side, leverage, entry —
+    directly above "No open positions."."""
     import inspect
 
     src = inspect.getsource(FuturesRuntime._sniper_shadow_status_lines)
-    assert 'r.get("outcome") is None' in src, "resolved rows are back in /status"
+    assert "_sniper_row_lines" not in src, "position-shaped shadow rows are back"
+    assert not hasattr(FuturesRuntime, "_sniper_row_lines"), "dead renderer resurrected"
     assert "_sniper_study_line" in src, "live variant has no study dashboard"
 
 
@@ -694,3 +698,110 @@ def test_pmt_positions_still_reach_the_lock_stack(rt, monkeypatch):
     p = _pos()
     p.metadata = {}
     assert rt._skips_discretionary_locks(p) is False
+
+
+# --------------------------------------------------------------------------
+# /status rewrite (2026-08-09, owner review)
+# --------------------------------------------------------------------------
+
+def test_status_never_prints_the_dead_signal_line(rt):
+    """"Signal: none" was a constant. The only surface the owner reads (/status)
+    passed no signal at all, and the signal it would have passed comes from the
+    PMT scan, which returns None while FUTURES_ENTRY_MIN_SCORE>=999. It read
+    "none" whether the bot had just vetoed a 24% mover or seen nothing."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._build_status_message)
+    assert "self._signal_line(signal)" in src
+    assert "if signal:" in src, "signal line must be gated on a signal existing"
+
+
+def test_status_shows_the_wildcard_funnel(rt):
+    rt._last_wildcard_scan = {
+        "at": time.time() - 180, "funnel": {"in_band": 674}, "scanned": 24,
+        "cands": 0, "hist": {"roc_below_min": 17, "no_pullback_resume": 4},
+        "best": None, "shorts_blocked": 0,
+    }
+    text = "\n".join(rt._wildcard_status_lines())
+    assert "674 in-band" in text and "24 scanned" in text
+    assert "roc_below_min x17" in text
+
+
+def test_status_hides_the_blocker_histogram_once_a_signal_exists(rt):
+    rt._last_wildcard_scan = {
+        "at": time.time(), "funnel": {"in_band": 674}, "scanned": 22, "cands": 1,
+        "hist": {"roc_below_min": 18},
+        "best": {"symbol": "BTW_USDT", "side": "LONG", "roc": 0.243, "rsi": 81.0},
+        "shorts_blocked": 0,
+    }
+    text = "\n".join(rt._wildcard_status_lines())
+    assert "roc_below_min" not in text, "blockers are noise once something fired"
+    assert "BTW_USDT" in text and "+24.3%/3h" in text
+
+
+def test_status_surfaces_the_last_rejected_wildcard_candidate(rt, tmp_path, monkeypatch):
+    """A 24.3% mover was found and vetoed 15 minutes before a /status that said
+    "Signal: none". slot_occupied (11 of 23 all-time) is the sleeve's real
+    bottleneck and had no surface at all."""
+    led = tmp_path / "shadow.jsonl"
+    led.write_text(json.dumps({
+        "ts": time.time() - 2820, "sleeve": "WILDCARD", "symbol": "BTW_USDT",
+        "side": "LONG", "roc_pct": 0.2428,
+        "reject_reason": "veto:crowded_longs(funding=0.150%)",
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setattr(rt, "_shadow_ledger_path", lambda: str(led))
+    line = rt._last_wildcard_reject()
+    assert "BTW_USDT" in line and "+24.3%/3h" in line
+    assert "crowded_longs" in line and "47m ago" in line
+
+
+def test_trial_counter_is_scoped_to_the_trial_not_the_200_row_cap(rt, monkeypatch):
+    """_save_state persists trade_history[-200:], so "Trades: 200" was a
+    saturated window pinned forever, not a count."""
+    from futuresbot import learning_digest as ld
+
+    monkeypatch.setattr(ld, "TRIAL_START", 1000.0)
+    monkeypatch.setattr(rt, "_feature_rows_cached", lambda: [
+        {"ts": 900.0, "kind": "WILDCARD", "r_multiple": 9.0, "pnl_usdt": 99.0},   # pre-trial
+        {"ts": 1500.0, "kind": "WILDCARD", "r_multiple": 0.42, "pnl_usdt": 1.168},
+        {"ts": 1600.0, "kind": "WILDCARD", "r_multiple": 0.53, "pnl_usdt": 0.646},
+        {"ts": 1700.0, "kind": "SNIPER", "r_multiple": -1.45, "pnl_usdt": -0.096},  # other sleeve
+    ])
+    line = rt._trial_progress_line()
+    assert "<b>2</b>/30 WC closes" in line
+    assert "netR <b>+0.95</b>" in line and "net <b>$+1.81</b>" in line
+
+
+def test_trial_start_is_env_overridable_and_no_longer_stale(monkeypatch):
+    """It was hardcoded to trial 4 (2026-07-13) and never moved through trials
+    5, 6, 6.5 and 7 — the weekly digest counted four trials as one.
+
+    Tests the resolver, not the module constant: reloading learning_digest
+    mid-suite pollutes every module holding a reference to it."""
+    from futuresbot.learning_digest import _trial_start
+
+    monkeypatch.setenv("FUTURES_TRIAL_START_TS", "1786130520")
+    assert _trial_start() == 1786130520.0
+    monkeypatch.setenv("FUTURES_TRIAL_START_TS", "not-a-number")
+    monkeypatch.delenv("FUTURES_TRIAL_START_TS")
+    assert _trial_start() == datetime(2026, 8, 7, 19, 22, tzinfo=timezone.utc).timestamp()
+
+
+def test_status_does_not_count_slots_for_a_disabled_sleeve(rt, monkeypatch):
+    """It printed "SQ: 0/1" while FUTURES_SQUEEZE_ENABLED=0 — a slot counter for
+    a sleeve that cannot open a position — and had no counter at all for the
+    sniper, the one sleeve holding real money."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._build_status_message)
+    assert "if squeeze_enabled():" in src
+    assert "sniper_enabled() and not sniper_shadow_only()" in src
+    assert "_sleeve_kind(p) == 'PMT'" in src, "PMT count must not use the convex flag"
+
+
+def test_status_states_decommissioned_sleeves_exactly_once(rt):
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._build_status_message)
+    assert src.count("PMT ⛔ decommissioned") == 0, "the standalone PMT line is gone"
+    assert "off = [n for n, on in" in src

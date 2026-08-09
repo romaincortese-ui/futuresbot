@@ -385,31 +385,36 @@ def test_status_shows_the_would_be_entries(runtime, monkeypatch):
     monkeypatch.setenv("FUTURES_SNIPER_VARIANTS", "SWING,FAST")
     runtime._ledger_write(_ledger_rows())
     text = "\n".join(runtime._sniper_shadow_status_lines())
-    assert "SHADOW" in text and "never trades" in text
-    # each variant scored separately — never pooled
-    assert "<b>SWING</b>: 2 would-be" in text and "cfR <b>+3.0</b>" in text
-    assert "<b>FAST</b>" in text and "cfR <b>-1.0</b>" in text
-    # Status tidy 2026-08-08 (operator request): RESOLVED sample rows are gone —
-    # they were two lines of stale history per variant and once rendered the
-    # same DOGE candidate twice. OPEN rows remain (live-relevant).
-    assert "AVAX_USDT LONG" not in text, "resolved sample rows are back in /status"
-    assert "SOL_USDT SHORT" in text and "open" in text
+    # Status tidy 2026-08-09 (operator request): one line for the whole paper
+    # record. Each variant is still scored separately — never pooled.
+    assert "paper (no fills/fees)" in text
+    assert "SWING 2 sig cfR +3.0" in text
+    assert "FAST" in text and "cfR -1.0" in text
+    # No per-candidate rows at all. They were rendered with side/leverage/entry
+    # exactly like real positions while "No open positions." sat below them.
+    assert "AVAX_USDT" not in text and "SOL_USDT" not in text
+    assert "@" not in text, "position-shaped shadow rows are back in /status"
 
 
 def test_status_flags_the_variant_that_is_not_economically_viable(runtime, monkeypatch):
     monkeypatch.setenv("FUTURES_SNIPER_VARIANTS", "SWING,FAST")
     runtime._ledger_write(_ledger_rows())
     text = "\n".join(runtime._sniper_shadow_status_lines())
-    swing_line = next(l for l in text.split("\n") if "SWING" in l)
-    fast_line = next(l for l in text.split("\n") if "FAST" in l)
-    assert "signal-study only" in fast_line
-    assert "signal-study only" not in swing_line
+    # The viability warning survives the compaction: FAST is not viable at
+    # taker fees, SWING is. On the live path the full phrase rides the
+    # real-money study line (see the study-line test); on the paper line the
+    # marker is compact so the block stays one row.
+    line = next(l for l in text.split("\n") if "paper" in l)
+    parts = line.split(" · ")
+    swing = next(x for x in parts if "SWING" in x)
+    fast = next(x for x in parts if "FAST" in x)
+    assert "⚠️" in fast and "⚠️" not in swing
 
 
 def test_status_line_present_but_quiet_before_any_signal(runtime):
     lines = runtime._sniper_shadow_status_lines()
-    assert len(lines) == 2                      # header + one active variant
-    assert "no signals yet" in lines[1]
+    assert len(lines) == 1
+    assert "no signals yet" in lines[0]
 
 
 def test_status_says_nothing_when_sniper_is_disabled(runtime, monkeypatch):

@@ -104,7 +104,7 @@ from futuresbot.opportunity_score import opportunity_balance_fraction, opportuni
 from futuresbot.pmt_core_weight import DEFAULT_REFRESH_SECONDS, refresh_env_from_redis
 from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balance_fraction_for_score, pmt_stop_first_sizing_enabled, pmt_strategy_enabled, pmt_symbol_allowed, pmt_win_cooldown_exit_reason, score_pmt_threshold_signal
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
-from futuresbot.sniper import VARIANTS, active_variants, capped_available, detect_sniper_signal, sniper_enabled, sniper_live_variants, sniper_max_notional_pct, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
+from futuresbot.sniper import VARIANTS, active_variants, capped_available, detect_sniper_signal, sniper_enabled, sniper_live_variants, sniper_max_notional_pct, sniper_max_positions, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_long_only, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
 from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
@@ -219,6 +219,11 @@ class FuturesRuntime:
         self._last_prediction_overlay_error_at = 0.0
         self._last_prophet_archive_at = 0.0
         self._last_wildcard_scan_at = 0.0
+        # Last wildcard scan funnel, kept for /status. Previously the funnel and
+        # the reject histogram existed only as Railway log lines: a 24.3% mover
+        # could be found and vetoed 15 min before a /status that said
+        # "Signal: none", and the owner had no surface that showed it.
+        self._last_wildcard_scan: dict[str, Any] | None = None
         self._last_squeeze_scan_at = 0.0
         self._last_sniper_scan_at: dict[str, float] = {}
         self._sniper_last_signal_at: dict[tuple[str, str, str], float] = {}
@@ -2118,8 +2123,82 @@ class FuturesRuntime:
                  for r in fills if r.get("r_multiple") and float(r.get("r_multiple") or 0) != 0
                  and r.get("pnl_usdt") is not None]
         one_r_txt = f" | 1R≈${sorted(one_r)[len(one_r)//2]:.2f}" if one_r else ""
-        return (f"  📐 study: <b>{len(fills)}/{target_fills}</b> fills | net ${net:+.2f}"
+        viable = next((v.economically_viable for v in active_variants()
+                       if v.name.upper() == str(variant_name).upper()), True)
+        warn = "" if viable else " ⚠️ signal-study only"
+        return (f"  🎯 <b>{html.escape(str(variant_name))}</b> 💰 LIVE{warn}: "
+                f"<b>{len(fills)}/{target_fills}</b> fills | net ${net:+.2f}"
                 f"{one_r_txt} | verdict at {target_fills}")
+
+    def _wildcard_status_lines(self) -> list[str]:
+        """What the wildcard sleeve is actually seeing, for /status.
+
+        Replaces "Signal: none", which was a dead constant: the only status
+        surface the owner reads never passed a signal at all, and the signal it
+        would have passed comes from the PMT scan, which returns None by
+        construction while FUTURES_ENTRY_MIN_SCORE>=999. The line therefore read
+        "none" whether the bot had just vetoed a 24% mover or seen nothing for
+        two days. Both funnel and reject histogram already existed; they only
+        ever reached the Railway log."""
+        snap = self._last_wildcard_scan
+        lines: list[str] = []
+        if snap:
+            f = snap.get("funnel") or {}
+            age_m = max(0.0, (time.time() - float(snap.get("at") or 0.0)) / 60.0)
+            lines.append(
+                f"  scan {age_m:.0f}m ago: {int(f.get('in_band') or 0)} in-band → "
+                f"{int(snap.get('scanned') or 0)} scanned → "
+                f"<b>{int(snap.get('cands') or 0)}</b> signals"
+            )
+            hist = snap.get("hist") or {}
+            if hist and not snap.get("cands"):
+                top = sorted(hist.items(), key=lambda kv: -kv[1])[:2]
+                lines.append("  blocked: " + " · ".join(f"{k} x{v}" for k, v in top))
+            best = snap.get("best")
+            if best:
+                lines.append(f"  best: <b>{html.escape(str(best.get('symbol')))}</b> "
+                             f"{best.get('side')} {float(best.get('roc') or 0) * 100:+.1f}%/3h")
+        last = self._last_wildcard_reject()
+        if last:
+            lines.append(f"  {last}")
+        return lines
+
+    def _last_wildcard_reject(self) -> str | None:
+        """The most recent wildcard signal that FIRED and was not taken.
+
+        This is the sleeve's real bottleneck and it was invisible: 23 candidates
+        all-time, of which 11 died on slot_occupied and 5 on ref_not_listed."""
+        try:
+            from futuresbot import shadow_ledger as shadow
+
+            rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
+                    if str(r.get("sleeve") or "") == "WILDCARD"]
+        except Exception:  # pragma: no cover — status must render regardless
+            return None
+        if not rows:
+            return None
+        r = rows[-1]
+        age_h = max(0.0, (time.time() - float(r.get("ts") or 0.0)) / 3600.0)
+        age = f"{age_h * 60:.0f}m" if age_h < 1 else (f"{age_h:.0f}h" if age_h < 48 else f"{age_h / 24:.0f}d")
+        return (f"last: <b>{html.escape(str(r.get('symbol') or '?'))}</b> {r.get('side')} "
+                f"{float(r.get('roc_pct') or 0) * 100:+.1f}%/3h → "
+                f"<b>{html.escape(str(r.get('reject_reason') or '?'))}</b> ({age} ago)")
+
+    def _trial_progress_line(self) -> str:
+        """The scoreboard the decision rule is actually evaluated on.
+
+        Replaces "Trades: {len(self.trade_history)}", which was neither
+        all-time nor a count: _save_state persists only trade_history[-200:],
+        so after >200 lifetime closes the number is pinned at 200 forever."""
+        from futuresbot.learning_digest import TRIAL_LABEL, TRIAL_START, TRIAL_TARGET_TRADES
+
+        rows = [r for r in self._feature_rows_cached()
+                if str(r.get("kind") or "").upper() == "WILDCARD"
+                and float(r.get("ts") or 0.0) >= TRIAL_START]
+        net_r = sum(float(r.get("r_multiple") or 0.0) for r in rows)
+        net_usd = sum(float(r.get("pnl_usdt") or 0.0) for r in rows)
+        return (f"Trial {TRIAL_LABEL}: <b>{len(rows)}</b>/{TRIAL_TARGET_TRADES} WC closes"
+                f" | netR <b>{net_r:+.2f}</b> | net <b>${net_usd:+.2f}</b>")
 
     def _sniper_shadow_status_lines(self) -> list[str]:
         """The Sniper's record, for /status.
@@ -2143,58 +2222,41 @@ class FuturesRuntime:
             all_rows = shadow.load_rows(self._shadow_ledger_path())
         except Exception:  # pragma: no cover — status must render regardless
             return []
-        uni = len(sniper_universe())
         live_names = sniper_live_variants() if not sniper_shadow_only() else ()
-        mode = (f"<b>LIVE</b> ({','.join(sorted(live_names))}, notional-capped)"
-                if live_names else "<b>SHADOW</b> (logs would-be entries, never trades)")
-        lines = [f"🎯 Sniper {mode} | {uni or 'liquid'} pairs"]
+        lines: list[str] = []
+        # Real money FIRST, and never adjacent to counterfactual R. The old
+        # layout printed a fee-free "cfR +1.1 | win 41%" directly above the real
+        # "net $-0.15" for the SAME sleeve — same letter R, opposite sign, no
+        # boundary between them. The per-position shadow rows are gone: they
+        # were rendered with side/leverage/entry exactly like real positions
+        # while "No open positions." sat eight lines below.
+        for name in sorted(live_names):
+            study = self._sniper_study_line(name)
+            if study:
+                lines.append(study)
+        # One line for every variant's paper record. "would-be" was factually
+        # wrong for a live variant: _maybe_scan_sniper shadow-logs EVERY signal
+        # before it attempts the live order, so signals actually taken with real
+        # money were being counted as never-traded.
+        parts: list[str] = []
         for variant in active_variants():
-            sleeve = f"SNIPER_{variant.name}"
-            rows = [r for r in all_rows if str(r.get("sleeve")) == sleeve]
-            note = "" if variant.economically_viable else " ⚠️ signal-study only"
-            if variant.name.upper() in live_names:
-                note += " 💰 LIVE"
+            rows = [r for r in all_rows if str(r.get("sleeve")) == f"SNIPER_{variant.name}"]
             if not rows:
-                lines.append(f"  <b>{variant.name}</b>{note}: no signals yet")
                 continue
             resolved = [r for r in rows if r.get("outcome") is not None]
             net = sum(float(r.get("outcome") or 0.0) for r in resolved)
             wins = sum(1 for r in resolved if float(r.get("outcome") or 0.0) > 0)
-            summary = (f"  <b>{variant.name}</b>{note}: {len(rows)} would-be | "
-                       f"resolved {len(resolved)} | cfR <b>{net:+.1f}</b>")
+            part = (f"{variant.name}{'' if variant.economically_viable else ' ⚠️'} "
+                    f"{len(rows)} sig cfR {net:+.1f}")
             if resolved:
-                summary += f" | win {100 * wins / len(resolved):.0f}%"
-            lines.append(summary)
-            # Status tidy (2026-08-08): resolved sample rows dropped — they were
-            # 2 lines per variant of stale history and once rendered the same
-            # DOGE candidate twice. OPEN rows stay (live-relevant); the study
-            # dashboard replaces history for the live leg.
-            open_rows = [r for r in rows if r.get("outcome") is None]
-            lines.extend(self._sniper_row_lines(open_rows[-2:]))
-            if variant.name.upper() in live_names:
-                study = self._sniper_study_line(variant.name)
-                if study:
-                    lines.append(study)
+                part += f" win {100 * wins / len(resolved):.0f}%"
+            parts.append(part)
+        if parts:
+            lines.append("  paper (no fills/fees): " + " · ".join(parts))
+        elif not lines:
+            lines.append("  no signals yet")
         return lines
 
-    def _sniper_row_lines(self, rows: list[dict[str, Any]]) -> list[str]:
-        lines: list[str] = []
-        for r in rows:  # newest are appended last
-            try:
-                if r.get("outcome") is None:
-                    age_h = max(0.0, (time.time() - float(r.get("ts") or 0.0)) / 3600.0)
-                    out = f"⏳ open {age_h:.0f}h"
-                else:
-                    kind = str(r.get("outcome_kind") or "")
-                    icon = "✅" if float(r["outcome"]) > 0 else "❌"
-                    out = f"{icon} {float(r['outcome']):+.1f}R ({kind})"
-                lines.append(
-                    f"  • {html.escape(str(r.get('symbol') or '?'))} {r.get('side')} "
-                    f"x{int(r.get('leverage') or 0)} @{self._format_price(float(r.get('entry') or 0.0))} → {out}"
-                )
-            except (TypeError, ValueError):
-                continue
-        return lines
 
     def _build_status_message(self, *, price: float | None = None, signal: dict[str, Any] | None = None, heartbeat: bool = False) -> str:
         title = "💓 <b>Heartbeat</b>" if heartbeat else "📋 <b>Status</b>"
@@ -2206,21 +2268,40 @@ class FuturesRuntime:
         # (operator decommission 2026-07-13). Previously the status claimed
         # "active | PMT threshold" regardless, which read as if PMT still traded.
         pmt_blocked = self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0) >= 999.0
-        if pmt_strategy_enabled() and not self._strategies_retired():
-            entries_state = f"{entries_state} | PMT ⛔ decommissioned" if pmt_blocked else f"{entries_state} | PMT threshold"
+        # The decommission is stated once, on the slot row, next to the other
+        # switched-off sleeve. It used to appear here AND as a standalone line.
+        if pmt_strategy_enabled() and not self._strategies_retired() and not pmt_blocked:
+            entries_state = f"{entries_state} | PMT threshold"
+        # One slot row covering every sleeve that can hold real money, so "what
+        # is at risk right now" is answered once. The old layout spread it over
+        # three lines and still got it wrong: a SQ counter while squeeze was
+        # live-set OFF, a PMT counter pinned at 0 by the score floor, and a live
+        # SNIPER position tagged "(wc)" against a WC count of 0.
+        slots: list[str] = []
+        if wildcard_enabled():
+            slots.append(f"🎲 WC <b>{self._convex_open_count('WILDCARD')}</b>/{wildcard_max_positions()}")
+        if sniper_enabled() and not sniper_shadow_only():
+            slots.append(f"🎯 SNIP <b>{self._convex_open_count('SNIPER')}</b>/{sniper_max_positions()}")
+        if squeeze_enabled():
+            slots.append(f"🌀 SQ <b>{self._convex_open_count('SQUEEZE')}</b>/{squeeze_max_positions()}")
+        pmt_live = pmt_strategy_enabled() and not pmt_blocked
+        if pmt_live:
+            slots.append(f"PMT <b>{sum(1 for p in self.open_positions.values() if self._sleeve_kind(p) == 'PMT')}</b>"
+                         f"/{self.config.max_concurrent_positions}")
+        # "PMT decommissioned" was printed twice (standalone line + Sys line).
+        # It belongs here, once, next to the other sleeve that is switched off.
+        off = [n for n, on in (("PMT", pmt_live), ("Squeeze", squeeze_enabled())) if not on]
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
-            # What the bot ACTUALLY hunts. The old line listed only the 6 PMT
-            # pairs, which since the 07-13 decommission is the one universe it
-            # can NOT enter — the convex sleeves scan different bands entirely.
-            (f"PMT ⛔ decommissioned ({len(active_syms)} pairs)"
-             if pmt_blocked else
-             f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}): {html.escape(', '.join(active_syms))}"),
-            *([f"🎲 Wildcard hunts small-caps (excl. top-{int(self._env_float('FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER', 30.0))} turnover) | "
+            *([" · ".join(slots) + (f"  ·  ⛔ {', '.join(off)}" if off else "")]
+              if slots else ([f"⛔ {', '.join(off)}"] if off else [])),
+            *([f"Scanning <b>{len(active_syms)}</b> futures pairs "
+               f"({html.escape(self._universe_label(active_syms))}): "
+               f"{html.escape(', '.join(active_syms))}"] if not pmt_blocked else []),
+            *([f"🎲 Wildcard small-caps (excl. top-{int(self._env_float('FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER', 30.0))} turnover) | "
                f"stop {self._env_float('FUTURES_WILDCARD_SL_ATR_MULT', 1.5):.1f}xATR"] if wildcard_enabled() else []),
-            *([f"🌀 Squeeze hunts top-{int(self._env_float('FUTURES_SQUEEZE_MAX_SCAN', 30.0))} liquid | "
-               f"min 1R {self._env_float('FUTURES_SQUEEZE_MIN_SL_MARGIN_PCT', 0.0):.0f}% margin"] if squeeze_enabled() else []),
+            *(self._wildcard_status_lines() if wildcard_enabled() else []),
             *self._sniper_shadow_status_lines(),
             self._btc_trend_line(),
             # One system line instead of three (calibration / overlay / entries):
@@ -2229,22 +2310,19 @@ class FuturesRuntime:
             f"{'✅' if self.daily_review else '⛔'} · overlay "
             f"{'on' if getattr(self.config, 'prediction_overlay_enabled', False) else 'off'}"
             f" · entries {entries_state}",
-            f"Avail: <b>${snapshot['available_usdt']:.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b> | Trades: <b>{len(self.trade_history)}</b>",
-            f"PMT positions: <b>{sum(1 for p in self.open_positions.values() if not self._is_wildcard_position(p))}</b>/{self.config.max_concurrent_positions} | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>",
-            # Slots are PER-SLEEVE since 07-17: counting both sleeves against a
-            # single cap rendered as "2/1 slot", which looked like a breach.
-            *([(
-                f"🎲 WC: <b>{self._convex_open_count('WILDCARD')}</b>/{wildcard_max_positions()}"
-                + f" | 🌀 SQ: <b>{self._convex_open_count('SQUEEZE')}</b>/{squeeze_max_positions()}"
-                + ("" if not self._wildcard_open_count() else " — " + ", ".join(
-                    f"{html.escape(p.symbol)}{'(sq)' if (p.metadata or {}).get('squeeze') else '(wc)'}"
-                    for p in self.open_positions.values() if self._is_wildcard_position(p)))
-            )] if wildcard_enabled() else []),
+            # Avail appeared even when flat, where it is equity printed twice.
+            (f"Equity: <b>${snapshot['equity_usdt']:.2f}</b>"
+             + (f" (free ${snapshot['available_usdt']:.2f})"
+                if abs(snapshot['available_usdt'] - snapshot['equity_usdt']) >= 0.01 else "")
+             + (f" | Unrealized: <b>${snapshot['unrealized_pnl_usdt']:+.2f}</b>"
+                if self.open_positions else "")),
+            self._trial_progress_line(),
             "━━━━━━━━━━━━━━━",
         ]
         if not self.open_positions:
             lines.append("No open positions.")
-            lines.append(self._signal_line(signal))
+            if signal:
+                lines.append(self._signal_line(signal))
         else:
             price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))
             if self.open_position is not None and self._is_plausible_position_mark(self.open_position, current_price):
@@ -4278,6 +4356,15 @@ class FuturesRuntime:
                 cands = kept
             best = cands[0][1] if cands else None
             best_lateness = cands[0][2] if cands else None
+            self._last_wildcard_scan = {
+                "at": time.time(), "funnel": dict(funnel), "hist": dict(hist or {}),
+                "scanned": scanned, "scan_capped": scan_capped, "cands": len(cands),
+                "shorts_blocked": shorts_blocked,
+                "best": ({"symbol": best.symbol, "side": best.side,
+                          "roc": float(getattr(best, "roc_pct", 0.0) or 0.0),
+                          "rsi": float(getattr(best, "rsi", 0.0) or 0.0)}
+                         if best is not None else None),
+            }
             log.info("[WILDCARD_FUNNEL] usdt=%d -> (non_crypto -%d, symbol_open -%d, "
                      "major -%d) in_band=%d -> turnover>=%.0f:%d -> move24h>=%.0f%%:%d "
                      "-> scan_capped -%d -> scanned=%d -> candidates=%d",

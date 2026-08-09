@@ -9,12 +9,33 @@ the runtime owns paths/sending. Fail-soft everywhere.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 
 from futuresbot.conditional_expectancy import default_conditions, rank_conditions
 
-TRIAL_START = datetime(2026, 7, 13, 23, 0, tzinfo=timezone.utc).timestamp()  # docs/DECISION_RULE.md
+
+def _trial_start() -> float:
+    """Start of the CURRENT trial, epoch seconds. docs/DECISION_RULE.md is the
+    authoritative record; this is the machine-readable pointer at it.
+
+    Was a hardcoded 2026-07-13 (trial 4) and never moved through trials 5, 6,
+    6.5 and 7 — so every "n/30" the digest reported was counting four trials as
+    one. Bumping FUTURES_TRIAL_START_TS IS the reset operation now.
+    """
+    raw = os.environ.get("FUTURES_TRIAL_START_TS", "").strip()
+    try:
+        if raw:
+            return float(raw)
+    except (TypeError, ValueError):
+        pass
+    # Trial 7 deploy, 2026-08-07 19:22 UTC.
+    return datetime(2026, 8, 7, 19, 22, tzinfo=timezone.utc).timestamp()
+
+
+TRIAL_START = _trial_start()
 TRIAL_TARGET_TRADES = 30
+TRIAL_LABEL = os.environ.get("FUTURES_TRIAL_LABEL", "7").strip() or "7"
 
 
 def load_jsonl(path) -> list[dict]:
