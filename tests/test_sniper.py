@@ -388,8 +388,11 @@ def test_status_shows_the_would_be_entries(runtime, monkeypatch):
     # Status tidy 2026-08-09 (operator request): one line for the whole paper
     # record. Each variant is still scored separately — never pooled.
     assert "paper (no fills/fees)" in text
-    assert "SWING 2 sig cfR +3.0" in text
-    assert "FAST" in text and "cfR -1.0" in text
+    # 2026-08-09 (operator request): counterfactual R is gone from the paper
+    # line — signals and win rate only.
+    assert "SWING 2 sig, 100% win" in text
+    assert "FAST" in text and "1 sig, 0% win" in text
+    assert "cfR" not in text
     # No per-candidate rows at all. They were rendered with side/leverage/entry
     # exactly like real positions while "No open positions." sat below them.
     assert "AVAX_USDT" not in text and "SOL_USDT" not in text

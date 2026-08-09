@@ -751,8 +751,19 @@ def test_status_surfaces_the_last_rejected_wildcard_candidate(rt, tmp_path, monk
     }) + "\n", encoding="utf-8")
     monkeypatch.setattr(rt, "_shadow_ledger_path", lambda: str(led))
     line = rt._last_wildcard_reject()
-    assert "BTW_USDT" in line and "+24.3%/3h" in line
-    assert "crowded_longs" in line and "47m ago" in line
+    assert "BTW_USDT" in line and "+24.3%/3h" in line and "47m ago" in line
+    # Plain English, but the number that fired the gate survives.
+    assert "crowded longs (funding 0.150%)" in line
+    assert "veto:" not in line and "=" not in line
+
+
+def test_reject_labels_fall_back_to_the_raw_reason(rt):
+    assert rt._reject_label("slot_occupied") == "no free slot"
+    assert rt._reject_label("veto:ref_not_listed") == "not listed on the reference exchange"
+    assert rt._reject_label("veto:move_not_corroborated(mexc=12.7%,ref=-0.5%)") == (
+        "move not confirmed on the reference exchange (mexc 12.7%, ref -0.5%)")
+    assert rt._reject_label("brand_new_gate") == "brand_new_gate"
+    assert rt._reject_label(None) == "unknown"
 
 
 def test_trial_counter_is_scoped_to_the_trial_not_the_200_row_cap(rt, monkeypatch):

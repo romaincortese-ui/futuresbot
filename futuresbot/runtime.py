@@ -73,6 +73,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -2125,10 +2126,10 @@ class FuturesRuntime:
         one_r_txt = f" | 1R≈${sorted(one_r)[len(one_r)//2]:.2f}" if one_r else ""
         viable = next((v.economically_viable for v in active_variants()
                        if v.name.upper() == str(variant_name).upper()), True)
-        warn = "" if viable else " ⚠️ signal-study only"
-        return (f"  🎯 <b>{html.escape(str(variant_name))}</b> 💰 LIVE{warn}: "
-                f"<b>{len(fills)}/{target_fills}</b> fills | net ${net:+.2f}"
-                f"{one_r_txt} | verdict at {target_fills}")
+        what = ("real $" if viable
+                else f"real $, {one_r_txt.strip(' |') or 'tiny'}, no edge at taker fees")
+        return (f"  🎯 <b>{html.escape(str(variant_name))}</b> meter ({what}): "
+                f"<b>{len(fills)}/{target_fills}</b> fills | net <b>${net:+.2f}</b>")
 
     def _wildcard_status_lines(self) -> list[str]:
         """What the wildcard sleeve is actually seeing, for /status.
@@ -2160,8 +2161,31 @@ class FuturesRuntime:
                              f"{best.get('side')} {float(best.get('roc') or 0) * 100:+.1f}%/3h")
         last = self._last_wildcard_reject()
         if last:
-            lines.append(f"  {last}")
+            lines.append(last)
         return lines
+
+    _REJECT_LABELS = {
+        "slot_occupied": "no free slot",
+        "side_disabled": "shorts are off",
+        "min_vol_skip": "volume too thin",
+        "shadow_only": "shadow mode",
+        "ref_not_listed": "not listed on the reference exchange",
+        "crowded_longs": "crowded longs",
+        "crowded_shorts": "crowded shorts",
+        "move_not_corroborated": "move not confirmed on the reference exchange",
+    }
+
+    @classmethod
+    def _reject_label(cls, reason: str) -> str:
+        """Internal reject enums read as jargon on a phone. Keep the numbers —
+        they are the reason the gate fired — and drop the machine syntax."""
+        raw = str(reason or "").strip()
+        key = raw.split(":", 1)[-1].split("(", 1)[0].strip()
+        label = cls._REJECT_LABELS.get(key, key or "unknown")
+        detail = re.search(r"\(([^)]*)\)", raw)
+        if detail:
+            label += " (" + detail.group(1).replace("=", " ").replace(",", ", ") + ")"
+        return label
 
     def _last_wildcard_reject(self) -> str | None:
         """The most recent wildcard signal that FIRED and was not taken.
@@ -2180,9 +2204,9 @@ class FuturesRuntime:
         r = rows[-1]
         age_h = max(0.0, (time.time() - float(r.get("ts") or 0.0)) / 3600.0)
         age = f"{age_h * 60:.0f}m" if age_h < 1 else (f"{age_h:.0f}h" if age_h < 48 else f"{age_h / 24:.0f}d")
-        return (f"last: <b>{html.escape(str(r.get('symbol') or '?'))}</b> {r.get('side')} "
-                f"{float(r.get('roc_pct') or 0) * 100:+.1f}%/3h → "
-                f"<b>{html.escape(str(r.get('reject_reason') or '?'))}</b> ({age} ago)")
+        return (f"  last skip: <b>{html.escape(str(r.get('symbol') or '?'))}</b> {r.get('side')} "
+                f"{float(r.get('roc_pct') or 0) * 100:+.1f}%/3h, {age} ago — "
+                f"<b>{html.escape(self._reject_label(r.get('reject_reason')))}</b>")
 
     def _trial_progress_line(self) -> str:
         """The scoreboard the decision rule is actually evaluated on.
@@ -2244,12 +2268,10 @@ class FuturesRuntime:
             if not rows:
                 continue
             resolved = [r for r in rows if r.get("outcome") is not None]
-            net = sum(float(r.get("outcome") or 0.0) for r in resolved)
             wins = sum(1 for r in resolved if float(r.get("outcome") or 0.0) > 0)
-            part = (f"{variant.name}{'' if variant.economically_viable else ' ⚠️'} "
-                    f"{len(rows)} sig cfR {net:+.1f}")
+            part = f"{variant.name}{'' if variant.economically_viable else ' ⚠️'} {len(rows)} sig"
             if resolved:
-                part += f" win {100 * wins / len(resolved):.0f}%"
+                part += f", {100 * wins / len(resolved):.0f}% win"
             parts.append(part)
         if parts:
             lines.append("  paper (no fills/fees): " + " · ".join(parts))
@@ -2299,8 +2321,6 @@ class FuturesRuntime:
             *([f"Scanning <b>{len(active_syms)}</b> futures pairs "
                f"({html.escape(self._universe_label(active_syms))}): "
                f"{html.escape(', '.join(active_syms))}"] if not pmt_blocked else []),
-            *([f"🎲 Wildcard small-caps (excl. top-{int(self._env_float('FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER', 30.0))} turnover) | "
-               f"stop {self._env_float('FUTURES_WILDCARD_SL_ATR_MULT', 1.5):.1f}xATR"] if wildcard_enabled() else []),
             *(self._wildcard_status_lines() if wildcard_enabled() else []),
             *self._sniper_shadow_status_lines(),
             self._btc_trend_line(),
