@@ -584,3 +584,113 @@ def test_status_system_lines_are_merged():
     src = inspect.getsource(FuturesRuntime._build_status_message)
     assert "Sys: calib" in src, "calibration/overlay/entries no longer merged"
     assert '"Calibration: ' not in src
+
+
+# --------------------------------------------------------------------------
+# sleeve tagging (trial-7 amendment, 2026-08-09)
+# --------------------------------------------------------------------------
+
+def _snipe(**md):
+    p = _pos()
+    p.metadata = {"wildcard": 1.0, "pmt_stop_first": 1.0, "sniper": 1.0,
+                  "sl_margin_pct": 4.79, **md}
+    p.leverage = 13
+    return p
+
+
+def test_sniper_positions_are_tagged_at_open():
+    """ROOT CAUSE. The shared entry primitive stamped wildcard=1.0 on every
+    convex position with a branch only for SQUEEZE, so a sniper trade was
+    indistinguishable from a wildcard one."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._open_wildcard_position)
+    assert 'kind == "SNIPER"' in src and 'metadata["sniper"]' in src
+
+
+def test_sleeve_kind_resolves_specific_markers_before_the_shared_flag(rt):
+    assert rt._sleeve_kind(_snipe()) == "SNIPER"
+    p = _pos(); p.metadata = {"wildcard": 1.0, "squeeze": 1.0}
+    assert rt._sleeve_kind(p) == "SQUEEZE"
+    assert rt._sleeve_kind(_pos()) == "WILDCARD"
+    p2 = _pos(); p2.metadata = {}
+    assert rt._sleeve_kind(p2) == "PMT"
+
+
+def test_sniper_does_not_consume_a_wildcard_slot(rt):
+    """It did: _convex_open_count counted anything wildcard-flagged and
+    non-squeeze, so a sniper position occupied one of trial 7's two slots."""
+    rt.open_positions = {"A_USDT": _snipe(), "B_USDT": _pos()}
+    assert rt._convex_open_count("WILDCARD") == 1
+    assert rt._convex_open_count("SNIPER") == 1
+    assert rt._convex_open_count("SQUEEZE") == 0
+
+
+def test_convex_exits_do_not_apply_to_sniper_positions(rt, monkeypatch):
+    """The 24h clock and retention trail were designed and priced for a ~16%
+    stop, not the sniper's 0.37%."""
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    assert rt._is_wildcard_convex(_pos()) is True
+    assert rt._is_wildcard_convex(_snipe()) is False
+    sq = _pos(); sq.metadata = {"wildcard": 1.0, "squeeze": 1.0}
+    assert rt._is_wildcard_convex(sq) is True     # squeeze keeps the convex stack
+
+
+def test_retention_floor_never_sits_below_the_sleeve_cost_drag(rt, monkeypatch):
+    """AVAX_USDT 2026-08-09: peaked +1.68R, floor 0.30x = +0.50R gross, closed
+    -0.01R net — because cost drag on a 0.37% stop is 0.52R per round trip.
+    A floor below breakeven banks a loss by construction."""
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    closed = []
+    monkeypatch.setattr(rt, "_close_position_for_exit",
+                        lambda p, **k: closed.append(k.get("reason")) or True)
+    # wildcard geometry: 16.4% stop -> cost drag ~0.012R -> floor is the 0.30 rule
+    p = _pos()
+    p.metadata["convex_peak_r"] = 2.0
+    assert rt._convex_runner_trail_exit(p, 106.5) is False      # +0.65R > 0.60 floor
+    assert rt._convex_runner_trail_exit(p, 105.0) is True       # +0.50R < 0.60 floor
+    assert closed == ["CONVEX_RETENTION_TRAIL"]
+
+
+def test_entry_message_names_the_sleeve_that_opened_it(rt):
+    assert "🎯" in rt._entry_message(_snipe())
+    assert "Meteorite" not in rt._entry_message(_snipe())
+    assert "🎲" in rt._entry_message(_pos())
+
+
+def test_entry_message_does_not_promise_a_partial_bank_on_convex(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_PARTIAL_BANK_ENABLED", "1")
+    assert "Bank 50%" not in rt._entry_message(_snipe())
+    assert "Bank 50%" not in rt._entry_message(_pos())
+
+
+def test_feature_store_row_carries_sleeve_and_exit_rule():
+    """Correction: both were written to the trade record but never reached the
+    feature store — every row read sleeve=None."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._append_feature_store)
+    assert '"sleeve"' in src and '"exit_rule"' in src
+
+
+def test_sniper_is_exit_governed_by_its_own_stop_and_tp_only(rt, monkeypatch):
+    """Excluding SNIPER from the convex stack must not hand it to the PMT lock
+    stack instead: micro-lock arms at 2.0% MARGIN, which on the sniper's 4.8%
+    stop is +0.42R — still under its 0.52R round-trip cost."""
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    monkeypatch.setenv("FUTURES_MICRO_LOCK_ENABLED", "1")
+    monkeypatch.setenv("USE_FUTURES_PROFIT_LOCK", "1")
+    snipe = _snipe()
+    assert rt._skips_discretionary_locks(snipe) is True
+    assert rt._micro_lock_exit(snipe, 101.0) is False
+    assert rt._profit_lock_exit(snipe, 101.0) is False
+    # ...and it is NOT convex either: no 24h clock, no retention trail.
+    assert rt._is_wildcard_convex(snipe) is False
+
+
+def test_pmt_positions_still_reach_the_lock_stack(rt, monkeypatch):
+    """Guard against the carve-out widening into 'nobody gets locks'."""
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
+    p = _pos()
+    p.metadata = {}
+    assert rt._skips_discretionary_locks(p) is False

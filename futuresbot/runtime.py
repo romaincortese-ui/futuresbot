@@ -1099,11 +1099,9 @@ class FuturesRuntime:
         marker, wildcard is the fallback for convex positions.
         """
         md = (position.metadata or {}) if position else {}
-        for key, name in (("squeeze", "SQUEEZE"), ("sniper", "SNIPER"), ("wildcard", "WILDCARD")):
-            if md.get(key):
-                variant = md.get(f"{key}_variant") or md.get("variant")
-                return f"{name}:{variant}" if variant else name
-        return "PMT"
+        name = FuturesRuntime._sleeve_kind(position)
+        variant = md.get(f"{name.lower()}_variant") or md.get("variant")
+        return f"{name}:{variant}" if variant and name != "PMT" else name
 
     @staticmethod
     def _hold_hours(position: FuturesPosition | None) -> float | None:
@@ -1329,12 +1327,29 @@ class FuturesRuntime:
         """True when this is a wildcard position AND the convex-exit flag is on.
         Convex wildcards skip the discretionary PROFIT locks so the full size
         rides its -1R resting stop / +5R TP — the fat-tail runner the wildcard
-        exists to catch. Hard stops, risk caps and loss exits are unaffected."""
-        md = position.metadata if isinstance(position.metadata, dict) else {}
-        return bool(md.get("wildcard")) and self._flag("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", default=False)
+        exists to catch. Hard stops, risk caps and loss exits are unaffected.
+
+        WILDCARD and SQUEEZE only. SNIPER is excluded by design: its ~0.37%
+        stop makes round-trip cost 0.52R, so a 0.30xpeak retention floor sits
+        BELOW its own breakeven and banks a loss at any peak under ~1.7R
+        (AVAX_USDT 2026-08-09: peak +1.68R -> closed -0.01R)."""
+        return (self._sleeve_kind(position) in ("WILDCARD", "SQUEEZE")
+                and self._flag("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", default=False))
+
+    def _skips_discretionary_locks(self, position: FuturesPosition) -> bool:
+        """The profit-lock / micro-lock stack is PMT machinery: its triggers are
+        denominated in MARGIN percent, which only means the same thing across
+        sleeves that share a stop width. Every convex sleeve opts out.
+
+        SNIPER opts out unconditionally, not via the convex flag. Its exit is
+        the exchange-side SL/TP set at entry and nothing else — that is what the
+        fill/slippage study measures. Dropping it into micro-lock (arm 2.0%
+        margin = 0.42R, floor 0.65% = 0.14R on a 4.8% stop) would bank below its
+        own 0.52R round-trip cost, the same defect that closed AVAX at -0.01R."""
+        return self._is_wildcard_convex(position) or self._sleeve_kind(position) == "SNIPER"
 
     def _profit_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
-        if self._is_wildcard_convex(position):
+        if self._skips_discretionary_locks(position):
             return False
         if not self._flag("USE_FUTURES_PROFIT_LOCK") and not (pmt_strategy_enabled() and self._flag("FUTURES_PMT_QUICK_PROFIT_PROTECTION_ENABLED")):
             return False
@@ -1738,6 +1753,21 @@ class FuturesRuntime:
             # trial 7: retention floor. Ratchet-only by construction (retain is
             # constant and peak only rises), and always >= retain x arm > 0.
             exit_level = retain * peak_r
+            # ...but "above zero in R" is not "above zero in DOLLARS". Cost drag
+            # is 0.190%/sl_frac, so a sleeve with a 0.37% stop pays 0.52R per
+            # round trip and a 0.30 floor nets -0.22R BY CONSTRUCTION. That is
+            # exactly how AVAX_USDT gave back a +1.68R peak for -$0.0005 on
+            # 2026-08-09. Floor the floor at the sleeve's own breakeven.
+            lev = float(getattr(position, "leverage", 0) or 0)
+            sl_frac = (risk_pct / (lev * 100.0)) if lev > 0 else 0.0
+            if sl_frac > 0:
+                cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
+                exit_level = max(exit_level, cost_r * self._env_float("FUTURES_CONVEX_COST_FLOOR_MULT", 1.5))
+                if exit_level >= peak_r:
+                    # Cannot trail this sleeve profitably at all — leave the
+                    # position to its stop / TP / clock rather than close it at
+                    # a level that banks a loss.
+                    return False
         else:
             # legacy giveback, kept reachable for rollback via env
             give_r = max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 2.0))
@@ -1754,7 +1784,7 @@ class FuturesRuntime:
                                              else "CONVEX_RUNNER_TRAIL")
 
     def _micro_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
-        if self._is_wildcard_convex(position):
+        if self._skips_discretionary_locks(position):
             return False
         if os.environ.get("FUTURES_MICRO_LOCK_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
             return False
@@ -2312,6 +2342,10 @@ class FuturesRuntime:
         metadata = position.metadata if isinstance(position.metadata, dict) else {}
         if not partial_bank_enabled() or not self._metadata_float(metadata, "pmt_stop_first"):
             return ""
+        # _maybe_partial_bank refuses every convex position, so advertising a
+        # "+1R bank" on one was a promise the bot could not keep.
+        if self._sleeve_kind(position) in ("WILDCARD", "SNIPER", "SQUEEZE"):
+            return ""
         entry = float(position.entry_price or 0.0)
         sl = float(position.sl_price or 0.0)
         if entry <= 0 or sl <= 0:
@@ -2326,14 +2360,26 @@ class FuturesRuntime:
         stop_risk_text = f"${stop_risk:.2f}" if stop_risk is not None else "n/a"
         stop_risk_pct_text = f" ({stop_risk_pct:.2f}% of margin)" if stop_risk_pct is not None else ""
         md = position.metadata if isinstance(position.metadata, dict) else {}
-        if md.get("wildcard"):
+        # Header follows the SLEEVE, not the shared wildcard flag that every
+        # convex position carries. A sniper entry previously announced itself as
+        # "🎲 WILDCARD ... Meteorite: 3h move -0.6%" — the wildcard's own trigger
+        # language on a move that could never pass the wildcard's 8% bar.
+        sleeve_kind = self._sleeve_kind(position)
+        try:
+            _roc = float(md.get("wildcard_roc_pct", 0.0) or 0.0) * 100
+            _rsi = float(md.get("wildcard_rsi", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            _roc = _rsi = 0.0
+        if sleeve_kind == "WILDCARD":
             header = "🎲 <b>WILDCARD Position Opened</b>"
-            try:
-                _roc = float(md.get("wildcard_roc_pct", 0.0) or 0.0) * 100
-                _rsi = float(md.get("wildcard_rsi", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                _roc = _rsi = 0.0
             wc_line = f"Meteorite: 3h move <b>{_roc:+.1f}%</b> | RSI {_rsi:.0f}\n"
+        elif sleeve_kind == "SNIPER":
+            header = "🎯 <b>SNIPER Position Opened</b>"
+            wc_line = (f"Burst: move <b>{_roc:+.2f}%</b> | RSI {_rsi:.0f}"
+                       f" | ⚠️ notional-capped study\n")
+        elif sleeve_kind == "SQUEEZE":
+            header = "🌀 <b>SQUEEZE Position Opened</b>"
+            wc_line = f"Coil break: <b>{_roc:+.2f}%</b> | RSI {_rsi:.0f}\n"
         else:
             header = "🚀 <b>Futures Position Opened</b>"
             wc_line = ""
@@ -3492,6 +3538,8 @@ class FuturesRuntime:
                 # carry them. Genuinely new here are roc_z, sl_frac_designed,
                 # peak_r and the equity snapshots.
                 "roc_z": md.get("roc_z"),
+                "sleeve": trade.get("sleeve"),
+                "exit_rule": trade.get("exit_rule"),
                 "risk_usdt": trade.get("risk_usdt"),
                 "sl_frac_designed": md.get("sl_frac_designed"),
                 "peak_r": md.get("convex_peak_r"),
@@ -4390,19 +4438,28 @@ class FuturesRuntime:
         )
         return {sym for _turn, sym in ranked[:n]}
 
+    @staticmethod
+    def _sleeve_kind(position: "FuturesPosition | None") -> str:
+        """Which convex sleeve owns this position — the single authority.
+
+        Order matters: every convex position carries wildcard=1.0 (the shared
+        entry primitive sets it), so the specific markers must be tested first.
+        """
+        md = (position.metadata if position and isinstance(position.metadata, dict) else {}) or {}
+        if md.get("squeeze"):
+            return "SQUEEZE"
+        if md.get("sniper"):
+            return "SNIPER"
+        if md.get("wildcard"):
+            return "WILDCARD"
+        return "PMT"
+
     def _convex_open_count(self, kind: str) -> int:
         """Open convex positions of ONE sleeve. Slots are per-sleeve (max 1
         wildcard + 1 squeeze concurrently): the single shared slot sat occupied
         ~69% of a 21d window — a 110h +$0.10 hold cost the AKE +600% launch."""
-        count = 0
-        for position in self.open_positions.values():
-            md = position.metadata if isinstance(position.metadata, dict) else {}
-            if not md.get("wildcard"):
-                continue
-            is_squeeze = bool(md.get("squeeze"))
-            if (kind == "SQUEEZE") == is_squeeze:
-                count += 1
-        return count
+        want = str(kind or "").upper()
+        return sum(1 for p in self.open_positions.values() if self._sleeve_kind(p) == want)
 
     @staticmethod
     def _entry_lateness(df: Any, side: str) -> float | None:
@@ -4819,6 +4876,17 @@ class FuturesRuntime:
         }
         if kind == "SQUEEZE":
             metadata["squeeze"] = 1.0
+        elif kind == "SNIPER":
+            # ROOT CAUSE FIX 2026-08-09. This primitive is shared by all three
+            # convex sleeves and stamped wildcard=1.0 unconditionally, with a
+            # branch only for squeeze. A sniper position was therefore
+            # INDISTINGUISHABLE from a wildcard one, which meant: it consumed a
+            # wildcard slot, it inherited the wildcard's 24h clock and retention
+            # trail (neither designed nor priced for a 0.37%-stop sleeve), and
+            # /status announced it as "🎲 WILDCARD ... Meteorite: 3h move -0.6%"
+            # — the wildcard's own trigger language on a move that could never
+            # pass the wildcard's 8% bar. Cost AVAX_USDT a +1.68R peak.
+            metadata["sniper"] = 1.0
         if self._pending_entry_lateness is not None:
             metadata["entry_lateness"] = round(float(self._pending_entry_lateness), 3)
         # 1.0 = corroborated on Bybit/OKX, 0.0 = MEXC-only (admitted only since the

@@ -15,6 +15,47 @@ could build profit and hand back >100% of it (mean banked: **-0.20R**). The live
 BICO trade is the exact shape: peak +1.46R (~+$4), trail level -0.54R, a fade to
 the 24h clock banks $0.
 
+## AMENDMENT 2026-08-09 — sleeve tagging (NOT a reset)
+
+A defect, not a treatment change: sniper positions were indistinguishable from
+wildcard ones. `_open_wildcard_position` (the shared entry primitive) stamped
+`wildcard: 1.0` on every convex entry with a branch only for SQUEEZE, so a
+SNIPER entry (a) consumed one of trial 7's two wildcard slots, (b) inherited
+the 24h clock and retention trail, and (c) announced itself on Telegram as
+"WILDCARD ... Meteorite: 3h move -0.6%" — the wildcard's own trigger language
+on a move that could never pass the wildcard's 8% bar.
+
+Live consequence, AVAX_USDT SHORT, closed 2026-08-09: peaked **+1.6767R**,
+closed **-0.01R / -$0.0005**. The retention floor did exactly what it promised
+in R (0.30 x 1.68 = +0.50R) and still banked a loss, because the sniper's stop
+is ~0.37% wide, so `cost_drag = 0.190% / 0.368% = 0.52R` per round trip. The
+retention invariant is stated in GROSS R; below a ~1.7R peak the sniper's floor
+sits under its own breakeven. The invariant was not violated — it was applied
+to a sleeve it was never priced for.
+
+Fix (three separations, no parameter moved):
+- `_sleeve_kind()` resolves SQUEEZE > SNIPER > WILDCARD > PMT from specific
+  markers instead of the shared flag; `metadata["sniper"]=1.0` is now stamped
+  at open. Slot counting, the entry message and the feature-store `sleeve`
+  column all read it.
+- Convex exits (24h clock, retention trail) apply to WILDCARD and SQUEEZE only.
+- SNIPER is exit-governed by its exchange-side SL/TP alone: it opts out of the
+  PMT profit-lock/micro-lock stack too, whose triggers are also margin-percent
+  denominated (micro-lock arms at 2.0% margin = +0.42R on a 4.8% sniper stop —
+  still under its 0.52R cost). Excluding it from convex without this would have
+  moved the defect, not removed it.
+- Cost floor added to `_convex_runner_trail_exit` regardless of sleeve: the
+  retention floor is raised to `1.5 x cost_R` and suppressed entirely when that
+  exceeds the peak. Inert on wildcard geometry (16% stop -> cost 0.012R).
+
+**Scoring impact.** Trial 7's counter is 30 WILDCARD closes; no wildcard close
+is invalidated. The sniper study restarts its 25-fill count from this deploy —
+its 5 prior fills (SOL +$0.034, SUI -$0.096, DOGE -$0.032, SOL -$0.052, AVAX
+-$0.0005) ran under exits the sleeve was not designed for and are VOID as
+fill-quality evidence. Slot contention is a live confound on the wildcard arm
+for the pre-amendment window: whenever a sniper was open, capacity was 1/2 not
+2/2. Recorded, not corrected.
+
 ## Changes under test in trial 7
 
 **Treatment (the reset):**
