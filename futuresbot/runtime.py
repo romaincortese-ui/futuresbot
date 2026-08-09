@@ -222,6 +222,8 @@ class FuturesRuntime:
         self._last_wildcard_scan_at = 0.0
         # symbol -> (sampled_at, deflator). See _turnover_deflator.
         self._turnover_baseline: dict[str, tuple[float, float]] = {}
+        # symbol -> which side of the pre-trial-8 gates it sat on, this scan.
+        self._wildcard_attribution: dict[str, dict[str, bool]] = {}
         # Last wildcard scan funnel, kept for /status. Previously the funnel and
         # the reject histogram existed only as Railway log lines: a 24.3% mover
         # could be found and vetoed 15 min before a /status that said
@@ -3639,6 +3641,10 @@ class FuturesRuntime:
                 # peak_r and the equity snapshots.
                 "roc_z": md.get("roc_z"),
                 "sleeve": trade.get("sleeve"),
+                # Trial-8 attribution: which of the two universe changes let
+                # this trade in. Without it a trial-8 verdict cannot be split.
+                "legacy_major": md.get("legacy_major"),
+                "legacy_prefilter_ok": md.get("legacy_prefilter_ok"),
                 "exit_rule": trade.get("exit_rule"),
                 "risk_usdt": trade.get("risk_usdt"),
                 "sl_frac_designed": md.get("sl_frac_designed"),
@@ -4299,6 +4305,14 @@ class FuturesRuntime:
             # small cap it's the beginning. Top-turnover names stay squeeze turf.
             exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0))
             majors = self._major_symbols(tickers, exclude_top)
+            # ATTRIBUTION. Trial 8 bundles two universe changes (band ranking +
+            # range pre-filter). Rather than run two 90-day trials, record which
+            # side of each OLD gate every candidate sat on, so a trial-8 result
+            # can be split by change after the fact instead of being ambiguous.
+            # Both are free: one extra sort of a list already in memory.
+            legacy_majors = self._top_turnover_symbols(tickers, 30)
+            legacy_move = max(0.0, self._env_float("FUTURES_WILDCARD_LEGACY_MIN_24H_MOVE", 0.03))
+            self._wildcard_attribution = {}
             # Funnel telemetry. A 92h replay of the SAME detector over the SAME
             # band found 48 full signals while the live scan reported
             # candidates=0 on every pass, so we count survivors at each stage
@@ -4343,6 +4357,12 @@ class FuturesRuntime:
                 if chg >= min_move:
                     funnel["move_24h_ok"] += 1
                     movers.append((chg, sym))
+                    self._wildcard_attribution[sym] = {
+                        # Would the OLD rules have let this symbol through?
+                        "legacy_major": bool(sym in legacy_majors),
+                        "legacy_prefilter_ok": bool(
+                            abs(float(t.get("riseFallRate") or 0.0)) >= legacy_move),
+                    }
             movers.sort(reverse=True)
             max_scan = int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))
             scan_capped = max(0, len(movers) - max_scan)   # silently dropped before
@@ -5159,6 +5179,7 @@ class FuturesRuntime:
             path = self._shadow_ledger_path()
             shadow.append_row(path, shadow.candidate_row(
                 sig, sleeve=kind, reject_reason=reject_reason, lateness=self._pending_entry_lateness,
+                extra=self._wildcard_attribution.get(str(getattr(sig, "symbol", "")), {}),
             ))
         except Exception as exc:  # pragma: no cover
             log.debug("shadow ledger append failed: %s", exc)
@@ -5265,6 +5286,8 @@ class FuturesRuntime:
         side_name = sig.side
         metadata: dict[str, Any] = {
             "wildcard": 1.0, "pmt_stop_first": 1.0,
+            **{k: float(v) for k, v in
+               self._wildcard_attribution.get(str(getattr(sig, "symbol", "")), {}).items()},
             "sl_margin_pct": float(sig.sl_margin_pct), "tp_margin_pct": float(sig.tp_margin_pct),
             "wildcard_roc_pct": round(float(sig.roc_pct), 4), "wildcard_rsi": float(sig.rsi),
             # Record what the regime scaler DID. Previously applied but never

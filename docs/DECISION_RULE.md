@@ -74,10 +74,33 @@ the top 30) consumed exclusion slots. "Top-30" never meant top-30 crypto.
    can be screened out. Measured live at deploy: pool **11 -> 20** symbols,
    **zero dropped**, and it admits exactly the two symbols that produced LONG
    signals and went untaken on 08-09 (SAGA_USDT, IOTX_USDT).
-   Bundled into trial 8 at owner instruction. Recorded confound: trial 8 now
-   tests TWO universe changes at once (band ranking + pre-filter), so a
-   negative result cannot be attributed to one of them.
+   Bundled into trial 8 at owner instruction.
    Rollback: `FUTURES_WILDCARD_RANGE_PREFILTER=0`.
+
+**On the two-changes-in-one-trial question (settled 2026-08-09).** Trial 8 does
+carry both universe changes, and the first write-up called that an
+unattributable confound. That was an overstatement, and renaming the trial
+would not have fixed it either — both changes are already live, so a new label
+is the same two-variable experiment with a different number on it.
+
+What was actually missing was a record of which side of each OLD gate every
+candidate sat on. Every wildcard candidate and every shadow row now carries:
+
+| field | meaning |
+|---|---|
+| `legacy_major` | was this symbol inside the pre-trial-8 raw top-30 by 24h turnover? |
+| `legacy_prefilter_ok` | would it have cleared the old `\|24h change\| >= 3%` screen? |
+
+Both are computed from data already in memory (one extra sort of the ticker
+list) and flow to the feature store, so a trial-8 verdict splits four ways
+after the fact — `legacy_major x legacy_prefilter_ok` — without running two
+90-day trials. A trade that is `legacy_major=True` was freed by the band fix; a
+trade that is `legacy_prefilter_ok=False` was freed by the range screen; one
+that is both was unreachable under either old rule alone.
+
+Note the two changes are not symmetric in risk: the range pre-filter is
+**lossless** (strictly a superset of the old pool — measured 11 -> 20, zero
+dropped), so it can only add candidates. Only the band ranking can remove one.
 
 **Measurement added (no reset):** the learning digest now runs a
 **missed-opportunity check** — the top 10 movers by 24h range in the tradeable

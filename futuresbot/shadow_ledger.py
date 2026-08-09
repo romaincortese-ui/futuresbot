@@ -89,8 +89,10 @@ def signal_tp_r(sig: Any) -> float:
         return TP_R
 
 
-def candidate_row(sig: Any, *, sleeve: str, reject_reason: str, lateness: float | None = None) -> dict[str, Any]:
+def candidate_row(sig: Any, *, sleeve: str, reject_reason: str, lateness: float | None = None,
+                  extra: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
+        **(extra or {}),
         "ts": round(time.time()),
         "symbol": sig.symbol, "side": sig.side, "sleeve": sleeve,
         "reject_reason": reject_reason,

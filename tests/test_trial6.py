@@ -985,3 +985,39 @@ def test_digest_carries_the_missed_check_when_supplied():
     assert "Y_USDT" in msg
     assert "🔎 x" in msg
     assert "Y_USDT" not in build_learning_digest([], [])
+
+
+def test_trial8_records_which_old_gate_each_candidate_sat_behind(rt):
+    """Trial 8 bundles two universe changes. Rather than run two 90-day trials,
+    every candidate records which side of each OLD gate it was on, so the
+    result can be split by change after the fact instead of being ambiguous."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert "legacy_majors = self._top_turnover_symbols(tickers, 30)" in src
+    assert '"legacy_major": bool(sym in legacy_majors)' in src
+    assert '"legacy_prefilter_ok"' in src
+
+    store = inspect.getsource(FuturesRuntime._append_feature_store)
+    assert '"legacy_major": md.get("legacy_major")' in store
+    assert '"legacy_prefilter_ok": md.get("legacy_prefilter_ok")' in store
+
+    shadow = inspect.getsource(FuturesRuntime._shadow_log_untaken)
+    assert "self._wildcard_attribution.get" in shadow
+
+
+def test_attribution_survives_a_symbol_the_scan_never_saw(rt):
+    """A signal from a path that did not populate the map must not raise."""
+    rt._wildcard_attribution = {}
+    from futuresbot.shadow_ledger import candidate_row
+
+    class _Sig:
+        symbol = "X_USDT"; side = "LONG"; entry_price = 1.0; sl_price = 0.9
+        tp_price = 1.5; leverage = 5; sl_margin_pct = 10.0; roc_pct = 0.09; rsi = 60.0
+
+    row = candidate_row(_Sig(), sleeve="WILDCARD", reject_reason="x", extra={})
+    assert row["symbol"] == "X_USDT"
+    assert "legacy_major" not in row
+    tagged = candidate_row(_Sig(), sleeve="WILDCARD", reject_reason="x",
+                           extra={"legacy_major": True, "legacy_prefilter_ok": False})
+    assert tagged["legacy_major"] is True and tagged["symbol"] == "X_USDT"
