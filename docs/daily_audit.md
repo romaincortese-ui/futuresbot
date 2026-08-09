@@ -1,3 +1,173 @@
+# Daily Audit — 2026-08-09
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Window 2026-08-08 16:10 -> 2026-08-09 16:10 UTC. Equity **$142.32**, available
+$142.32, **0 open positions**, 0 unrealized. `pytest -q` **781 passed**.
+
+### 1. Trades (1 close)
+
+| # | time | symbol | sleeve | side | lev | 1R (%margin) | R | net $ | exit reason |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 03:32 | AVAX_USDT | SNIPER | SHORT | x13 | 4.79 | **-0.01** | -0.0005 | CONVEX_RETENTION_TRAIL |
+
+Exchange `history_positions` returns exactly **1** in-window close; the feature
+store grew 52 -> **53**. Reconciles **1-for-1**. (Exchange realised +$0.0001 vs
+store -$0.0005 — sub-cent fee attribution, not a gap.) **WILDCARD: 0 closes,
+0 opens.** PMT: 0, `entries_disabled (FUTURES_ENTRY_MIN_SCORE>=999)` on every
+cycle. Squeeze: `FUTURES_SQUEEZE_ENABLED=0`, sleeve OFF.
+
+**AVAX is the trade that wrote today's DECISION_RULE amendment**, and it is
+already diagnosed there: peak **+1.6767R**, retention floor 0.30 x 1.68 =
+**+0.50R gross**, sniper round-trip cost `0.190% / 0.368% = 0.52R` — the floor
+sat *below the sleeve's own breakeven*, so a 1.7R peak banked -$0.0005 over
+5.25h. Tripwires **1** (armed close <= $0) and **2** (retention bank < +0.15R)
+both fired; both attribute to the sleeve-misapplication defect, not to the
+retention rule. Fix (sleeve separation + `1.5 x cost_R` floor) deployed
+**16:05 UTC today**, deployment `d38e3406` SUCCESS, cycle counter restarted
+clean, no Traceback, ACCOUNT line healthy.
+
+### 1-OPEN. Open positions
+
+**None.** Nothing held at any point in the window after 03:32.
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** 53 rows, in sync with the exchange ledger.
+
+**(b) Conditional expectancy** (n=53, window 06-27..08-09, mean +$0.223,
+meanR +0.237, win 43.4%) — verdicts with n>=10 both sides, **propose-only**:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold>=120min | **FAVOR** | +1.860 | 31 / +0.995 / 64.5% | 22 / -0.865 / 13.6% |
+| side=SHORT | FAVOR | +0.790 | 19 / +0.730 / 47.4% | 34 / -0.060 / 41.2% |
+| leverage<=4 | FAVOR | +0.152 | 20 / +0.318 / 50.0% | 33 / +0.166 / 39.4% |
+| regime_trimmed (mult<1) / chop | AVOID | -0.532 | 28 / -0.028 / 39.3% | 25 / +0.504 / 48.0% |
+| regime_trimmed_hard (<0.5) | AVOID | -0.550 | 16 / -0.161 | 37 / +0.389 |
+| leverage>=7 | AVOID | -0.450 | 23 / -0.032 | 30 / +0.418 |
+| fee_heavy>=30% | AVOID | -0.276 | 11 / +0.004 | 42 / +0.280 |
+
+`hold>=120min` is the standout and is the same fact as `leverage>=7 AVOID` and
+`fee_heavy AVOID` seen from three angles: **short-held, high-leverage,
+fee-dominated trades are where the money goes.** Every live sniper fill is
+x13 and sub-20min.
+
+**(c) Shadow ledger** — 80 rows.
+
+*veto:\** 11 rows / 10 resolved / **netR +10.94** — i.e. the external gate is
+*costing*, and the >=10-resolved bar is met. But the aggregate is misleading;
+split by sleeve it is **opposite-signed**:
+
+| veto | sleeve | n | netR | reading |
+|---|---|---|---|---|
+| ref_not_listed | WILDCARD | 5 | **-2.06** | **PROTECTIVE — keep** |
+| ref_not_listed | SQUEEZE | 4 | **+8.00** | costly (all 4 tokenized equity/commodity) |
+| move_not_corroborated | WILDCARD | 1 | +5.00 | ON_USDT |
+| crowded_longs | WILDCARD | 1 | unresolved | BTW_USDT, today |
+
+The squeeze half is a **mechanism**, not a sample: SKHYSTOCK, SPCXSTOCK, USOIL,
+SNDKSTOCK can never be listed on a crypto reference exchange, so
+`ref_not_listed` structurally excludes the entire tokenized-equity class from
+the squeeze sleeve — a permanent 100% veto rate, not a filter. n=4 is below the
+proposal bar and squeeze is OFF, so this is **recorded, not proposed**. Revisit
+if squeeze is re-enabled.
+
+*slot_occupied* — 17 rows, all resolved, netR +7.77. Split at the 2-slot ship
+(2026-07-31): **pre** WILDCARD n=10 +2.77R, SQUEEZE n=6 **+0.00R exactly**;
+**post** WILDCARD **n=1** (+5.00R, HEI 08-05). The second wildcard slot
+**already absorbed the opportunity cost** — 1 blocked candidate in 9 days. No
+evidence for a 3rd wildcard slot; the squeeze slot-lock is exactly neutral.
+Answering the recurring question directly: **not missing out.**
+
+*SNIPER shadow, cost-adjusted* — **n=46, gross +15.55R (avg +0.338R/trade),
+net-of-cost -2.16R (avg -0.047R/trade)**, applying the repo's own 0.190%
+round-trip constant per row as `0.190 x lev / sl_margin_pct`. The live arm
+agrees: 5 fills, **-2.88R / -$0.147**. The sleeve's own log line already says
+`mode=LIVE (SIGNAL-STUDY ONLY: not viable at taker fees)`.
+
+**(d) Scan telemetry.** Wildcard funnel: 970 usdt -> (non_crypto -271,
+major -26) in_band=673 -> turnover>=3M: 44 -> |24h|>=3%: 22-24 -> scanned ->
+**candidates 0**. Histogram dominated by **roc_below_min (17-18 of ~23)**, then
+`no_pullback_resume` (4-5), `climax_wick`/`low_volume_z` (1). No `SIZE_TRIM`
+lines. **No order rejects (5003/2015) — no execution bug.**
+
+At 16:01 the mover count collapsed **23 -> 0** and stayed there. Verified
+independently against the MEXC ticker at 16:14: **3 symbols market-wide** pass
+|24h| >= 3% (JIMOTHY -4.6%, ACE +4.2%, KAITO -3.4%), 84 pass turnover. This is
+a genuine market-wide compression as yesterday's move rolls out of the trailing
+24h window, **not a data outage** — the wildcard is not blind.
+
+**(e) Decision rule — TRIAL 7.** **1/30 wildcard closes in-trial**
+(BTW_USDT +0.53R / +$0.65). BICO excluded (`trail_migrated`). netR **+0.53**,
+**ex-best 0.00**, max DD negligible. Far too early for any verdict.
+`USE_DRAWDOWN_KILL` is now **1** (was the 07-17 override at 0) — resolved.
+
+### 1b. Wildcard diagnosis
+
+0 trades and **that is correct behaviour**, but the sleeve was *not* idle: it
+produced exactly one qualified candidate today — **BTW_USDT LONG, 3h ROC
++24.3%, lateness 1.0, 14:44 UTC — blocked by `veto:crowded_longs
+(funding=0.150%)`**, the second BTW appearance in two days (the first was
+traded 08-08 for +$0.65). Unresolved; it is the single most informative pending
+row in the ledger, since `ref_not_listed` on wildcard is measured protective
+but `crowded_longs` has n=1.
+
+**Do NOT loosen any gate.** With 3 movers existing market-wide, loosening does
+not find trades, it manufactures losses. Dominant rejection is `roc_below_min`
+against an 8% bar in a market whose top mover is 4.6%.
+
+### 2. Champion vs shadow
+
+**Shadow stale, comparison suppressed pending resync.**
+
+### 3. Lever
+
+**PROPOSE (operator-gated, not applied): `FUTURES_SNIPER_SHADOW_ONLY=1`.**
+
+The amendment ordered the sniper to restart a 25-fill live count. The 46-row
+shadow ledger already answers the question that count would buy: the signal is
+**gross-positive (+0.338R/trade) and net-negative (-0.047R/trade)** once the
+sleeve's own cost constant is applied — a fee/execution problem, not a signal
+problem. Every sniper signal is shadow-logged *before* the live order is
+attempted, so shadow-only **loses zero information** while removing the taker
+drag. Paying the live arm to re-derive this costs ~-$0.7 over 25 fills at the
+current $0.03/R scale — small, but bought with nothing.
+
+The honest counter, stated: shadow outcomes are directional-only counterfactuals
+at fixed +2R/-1R and are not fills, and -0.047R/trade is close enough to zero
+that the correct conclusion is "the edge is exactly the size of the cost."
+That argues for a **maker/limit-entry sniper variant** rather than deletion.
+Recommendation: shadow-only **until** a maker-entry path exists, then re-arm.
+
+### 4. Validate
+
+`pytest -q` 781 passed. No replay/MC run — no exit or sizing candidate was
+promoted. No entry change (frozen). Nothing staged on shadow (stale).
+
+### 5. Deploy
+
+**None by this audit.** The sleeve-separation fix (`eb1eee6`, `e013d0d`) was
+deployed at 16:05 UTC before this run and is verified live and green.
+
+**ACTION ITEM (repo hygiene):** both commits are **local-only — `main` is ahead
+of `origin/main` by 2** while running as live champion code. `git push` to
+restore origin as the recoverable source of what is live. Not self-applied
+(no promotion in this audit).
+
+**ACTION ITEM (carried):** resync Futures-shadow to champion HEAD
+(`railway up --service Futures-shadow`, paper, zero live risk).
+
+### 6. Verdict
+
+1 close, -0.01R, on the sleeve whose defect was fixed the same day. Wildcard
+correctly dormant with one funding-vetoed candidate. Trial 7 at 1/30. The one
+new fact worth carrying: **the slot-cost question is now answered — the 2nd
+wildcard slot took the opportunity cost to ~zero (1 blocked candidate in 9
+days), and the sniper's edge is exactly the size of its fees at n=46.**
+
 # Daily Audit — 2026-08-08
 
 ---
