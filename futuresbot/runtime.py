@@ -220,6 +220,8 @@ class FuturesRuntime:
         self._last_prediction_overlay_error_at = 0.0
         self._last_prophet_archive_at = 0.0
         self._last_wildcard_scan_at = 0.0
+        # symbol -> (sampled_at, deflator). See _turnover_deflator.
+        self._turnover_baseline: dict[str, tuple[float, float]] = {}
         # Last wildcard scan funnel, kept for /status. Previously the funnel and
         # the reject histogram existed only as Railway log lines: a 24.3% mover
         # could be found and vetoed 15 min before a /status that said
@@ -4280,8 +4282,8 @@ class FuturesRuntime:
             # Band focus (backtested 60d+21d, outlier-robust): the wildcard's edge
             # lives in the SMALL-CAP band. On a major, +8% IS the move; on a
             # small cap it's the beginning. Top-turnover names stay squeeze turf.
-            exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 30.0))
-            majors = self._top_turnover_symbols(tickers, exclude_top)
+            exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0))
+            majors = self._major_symbols(tickers, exclude_top)
             # Funnel telemetry. A 92h replay of the SAME detector over the SAME
             # band found 48 full signals while the live scan reported
             # candidates=0 on every pass, so we count survivors at each stage
@@ -4302,7 +4304,7 @@ class FuturesRuntime:
                 # across equity-market closes and weekends, which is a different
                 # instrument class from a 24/7 perp, and their ATR-derived stops
                 # are meaningless against that gap risk.
-                if not _is_crypto_usdt_symbol(sym, None):
+                if not self._is_tradeable_crypto(sym):
                     funnel["non_crypto"] += 1
                     continue
                 # Capacity telemetry: these two were collapsed into one skip, so
@@ -4535,7 +4537,7 @@ class FuturesRuntime:
 
     @staticmethod
     def _top_turnover_symbols(tickers: list, n: int) -> set[str]:
-        """Top-n USDT perps by 24h turnover — the liquid 'majors' band."""
+        """Legacy raw-24h ranking. Kept only as the rollback path."""
         if n <= 0:
             return set()
         ranked = sorted(
@@ -4544,6 +4546,105 @@ class FuturesRuntime:
             reverse=True,
         )
         return {sym for _turn, sym in ranked[:n]}
+
+    @staticmethod
+    def _is_tradeable_crypto(symbol: str) -> bool:
+        """universe._is_crypto_usdt_symbol PLUS the sniper's category rules.
+
+        The two filters disagreed and the weaker one guarded the wildcard:
+        _is_crypto_usdt_symbol matches an exact base or "STOCK", so it drops
+        SPX500 and SNDKSTOCK but passes XAU, SPY, SOXL, JP225, KOSPI, TESLA,
+        ANTHROPIC and OPENAI. sniper.symbol_allowed matches at either END of the
+        base, which is what actually catches them. Tokenised equities gap across
+        market closes and weekends — the exact hazard an ATR-derived stop cannot
+        price — so the stricter rule is the correct one for both sleeves.
+        """
+        from futuresbot.sniper import symbol_allowed as _sniper_allowed
+
+        if not _is_crypto_usdt_symbol(symbol, None):
+            return False
+        base = symbol.upper().replace("_USDT", "")
+        excluded = ("XAU", "XAG", "GOLD", "SILVER", "USOIL", "UKOIL", "NGAS", "STOCK",
+                    "SPY", "SOXL", "SOXS", "JP225", "KOSPI", "HK50", "SPX", "NAS",
+                    "US30", "XPT", "XPD", "ZINC", "SMH", "KORU", "DRAM")
+        return not any(base.startswith(p) or base.endswith(p) for p in excluded)
+
+    def _turnover_deflator(self, symbol: str) -> float:
+        """How inflated is this symbol's 24h turnover by TODAY specifically?
+
+        Returns ``median(last 7 complete days' turnover) / (last complete day's
+        turnover)``, computed from the symbol's OWN daily bars so contract size
+        cancels in the ratio and the result is a pure, cross-comparable
+        multiplier. ~1.0 for a symbol trading normally; well under 1.0 for one
+        having an exceptional day.
+
+        Cached, because a baseline moves on a scale of days and the scan runs
+        every 15 minutes."""
+        now_t = time.time()
+        hit = self._turnover_baseline.get(symbol)
+        ttl = max(1.0, self._env_float("FUTURES_WILDCARD_BASELINE_CACHE_HOURS", 12.0)) * 3600.0
+        if hit is not None and now_t - hit[0] < ttl:
+            return hit[1]
+        ratio = 1.0
+        try:
+            df = self.client.get_klines(symbol, interval="Day1",
+                                        start=int(now_t) - 12 * 86400, end=int(now_t))
+            # Drop the still-forming final bar: comparing a partial day against
+            # complete ones would report every symbol as quiet.
+            turn = [float(c) * float(v) for c, v in zip(df["close"], df["volume"])][:-1]
+            turn = [x for x in turn if x > 0][-7:]
+            if len(turn) >= 4:
+                med = sorted(turn)[len(turn) // 2]
+                last = turn[-1]
+                if last > 0 and med > 0:
+                    # CLAMPED AT 1.0 — the correction is one-sided because the
+                    # distortion is. Turnover is inflated BY a move, so the rule
+                    # may only ever DEMOTE a symbol trading above its baseline;
+                    # letting it promote a quiet one made BNB tradeable and
+                    # ranked SOXL (a tokenised ETF whose weekend volume goes to
+                    # zero, deflator 16.98) as a crypto major.
+                    ratio = min(1.0, med / last)
+        except Exception:
+            ratio = 1.0                      # fail-open: behave like the old rule
+        self._turnover_baseline[symbol] = (now_t, ratio)
+        return ratio
+
+    def _major_symbols(self, tickers: list, n: int) -> set[str]:
+        """The 'majors' band the wildcard stays out of.
+
+        Two defects fixed 2026-08-09 (trial 8):
+
+        1. ENDOGENOUS RANKING. Ranking on raw 24h turnover excluded symbols in
+           proportion to how hard they had just moved — turnover IS created by
+           the move. TUT_USDT sat at rank 12 with $76M *because* it was +19% on
+           the day; every genuine major in the same band moved under 2%. The
+           rule was not selecting a liquidity band, it was removing whichever
+           small caps had just done the thing the sleeve exists to catch.
+           Turnover is now deflated by the symbol's own 7-day baseline, so a
+           one-day spike no longer promotes a small cap into the majors.
+
+        2. NON-CRYPTO ATE THE SLOTS. The ranking ran on the raw ticker list, so
+           tokenised equities (SKHYNIXSTOCK, SPCXSTOCK, SILVER, MUSTOCK,
+           SPX500 — six of the top 30) consumed exclusion slots for symbols the
+           crypto filter drops anyway. "Top-30" never meant top-30 crypto.
+        """
+        if n <= 0:
+            return set()
+        if not self._flag("FUTURES_WILDCARD_TURNOVER_BASELINE", default=True):
+            return self._top_turnover_symbols(tickers, n)
+        rows = [(float(t.get("amount24") or 0.0), str(t.get("symbol") or ""))
+                for t in tickers
+                if str(t.get("symbol") or "").endswith("_USDT")
+                and self._is_tradeable_crypto(str(t.get("symbol") or ""))]
+        rows.sort(reverse=True)
+        # Deflate only the shortlist that could plausibly land in the band. A
+        # symbol far below the cut cannot be promoted by deflation (the
+        # multiplier is <= ~1), so its baseline is never worth an API call.
+        pool_mult = max(1.0, self._env_float("FUTURES_WILDCARD_BASELINE_POOL_MULT", 2.0))
+        shortlist = rows[:int(n * pool_mult)]
+        scored = sorted(((turn * self._turnover_deflator(sym), sym)
+                         for turn, sym in shortlist), reverse=True)
+        return {sym for _turn, sym in scored[:n]}
 
     @staticmethod
     def _sleeve_kind(position: "FuturesPosition | None") -> str:

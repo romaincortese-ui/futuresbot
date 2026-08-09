@@ -1,3 +1,115 @@
+# Pre-registered decision rule — CONVEX TRIAL 8 (from 2026-08-09)
+
+## Trial 7 CLOSED at n=2 in-trial closes, ~47h. Not a performance verdict.
+
+| | |
+|---|---|
+| Closes | 2 / 30 — BICO +$1.168 / 0.42R (migrated, excluded); BTW +$0.646 / 0.53R |
+| Net | +$1.81, +0.95R, 2/2 wins, both `CONVEX_RETENTION_TRAIL` |
+| Tripwires | TW1 0 of 2 armed closes <= $0 PASS; TW2 2 of 2 >= +0.15R PASS; TW3/TW4 unreadable at n=2 |
+| Scoreable n | **1** — BICO was pre-registered as excluded (migrated from trial 6.5) |
+
+Closed by owner decision on a **discovered defect in universe construction**,
+not on results. The retention trail is UNCHANGED and carries into trial 8; its
+2-for-2 record is not evidence either way at n=1.
+
+## The trial-7 lesson: the majors exclusion was endogenous
+
+`_top_turnover_symbols` ranked the raw ticker list by **24-hour** turnover. But
+turnover is *created by* the move, so the rule removed symbols in proportion to
+how hard they had just run — the exact event the sleeve exists to catch.
+
+Measured on the live book, 2026-08-09, against that day's top gainers:
+
+| symbol | 24h turnover | rank | 24h move | outcome |
+|---|---|---|---|---|
+| TUT_USDT | $76.7M | **12** | +19.31% | excluded — 2 clean LONG signals lost |
+| SKYAI_USDT | $58.0M | 15 | -13.12% | excluded |
+| BICO_USDT | $39.5M | 18 | +6.53% | excluded — 1 LONG signal lost |
+| CYS_USDT | $18.1M | 28 | +11.24% | excluded |
+| ADA / DOGE / AVAX / LINK / DOT / UNI | — | 16-29 | **all < 2%** | genuine majors |
+
+Turnover rank could not separate "a major" from "a small cap having a big day",
+because the second one *becomes* high-turnover by having the day.
+
+Second defect, same function: the ranking ran BEFORE the crypto filter, so
+tokenised equities (SKHYNIXSTOCK, SPCXSTOCK, SILVER, MUSTOCK, SPX500 — six of
+the top 30) consumed exclusion slots. "Top-30" never meant top-30 crypto.
+
+## Changes under test in trial 8
+
+**Treatment (the reset):**
+
+1. **Majors ranked on baseline turnover, not today's.** `_major_symbols`
+   deflates each symbol's 24h turnover by its own 7-day baseline, derived from
+   its own daily bars so contract size cancels in the ratio:
+   `deflator = min(1.0, median(last 7 complete days) / last complete day)`.
+   **Clamped at 1.0 — the correction is one-sided because the distortion is.**
+   Unclamped it also *promoted* quiet symbols: SOXL (a tokenised ETF whose
+   weekend volume goes to zero) scored a 16.98x deflator and outranked every
+   crypto major, and BNB became tradeable. Cached 12h; fails open to the old
+   behaviour on any kline error.
+2. **Ranking and scanning both use the strict category filter.**
+   `_is_tradeable_crypto` = `universe._is_crypto_usdt_symbol` **plus** the
+   sniper's end-matching prefix rules. The weaker filter guarded the wildcard
+   and passes XAU, SPY, SOXL, JP225, KOSPI, TESLA, ANTHROPIC, OPENAI — XAU_USDT
+   produced trial 4's worst trade (-3.79R in 60s on a 0.28% stop) and would
+   have become scannable the moment it stopped occupying an exclusion slot.
+3. **`FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER` 30 -> 24.** NOT a tuning move:
+   holding the treatment constant while fixing how it is measured. The old
+   top-30 spent ~6 slots on tokenised equities, so it excluded ~24 crypto
+   names. Ranking crypto-only at 30 would have silently WIDENED the exclusion
+   and made BMT_USDT (+35.49% that day, raw rank 38) untradeable.
+
+**Unchanged from trial 7:** retention trail (arm +1R, floor 0.30xpeak,
+ratchet-only, cost-floored), 24h convex clock, long-only, 2 slots, risk dial
+ON, +5R TP, 3.0xATR stop capped at 20% of margin.
+
+## What this measurably does and does not fix
+
+Validated against the live book at deploy time:
+
+- **TUT_USDT: FIXED.** Falls out of the excluded band entirely.
+- **BMT_USDT: PRESERVED** as tradeable (would have been lost at n=30).
+- **BICO_USDT: STILL EXCLUDED**, at deflated rank 17 of 24. Recorded honestly:
+  under a *correct* rule BICO is a major — $39.5M turnover, 0.71 deflator,
+  $28.0M baseline. Catching it needs the count at <= 16, which would be fitting
+  to a single symbol on a single day. **Not done.**
+- **BNB_USDT: known artifact.** A single above-median day gives it a 0.75
+  deflator and it lands at rank 26, i.e. tradeable. Self-corrects as the
+  baseline window rolls. Harmless in practice: BNB sits in the BTC/ETH/SOL
+  cohort, which breached |3h ROC| >= 8% **zero times in 1717 windows** over 18
+  days of cached bars.
+
+## Not changed, and why (from the same day's evidence)
+
+- **$3M turnover floor** (cost TST_USDT, $1.82M). Kept. EPIC_USDT produced no
+  signal at all, so one symbol is the entire case, and the floor is what keeps
+  fills honest on a $142 account.
+- **Long-only** (cost IOTX_USDT, a SHORT signal). Kept — it is the one gate
+  already accruing evidence: shadow rows now read **+2.23R over 4** under the
+  live exit policy (was +0.78R under the retired bracket). Pre-registered bar
+  is n >= 20. It will answer itself.
+- **The 24h pre-filter screening a 3h trigger** (`FUTURES_WILDCARD_MIN_24H_MOVE`
+  vs `FUTURES_WILDCARD_MIN_ROC`) — a symbol that runs +30% in 3h and retraces
+  never re-enters the pool, and the filter admitted 8 of 970 symbols at 17:20
+  on 2026-08-09. This is a REAL defect and is deliberately NOT bundled: it
+  would confound the universe change under test. **Highest-priority candidate
+  for trial 9**, to be replayed on the harness first.
+
+## Scoring — unchanged bars
+
+30 WILDCARD closes or 90 days, whichever first. Tripwires, robustness bars
+(day-clustered t, leave-one-month-out, top-3 haircut, family-wise null) and
+rollbacks all carry over from trial 7 verbatim. New rollback:
+`FUTURES_WILDCARD_TURNOVER_BASELINE=0` restores raw-24h ranking.
+
+**Freeze discipline.** This is the 4th reset in ~10 days and the fourth trial
+to score zero verdicts. It was taken on a defect, not a preference — but the
+count is recorded here so the next reset has to argue against it.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 7 (from 2026-08-07)
 
 Trial 6.5 CLOSED at **n=0 in-trial closes** after ~20h. Not a performance

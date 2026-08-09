@@ -351,7 +351,7 @@ def test_wildcard_scan_excludes_tokenised_equities():
     assert _is_crypto_usdt_symbol("NVIDIA_USDT", None) is False
     assert _is_crypto_usdt_symbol("BTW_USDT", None) is True
     src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
-    assert "_is_crypto_usdt_symbol" in src, "wildcard scan still admits non-crypto"
+    assert "_is_tradeable_crypto" in src, "wildcard scan still admits non-crypto"
 
 
 def test_feature_store_row_carries_the_trial6_columns():
@@ -816,3 +816,80 @@ def test_status_states_decommissioned_sleeves_exactly_once(rt):
     src = inspect.getsource(FuturesRuntime._build_status_message)
     assert src.count("PMT ⛔ decommissioned") == 0, "the standalone PMT line is gone"
     assert "off = [n for n, on in" in src
+
+
+# --------------------------------------------------------------------------
+# trial 8: the majors band (2026-08-09)
+# --------------------------------------------------------------------------
+
+def _tick(sym, turn, move=0.0):
+    return {"symbol": sym, "amount24": turn, "riseFallRate": move}
+
+
+def test_turnover_ranking_no_longer_promotes_a_symbol_for_moving(rt, monkeypatch):
+    """THE DEFECT. Turnover is CREATED by the move, so ranking on raw 24h
+    turnover excluded symbols in proportion to how hard they had just run.
+    TUT_USDT sat at rank 12 with $76M *because* it was +19% that day, while
+    every genuine major in the same band moved under 2%."""
+    ticks = [_tick("BTC_USDT", 1_700_000_000), _tick("ETH_USDT", 1_000_000_000),
+             _tick("SPIKE_USDT", 76_000_000, 0.19), _tick("CALM_USDT", 40_000_000)]
+    # SPIKE traded 10x its baseline today; everyone else is at baseline
+    monkeypatch.setattr(rt, "_turnover_deflator",
+                        lambda sym: 0.1 if sym == "SPIKE_USDT" else 1.0)
+    majors = rt._major_symbols(ticks, 3)
+    assert "SPIKE_USDT" not in majors, "a one-day spike still promotes a small cap"
+    assert {"BTC_USDT", "ETH_USDT", "CALM_USDT"} == majors
+
+
+def test_the_deflator_can_only_demote_never_promote(rt, monkeypatch):
+    """One-sided by construction, because the distortion is. An unclamped ratio
+    ranked SOXL — a tokenised ETF whose weekend volume goes to zero, deflator
+    16.98 — above every crypto major, and made BNB tradeable."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._turnover_deflator)
+    assert "min(1.0, med / last)" in src
+
+
+def test_majors_ranking_is_crypto_only(rt, monkeypatch):
+    """Six of the raw top 30 were tokenised equities, so exclusion slots were
+    spent on symbols the scan drops anyway — "top-30" never meant top-30
+    crypto."""
+    monkeypatch.setattr(rt, "_turnover_deflator", lambda sym: 1.0)
+    ticks = [_tick("SKHYNIXSTOCK_USDT", 900_000_000), _tick("XAU_USDT", 800_000_000),
+             _tick("BTC_USDT", 700_000_000), _tick("ALT_USDT", 1_000_000)]
+    assert rt._major_symbols(ticks, 2) == {"BTC_USDT", "ALT_USDT"}
+
+
+def test_synthetic_commodity_perps_cannot_be_scanned(rt):
+    """XAU_USDT passes universe._is_crypto_usdt_symbol and produced trial 4's
+    worst trade (-3.79R in 60s on a 0.28% stop). Once it stopped occupying an
+    exclusion slot it would have become scannable."""
+    assert rt._is_tradeable_crypto("XAU_USDT") is False
+    assert rt._is_tradeable_crypto("SOXL_USDT") is False
+    assert rt._is_tradeable_crypto("JP225_USDT") is False
+    assert rt._is_tradeable_crypto("QBTSSTOCK_USDT") is False
+    assert rt._is_tradeable_crypto("BTW_USDT") is True
+    assert rt._is_tradeable_crypto("TUT_USDT") is True
+
+
+def test_deflator_fails_open_to_the_old_behaviour(rt, monkeypatch):
+    """A kline failure must not silently reclassify the whole universe."""
+    class _Boom:
+        def get_klines(self, *a, **k):
+            raise RuntimeError("api down")
+
+    rt.client = _Boom()
+    rt._turnover_baseline = {}
+    assert rt._turnover_deflator("X_USDT") == 1.0
+
+
+def test_the_exclusion_count_holds_the_treatment_constant(rt):
+    """Ranking crypto-only at 30 would have WIDENED the exclusion by the ~6
+    slots the tokenised equities used to occupy, silently making BMT_USDT
+    (+35% that day, raw rank 38) untradeable. 24 preserves the effective
+    breadth; the ranking method is what changed, not the count."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert 'FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0' in src
