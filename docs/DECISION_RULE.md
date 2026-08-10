@@ -1,3 +1,30 @@
+# STANDING OBJECTIVE (owner directive, 2026-08-10)
+
+**Every change is justified by expected $ P&L.** Not R, not coverage, not
+signal count, not elegance. Before proposing a change, state: the $ per trade,
+the trades per month, and the edge assumed. If the answer is "under $10/month
+either way", say so and drop it.
+
+The arithmetic that governs it, at the time of writing:
+
+| | |
+|---|---|
+| 1R | **$2.66** — `risk_pct x equity` = 1.87% x $142. The risk dial makes this identical on EVERY symbol, so "that market is too small to be worth trading" is not a valid objection in this design |
+| entries | ~0.7/day now; slot-capped at 2/day by 2 slots x the 24h clock |
+| monthly envelope | **-$11 to +$22** at 21 trades; **-$32 to +$64** at 60, for edges of -0.2R to +0.4R |
+
+**The uncomfortable consequence:** at this account size no change moves
+materially more dollars. More trades widens the envelope in BOTH directions —
+it does not tilt it. Only a positive per-trade edge tilts it, and after seven
+trials that edge has never been scored.
+
+Therefore the highest-$ work is whatever shortens **time-to-verdict**, because
+a proven +0.4R/trade is +$64/mo at $142 and +$450/mo at $1,000. Widening the
+funnel on an unmeasured edge is not a P&L improvement; it is a variance
+increase wearing one's clothes.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 10 (from 2026-08-10)
 
 ## Trial 9 closed at 0 closes after 1.5h. It tested nothing.
