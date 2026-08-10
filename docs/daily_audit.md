@@ -1,3 +1,205 @@
+# Daily Audit — 2026-08-10
+
+---
+
+## Automated Assessment (UTC 16:45)
+
+Window 2026-08-09 16:30 -> 2026-08-10 16:45 UTC. Equity **$142.35**, available
+$142.35, **0 open positions**, 0 unrealized. `pytest -q` **833 passed**.
+
+### 1. Trades (3 closes, all SNIPER)
+
+| # | time UTC | symbol | side | lev | 1R (%margin) | R net | R gross | net $ | exit |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 08-09 23:30 | LINK_USDT | SHORT | x13 | 4.92 | **+1.72** | +2.14 | +0.0377 | bracket TP (2R) |
+| 2 | 08-10 12:49 | HYPE_USDT | LONG | x13 | 7.69 | **-1.33** | -1.06 | -0.0434 | stop |
+| 3 | 08-10 15:24 | XRP_USDT | SHORT | x13 | 4.54 | **+1.60** | +2.06 | +0.0403 | bracket TP (2R) |
+
+Net **+$0.0346**, **netR +1.99**, 2/3 wins. Exchange `history_positions`
+returns exactly **3** in-window closes; the feature store grew 53 -> **56**.
+Reconciles **3-for-3** (realised matches to the sub-cent).
+
+**WILDCARD: 0 closes, 0 opens.** PMT: 0, `entries_disabled` on every cycle.
+Squeeze: `FUTURES_SQUEEZE_ENABLED=0`, sleeve OFF.
+
+**Sniper ledger, n=8: netR -0.90, net -$0.1126, 3/8 wins.** The shape is the
+whole story and it is consistent across all eight: every win undershoots the
++2R target (+1.32, +1.60, +1.72) and every loss overshoots the -1R stop
+(-1.11, -1.33, -1.45, -1.64). A designed 2:1 bracket is realising ~1.55 : 1.38
+= **1.12:1**, which needs a **47%** win rate; live is 37.5%. The sleeve's own
+scan line already says so — `mode=LIVE (SIGNAL-STUDY ONLY: not viable at taker
+fees)` — and it runs notional-capped at 5%, so each trade risks ~$0.03. n=8 is
+below the >=10 bar for a disable proposal. **No proposal; keep observing.**
+
+### 1-OPEN. Open positions
+
+**None.** Nothing held at the close of the window.
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** 56 rows, in sync with the exchange ledger.
+
+**(b) Conditional expectancy** (n=56, window 06-27..08-10, mean +$0.212,
+meanR +0.26, win 44.6%) — OOS-consistent verdicts, **propose-only**:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold>=120min | **FAVOR** | +1.758 | 32 / +0.965 / 65.6% | 24 / -0.793 / 16.7% |
+| roc>=12pct | FAVOR | +1.302 | 9 / +1.304 / 66.7% | 47 / +0.002 / 40.4% |
+| side=SHORT | FAVOR | +0.724 | 21 / +0.664 / 52.4% | 35 / -0.060 / 40.0% |
+| leverage<=4 | FAVOR | +0.165 | 20 / +0.318 / 50.0% | 36 / +0.153 / 41.7% |
+| regime_trimmed / chop | AVOID | -0.507 | 30 / -0.024 / 43.3% | 26 / +0.483 / 46.2% |
+| regime_trimmed_hard (<0.5) | AVOID | -0.522 | 16 / -0.161 | 40 / +0.361 |
+| leverage>=7 | AVOID | -0.445 | 26 / -0.027 | 30 / +0.418 |
+| side=LONG | AVOID | -0.724 | 35 / -0.060 | 21 / +0.664 |
+| fee_heavy>=30pct | AVOID | -0.258 | 11 / +0.004 | 45 / +0.262 |
+
+Unchanged in direction from 08-09 and unchanged in meaning: **short-held,
+high-leverage, fee-dominated trades are where the money goes**, and every live
+sniper fill is x13 and sub-3h. `side=LONG AVOID` strengthened this window
+(HYPE, the one loss, was the only long).
+
+**(c) Shadow ledger** — 90 rows.
+
+*veto:ref_not_listed* — 10 rows / 9 resolved / **netR -2.77 net of cost**.
+**This is a sign flip against yesterday's reading and it is a correction, not
+new data.** The 08-09 audit reported the squeeze half at **+8.00R** ("costly")
+off *gross* counterfactuals; commit `fbb9e85` now scores veto counterfactuals
+net of cost under the live exit, and both halves go negative:
+
+| half | n resolved | netR (cost-net) | reading |
+|---|---|---|---|
+| SQUEEZE synthetics (SKHY/SPCX/USOIL/SNDK) | 4 | **-0.63** | protective |
+| WILDCARD alts (KOMA/SKYAI x2/CATE/SYN) | 5 | **-2.14** | protective |
+
+The >=10-resolved bar is essentially met (9 of 10; TST_USDT still open). The
+external gate is **earning its keep on both sleeves** — no relaxation proposal,
+and the 08-09 "structurally excludes tokenised equities from squeeze" note
+should be read as a *mechanism* observation only, not as a cost.
+
+*slot_occupied* — 17 rows, all resolved, **netR +5.36 net** (+10.86 gross).
+Post-2-slot-ship (07-31) it is still **n=1** (HEI_USDT +4.99R, 08-05). Nothing
+new this window; the 2nd slot remains un-adjudicated.
+
+*min_vol_skip* — 11 rows, 11 resolved, **netR +8.04** — now the single largest
+opportunity cost in the ledger and past the >=10 bar. These are candidates
+rejected because one contract exceeded the sized margin, i.e. **the account is
+too small to take them**, not a strategy rejection. Not fixable by any tunable
+under this mandate (it resolves with account size). Recorded for the operator.
+
+*SNIPER_FAST shadow* — 40 resolved, gross +12.85R, **net +3.72R**, 20 wins,
+kinds tp 15 / stop 18 / timeout 7. The shadow's cost model is well calibrated
+against the live fills (it predicted LINK +1.498R vs +1.72R actual, XRP
++1.456R vs +1.60R, HYPE -1.321R vs -1.33R). Note the shadow logs sniper signals
+that WERE taken live under `shadow_only`, so those 40 rows are not a clean
+untaken-counterfactual set — 8 of them are the live trades. Recorded.
+
+**(d) Decision rule.** Trial 8: **0 / 30** convex closes (opened 08-09; the
+wildcard has produced no candidate since). Convex since 07-13: n=27,
+netR **+1.65**, ex-best **-3.44**, net **+$8.45**. Max drawdown across the
+feature-store window **-0.41%**, far inside the 30% criterion and the 20% flag.
+`USE_DRAWDOWN_KILL=1`, `DRAWDOWN_HALT_PCT=0.25` — unchanged.
+
+### 1b. Wildcard — diagnose
+
+Funnel (identical across all 4 scans in the window):
+
+```
+usdt=971 -> (non_crypto -289, symbol_open -0, major -24) -> in_band=658
+       -> turnover>=$3M: 49 -> range24>=8%: 22 -> scanned=22 -> candidates=0
+```
+
+Rejection histogram: `roc_below_min` 18, `no_pullback_resume` 2-6,
+`low_volume_z` 2. **Zero entry failures** — no 5003/2015, no Traceback in the
+window. The trial-8 machinery is confirmed working end to end: the range
+pre-filter is holding the pool at **19-22** (it was 8-11 on the old
+`|24h change|>=3%` screen), the majors band deflates on baseline turnover and
+removes 24, and the strict category filter drops 289 non-crypto **before**
+ranking. Dormancy cause is regime — nothing in the band posted an 8% 3h ROC.
+**Correct behaviour; no gate loosened.**
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 3-4. Lever and validation — `exit_kind` scored against the wrong target
+
+`_classify_exit_kind` measured every close against a hardcoded **5R**, but the
+sniper brackets at **2R**. Its completed TPs land at ~+1.6R net and were all
+filed **OTHER**. With 8 sniper closes now in the store the pooled census read:
+
+| | TP | STOP | OTHER |
+|---|---|---|---|
+| pooled, as recorded | **0** | 6 | **10** |
+
+That is 16 instrumented closes with 0% TP and OTHER dominant — which **already
+satisfies the pre-registered TP-completion tripwire** ("TP completions <10% over
+>=15 trades AND OTHER dominates"). Read literally, today's audit was obliged to
+propose scaling the **convex** TP down to 3R — on the strength of eight sniper
+trades, two of which hit their target exactly as designed. The tripwire was
+about to fire on a measurement artefact.
+
+**Fix (deployed).** Two parts, both telemetry-only; no order, sizing or exit
+logic touched:
+
+1. Pass the position's real target, derived from `tp_margin_pct / sl_margin_pct`
+   already present in metadata (5R convex, 2R sniper). Absent -> 5R as before,
+   so pre-08 rows are unaffected.
+2. Compare on **gross** R. The old net-R tolerance (0.9x target) was calibrated
+   where the round-trip cost is ~6% of a 5R target; on a 2R bracket the same
+   absolute cost is ~25%. No proportional tolerance serves both, so the
+   question "did the target fill" is now asked of the fill, not of the fee bill
+   it arrived with.
+
+**Validation.** `pytest -q` **833 passed** (2 new tests, both pinned to
+verbatim live-ledger numbers). Replayed over all 56 stored closes:
+
+| trade | net R | gross R | old | new |
+|---|---|---|---|---|
+| LINK 08-09 | +1.72 | +2.14 | OTHER | **TP** |
+| XRP 08-10 | +1.60 | +2.06 | OTHER | **TP** |
+| SOL 08-08 | +1.32 | +1.78 | OTHER | OTHER (fell short of 2R) |
+| AVAX 08-09 | -0.01 | -0.00 | OTHER | OTHER (retention trail) |
+| SUI / DOGE / SOL / HYPE | -1.11..-1.64 | — | STOP | STOP (unchanged) |
+
+Corrected census: sniper **TP 2 / STOP 4 / OTHER 2**; **convex-only untouched at
+TP 0 / STOP 1 / OTHER 5 over n=6** — below the n>=15 bar, which is the honest
+reading of the convex sleeve and the reason no TP proposal is made today.
+
+No exit or sizing behaviour changed, so no `replay_exits` / `mc_ledger` gate
+applies; V-stack step (a) is the whole gate for a classifier fix.
+
+### 5. Deploy
+
+Commit `70a8b06`, pushed, `railway up --service Futures-bot` at 16:40 UTC with
+**zero open positions**. Container verified running the new code, cycle counter
+restarted clean, `ACCOUNT equity=142.35 available=142.35 positions=0`, no
+Traceback.
+
+### 6. Last-7-days changes — still earning their keep?
+
+| change | date | verdict |
+|---|---|---|
+| Sleeve separation (SNIPER out of WILDCARD slots/exits) | 08-09 | **Yes.** No sniper position has taken a wildcard retention trail since; AVAX was the last casualty. |
+| Retention-trail cost floor (1.5x cost_R) | 08-09 | **Untested.** 0 armed closes since. |
+| Majors on baseline turnover + strict crypto filter | 08-09 | **Working as designed** (major -24, non_crypto -289 pre-rank). No trade yet to score. |
+| 24h-range pre-filter | 08-09 | **Yes.** Pool 8-11 -> 19-22, zero dropped. |
+| Cost-net veto scoring (`fbb9e85`) | 08-09 | **Yes, and materially.** It flipped `ref_not_listed` from "costing +8R" to "saving 2.77R" — the previous reading would have justified relaxing a gate that is in fact protective. |
+| `exit_kind` target-aware (`70a8b06`) | 08-10 | Deployed today. |
+
+### 7. Verdict
+
+Three sniper closes, +$0.03, net +1.99R — noise at this size and not a signal
+either way. The wildcard is correctly dormant with its trial-8 universe fix
+confirmed working. The day's real finding was not a trade: **two separate
+measurement defects were about to produce two wrong proposals** — the veto
+ledger read gross (fixed 08-09, reported today with the sign flip) and the exit
+classifier read every sleeve against a 5R target (fixed and deployed today).
+Both would have loosened or shrunk something that is working. No risk
+parameter, universe entry or exit rule was touched.
+
+---
+
 # Daily Audit — 2026-08-09
 
 ---
