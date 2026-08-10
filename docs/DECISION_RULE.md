@@ -1,3 +1,98 @@
+# Pre-registered decision rule — CONVEX TRIAL 9 (from 2026-08-10)
+
+## Trial 8 CLOSED at 0 wildcard closes in ~23h. The zero IS the finding.
+
+Not a performance verdict — there was no performance. The sleeve scanned
+cleanly every 15 minutes for a day (19-22 symbols per pass, `candidates=0` on
+every one) and opened nothing. The universe changes worked: the pool roughly
+doubled (8-11 symbols -> 19-22) and TUT_USDT became tradeable. Arrival was not
+the whole problem.
+
+## What trial 8 uncovered: the scan grid samples a transient condition
+
+The 2026-08-10 missed-opportunity report listed **seven symbols where a LONG
+signal existed and no position was opened**, two of them within three hours
+(GUA_USDT, BLESS_USDT) with both slots free. Three hypotheses, tested in order:
+
+| hypothesis | verdict |
+|---|---|
+| Partial-bar asymmetry — the live scan evaluates a half-formed final bar, the replay a completed one | **REFUTED.** Re-running the detector the way the scanner does it (`end=scan_time`, partial bar) found the SAME signals — GUA at 11:05 and 14:50, BLESS at 13:20. This had been the leading trial-9 candidate; the evidence killed it. |
+| Pool filters excluded them | **REFUTED.** GUA ($15.3M turnover, 117% range) and BLESS ($19.8M, 21%) are cleanly inside the scan pool. |
+| The signal is transient and the grid misses it | **CONFIRMED — measured.** |
+
+Sampling GUA_USDT's entry condition every 5 minutes for 5 hours:
+
+```
+.....................................SSS....................
+11:43                                                   16:38 UTC
+condition TRUE on 3/60 samples = 5.0% duty cycle
+longest unbroken window: 15 minutes
+```
+
+**The condition holds for about 5% of the time, in a single 15-minute window.**
+A 15-minute scan grid places ~1 sample inside a 15-minute window, so
+`P(zero hits) ~ e^-1 = 37%` per opportunity. On this symbol it saw nothing —
+entirely consistent with chance, not with a defect.
+
+This is the same failure mode already documented for the sniper: *"a 30-minute
+signal scanned hourly is invisible... the expected catch was 0.8 and we logged
+0"*. It was never checked for the wildcard.
+
+## Changes under test in trial 9
+
+**Treatment (the reset):**
+
+1. **`FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS` 900 -> 450.** Expected samples in
+   a 15-minute window goes 1 -> 2, so `P(miss)` goes ~37% -> ~13.5%: capture
+   ~63% -> ~87%, i.e. **about +37% more entries from the same market**. This
+   buys CAPTURE, not arrival — it does not make signals more frequent, it stops
+   throwing away the ones that occur. Cost: 2x kline calls (~176/hr vs ~88).
+   Rollback: set the env var back to 900.
+
+**Unchanged, carried from trial 8:** baseline-turnover majors band (24), the
+lossless 24h-range pre-filter, strict category filter, retention trail
+(arm +1R, floor 0.30xpeak, cost-floored), 24h convex clock, long-only, 2 slots,
+risk dial ON, +5R TP, 3.0xATR stop capped at 20% of margin.
+
+## Honest accounting of what trial 9 is testing
+
+Trial 9 carries **three** untested changes: the band ranking and the range
+pre-filter (both from trial 8, which scored zero closes and therefore tested
+nothing) plus the scan cadence. Attribution is partly preserved —
+`legacy_major` and `legacy_prefilter_ok` are recorded per candidate — but there
+is no per-trade tag for "would a 900s grid have seen this", and there cannot be
+one, because the counterfactual is about a sample that was never taken.
+
+Stated plainly: **if trial 9 produces a positive result, it will not be
+attributable to the cadence alone.** The compensating argument is that all
+three changes are about WHICH SIGNALS ARE OBSERVED, not about what is traded
+once observed — entry geometry, sizing and exits are untouched since trial 7.
+
+## Do not do this if...
+
+- ...the expectation is that a finer grid creates edge. It cannot. It recovers
+  signals the sleeve already generates and discards. If the underlying
+  signal has no edge, sampling it twice as often loses money twice as fast.
+- ...anyone proposes going to 300s or 120s on the same reasoning. The
+  measured window is ~15 minutes; 450s already puts 2 samples inside it and
+  the return on further halving falls off as `e^-n`. 300s buys ~+5pp of
+  capture for 50% more API load.
+
+## Scoring — unchanged bars
+
+30 WILDCARD closes or 90 days, whichever first. Tripwires, robustness bars
+(day-clustered t, leave-one-month-out, top-3 haircut, family-wise null) and all
+other rollbacks carry over verbatim.
+
+**Reset count: 5 in ~11 days**, zero scored verdicts. Trials 5, 6, 6.5 and 7
+were reset on defects; trial 8 on a measurement that showed the sleeve was
+discarding its own signals. Each was justified individually. The count is
+recorded here because the pattern is now the largest single risk to this
+programme: **a trial that never runs long enough to score cannot be wrong, and
+cannot be right either.**
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 8 (from 2026-08-09)
 
 ## Trial 7 CLOSED at n=2 in-trial closes, ~47h. Not a performance verdict.

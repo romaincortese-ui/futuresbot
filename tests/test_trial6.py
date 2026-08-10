@@ -1263,3 +1263,28 @@ def test_report_states_what_it_did_not_look_at(rt, monkeypatch):
     assert "not the whole book" in text
     assert "fetch(es) failed" in text
     assert "upper bound" in text, "the completed-vs-partial-bar caveat is missing"
+
+
+def test_scan_grid_is_finer_than_the_signal_lifetime():
+    """TRIAL 9. The entry condition is transient — measured on GUA_USDT
+    2026-08-10, true on 3 of 60 five-minute samples (5.0% duty cycle) in one
+    unbroken 15-minute window. A 15-minute scan grid puts ~1 sample in that
+    window, so P(miss) ~ e^-1 = 37% per opportunity, and it missed. The grid
+    must be finer than the thing it samples."""
+    import math
+
+    from futuresbot.wildcard import wildcard_scan_interval_seconds
+
+    assert wildcard_scan_interval_seconds() == 450
+    window_s = 15 * 60                      # measured unbroken signal window
+    p_miss = math.exp(-window_s / wildcard_scan_interval_seconds())
+    assert p_miss < 0.15, "the grid is still coarse relative to the signal"
+
+
+def test_scan_interval_is_still_overridable(monkeypatch):
+    from futuresbot.wildcard import wildcard_scan_interval_seconds
+
+    monkeypatch.setenv("FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS", "900")
+    assert wildcard_scan_interval_seconds() == 900      # rollback path
+    monkeypatch.setenv("FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS", "10")
+    assert wildcard_scan_interval_seconds() == 60       # floor holds

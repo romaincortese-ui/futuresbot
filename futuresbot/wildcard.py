@@ -68,7 +68,19 @@ def wildcard_max_positions() -> int:
 
 
 def wildcard_scan_interval_seconds() -> int:
-    return max(60, int(_f("FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS", 900)))  # 15m default
+    """Trial 9: 450s, halved from 900s.
+
+    The entry condition is TRANSIENT, and the old grid was the same order of
+    magnitude as its lifetime. Measured on GUA_USDT 2026-08-10 by sampling the
+    live detector every 5 minutes for 5 hours: the condition held on 3 of 60
+    samples (5.0% duty cycle) in ONE unbroken 15-minute window. A 15-minute
+    grid places ~1 sample in a 15-minute window, so P(seeing nothing) ~ e^-1 =
+    37% per opportunity — and it saw nothing. At 450s the expected samples in
+    that window is 2, so P(miss) ~ e^-2 = 13.5%.
+
+    This buys CAPTURE, not arrival: ~63% -> ~87% of signals observed, about
+    +37% more entries from the same market. Cost is 2x the kline calls."""
+    return max(60, int(_f("FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS", 450)))
 
 
 def wildcard_min_turnover_usdt() -> float:
