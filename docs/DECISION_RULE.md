@@ -38,6 +38,41 @@ This is the same failure mode already documented for the sniper: *"a 30-minute
 signal scanned hourly is invisible... the expected catch was 0.8 and we logged
 0"*. It was never checked for the wildcard.
 
+## SNIPER RETIRED, 2026-08-10
+
+Final live record, 8 fills over 3 days:
+
+| | |
+|---|---|
+| net | **-0.90R / -$0.1126**, 3 wins of 8 (37.5%) |
+| shape | avg win +1.55R, avg loss -1.11R -> **breakeven needs 41.7%** |
+| shadow | SNIPER_FAST n=40: **+12.85R gross, -3.18R net** of its own ~0.5R round trip |
+
+It answered the question it was built for. The open question was fill quality —
+whether a notional-capped leg fills where the model says. It does: LINK and XRP
+both filled their 2R brackets and netted +1.6-1.7R. The economics were never
+open: `FAST` runs with its cost gates deliberately disabled and is flagged "not
+viable at taker fees" in its own code. On a 0.37% stop the round trip is ~0.5R,
+so it must be right 42% of the time to stand still on a signal whose shadow win
+rate is 50% and whose live win rate is 37.5%.
+
+Retired at 8 of a planned 25 fills rather than run to the pre-registered n. The
+remaining 17 would have cost ~-$0.30 and could not have changed the verdict:
+the fill-quality question is answered and the cost arithmetic is not a sampling
+question. Recorded as a deviation from the pre-registration, not a graduation.
+
+**Removed from `/status`, the boot message and the digest.** Historical rows
+stay in the ledger; nothing new is written. Reversible with
+`FUTURES_SNIPER_ENABLED=1` plus a revert of the display commit.
+
+**If it ever returns, the fix is not more trades — it is a wider stop.** At a 2%
+stop the drag is 0.095R instead of 0.51R and the same 50% shadow win rate is
+clearly profitable. That is a different sleeve and needs its own trial.
+
+Same review also corrected the boot message, which still advertised the six PMT
+pairs — the one universe the bot cannot enter since 2026-07-13. It now states
+the wildcard's slots, scan cadence and band, and names the off sleeves.
+
 ## Changes under test in trial 9
 
 **Treatment (the reset):**

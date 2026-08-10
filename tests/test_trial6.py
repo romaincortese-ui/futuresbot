@@ -806,8 +806,12 @@ def test_status_does_not_count_slots_for_a_disabled_sleeve(rt, monkeypatch):
 
     src = inspect.getsource(FuturesRuntime._build_status_message)
     assert "if squeeze_enabled():" in src
-    assert "sniper_enabled() and not sniper_shadow_only()" in src
     assert "_sleeve_kind(p) == 'PMT'" in src, "PMT count must not use the convex flag"
+    # SNIPER retired 2026-08-10 — no slot, no block, but named in the off list
+    # so the retirement is visible rather than silent.
+    assert "SNIP <b>" not in src
+    assert "_sniper_shadow_status_lines()" not in src
+    assert '("Sniper", sniper_enabled())' in src
 
 
 def test_status_states_decommissioned_sleeves_exactly_once(rt):

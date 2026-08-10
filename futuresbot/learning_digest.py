@@ -111,38 +111,15 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
     else:
         lines.append("Engine: no OOS-consistent findings yet")
 
-    # The Sniper's rows are a deliberate shadow STUDY, not vetoed near-misses —
-    # folded into the generic scorecard they would render as a cryptic
-    # "shadow_only: n=8". Split them out and answer the actual question:
-    # what would this sleeve have done if it were live?
     # Scope the veto scorecard to the trial. It used to read the whole file, so
     # it pooled trials 4-7 — regimes, sleeve configs and exit policies mixed
     # into one cfR that no decision could safely rest on.
     in_trial = [r for r in shadow_rows if float(r.get("ts") or 0) >= trial_start]
-    sniper = [r for r in in_trial if str(r.get("sleeve") or "").startswith("SNIPER")]
+    # SNIPER retired 2026-08-10 (live record -0.90R / -$0.11 over 8 fills;
+    # shadow +12.85R gross but -3.18R net of its own 0.5R round-trip cost).
+    # Its rows stay in the ledger as history; they are simply no longer
+    # reported, and no new ones are written.
     other = [r for r in in_trial if not str(r.get("sleeve") or "").startswith("SNIPER")]
-    if sniper:
-        by_variant: dict[str, list[dict]] = {}
-        for r in sniper:
-            sleeve = str(r.get("sleeve") or "SNIPER")
-            by_variant.setdefault(sleeve.split("_", 1)[1] if "_" in sleeve else "SWING", []).append(r)
-        lines.append("🎯 Sniper SHADOW (would-be trades, never traded):")
-        for name, rows in sorted(by_variant.items()):
-            res = [r for r in rows if r.get("outcome") is not None]
-            net = sum(float(r.get("outcome") or 0) for r in res)
-            wins = sum(1 for r in res if float(r.get("outcome") or 0) > 0)
-            kinds: dict[str, int] = {}
-            for r in res:
-                k = str(r.get("outcome_kind") or "?")
-                kinds[k] = kinds.get(k, 0) + 1
-            net_after = sum(_net(r) for r in res)
-            line = f"• <b>{name}</b>: {len(rows)} logged, {len(res)} resolved | cfR <b>{net:+.1f}</b>"
-            if res:
-                line += (f" (net of cost <b>{net_after:+.1f}</b>) | win {100 * wins / len(res):.0f}% "
-                         f"| tp {kinds.get('tp', 0)} stop {kinds.get('stop', 0)} timeout {kinds.get('timeout', 0)}")
-            lines.append(line)
-        lines.append("<i>cfR is fee-free; read the net figure — a 0.37% stop pays ~0.5R "
-                     "per round trip</i>")
 
     resolved = [r for r in other if r.get("outcome") is not None]
     if other:

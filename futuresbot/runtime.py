@@ -2313,8 +2313,6 @@ class FuturesRuntime:
         slots: list[str] = []
         if wildcard_enabled():
             slots.append(f"🎲 WC <b>{self._convex_open_count('WILDCARD')}</b>/{wildcard_max_positions()}")
-        if sniper_enabled() and not sniper_shadow_only():
-            slots.append(f"🎯 SNIP <b>{self._convex_open_count('SNIPER')}</b>/{sniper_max_positions()}")
         if squeeze_enabled():
             slots.append(f"🌀 SQ <b>{self._convex_open_count('SQUEEZE')}</b>/{squeeze_max_positions()}")
         pmt_live = pmt_strategy_enabled() and not pmt_blocked
@@ -2323,7 +2321,8 @@ class FuturesRuntime:
                          f"/{self.config.max_concurrent_positions}")
         # "PMT decommissioned" was printed twice (standalone line + Sys line).
         # It belongs here, once, next to the other sleeve that is switched off.
-        off = [n for n, on in (("PMT", pmt_live), ("Squeeze", squeeze_enabled())) if not on]
+        off = [n for n, on in (("PMT", pmt_live), ("Squeeze", squeeze_enabled()),
+                               ("Sniper", sniper_enabled())) if not on]
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
@@ -2333,7 +2332,6 @@ class FuturesRuntime:
                f"({html.escape(self._universe_label(active_syms))}): "
                f"{html.escape(', '.join(active_syms))}"] if not pmt_blocked else []),
             *(self._wildcard_status_lines() if wildcard_enabled() else []),
-            *self._sniper_shadow_status_lines(),
             self._btc_trend_line(),
             # One system line instead of three (calibration / overlay / entries):
             # each was a full row of mostly-static state.
@@ -2550,13 +2548,32 @@ class FuturesRuntime:
             f"Max per bucket: <b>{self.config.max_per_bucket}</b>"
         )
         warning_line = self._universe_warning_line(active_syms)
-        universe_note = f"Scanning <b>{len(active_syms)}</b> futures pairs ({html.escape(self._universe_label(active_syms))}):"
+        # The startup message used to list the six PMT pairs, which since the
+        # 2026-07-13 decommission is the one universe the bot can NOT enter —
+        # the same defect fixed in /status on 08-09. The wildcard sleeve scans
+        # a live-ranked band of ~650 symbols and is what actually trades, so
+        # say that instead. The PMT list is only shown when PMT can trade.
+        pmt_blocked = self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0) >= 999.0
         message_parts = [
             f"🚀 <b>Futures Bot Started</b> [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
-            universe_note,
-            *symbol_lines,
         ]
+        if wildcard_enabled():
+            message_parts.append(
+                f"🎲 <b>Wildcard</b> {wildcard_max_positions()} slot(s) | scan every "
+                f"<b>{wildcard_scan_interval_seconds()}s</b> | "
+                f"excl. top-{int(self._env_float('FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER', 24.0))} "
+                f"turnover")
+        off_sleeves = [n for n, on in (("PMT", not pmt_blocked and pmt_strategy_enabled()),
+                                       ("Squeeze", squeeze_enabled()),
+                                       ("Sniper", sniper_enabled())) if not on]
+        if off_sleeves:
+            message_parts.append(f"⛔ off: {', '.join(off_sleeves)}")
+        if not pmt_blocked:
+            message_parts.append(
+                f"Scanning <b>{len(active_syms)}</b> futures pairs "
+                f"({html.escape(self._universe_label(active_syms))}):")
+            message_parts.extend(symbol_lines)
         if warning_line:
             message_parts.extend(["━━━━━━━━━━━━━━━", warning_line])
         message_parts.extend([

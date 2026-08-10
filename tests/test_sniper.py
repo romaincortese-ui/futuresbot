@@ -511,25 +511,16 @@ def test_feature_store_row_tags_sniper_kind(runtime):
     assert row["kind"] == "SNIPER"  # previously fell through to the "PMT" default
 
 
-def test_digest_scores_each_variant_separately():
+def test_digest_no_longer_reports_the_retired_sniper():
+    """SNIPER retired 2026-08-10: live -0.90R / -$0.11 over 8 fills, and its
+    shadow record is +12.85R gross but -3.18R net of its own ~0.5R round-trip
+    cost. Rows stay in the ledger as history; nothing new is written and the
+    digest no longer renders them."""
     from futuresbot.learning_digest import build_learning_digest
 
     msg = build_learning_digest([], _ledger_rows(), trial_start=0.0)
-    assert "Sniper SHADOW (would-be trades, never traded):" in msg
-    assert "<b>SWING</b>: 2 logged, 1 resolved | cfR <b>+3.0</b>" in msg
-    assert "<b>FAST</b>: 1 logged, 1 resolved | cfR <b>-1.0</b>" in msg
-    assert "tp 1 stop 0 timeout 0" in msg      # SWING
-    assert "tp 0 stop 1 timeout 0" in msg      # FAST
-    # The caveat travels with the number, and cfR now carries its cost twin.
-    assert "cfR is fee-free" in msg and "net of cost" in msg
-    # ...and the generic scorecard no longer swallows them as "shadow_only"
-    assert "shadow_only" not in msg
-    assert "slot_occupied: n=1 cfR +5.0" in msg
-
-
-# --------------------------------------------------------------------------
-# variants
-# --------------------------------------------------------------------------
+    assert "Sniper" not in msg and "SWING" not in msg
+    assert "cfR" not in msg or "shadow_only" not in msg
 
 def test_bars_needed_covers_the_range_median_not_just_the_lookback():
     # Sizing this as move_bars + range_block made FAST_TRIGGER (6-bar look-back,
