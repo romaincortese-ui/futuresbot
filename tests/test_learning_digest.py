@@ -85,6 +85,37 @@ def test_exit_kind_classification():
     assert k(0.34) == "OTHER"     # ARB: neither
     assert k(2.53) == "OTHER"     # AKE: closed mid-flight
     assert k(None) is None
+    # A 2R-bracket sleeve (sniper) completes its target at ~+1.6R net. Scored
+    # against the convex 5R those are OTHER, which mis-reads a filled target as
+    # "target too demanding" in the TP-completion tripwire.
+    assert k(1.72, tp_r=2.0, gross_r=2.13) == "TP"   # LINK 08-09: bracket filled
+    assert k(1.60, tp_r=2.0, gross_r=2.08) == "TP"   # XRP 08-10
+    assert k(1.72, gross_r=2.13) == "OTHER"          # the old, wrong reading
+    assert k(-1.33, tp_r=2.0, gross_r=-1.06) == "STOP"  # HYPE: overshoot, still a stop
+    # Fees alone must not manufacture a TP: SOL 08-08 paid 26% of gross and
+    # still only reached +1.78R gross against a 2R target.
+    assert k(1.32, tp_r=2.0, gross_r=1.78) == "OTHER"
+
+
+def test_tagger_scores_exit_kind_against_the_sleeves_own_target():
+    from types import SimpleNamespace
+    from futuresbot.runtime import FuturesRuntime
+    rt = object.__new__(FuturesRuntime)
+    # LINK_USDT 2026-08-09, verbatim from the live ledger: +8.48% of margin net
+    # on a 4.9171% stop = +1.72R net, +2.13R gross of a 2R bracket.
+    trade = {"pnl_usdt": 0.0377, "fees_usdt": 0.0092, "pnl_pct": 8.48, "margin_usdt": 0.4596,
+             "entry_time": "2026-08-09T22:53:00+00:00", "exit_time": "2026-08-09T23:30:00+00:00",
+             "exit_reason": "EXCHANGE_CLOSE"}
+    sniper = SimpleNamespace(metadata={"sniper": 1.0, "sl_margin_pct": 4.9171,
+                                       "tp_margin_pct": 4.9171 * 2.0})
+    assert rt._trade_attribution_tags(sniper, trade)["exit_kind"] == "TP"
+    # Same realised R on a 5R convex sleeve is genuinely mid-flight.
+    convex = SimpleNamespace(metadata={"wildcard": 1.0, "sl_margin_pct": 4.9171,
+                                       "tp_margin_pct": 4.9171 * 5.0})
+    assert rt._trade_attribution_tags(convex, trade)["exit_kind"] == "OTHER"
+    # No tp_margin_pct (pre-2026-08 rows) falls back to the convex 5R.
+    legacy = SimpleNamespace(metadata={"wildcard": 1.0, "sl_margin_pct": 4.9171})
+    assert rt._trade_attribution_tags(legacy, trade)["exit_kind"] == "OTHER"
 
 
 def test_digest_reports_tp_completion():

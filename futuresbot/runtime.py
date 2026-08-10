@@ -3668,13 +3668,23 @@ class FuturesRuntime:
             log.debug("feature store append failed: %s", exc)
 
     @staticmethod
-    def _classify_exit_kind(r_multiple: float | None, tp_r: float = 5.0) -> str | None:
-        """TP / STOP / OTHER from the realised R. Tolerances absorb fees and the
-        stop overshoot we measured live (losers land -1.0 to -1.3R, e.g. BTW
-        -1.65R on a gap). OTHER = timeout, manual or exchange-side close."""
+    def _classify_exit_kind(r_multiple: float | None, tp_r: float = 5.0,
+                            gross_r: float | None = None) -> str | None:
+        """TP / STOP / OTHER from the realised R, scored against the sleeve's OWN
+        target. Tolerances absorb fees and the stop overshoot we measured live
+        (losers land -1.0 to -1.3R, e.g. BTW -1.65R on a gap). OTHER = timeout,
+        manual or exchange-side close.
+
+        `gross_r` (R before fees) is the honest test for "did the target fill".
+        The net-R tolerance is a proxy calibrated on the 5R convex sleeve, where
+        the round-trip cost is ~6% of the target; on the sniper's 2R bracket the
+        same absolute cost is ~25%, so a TP that filled reads as OTHER without
+        it — the exact pattern the TP-completion tripwire treats as evidence the
+        target is too demanding."""
         if r_multiple is None:
             return None
-        if r_multiple >= tp_r * 0.9:
+        reached = r_multiple if gross_r is None else gross_r
+        if reached >= tp_r * (0.9 if gross_r is None else 0.95):
             return "TP"
         if r_multiple <= -0.85:
             return "STOP"
@@ -3699,6 +3709,11 @@ class FuturesRuntime:
             gross = pnl + fees
             sl = mf("sl_margin_pct")
             pnl_pct = float(trade.get("pnl_pct", 0.0) or 0.0)
+            # P&L before fees, in the same %-of-margin unit as pnl_pct, so
+            # "did the target fill" can be asked of the fill and not of the
+            # fee bill it arrived with.
+            margin_usdt = float(trade.get("margin_usdt") or 0.0)
+            gross_pct = pnl_pct + abs(fees) / margin_usdt * 100.0 if margin_usdt > 0 else None
             roc = mf("wildcard_roc_pct")
             try:
                 hold_min = round((datetime.fromisoformat(trade["exit_time"]) - datetime.fromisoformat(trade["entry_time"])).total_seconds() / 60.0, 1)
@@ -3729,7 +3744,17 @@ class FuturesRuntime:
                 # Trial 4 watches TP completion: widening the stop to 3.0xATR
                 # doubled the price move +5R requires (~75%), so if completions
                 # collapse the stop/TP pairing is too demanding.
-                "exit_kind": self._classify_exit_kind(pnl_pct / sl if sl and sl > 0 else None),
+                # Score against the position's OWN target, not a hardcoded 5R.
+                # The sniper brackets at 2R, so every one of its completed TPs
+                # landed at ~+1.6R net and was filed OTHER — which is precisely
+                # the pattern the TP-completion tripwire reads as "target too
+                # demanding". Left alone it would propose shrinking the CONVEX
+                # TP on the strength of sniper trades that hit their target.
+                "exit_kind": self._classify_exit_kind(
+                    pnl_pct / sl if sl and sl > 0 else None,
+                    tp_r=(mf("tp_margin_pct") / sl) if (mf("tp_margin_pct") and sl and sl > 0) else 5.0,
+                    gross_r=(gross_pct / sl) if (gross_pct is not None and sl and sl > 0) else None,
+                ),
             }
         except Exception:  # pragma: no cover — tagging must never break a close
             return {}
