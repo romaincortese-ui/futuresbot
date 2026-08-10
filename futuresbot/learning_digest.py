@@ -96,6 +96,19 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
     # TP completion (trial 4): the 3.0xATR stop doubled the price move +5R needs
     # (~75%). If completions collapse, the stop/TP pairing is too demanding and
     # the fix is scaling TP down at wide stops — not reverting the stop.
+    # Shorts re-enabled 2026-08-10 as a CAPACITY change. They must be scoreable
+    # on their own from the first close: the short arm has a different payoff
+    # ceiling (target clamped at 50% price distance) and a different prior, so
+    # pooling the two sides would make the trial unreadable either way.
+    for side in ("LONG", "SHORT"):
+        arm = [r for r in trial if str(r.get("side") or "").upper() == side]
+        if arm:
+            r_arm = [float(r.get("r_multiple") or 0) for r in arm]
+            w = sum(1 for x in r_arm if x > 0)
+            lines.append(f"  {side}: <b>{len(arm)}</b> | netR <b>{sum(r_arm):+.2f}</b> "
+                         f"| ${sum(float(r.get('pnl_usdt') or 0) for r in arm):+.2f} "
+                         f"| win {100 * w / len(arm):.0f}%")
+
     kinds = [r.get("exit_kind") for r in trial if r.get("exit_kind")]
     if kinds:
         tp = kinds.count("TP"); stop = kinds.count("STOP"); other = kinds.count("OTHER")

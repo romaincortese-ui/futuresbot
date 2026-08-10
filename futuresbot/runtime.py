@@ -2232,8 +2232,18 @@ class FuturesRuntime:
                 and float(r.get("ts") or 0.0) >= TRIAL_START]
         net_r = sum(float(r.get("r_multiple") or 0.0) for r in rows)
         net_usd = sum(float(r.get("pnl_usdt") or 0.0) for r in rows)
-        return (f"Trial {TRIAL_LABEL}: <b>{len(rows)}</b>/{TRIAL_TARGET_TRADES} WC closes"
+        line = (f"Trial {TRIAL_LABEL}: <b>{len(rows)}</b>/{TRIAL_TARGET_TRADES} WC closes"
                 f" | netR <b>{net_r:+.2f}</b> | net <b>${net_usd:+.2f}</b>")
+        # Split by side while both arms are live: the short arm carries a
+        # different payoff ceiling and a different prior, and pooling them
+        # would make the trial unreadable in either direction.
+        if not wildcard_long_only():
+            for side in ("LONG", "SHORT"):
+                arm = [r for r in rows if str(r.get("side") or "").upper() == side]
+                if arm:
+                    line += (f"\n  {side} {len(arm)}: netR "
+                             f"<b>{sum(float(r.get('r_multiple') or 0) for r in arm):+.2f}</b>")
+        return line
 
     def _sniper_shadow_status_lines(self) -> list[str]:
         """The Sniper's record, for /status.

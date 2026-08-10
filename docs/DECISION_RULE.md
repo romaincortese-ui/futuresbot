@@ -1,3 +1,81 @@
+# Pre-registered decision rule — CONVEX TRIAL 10 (from 2026-08-10)
+
+## Trial 9 closed at 0 closes after 1.5h. It tested nothing.
+
+Opened 17:12 UTC, superseded 18:4x the same day by an owner decision to
+re-enable shorts. No candidate fired in between. The 450s cadence carries into
+trial 10 untouched and untested; nothing is lost because nothing was measured.
+
+## Trial 10: shorts re-enabled
+
+**`FUTURES_WILDCARD_LONG_ONLY` 1 -> 0.** Shorts have been DETECTED and
+shadow-logged as `side_disabled` since trial 6; they are now taken.
+
+### This is ahead of the pre-registered bar, and that is recorded
+
+Trial 6 set the bar at **n >= 20 resolved short shadow rows**. There are **4**.
+Enabling now is a decision made against this document's own standard, and the
+2026-08-02 external-gate episode is the cautionary precedent: a gate was
+relaxed on 4 rows and reverted the same day, leaving the standing rule that
+*"a pre-registered threshold is not satisfied by recomputing evidence the same
+document already inspected and rejected."*
+
+What makes this different from that episode — stated so it can be judged later,
+not to excuse it:
+
+1. **The original rationale was measured against an exit policy that no longer
+   exists.** Long-only shipped because "a short's payoff is bounded at
+   `1/sl_frac`, so the convex +5R design is structurally a LONG-side design",
+   with a target ladder monotone UP in k for longs (+0.021 -> +0.250) and DOWN
+   for shorts (+0.077 -> +0.020). That ladder is a hold-to-target measurement.
+   Since trial 7 the bot runs a 0.30xpeak retention trail with ~7% TP
+   completion — the target multiple barely governs the outcome any more.
+2. **Re-scoring the shorts under the LIVE exit policy improved them**, from
+   +0.78R to **+2.23R over 4**. The re-resolution was a measurement fix applied
+   to every sleeve, not a search for a favourable reading.
+3. **This is being taken as a CAPACITY change, not an edge claim** — the same
+   framing used for the 24h clock and the runner trail. Shorts accrue ~3.8x
+   faster than the book; the binding constraint on this programme is entries,
+   not exit tuning.
+
+### The asymmetry that remains, unfixed and deliberate
+
+A short's target is clamped at 50% price distance (`short_tp_clamped`), because
+21% of short signals otherwise had a target at or through **price zero**. So a
+short's ceiling is `0.50 / sl_frac` — **2.5R at the widest live stop** — against
+the long's 5R, for the same -1R risk. The clamp is NOT being loosened to make
+the sides look symmetric; the unreachable-target defect it fixes is real.
+
+Consequence: the short arm is a lower-ceiling bet by construction. It is
+scored **separately from the first close**, on `/status` and in the digest, so
+neither arm can hide inside the other's number.
+
+### Kill conditions, pre-registered now
+
+- Short arm at **n >= 10** with netR below the long arm's netR per trade by
+  more than 1.0R -> revert to long-only. Rollback:
+  `FUTURES_WILDCARD_LONG_ONLY=1`, no deploy.
+- Any short close worse than **-1.5R** (gap through the stop) -> investigate
+  before the next short is taken. Small caps gap harder against shorts than
+  longs, and the exchange stop is the only hard protection.
+
+**Unchanged, carried from trials 8/9:** 450s scan cadence, baseline-turnover
+majors band (24), lossless 24h-range pre-filter, strict category filter,
+retention trail, 24h clock, 2 slots, risk dial, 3.0xATR stop capped at 20%.
+
+## Scoring
+
+30 WILDCARD closes or 90 days. Both arms count toward the 30; each is also
+reported alone. All robustness bars carry over verbatim.
+
+**Reset count: 6 in 11 days**, zero scored verdicts. Trials 9 and 10 each cost
+under two hours of live time, so the measured loss is nil — but the pattern is
+the programme's largest risk and it is now the seventh consecutive trial that
+has not reached a readout. **A trial that never runs long enough to score
+cannot be wrong, and cannot be right either.**
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 9 (from 2026-08-10)
 
 ## Trial 8 CLOSED at 0 wildcard closes in ~23h. The zero IS the finding.

@@ -1292,3 +1292,60 @@ def test_scan_interval_is_still_overridable(monkeypatch):
     assert wildcard_scan_interval_seconds() == 900      # rollback path
     monkeypatch.setenv("FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS", "10")
     assert wildcard_scan_interval_seconds() == 60       # floor holds
+
+
+# --------------------------------------------------------------------------
+# trial 10: shorts re-enabled (2026-08-10)
+# --------------------------------------------------------------------------
+
+def test_short_arm_is_scored_separately_while_both_sides_are_live(rt, monkeypatch):
+    """The short arm has a different payoff ceiling — its target is clamped at
+    50% price distance, so its max is 0.50/sl_frac (2.5R at the widest live
+    stop) against the long's 5R. Pooling the sides would make the trial
+    unreadable in either direction."""
+    monkeypatch.setenv("FUTURES_WILDCARD_LONG_ONLY", "0")
+    from futuresbot import learning_digest as ld
+
+    monkeypatch.setattr(ld, "TRIAL_START", 1000.0)
+    monkeypatch.setattr(rt, "_feature_rows_cached", lambda: [
+        {"ts": 1500.0, "kind": "WILDCARD", "side": "LONG", "r_multiple": 2.0, "pnl_usdt": 5.0},
+        {"ts": 1600.0, "kind": "WILDCARD", "side": "SHORT", "r_multiple": -1.0, "pnl_usdt": -2.6},
+        {"ts": 1700.0, "kind": "WILDCARD", "side": "SHORT", "r_multiple": 1.5, "pnl_usdt": 4.0},
+    ])
+    line = rt._trial_progress_line()
+    assert "<b>3</b>/30 WC closes" in line
+    assert "LONG 1: netR <b>+2.00</b>" in line
+    assert "SHORT 2: netR <b>+0.50</b>" in line
+
+
+def test_side_split_is_hidden_when_only_longs_can_trade(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_LONG_ONLY", "1")
+    from futuresbot import learning_digest as ld
+
+    monkeypatch.setattr(ld, "TRIAL_START", 1000.0)
+    monkeypatch.setattr(rt, "_feature_rows_cached", lambda: [
+        {"ts": 1500.0, "kind": "WILDCARD", "side": "LONG", "r_multiple": 2.0, "pnl_usdt": 5.0}])
+    assert "LONG 1:" not in rt._trial_progress_line()
+
+
+def test_short_targets_stay_clamped_when_shorts_go_live():
+    """Price cannot go below zero: at the live 3.0xATR stop, 21% of short
+    signals had a target at or through zero. Enabling shorts must NOT reach for
+    the unclamped target to make them look symmetric."""
+    import inspect
+
+    from futuresbot import wildcard
+
+    src = inspect.getsource(wildcard.detect_wildcard_signal)
+    assert "MAX_SHORT_TP_DIST" in src and "short_tp_clamped" in src
+
+
+def test_shorts_are_still_filtered_after_the_candidate_list(rt):
+    """Never inside the detector: _shadow_log_untaken only fires on objects
+    that reached the candidate list, so a detector-level reject would produce
+    zero shadow rows and destroy the question permanently."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert "if wildcard_long_only():" in src
+    assert 'self._shadow_log_untaken(sig, "WILDCARD", "side_disabled")' in src
