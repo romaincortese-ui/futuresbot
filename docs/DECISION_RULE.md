@@ -146,6 +146,55 @@ Validated against the live book at deploy time:
   would confound the universe change under test. **Highest-priority candidate
   for trial 9**, to be replayed on the harness first.
 
+## Two-window missed-opportunity check + a live exit bug (2026-08-09)
+
+The daily digest's missed-opportunity check now runs **two windows**: top 10 by
+24h range (exact, from the ticker) and top 10 by 48h range (from Min60 bars over
+a shortlist). Rationale: a symbol that adds 12% two days running is a 25% move
+that looks unremarkable on either single day, so it appears on neither a 24h
+change nor a 24h range ranking. First live render found three such symbols with
+LONG signals — MUBARAK, BLUAI, COOKIE — none of which the 24h list surfaced.
+
+**A pre-existing LIVE TRADING BUG was found reviewing it** (`runtime.py`, exit
+loop). On a `get_fair_price` failure the loop fell back to
+`_get_reference_price()`, which resolves to whichever position happens to be
+`self.open_position`. With two convex slots, a transient failure on an alt at
+$0.02 evaluated its exits against BTC at $65,000 — an astronomical fake gain
+that the profit locks and the retention trail would act on with a market close.
+Fixed: a position whose price cannot be fetched is SKIPPED for that cycle (the
+exchange-side stop still stands); the reference price is only substituted when
+the symbol matches. Not a treatment change — it removes a failure, and it has
+never been observed firing.
+
+Also fixed pre-deploy, from the same review:
+
+| defect | consequence |
+|---|---|
+| no wall-clock budget on ~100 sequential kline calls | a degraded exchange blocked the trading cycle up to ~79 min — `/pause` dead, no heartbeat, no exits. Now `FUTURES_MISSED_BUDGET_SECONDS` (60s) with the truncation disclosed |
+| digest marker written AFTER the work | an unwritable marker read back 0.0 forever: full digest + ~100 kline calls **every cycle**. Now claimed before the work, fails closed |
+| failed Telegram send still advanced the marker | silently cost a full day's digest. Now rolled back on failure |
+| traded/blocked used a 48h lookback on the 24h list | a fill 40h old stamped "traded" on a 24h line and suppressed the replay — a clean pass on exactly the symbol that mattered |
+| replay window silently truncated on short history | a symbol listed 3 days ago got 22h of a 48h window and still answered "never cleared 8%/3h" — new listings are the +100%-over-two-days population |
+| top blocker was always `no_pullback_resume` | it is gate 2 of 4 and rejects ~70% of trigger bars on every symbol, so it carried no information. Now reports bars that got PAST it and what killed them |
+
+**That last fix produced a finding.** With pullback-resume excluded, the actual
+killer on nearly every candidate is **`low_volume_z`** (XAN 11/11, BLUAI 9/13,
+BANANAS31 7/9, CAP 4/6). That was invisible before.
+
+**Recorded, NOT fixed — trial 9 candidate.** The live scan fetches klines with
+`end=now`, so its final bar is PARTIALLY FORMED, while the replay uses completed
+bars. The volume-z gate divides by a full bar's volume in replay and a partial
+bar's in live: a scan landing 3 minutes into a 15m bar sees ~20% of the eventual
+volume, so live is systematically STRICTER on exactly the gate now shown to be
+binding. Fixing it (drop the incomplete bar) changes which trades are taken and
+would reset trial 8, so it is deferred and the digest discloses that its signal
+counts are an upper bound.
+
+**Known limitation, disclosed in the report itself:** the 48h list ranks a
+shortlist (top 24h-range + top 7d-return), not the whole book. A move that ran
+and fully retraced inside hours 48-24 is invisible on both axes and can be
+absent.
+
 ## Safety amendment 2026-08-09 — unattended operation
 
 Not a treatment change; recorded because one item can bind in the tail.

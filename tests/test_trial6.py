@@ -1021,3 +1021,245 @@ def test_attribution_survives_a_symbol_the_scan_never_saw(rt):
     tagged = candidate_row(_Sig(), sleeve="WILDCARD", reject_reason="x",
                            extra={"legacy_major": True, "legacy_prefilter_ok": False})
     assert tagged["legacy_major"] is True and tagged["symbol"] == "X_USDT"
+
+
+# --------------------------------------------------------------------------
+# missed-opportunity check: two windows (2026-08-09, owner request)
+# --------------------------------------------------------------------------
+
+def test_missed_check_runs_both_windows_and_does_not_repeat_symbols(rt, monkeypatch):
+    """A symbol that adds 12% two days running is a 25% move that shows up on
+    neither a 24h change nor a 24h range ranking. The second window is the
+    whole point; repeating the 24h names in it would only pad the message."""
+    def _t(sym, rng24, turn=9e6, r7=0.0):
+        return {"symbol": sym, "riseFallRate": 0.01, "amount24": turn,
+                "high24Price": 100.0 * (1 + rng24), "lower24Price": 100.0,
+                "riseFallRates": {"r7": r7}}
+
+    ticks = [_t("SPIKE_USDT", 2.0), _t("GRIND_USDT", 0.05, r7=0.6), _t("QUIET_USDT", 0.01)]
+    rt.client = MagicMock()
+    rt.client.get_all_tickers.return_value = ticks
+    monkeypatch.setattr(rt, "_major_symbols", lambda t, n: set())
+    monkeypatch.setattr(rt, "_feature_rows_cached", lambda: [])
+    monkeypatch.setattr(rt, "_shadow_ledger_path", lambda: "/nonexistent")
+    monkeypatch.setattr(rt, "_replay_verdict", lambda s, r, bars_back=96: f"checked/{bars_back}")
+    # GRIND is flat on any single day but big over 48h
+    monkeypatch.setattr(rt, "_window_move",
+                        lambda sym, hours: (0.9, 0.6) if sym == "GRIND_USDT" else (0.05, 0.01))
+
+    text = "\n".join(rt._missed_opportunity_lines(top_n=2))
+    assert "24h" in text and "48h" in text
+    assert "GRIND_USDT" in text, "the 48h-only mover was not surfaced"
+    assert text.count("SPIKE_USDT") == 1, "a 24h name was repeated in the 48h list"
+    assert "checked/192" in text, "the 48h entry must replay a 48h window"
+
+
+def test_sub_floor_movers_do_not_consume_the_ranked_slots(rt, monkeypatch):
+    """On a busy day the top 10 by range is mostly illiquid micro-caps; letting
+    them take the slots pushed every actionable line off the list."""
+    def _t(sym, rng24, turn):
+        return {"symbol": sym, "riseFallRate": 0.01, "amount24": turn,
+                "high24Price": 100.0 * (1 + rng24), "lower24Price": 100.0,
+                "riseFallRates": {"r7": 0.0}}
+
+    ticks = [_t("MICRO1_USDT", 3.0, 1e5), _t("MICRO2_USDT", 2.5, 2e5),
+             _t("REAL_USDT", 0.5, 9e6)]
+    rt.client = MagicMock()
+    rt.client.get_all_tickers.return_value = ticks
+    monkeypatch.setattr(rt, "_major_symbols", lambda t, n: set())
+    monkeypatch.setattr(rt, "_feature_rows_cached", lambda: [])
+    monkeypatch.setattr(rt, "_shadow_ledger_path", lambda: "/nonexistent")
+    monkeypatch.setattr(rt, "_replay_verdict", lambda s, r, bars_back=96: "checked")
+    monkeypatch.setattr(rt, "_window_move", lambda sym, hours: (0.0, 0.0))
+
+    text = "\n".join(rt._missed_opportunity_lines(top_n=1))
+    assert "REAL_USDT" in text, "the liquid mover lost its slot to a micro-cap"
+    assert "turnover floor" in text and "MICRO1_USDT" in text   # still reported
+    assert "checked" in text
+
+
+def test_signal_age_decides_the_alarm_not_the_count(rt, monkeypatch):
+    """"1 LONG signal" reads the same whether it fired four minutes ago — which
+    means something is wrong now — or forty hours ago, before a gate that has
+    since been fixed."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._replay_verdict)
+    assert "FUTURES_MISSED_ALERT_HOURS" in src
+    assert "last {when} ago" in src
+    assert 'f"⚠️ <b>{longs} LONG signal(s)</b>, last {when} ago, no position"' in src
+
+
+def test_missed_check_is_deferred_while_a_position_is_open(rt):
+    """~35s of kline fetches runs INSIDE the trading cycle, and the convex
+    exits are software — blocking the loop delays the retention trail."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_send_learning_digest)
+    assert "if self.open_positions:" in src
+    assert "deferred" in src
+
+
+def test_window_move_fails_closed_to_zero(rt):
+    """A symbol that cannot be fetched must drop off the ranking, not poison
+    it with a fabricated range."""
+    rt.client = MagicMock()
+    rt.client.get_klines.side_effect = RuntimeError("gone")
+    assert rt._window_move("X_USDT", hours=48) == (0.0, 0.0)
+
+
+def test_digest_is_never_starved_by_a_run_of_open_positions(rt):
+    """Deferring the 35s check while a position is open protects the software
+    exits — but deferring forever costs the operator their only daily artifact.
+    Past half a period overdue it sends without the forensic section."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_send_learning_digest)
+    assert "overdue = now_t - last > (days + 0.5) * 86400.0" in src
+    assert "if self.open_positions and not overdue:" in src
+    assert "skipped" in src, "the operator must be told the section is missing"
+    # the marker is written only after a successful send, so a defer retries
+    assert src.index("if self.open_positions and not overdue:") < src.index("marker.write_text")
+
+
+# --------------------------------------------------------------------------
+# adversarial review of the two-window report, 2026-08-09 (all pre-deploy)
+# --------------------------------------------------------------------------
+
+def test_exit_never_prices_one_position_off_another_symbol():
+    """CRITICAL, pre-existing. On a get_fair_price failure the exit loop fell
+    back to _get_reference_price(), which resolves to whichever position is
+    self.open_position. With two convex slots, an alt at $0.02 was evaluated
+    against BTC at $65,000 — an astronomical fake gain the profit locks and the
+    retention trail would act on with a market close."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime.run)
+    assert "ref_symbol = (self.open_position.symbol" in src
+    assert "if position.symbol != ref_symbol or current_price <= 0:" in src
+    assert "EXIT_SKIP" in src
+    # the old unconditional substitution must be gone
+    assert "                        pos_price = current_price\n                    except Exception:" not in src
+
+
+def test_missed_check_has_a_wall_clock_budget():
+    """CRITICAL. ~100 sequential kline calls, each retried 3x with backoff, is
+    ~79 minutes of a blocked cycle on a degraded exchange — during which /pause
+    is dead, the heartbeat never fires and no exit is evaluated."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._missed_opportunity_lines)
+    assert "FUTURES_MISSED_BUDGET_SECONDS" in src
+    assert "time.monotonic() - t0 > budget" in src
+    assert "budget exhausted" in src or "skipped on the" in src
+
+
+def test_digest_marker_is_claimed_before_the_work_and_fails_closed():
+    """CRITICAL. An unwritable marker read back as 0.0 forever, so the throttle
+    always passed: a full digest plus ~100 kline calls every cycle, silently."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_send_learning_digest)
+    assert "marker unwritable" in src
+    assert src.index("marker.write_text(str(now_t)") < src.index("self._notify(build_learning_digest")
+    # ...and a failed send must not consume the day
+    assert "will retry next cycle" in src
+    assert "marker.write_text(str(last)" in src
+
+
+def test_notify_reports_whether_it_actually_sent(rt):
+    class _Tg:
+        configured = True
+        ok = True
+
+        def send_message(self, m, parse_mode="HTML"):
+            return self.ok
+
+    rt.telegram = _Tg()
+    assert rt._notify("x") is True
+    rt.telegram.ok = False
+    assert rt._notify("x") is False
+
+
+def test_traded_and_blocked_are_scoped_to_the_line_s_own_window(rt):
+    """A fill 40h old was stamping "traded" on a 24h line and suppressing the
+    replay — the one section built to show what was missed reported a clean
+    pass on exactly the symbol that mattered."""
+    now = time.time()
+    ctx = {"traded": {"OLD_USDT": now - 40 * 3600, "NEW_USDT": now - 2 * 3600},
+           "blocked": {}, "majors": set(), "floor": 1.0, "min_roc": 0.08}
+    tick = {"symbol": "OLD_USDT", "amount24": 9e6}
+    rt._replay_verdict = lambda s, r, bars_back=96: "REPLAYED"
+    # 24h line: the 40h-old fill is out of window, so the replay must run
+    assert "REPLAYED" in rt._mover_line(tick, 0.5, 0.2, ctx, bars_back=96)
+    # 48h line: same fill is in window
+    assert "traded" in rt._mover_line(tick, 0.5, 0.2, ctx, bars_back=192)
+    fresh = {"symbol": "NEW_USDT", "amount24": 9e6}
+    assert "traded" in rt._mover_line(fresh, 0.5, 0.2, ctx, bars_back=96)
+
+
+def test_verdict_discloses_a_truncated_replay_window():
+    """range(max(200, n - bars_back), ...) clamps the START, not the span, so a
+    symbol listed three days ago got 22h of a 48h window and still answered
+    "never cleared 8%/3h". New listings are exactly the +100%-over-two-days
+    population."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._replay_verdict)
+    assert "covered_h" in src and "only {covered_h:.0f}h of history" in src
+
+
+def test_blocker_report_skips_the_gate_that_always_wins():
+    """detect_wildcard_signal appends exactly ONE tag per call and
+    pullback-resume is gate 2 of 4, so it rejects ~70% of trigger bars on every
+    symbol and always won the top-blocker pick. The tunable information is what
+    killed the bars that got PAST it."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._replay_verdict)
+    assert 'blockers.get("no_pullback_resume", 0)' in src
+    assert 'k != "no_pullback_resume"' in src
+    assert "past pullback" in src
+
+
+def test_report_says_when_the_scanner_is_not_running(rt, monkeypatch):
+    """Every line reads as a detector or gate story. If the sleeve is off,
+    paused or throwing, all of them are noise and THAT is the alarm."""
+    rt.client = MagicMock()
+    rt.client.get_all_tickers.return_value = [
+        {"symbol": "A_USDT", "amount24": 9e6, "riseFallRate": 0.5,
+         "high24Price": 200.0, "lower24Price": 100.0, "riseFallRates": {"r7": 0.0}}]
+    monkeypatch.setattr(rt, "_major_symbols", lambda t, n: set())
+    monkeypatch.setattr(rt, "_feature_rows_cached", lambda: [])
+    monkeypatch.setattr(rt, "_shadow_ledger_path", lambda: "/nonexistent")
+    monkeypatch.setattr(rt, "_replay_verdict", lambda s, r, bars_back=96: "x")
+    monkeypatch.setattr(rt, "_window_move", lambda sym, hours: (0.0, 0.0))
+    rt._last_wildcard_scan = {"at": time.time()}
+    rt._paused = True
+    assert "not scanning" in "\n".join(rt._missed_opportunity_lines())
+    # The stale-scan branch is only reachable once the sleeve is ENABLED —
+    # otherwise "disabled" is the correct and more important alarm.
+    rt._paused = False
+    monkeypatch.setenv("FUTURES_WILDCARD_ENABLED", "1")
+    rt._last_wildcard_scan = {"at": time.time() - 86400}
+    assert "may have stalled" in "\n".join(rt._missed_opportunity_lines())
+
+
+def test_report_states_what_it_did_not_look_at(rt, monkeypatch):
+    """A silently truncated list reads exactly like a clean one — the worst
+    failure mode for the only artifact an absent operator gets."""
+    rt.client = MagicMock()
+    rt.client.get_all_tickers.return_value = [
+        {"symbol": "A_USDT", "amount24": 9e6, "riseFallRate": 0.5,
+         "high24Price": 200.0, "lower24Price": 100.0, "riseFallRates": {"r7": 0.0}}]
+    monkeypatch.setattr(rt, "_major_symbols", lambda t, n: set())
+    monkeypatch.setattr(rt, "_feature_rows_cached", lambda: [])
+    monkeypatch.setattr(rt, "_shadow_ledger_path", lambda: "/nonexistent")
+    monkeypatch.setattr(rt, "_replay_verdict", lambda s, r, bars_back=96: "x")
+    monkeypatch.setattr(rt, "_window_move", lambda sym, hours: (0.0, 0.0))
+    rt._last_wildcard_scan = {"at": time.time()}
+    rt._paused = False
+    text = "\n".join(rt._missed_opportunity_lines())
+    assert "not the whole book" in text
+    assert "fetch(es) failed" in text
+    assert "upper bound" in text, "the completed-vs-partial-bar caveat is missing"

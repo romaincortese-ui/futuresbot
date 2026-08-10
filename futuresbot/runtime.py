@@ -793,11 +793,18 @@ class FuturesRuntime:
         rate, _src = self._symbol_taker_fee.get(symbol.upper(), (default_fee, default_src))
         return float(rate)
 
-    def _notify(self, message: str, *, parse_mode: str = "HTML") -> None:
+    def _notify(self, message: str, *, parse_mode: str = "HTML") -> bool:
+        """True when the message actually went out.
+
+        Returns a value now because the digest advances a marker file on send:
+        a swallowed failure cost a whole day's report with no trace beyond one
+        warning line. Callers that do not care may keep ignoring it."""
         if not self.telegram.configured:
-            return
+            return False
         if not self.telegram.send_message(message, parse_mode=parse_mode):
             log.warning("Telegram send failed")
+            return False
+        return True
 
     def _notify_once(self, key: str, message: str, *, cooldown_seconds: int = TELEGRAM_ALERT_COOLDOWN_SECONDS, parse_mode: str = "HTML") -> None:
         now_ts = time.time()
@@ -4750,93 +4757,268 @@ class FuturesRuntime:
             # load_rows, not load_jsonl: the latter bypasses the ~90s duplicate
             # collapse, so the digest was double-counting rows /status dedupes.
             shadow_rows = shadow.load_rows(self._shadow_ledger_path())
+            missed = []
+            # The check costs ~35s of kline fetches, and it runs INSIDE the
+            # trading cycle. The convex exits are software, so blocking the loop
+            # while a position is open delays the retention trail and the 24h
+            # clock. Defer to the next cycle instead — the digest is daily and
+            # the bot is flat most of the time, so this costs at most a few
+            # hours of report latency and never an exit.
+            # ...but deferring forever is worse than a late exit check. If the
+            # digest is more than half a period overdue, send it WITHOUT the
+            # forensic section rather than let a run of open positions starve
+            # the operator's only daily artifact.
+            overdue = now_t - last > (days + 0.5) * 86400.0
+            if self.open_positions and not overdue:
+                log.info("[LEARNING_DIGEST] deferred: %d position(s) open",
+                         len(self.open_positions))
+                return
+            if self.open_positions:
+                log.warning("[LEARNING_DIGEST] overdue %.1fh — sending without the "
+                            "missed-opportunity check (%d position(s) open)",
+                            (now_t - last) / 3600.0, len(self.open_positions))
+                missed = ["<i>🔎 missed-opportunity check skipped — positions were "
+                          "open every time the digest came due</i>"]
+            else:
+                try:
+                    missed = self._missed_opportunity_lines()
+                except Exception:  # a forensic extra must never block the digest
+                    missed = []
+            # Claim the slot BEFORE the expensive work and the send. If the
+            # marker cannot be written — /data unmounted, read-only volume —
+            # `last` reads back as 0.0 forever, the throttle always passes, and
+            # the bot would re-send the digest and burn ~100 kline calls every
+            # single cycle until someone noticed. Failing closed is the only
+            # safe direction.
             try:
-                missed = self._missed_opportunity_lines()
-            except Exception:      # a forensic extra must never block the digest
-                missed = []
-            self._notify(build_learning_digest(store_rows, shadow_rows,
-                                               missed_lines=missed))
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(str(now_t), encoding="utf-8")
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(str(now_t), encoding="utf-8")
+            except Exception as exc:
+                log.warning("[LEARNING_DIGEST] marker unwritable (%s) — skipping this "
+                            "run rather than looping every cycle", exc)
+                return
+            if not self._notify(build_learning_digest(store_rows, shadow_rows,
+                                                      missed_lines=missed)):
+                # Roll the marker back so a transient Telegram failure does not
+                # silently cost a whole day's digest.
+                try:
+                    marker.write_text(str(last), encoding="utf-8")
+                except Exception:
+                    pass
+                log.warning("[LEARNING_DIGEST] send failed; will retry next cycle")
+                return
             log.info("[LEARNING_DIGEST] sent store=%d shadow=%d", len(store_rows), len(shadow_rows))
         except Exception as exc:  # pragma: no cover — digest never breaks the cycle
-            log.debug("learning digest failed: %s", exc)
+            log.warning("learning digest failed: %s", exc)
 
     def _missed_opportunity_lines(self, top_n: int = 10) -> list[str]:
-        """Did the bot miss anything big in the last 24h? Answered, not guessed.
+        """Did the bot miss anything big? Answered from data, not guessed.
 
-        Takes the biggest movers in the tradeable band and, for each, replays
-        the SAME detector the live scan runs over the last 24h of 15m bars and
-        reports which of four things happened: traded / signalled but blocked
-        (with the reason) / no signal (with the blocker) / never scanned (with
-        the funnel stop). Built after 2026-08-09, when eight of that day's ten
-        biggest gainers went untaken and reconstructing why took a manual
-        forensic pass over four data sources.
+        Two windows, because they fail differently. A 24h list catches the
+        spike; a 48h list catches the GRIND — a symbol that adds 12% two days
+        running is a 25% move that never looked remarkable on either single
+        day, so it appears on neither a 24h change nor a 24h range ranking.
 
-        Ranked on 24h RANGE, not 24h change: a symbol that spiked and retraced
-        is exactly the case the old screen hid.
+        Every symbol on either list gets one of five verdicts: traded /
+        signalled-but-blocked / never scanned (funnel stop) / scanned but no
+        signal (with the dominant blocker) / below the turnover floor. Built
+        after 2026-08-09, when reconstructing why eight of that day's ten
+        biggest gainers went untaken took a manual pass over four sources.
         """
-        from futuresbot.wildcard import detect_wildcard_signal
-
         try:
             tickers = self.client.get_all_tickers() or []
         except Exception:
             return []
-        exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0))
-        majors = self._major_symbols(tickers, exclude_top)
-        floor = wildcard_min_turnover_usdt()
-        min_roc = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_ROC", 0.08))
-
-        ranked = sorted(
-            ((self._range_24h(t), t) for t in tickers
-             if str(t.get("symbol") or "").endswith("_USDT")
-             and self._is_tradeable_crypto(str(t.get("symbol") or ""))),
-            key=lambda kv: kv[0], reverse=True)[:top_n]
-        if not ranked:
+        pool = [t for t in tickers
+                if str(t.get("symbol") or "").endswith("_USDT")
+                and self._is_tradeable_crypto(str(t.get("symbol") or ""))]
+        if not pool:
             return []
 
-        traded = {str(r.get("symbol")) for r in self._feature_rows_cached()
-                  if float(r.get("ts") or 0.0) >= time.time() - 86400}
+        exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0))
+        ctx = {
+            "majors": self._major_symbols(tickers, exclude_top),
+            "floor": wildcard_min_turnover_usdt(),
+            "min_roc": max(0.0, self._env_float("FUTURES_WILDCARD_MIN_ROC", 0.08)),
+            # Keep the TIMESTAMP, not just membership: the section's window
+            # decides whether a hit is relevant. A 48h-old fill was stamping
+            # "traded" on a 24h line and suppressing the replay, so the one
+            # section built to show what was missed reported a clean pass on
+            # exactly the symbol that mattered.
+            "traded": {}, "blocked": {},
+        }
+        for r in self._feature_rows_cached():
+            sym, ts = str(r.get("symbol")), float(r.get("ts") or 0.0)
+            ctx["traded"][sym] = max(ctx["traded"].get(sym, 0.0), ts)
         try:
             from futuresbot import shadow_ledger as shadow
 
-            blocked = {str(r.get("symbol")): str(r.get("reject_reason") or "?")
-                       for r in shadow.load_rows(self._shadow_ledger_path())
-                       if float(r.get("ts") or 0.0) >= time.time() - 86400}
+            for r in shadow.load_rows(self._shadow_ledger_path()):
+                sym, ts = str(r.get("symbol")), float(r.get("ts") or 0.0)
+                if ts >= ctx["blocked"].get(sym, (0.0, ""))[0]:
+                    ctx["blocked"][sym] = (ts, str(r.get("reject_reason") or "?"))
         except Exception:
-            blocked = {}
+            pass
 
-        lines = [f"🔎 <b>Missed-opportunity check</b> — top {len(ranked)} movers, 24h"]
-        thin: list[str] = []
-        for rng, t in ranked:
-            sym = str(t.get("symbol"))
-            chg = float(t.get("riseFallRate") or 0.0) * 100
-            turn = float(t.get("amount24") or 0.0)
-            head = (f"• <b>{html.escape(sym)}</b> {chg:+.1f}% "
-                    f"(range {rng * 100:.0f}%)")
-            if sym in traded:
-                lines.append(f"{head} — ✅ traded")
-                continue
-            if sym in blocked:
-                lines.append(f"{head} — ⛔ {html.escape(self._reject_label(blocked[sym]))}")
-                continue
-            # Funnel stops come BEFORE detection, so report them without a fetch.
-            if sym in majors:
-                lines.append(f"{head} — majors band")
-                continue
-            if turn < floor:
-                # Collapsed: on a busy day most of the top movers are illiquid
-                # micro-caps, and five identical "under the floor" rows bury the
-                # one line that needs acting on.
-                thin.append(f"{html.escape(sym)} ${turn / 1e6:.1f}M")
-                continue
-            lines.append(f"{head} — {self._replay_verdict(sym, min_roc)}")
+        # Sub-floor symbols are reported, but they must not consume the ranked
+        # slots: on a busy day the top 10 by range is mostly illiquid micro-caps
+        # and the actionable lines get pushed off the list entirely.
+        def _liquid(t) -> bool:
+            return float(t.get("amount24") or 0.0) >= ctx["floor"]
+
+        # --- 24h list: exact, straight off the ticker -----------------------
+        by_range = sorted(pool, key=self._range_24h, reverse=True)
+        top24 = [t for t in by_range if _liquid(t)][:top_n]
+        thin_pool = [t for t in by_range[:top_n * 3] if not _liquid(t)]
+
+        # --- 48h list: needs bars, so shortlist first -----------------------
+        # A 48h mover is necessarily also large on ONE of these two axes: its
+        # own 24h range (if the move was concentrated) or its 7-day return (if
+        # it ground out over two days). The union is a wide net over a
+        # quantity the ticker already carries, so no extra calls to build it.
+        short_n = int(self._env_float("FUTURES_MISSED_SHORTLIST", 40.0))
+
+        def _r7(t):
+            try:
+                return abs(float((t.get("riseFallRates") or {}).get("r7") or 0.0))
+            except (TypeError, ValueError, AttributeError):
+                return 0.0
+
+        # Only symbols that could actually reach a ranked slot are worth a
+        # fetch: sub-floor and majors names are classified from the ticker
+        # alone, and fetching them was roughly half the wall-clock cost.
+        rankable = [t for t in pool
+                    if _liquid(t) and str(t.get("symbol")) not in ctx["majors"]]
+        shortlist = {str(t.get("symbol")): t for t in
+                     sorted(rankable, key=self._range_24h, reverse=True)[:short_n]}
+        shortlist.update({str(t.get("symbol")): t for t in
+                          sorted(rankable, key=_r7, reverse=True)[:short_n]})
+        # WALL-CLOCK BUDGET. These are sequential HTTP calls, and the client
+        # retries 3x with backoff — a degraded MEXC turns ~100 fetches into
+        # ~79 minutes of a blocked trading cycle, during which /pause is dead,
+        # the heartbeat never fires and no exit is evaluated. A partial report
+        # is fine; a frozen bot is not.
+        budget = max(10.0, self._env_float("FUTURES_MISSED_BUDGET_SECONDS", 60.0))
+        t0 = time.monotonic()
+        scored48: list[tuple[float, float, dict]] = []
+        failed = checked = 0
+        for sym, t in shortlist.items():
+            if time.monotonic() - t0 > budget:
+                break
+            checked += 1
+            rng, chg = self._window_move(sym, hours=48)
+            if rng > 0:
+                scored48.append((rng, chg, t))
+            else:
+                failed += 1
+        skipped = len(shortlist) - checked
+        scored48.sort(key=lambda x: x[0], reverse=True)
+        seen24 = {str(t.get("symbol")) for t in top24}
+        top48 = [(r, c, t) for r, c, t in scored48
+                 if str(t.get("symbol")) not in seen24 and _liquid(t)][:top_n]
+        thin_pool += [t for _r, _c, t in scored48[:top_n * 3]
+                      if not _liquid(t) and str(t.get("symbol")) not in seen24]
+
+        thin = sorted({f"{html.escape(str(t.get('symbol')))} "
+                       f"${float(t.get('amount24') or 0.0) / 1e6:.1f}M"
+                       for t in thin_pool})
+        lines = ["🔎 <b>Missed-opportunity check</b>"]
+        # Was the scanner even running? Every line below reads as a detector or
+        # gate story; if the sleeve is off, paused or throwing, all of them are
+        # noise and THIS is the alarm.
+        snap = self._last_wildcard_scan
+        scan_age = (time.time() - float((snap or {}).get("at") or 0.0)) / 60.0
+        if not wildcard_enabled() or self._paused:
+            lines.append("⚠️ <b>wildcard sleeve is not scanning</b> "
+                         f"({'paused' if self._paused else 'disabled'}) — "
+                         "everything below is historical")
+        elif not snap or scan_age > 2 * wildcard_scan_interval_seconds() / 60.0:
+            lines.append(f"⚠️ <b>last scan {scan_age:.0f}m ago</b> — the scanner may "
+                         "have stalled; treat the lines below with that in mind")
+        if top24:
+            lines.append(f"<b>24h</b> — top {len(top24)} movers by range")
+            lines += [self._mover_line(t, self._range_24h(t),
+                                       float(t.get("riseFallRate") or 0.0), ctx,
+                                       bars_back=96) for t in top24]
+        if top48:
+            # Only symbols the 24h list did NOT already name. A steady grind —
+            # +12% two days running — is a 25% move that shows up on neither a
+            # 24h change nor a 24h range ranking, which is the whole point of
+            # running the second window.
+            lines.append(f"<b>48h</b> — {len(top48)} more, invisible at 24h")
+            lines += [self._mover_line(t, rng, chg, ctx, bars_back=192)
+                      for rng, chg, t in top48]
         if thin:
-            lines.append(f"• {len(thin)} under the ${floor / 1e6:.0f}M turnover floor: "
-                         + ", ".join(thin))
+            # Named in full this runs to twenty symbols and buries everything
+            # above it. The count is the signal; the names are a sample.
+            shown = thin[:4]
+            more = f" +{len(thin) - len(shown)} more" if len(thin) > len(shown) else ""
+            lines.append(f"• <b>{len(thin)}</b> big movers under the "
+                         f"${ctx['floor'] / 1e6:.0f}M turnover floor: "
+                         + ", ".join(shown) + more)
+        # Say what was NOT looked at. A silently truncated list reads exactly
+        # like a clean one, which is the worst possible failure for the only
+        # artifact an absent operator gets.
+        caveats = []
+        if failed:
+            caveats.append(f"{failed} 48h fetch(es) failed")
+        if skipped:
+            caveats.append(f"{skipped} shortlisted symbol(s) skipped on the "
+                           f"{budget:.0f}s budget")
+        lines.append("<i>48h ranks a shortlist (top 24h-range + top 7d-return), not the "
+                     "whole book — a move that ran and fully retraced inside hours "
+                     "48-24 can be absent"
+                     + ("; " + ", ".join(caveats) if caveats else "") + "</i>")
+        lines.append("<i>signal counts replay COMPLETED bars; the live scan samples "
+                     "mid-bar, so they are an upper bound on what it could have seen</i>")
         return lines
 
-    def _replay_verdict(self, symbol: str, min_roc: float) -> str:
+    def _mover_line(self, ticker: dict, rng: float, chg: float, ctx: dict,
+                    *, bars_back: int) -> str:
+        """One mover, one reason, scoped to the SAME window as the line."""
+        sym = str(ticker.get("symbol"))
+        cutoff = time.time() - bars_back * 900          # bars_back x 15m
+        head = f"• <b>{html.escape(sym)}</b> {chg * 100:+.1f}% (range {rng * 100:.0f}%)"
+        t_ts = ctx["traded"].get(sym, 0.0)
+        if t_ts >= cutoff:
+            return f"{head} — ✅ traded {self._ago(t_ts)}"
+        b_ts, b_reason = ctx["blocked"].get(sym, (0.0, ""))
+        if b_ts >= cutoff:
+            return (f"{head} — ⛔ {html.escape(self._reject_label(b_reason))} "
+                    f"{self._ago(b_ts)}")
+        # Funnel stops happen BEFORE detection, so they need no bars.
+        if sym in ctx["majors"]:
+            return f"{head} — majors band"
+        return f"{head} — {self._replay_verdict(sym, ctx['min_roc'], bars_back=bars_back)}"
+
+    @staticmethod
+    def _ago(ts: float) -> str:
+        h = max(0.0, (time.time() - float(ts or 0.0)) / 3600.0)
+        return f"{h * 60:.0f}m ago" if h < 1 else f"{h:.0f}h ago"
+
+    def _window_move(self, symbol: str, *, hours: int) -> tuple[float, float]:
+        """(range, change) over a rolling window, from Min60 bars.
+
+        The ticker only carries 24h figures, so any other window has to be
+        computed. Returns (0.0, 0.0) on any failure — a missing symbol drops
+        off the ranking rather than poisoning it."""
+        try:
+            df = self.client.get_klines(symbol, interval="Min60",
+                                        start=int(time.time()) - (hours + 2) * 3600,
+                                        end=int(time.time()))
+            highs = [float(x) for x in df["high"]][-hours:]
+            lows = [float(x) for x in df["low"]][-hours:]
+            closes = [float(x) for x in df["close"]][-hours:]
+        except Exception:
+            return (0.0, 0.0)
+        if not highs or not lows or len(closes) < 2:
+            return (0.0, 0.0)
+        hi, lo = max(highs), min(lows)
+        rng = (hi - lo) / lo if lo > 0 else 0.0
+        chg = (closes[-1] / closes[0] - 1.0) if closes[0] > 0 else 0.0
+        return (rng, chg)
+
+    def _replay_verdict(self, symbol: str, min_roc: float, *, bars_back: int = 96) -> str:
         """Replay the live detector over the last 24h of 15m bars.
 
         Only bars whose 3h ROC already clears the trigger are worth a full
@@ -4854,10 +5036,18 @@ class FuturesRuntime:
         n = len(closes)
         if n < 200:
             return "not checked (short history)"
+        # range(max(200, n - bars_back), ...) clamps the START, not the span: a
+        # symbol listed three days ago gets 22h of a 48h window and still
+        # answered "never cleared 8%/3h". New listings are exactly the
+        # population that runs +100% over two days.
+        covered_h = (n - max(200, n - bars_back)) * 0.25
+        short = covered_h < bars_back * 0.25 * 0.9
+        caveat = f" (only {covered_h:.0f}h of history)" if short else ""
         longs = shorts = 0
         blockers: dict[str, int] = {}
         triggers = 0
-        for i in range(max(200, n - 96), n + 1):
+        last_long = None
+        for i in range(max(200, n - bars_back), n + 1):
             if i <= ROC_BARS:
                 continue
             if abs(closes[i - 1] / closes[i - 1 - ROC_BARS] - 1.0) < min_roc:
@@ -4870,18 +5060,36 @@ class FuturesRuntime:
                     blockers[r] = blockers.get(r, 0) + 1
             elif sig.side == "LONG":
                 longs += 1
+                last_long = i
             else:
                 shorts += 1
         if longs:
-            return (f"⚠️ <b>{longs} LONG signal(s)</b> and no position — "
-                    f"check slots and gates")
+            # AGE MATTERS more than the count. "1 LONG signal" reads the same
+            # whether it fired four minutes ago — which means something is
+            # wrong right now — or forty hours ago, before a gate that has
+            # since been fixed. Only the recent case deserves an alarm.
+            age_h = max(0.0, (n - (last_long or n)) * 0.25)
+            recent = age_h <= self._env_float("FUTURES_MISSED_ALERT_HOURS", 6.0)
+            when = f"{age_h * 60:.0f}m" if age_h < 1 else f"{age_h:.0f}h"
+            return ((f"⚠️ <b>{longs} LONG signal(s)</b>, last {when} ago, no position"
+                     if recent else
+                     f"{longs} LONG signal(s), last {when} ago, not taken"))
         if shorts:
             return f"{shorts} SHORT signal(s), shorts are off"
         if not triggers:
-            return f"never cleared {min_roc * 100:.0f}%/3h"
-        top = sorted(blockers.items(), key=lambda kv: -kv[1])[:1]
-        return (f"{triggers} trigger bar(s), no signal"
-                + (f" — {top[0][0]} x{top[0][1]}" if top else ""))
+            return f"never cleared {min_roc * 100:.0f}%/3h{caveat}"
+        # no_pullback_resume wins this pick on essentially every symbol —
+        # detect_wildcard_signal appends exactly ONE tag per call and
+        # pullback-resume is gate 2 of 4, so it rejects ~70% of trigger bars
+        # everywhere. Reporting it says nothing. What matters is how many bars
+        # got PAST it and what killed them, because those are the tunable ones.
+        passed = triggers - blockers.get("no_pullback_resume", 0)
+        rest = sorted(((k, v) for k, v in blockers.items() if k != "no_pullback_resume"),
+                      key=lambda kv: -kv[1])[:1]
+        if passed > 0 and rest:
+            return (f"{triggers} trigger bar(s), {passed} past pullback, "
+                    f"then {rest[0][0]} x{rest[0][1]}{caveat}")
+        return f"{triggers} trigger bar(s), none survived pullback-resume{caveat}"
 
     def _resolve_shadow_ledger(self) -> None:
         """Resolve pending shadow-ledger counterfactuals (throttled to hourly).
@@ -9194,12 +9402,29 @@ class FuturesRuntime:
                 signal: dict[str, Any] | None = None
                 # Per-position hourly exit check. Snapshot the dict so that mid-loop
                 # mutations from exits don't affect iteration order.
+                ref_symbol = (self.open_position.symbol if self.open_position is not None
+                              else (self._active_symbols[0] if self._active_symbols
+                                    else self.config.symbol))
                 for position in list(self.open_positions.values()):
                     try:
                         pos_price = self.client.get_fair_price(position.symbol)
-                        if pos_price <= 0:
-                            pos_price = current_price
                     except Exception:
+                        pos_price = 0.0
+                    if pos_price <= 0:
+                        # NEVER substitute the reference price for a different
+                        # symbol. _get_reference_price resolves to whichever
+                        # position happens to be self.open_position, so with two
+                        # convex slots a transient fetch failure on an alt at
+                        # $0.02 evaluated its exits against BTC at $65,000 — an
+                        # astronomical fake gain that the profit locks and the
+                        # retention trail would act on with a market close.
+                        # A skipped cycle is always safer: the exchange-side
+                        # stop is still in place.
+                        if position.symbol != ref_symbol or current_price <= 0:
+                            log.warning("[EXIT_SKIP] %s price unavailable this cycle "
+                                        "(no cross-symbol fallback); exchange stop stands",
+                                        position.symbol)
+                            continue
                         pos_price = current_price
                     # Sprint 1 §2.5 — pre-liquidation force-close. No-op when flag off.
                     if self._liq_buffer_force_close(position, pos_price):
