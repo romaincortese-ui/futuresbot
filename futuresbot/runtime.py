@@ -237,6 +237,8 @@ class FuturesRuntime:
         # once per pass (up to 96x at the 24h clock), which would swamp the
         # slot_occupied population that any slot-count decision rests on.
         self._wildcard_block_logged: set[tuple[str, str]] = set()
+        # Timestamps of recent preemptions, for the rolling 24h budget.
+        self._preempt_log: list[float] = []
         self._pending_entry_lateness: float | None = None
         self._pending_ref_listed: bool | None = None
         self._last_shadow_resolve_at = 0.0
@@ -3179,6 +3181,8 @@ class FuturesRuntime:
             "paused": self._paused,
             "recent_activity": list(self._recent_activity),
             "last_exit_by_symbol": self._last_exit_by_symbol,
+            "preempt_log": [t for t in getattr(self, "_preempt_log", [])
+                            if time.time() - t < 86400],
             "last_telegram_update": self._last_telegram_update,
             "last_heartbeat_at": self._last_heartbeat_at,
         }
@@ -4317,6 +4321,152 @@ class FuturesRuntime:
             lines.append("All exchange positions already tracked. Nothing to adopt.")
         return "\n".join(lines)
 
+    def _preemption_possible(self) -> bool:
+        return bool(self._flag("FUTURES_WILDCARD_PREEMPT_ENABLED", default=True))
+
+    def _preemption_candidate(self, incoming) -> "FuturesPosition | None":
+        """The open wildcard position worth giving up for `incoming`, or None.
+
+        The convex clock recycles slots INDISCRIMINATELY — at 6h it evicts
+        winners alongside duds, which is why a 6h clock buys throughput at the
+        cost of per-trade quality (measured: mean R +0.340 -> +0.289). This
+        chooses: it only ever gives up a position that has already failed to
+        work, and only when a fresh signal needs the slot. Measured over 8 days
+        / 60 signals, that lifted mean R to +0.508, day-clustered t to +2.00 and
+        the top-3-haircut from -4.41R to +9.44R.
+
+        Every guard below is a safety rail, not a tuned parameter."""
+        if not self._flag("FUTURES_WILDCARD_PREEMPT_ENABLED", default=True):
+            return None
+        thresh = self._env_float("FUTURES_WILDCARD_PREEMPT_BELOW_R", 0.3)
+        # 15 min = ONE bar. Measured, not assumed: a 60-minute "prudent" guard
+        # halved the whole effect (t_day +2.00 -> +1.03, ex-top3 +9.44 -> -1.37)
+        # because it blocks precisely the valuable evictions — a position below
+        # +0.3R inside the first hour is one that failed immediately, and those
+        # are the ones worth replacing. 0 and 15 are indistinguishable; 30+
+        # degrades monotonically. One bar buys anti-churn for nothing.
+        min_age = max(0.0, self._env_float("FUTURES_WILDCARD_PREEMPT_MIN_AGE_MIN", 15.0))
+        cap = int(self._env_float("FUTURES_WILDCARD_PREEMPT_MAX_PER_DAY", 6))
+        now_t = time.time()
+        # Rolling 24h eviction budget. Without it a burst of signals could
+        # churn the book, paying a round trip each time for no thesis change.
+        self._preempt_log = [t for t in getattr(self, "_preempt_log", []) if now_t - t < 86400]
+        if len(self._preempt_log) >= cap:
+            log.info("[PREEMPT] budget spent (%d/24h) — holding", cap)
+            return None
+        worst = None
+        for pos in list(self.open_positions.values()):
+            if self._sleeve_kind(pos) != "WILDCARD":
+                continue                       # never touch another sleeve's book
+            if pos.symbol == getattr(incoming, "symbol", None):
+                continue                       # not the same symbol
+            age_h = self._hold_hours(pos)
+            if age_h is None or age_h * 60.0 < min_age:
+                continue                       # a fresh entry gets its chance;
+                                               # unknown age is never evicted
+            mark = self._symbol_current_prices((pos.symbol,)).get(pos.symbol)
+            r_now = self._position_r_multiple(pos, mark)
+            if r_now is None:
+                continue                       # unknown P&L is never evicted
+            if r_now >= thresh:
+                continue                       # working, or in profit: keep it
+            if worst is None or r_now < worst[1]:
+                worst = (pos, r_now, float(mark))
+        if worst is None:
+            return None
+        return worst          # (position, r_now, mark) — charged by the caller
+
+    def _try_preempt_for(self, sig) -> float | None:
+        """Free a slot for `sig`. Returns the refreshed available balance, or None.
+
+        Called ONLY after `sig` has cleared its veto, because the simulated rule
+        pairs every eviction with a replacement by construction and live does
+        not: evicting first meant a vetoed or unfillable candidate could leave
+        the book one real position poorer and nothing opened.
+        """
+        pick = self._preemption_candidate(sig)
+        if pick is None:
+            return None
+        victim, r_now, mark = pick
+        log.warning("[PREEMPT] %s at %+.2fR yields its slot to %s %s",
+                    victim.symbol, r_now, getattr(sig, "side", "?"),
+                    getattr(sig, "symbol", "?"))
+        try:
+            ok = self._close_position_for_exit(victim, current_price=mark,
+                                               reason="CONVEX_PREEMPTED")
+        except Exception as exc:
+            # _close_position_for_exit cancels the exchange TP/SL BEFORE sending
+            # the close. If the close raises, the position is still live with no
+            # resting stop and the scan's blanket handler would have swallowed
+            # it as one WARNING line. Re-arm the stop and shout.
+            log.exception("[PREEMPT] close FAILED for %s — re-arming its stop", victim.symbol)
+            self._rearm_stop(victim)
+            self._notify_once(
+                f"preempt_fail_{victim.symbol}",
+                f"⚠️ <b>Preemption close failed</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n{html.escape(victim.symbol)} is still OPEN. "
+                f"Its exchange stop was cancelled and has been re-armed — verify it.\n"
+                f"<code>{html.escape(str(exc))[:200]}</code>")
+            return None
+        if not ok:
+            return None
+        self._preempt_log.append(time.time())     # charged only on a real close
+        # Re-read the balance: the freed margin is not in the snapshot taken at
+        # the top of the scan, so the replacement would size ~10-15% small —
+        # precisely the trade the eviction was paid for.
+        try:
+            return float(self._account_snapshot(
+                self._get_reference_price()).get("available_usdt", 0.0) or 0.0)
+        except Exception:
+            return None
+
+    def _rearm_stop(self, position) -> None:
+        """Re-place a resting stop after a failed close. Best-effort, loud."""
+        try:
+            if self.config.paper_trade or not position.position_id:
+                return
+            if not (position.sl_price and position.sl_price > 0):
+                return
+            self.client.place_position_tpsl(
+                position_id=str(position.position_id), vol=int(position.contracts),
+                take_profit_price=position.tp_price or None,
+                stop_loss_price=float(position.sl_price), side=position.side)
+            log.warning("[PREEMPT] re-armed stop on %s at %s",
+                        position.symbol, self._format_price(float(position.sl_price)))
+        except Exception as exc:  # pragma: no cover — already in a failure path
+            log.exception("[PREEMPT] could not re-arm stop on %s: %s", position.symbol, exc)
+
+    def _position_r_multiple(self, position, mark: float | None) -> float | None:
+        """Current P&L in R, net of the round-trip cost. None when unknowable."""
+        try:
+            mark = float(mark)          # a non-numeric mark must not raise here
+        except (TypeError, ValueError):
+            return None
+        if mark <= 0:
+            return None
+        try:
+            entry = float(position.entry_price)
+            sl = float(position.sl_price or 0.0)
+            # A MISSING stop is not a 100%-wide stop. `sl_price` is 0.0 on any
+            # position adopted by /reconcile or recovered from state, and
+            # treating that as one_r == entry turned a +25% winner into
+            # "+0.248R" — below the eviction threshold, so preemption would
+            # have market-closed it. Every other R consumer already bails here
+            # (_position_stop_risk_usdt returns None when sl_price <= 0), which
+            # is why the retention trail was never fooled; this one was the
+            # exception. Unknowable R is never evictable.
+            if entry <= 0 or sl <= 0:
+                return None
+            one_r = abs(entry - sl)
+            if one_r <= 0:
+                return None
+            sgn = 1.0 if str(position.side).upper() == "LONG" else -1.0
+            gross = (float(mark) - entry) * sgn / one_r
+            cost = (self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0) / (one_r / entry)
+            return gross - cost
+        except (TypeError, ValueError, AttributeError):
+            return None
+
     def _wildcard_open_count(self) -> int:
         return sum(1 for p in self.open_positions.values() if self._is_wildcard_position(p))
 
@@ -4490,6 +4640,13 @@ class FuturesRuntime:
                      best.symbol if best else "none")
             if best is None:
                 return
+            if slot_blocked and best is not None and self._preemption_possible():
+                # Fall through to the candidate loop: preemption happens THERE,
+                # per candidate, after its veto passes.
+                slot_blocked = False
+                preempt_needed = True
+            else:
+                preempt_needed = False
             if slot_blocked:
                 self._pending_entry_lateness = best_lateness
                 # Log each blocked candidate ONCE per blocking episode. The scan
@@ -4523,7 +4680,30 @@ class FuturesRuntime:
                         log.info("[EXTERNAL_GATE] VETO WILDCARD %s %s — %s (trying next candidate)", sig.side, sig.symbol, reason)
                         self._shadow_log_untaken(sig, "WILDCARD", f"veto:{reason}")
                         continue
-                if self._open_wildcard_position(sig, available, veto_checked=True):
+                if preempt_needed:
+                    # Slots are full. Free one for THIS candidate, now that it
+                    # has passed the gate — never before.
+                    refreshed = self._try_preempt_for(sig)
+                    if refreshed is None:
+                        self._pending_entry_lateness = best_lateness
+                        key = (sig.symbol, sig.side)
+                        if key not in self._wildcard_block_logged:
+                            self._wildcard_block_logged.add(key)
+                            self._shadow_log_untaken(sig, "WILDCARD", "slot_occupied")
+                        log.info("[WILDCARD_SCAN_SUMMARY] skipped=slot_occupied candidate=%s "
+                                 "open=%d (preemption declined)", sig.symbol,
+                                 self._convex_open_count("WILDCARD"))
+                        return
+                    available = refreshed
+                    preempt_needed = False
+                opened = self._open_wildcard_position(sig, available, veto_checked=True)
+                if not opened and not preempt_needed:
+                    # A slot was paid for and nothing filled it. Measurable, not
+                    # silent: the replay pairs every eviction with an entry and
+                    # live must be able to show where it did not.
+                    log.warning("[PREEMPT] EVICTED_UNFILLED — %s did not open after a "
+                                "slot was freed", sig.symbol)
+                if opened:
                     return
         except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
             log.warning("[WILDCARD_SCAN] failed: %s", exc)

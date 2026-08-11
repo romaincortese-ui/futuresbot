@@ -258,7 +258,13 @@ def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], n
         return None
     if now_ts - float(row["ts"]) >= horizon_s:
         mark_r = (last_mark - entry) * sgn / one_r
-        return _resolved(row, mark_r, "timeout", now_ts, convex=convex)
+        # Stamp the CLOCK, not the wall clock. A timeout ends when the horizon
+        # expires; recording `now_ts` said a trade opened 9 days ago was still
+        # running until the moment the resolver happened to run, which made the
+        # row's own duration meaningless and any slot-occupancy analysis built
+        # on it wrong by days.
+        return _resolved(row, mark_r, "timeout", float(row["ts"]) + horizon_s,
+                         convex=convex)
     return None
 
 

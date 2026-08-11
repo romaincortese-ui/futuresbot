@@ -208,11 +208,16 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
     side = "LONG" if roc > 0 else "SHORT"
     s = 1 if side == "LONG" else -1
 
-    # 2. pullback-resume
-    resumed = (cur > prev) if s > 0 else (cur < prev)
-    pulled_back = (prev < prev2) if s > 0 else (prev > prev2)
-    if not (resumed and pulled_back):
-        return _rej(reasons, "no_pullback_resume")
+    # 2. pullback-resume — the single largest filter in the detector, rejecting
+    # ~76% of all trigger bars (325 of ~425 in a measured live day). It demands
+    # a specific 3-bar shape (down bar, then up bar), which a random walk
+    # supplies ~25% of the time. It has never been measured for value; the flag
+    # exists so both arms can be replayed offline. Default unchanged.
+    if _b("FUTURES_WILDCARD_REQUIRE_PULLBACK", True):
+        resumed = (cur > prev) if s > 0 else (cur < prev)
+        pulled_back = (prev < prev2) if s > 0 else (prev > prev2)
+        if not (resumed and pulled_back):
+            return _rej(reasons, "no_pullback_resume")
 
     # 3. exhaustion guard
     rsi = _rsi(frame)

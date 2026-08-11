@@ -1349,3 +1349,182 @@ def test_shorts_are_still_filtered_after_the_candidate_list(rt):
     src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
     assert "if wildcard_long_only():" in src
     assert 'self._shadow_log_untaken(sig, "WILDCARD", "side_disabled")' in src
+
+
+# --------------------------------------------------------------------------
+# slot preemption (trial 11, 2026-08-11)
+# --------------------------------------------------------------------------
+
+def _wc(sym, side="LONG", entry=100.0, sl=84.0, age_h=3.0):
+    p = _pos()
+    p.symbol = sym; p.side = side; p.entry_price = entry; p.sl_price = sl
+    p.opened_at = datetime.now(timezone.utc) - timedelta(hours=age_h)
+    p.metadata = {"wildcard": 1.0, "sl_margin_pct": 16.0}
+    return p
+
+
+class _Incoming:
+    """The signal asking for a slot. Named distinctly: `_Sig` is already taken
+    in this file by the risk-dial fixtures."""
+
+    symbol = "NEW_USDT"; side = "LONG"
+
+
+def test_preemption_gives_up_only_a_position_that_has_failed(rt, monkeypatch):
+    """The convex clock recycles slots indiscriminately — at 6h it evicts
+    winners too, which is why it buys throughput at the cost of per-trade
+    quality. Preemption chooses: only a position already below the threshold."""
+    dud, winner = _wc("DUD_USDT"), _wc("WIN_USDT")
+    rt.open_positions = {"DUD_USDT": dud, "WIN_USDT": winner}
+    # DUD at +0.05R, WINNER at +2.0R
+    monkeypatch.setattr(rt, "_symbol_current_prices",
+                        lambda syms: {"DUD_USDT": 101.0, "WIN_USDT": 132.0})
+    pick = rt._preemption_candidate(_Incoming())
+    assert pick is not None and pick[0] is dud
+    assert pick[1] < 0.3 and pick[2] == 101.0        # (victim, r_now, mark)
+
+
+def test_preemption_never_touches_a_working_position(rt, monkeypatch):
+    rt.open_positions = {"A_USDT": _wc("A_USDT"), "B_USDT": _wc("B_USDT")}
+    monkeypatch.setattr(rt, "_symbol_current_prices",
+                        lambda syms: {"A_USDT": 110.0, "B_USDT": 115.0})   # +0.6R, +0.9R
+    assert rt._preemption_candidate(_Incoming()) is None
+
+
+def test_preemption_never_evicts_another_sleeve(rt, monkeypatch):
+    sq = _wc("SQ_USDT"); sq.metadata = {"wildcard": 1.0, "squeeze": 1.0}
+    rt.open_positions = {"SQ_USDT": sq}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {"SQ_USDT": 100.0})
+    assert rt._preemption_candidate(_Incoming()) is None
+
+
+def test_preemption_never_evicts_a_fresh_entry(rt, monkeypatch):
+    """Without a minimum age a signal arriving a minute after an entry could
+    churn it, paying a round trip for no change of thesis."""
+    fresh = _wc("FRESH_USDT", age_h=0.2)
+    rt.open_positions = {"FRESH_USDT": fresh}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {"FRESH_USDT": 100.0})
+    assert rt._preemption_candidate(_Incoming()) is None
+
+
+def test_preemption_never_evicts_on_an_unknown_price(rt, monkeypatch):
+    """An unknowable P&L must never be read as a failing trade — the same
+    class of defect as the exit loop pricing one position off another symbol."""
+    rt.open_positions = {"X_USDT": _wc("X_USDT")}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {})
+    assert rt._preemption_candidate(_Incoming()) is None
+
+
+def test_preemption_never_evicts_the_incoming_symbol(rt, monkeypatch):
+    same = _wc("NEW_USDT")
+    rt.open_positions = {"NEW_USDT": same}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {"NEW_USDT": 100.0})
+    assert rt._preemption_candidate(_Incoming()) is None
+
+
+def test_preemption_has_a_daily_budget(rt, monkeypatch):
+    """Charged when a close SUCCEEDS, not when a victim is picked: a transient
+    price-fetch failure between selection and close was burning the allowance
+    with nothing closed."""
+    monkeypatch.setenv("FUTURES_WILDCARD_PREEMPT_MAX_PER_DAY", "2")
+    rt.open_positions = {"D_USDT": _wc("D_USDT")}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {"D_USDT": 100.0})
+    # selection alone must NOT spend the budget
+    for _ in range(5):
+        assert rt._preemption_candidate(_Incoming()) is not None
+    assert rt._preempt_log == []
+    rt._preempt_log = [time.time(), time.time()]
+    assert rt._preemption_candidate(_Incoming()) is None, "budget not enforced"
+    rt._preempt_log = [time.time() - 90000, time.time() - 90000]
+    assert rt._preemption_candidate(_Incoming()) is not None, "budget did not roll off"
+
+
+def test_preemption_is_flag_gated(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_PREEMPT_ENABLED", "0")
+    rt.open_positions = {"D_USDT": _wc("D_USDT")}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {"D_USDT": 100.0})
+    assert rt._preemption_candidate(_Incoming()) is None
+
+
+def test_position_r_is_net_of_cost_and_none_when_unknowable(rt):
+    p = _wc("A_USDT", entry=100.0, sl=84.0)          # 1R = 16% of price
+    r = rt._position_r_multiple(p, 116.0)            # +1R gross
+    assert 0.98 < r < 1.0, "cost not subtracted"
+    assert rt._position_r_multiple(p, None) is None
+    assert rt._position_r_multiple(p, 0.0) is None
+    degenerate = _wc("B_USDT", entry=100.0, sl=100.0)
+    assert rt._position_r_multiple(degenerate, 110.0) is None
+
+
+def test_scan_tries_preemption_before_logging_slot_occupied(rt):
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    # Eviction happens INSIDE the candidate loop, AFTER the veto: evicting
+    # first meant a vetoed or unfillable candidate could leave the book one
+    # real position poorer with nothing opened.
+    assert "self._try_preempt_for(sig)" in src
+    assert src.index("_external_entry_veto") < src.index("_try_preempt_for")
+    assert src.index("_try_preempt_for") < src.index("_open_wildcard_position(sig")
+    assert "EVICTED_UNFILLED" in src, "an unpaired eviction must be measurable"
+    tp = inspect.getsource(FuturesRuntime._try_preempt_for)
+    assert 'reason="CONVEX_PREEMPTED"' in tp
+    assert "_rearm_stop" in tp, "a failed close must re-arm the stop"
+    assert "available_usdt" in tp, "the replacement must resize after the eviction"
+
+
+def test_min_age_guard_is_one_bar_because_longer_was_measured_harmful(rt, monkeypatch):
+    """A 60-minute guard felt prudent and halved the effect: t_day +2.00 ->
+    +1.03, ex-top3 +9.44R -> -1.37R, evictions 16 -> 9. It blocks the valuable
+    ones — a position below +0.3R inside the first hour has already failed."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._preemption_candidate)
+    assert 'FUTURES_WILDCARD_PREEMPT_MIN_AGE_MIN", 15.0' in src
+    # a 20-minute-old dud IS evictable; a 5-minute-old one is not
+    rt.open_positions = {"D_USDT": _wc("D_USDT", age_h=0.34)}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {"D_USDT": 100.0})
+    assert rt._preemption_candidate(_Incoming()) is not None
+    rt._preempt_log = []
+    rt.open_positions = {"D_USDT": _wc("D_USDT", age_h=0.08)}
+    assert rt._preemption_candidate(_Incoming()) is None
+
+
+def test_a_missing_stop_is_never_read_as_a_losing_trade(rt):
+    """CRITICAL. /reconcile adopts orphans with sl_price 0.0, which made
+    one_r == entry: a +25% winner computed as +0.248R, under the +0.3
+    threshold, and preemption would have market-closed it."""
+    p = _wc("ADOPTED_USDT", entry=1.0, sl=0.0)
+    assert rt._position_r_multiple(p, 1.25) is None
+    rt.open_positions = {"ADOPTED_USDT": p}
+    rt._symbol_current_prices = lambda syms: {"ADOPTED_USDT": 1.25}
+    assert rt._preemption_candidate(_Incoming()) is None
+    # ...and a junk mark is refused rather than raising into the scan
+    assert rt._position_r_multiple(_wc("Z_USDT"), "n/a") is None
+
+
+def test_a_failed_preempt_close_rearms_the_stop_and_alerts(rt, monkeypatch):
+    """_close_position_for_exit cancels the exchange TP/SL BEFORE closing. If
+    the close raises, the position is live with no stop, and the scan's blanket
+    handler would have swallowed it as one WARNING line."""
+    victim = _wc("V_USDT")
+    victim.position_id = "pid-1"
+    rt.open_positions = {"V_USDT": victim}
+    monkeypatch.setattr(rt, "_symbol_current_prices", lambda syms: {"V_USDT": 100.0})
+    monkeypatch.setattr(rt, "_close_position_for_exit",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("MEXC 500")))
+    rearmed, alerts = [], []
+    monkeypatch.setattr(rt, "_rearm_stop", lambda p: rearmed.append(p.symbol))
+    monkeypatch.setattr(rt, "_notify_once", lambda k, m, **kw: alerts.append(k))
+    assert rt._try_preempt_for(_Incoming()) is None
+    assert rearmed == ["V_USDT"], "stop was not re-armed"
+    assert alerts and "preempt_fail" in alerts[0], "operator was not told"
+    assert rt._preempt_log == [], "budget spent on a close that never happened"
+
+
+def test_preempt_budget_survives_a_restart(rt):
+    """It lived only in memory, so a redeploy — which happens several times a
+    day here — granted a fresh six evictions each time."""
+    import inspect
+
+    assert '"preempt_log"' in inspect.getsource(FuturesRuntime._save_state)

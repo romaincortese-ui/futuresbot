@@ -25,6 +25,100 @@ increase wearing one's clothes.
 
 ---
 
+# Pre-registered decision rule — CONVEX TRIAL 11 (from 2026-08-11)
+
+## Trial 10 closed at 0 closes, ~24h. Shorts worked; one gate ate everything.
+
+Candidate arrival DOUBLED as predicted (4 in 20.6h vs 2 in 23h) and three of
+the four were shorts — the change did exactly what it was meant to. All four
+died on `veto:ref_not_listed`, whose record is now 11 vetoes, 9 resolved,
+**8 of 9 negative, -5.75R**. The gate is not the problem; it is correct.
+
+## Trial 11: SLOT PREEMPTION
+
+`FUTURES_WILDCARD_PREEMPT_ENABLED=1` (new). When a candidate clears its veto
+and both slots are full, the bot may close an open wildcard position **that has
+already failed** and give the slot to the new signal.
+
+### Why this and not the clock
+
+The convex clock recycles slots INDISCRIMINATELY — at 6h it evicts winners
+alongside duds. Preemption chooses. Measured over 8 days / 60 signals / 16
+symbols, replayed under the live exit policy net of cost:
+
+| rule | n | netR | mean R | t_day | ex-top3 | $/mo |
+|---|---|---|---|---|---|---|
+| no preemption (live) | 31 | +10.54 | +0.340 | +1.02 | **-4.41** | +105 |
+| 6h clock | 44 | +12.73 | +0.289 | +1.54 | +2.57 | +127 |
+| **preempt < +0.3R** | **48** | **+24.40** | **+0.508** | **+2.00** | **+9.44** | **+243** |
+| both together | 55 | +12.25 | +0.223 | +1.42 | +2.09 | +122 |
+
+More trades AND better trades — unusual, and the tell that it is not the same
+trade-off: the clock buys throughput by cutting winners, preemption by cutting
+only what has already failed. **They are substitutes: stacking them is worse
+than either alone.** The clock stays at 24h.
+
+First configuration in this programme to reach day-clustered t 2.00 with a
+positive top-3 haircut. The live arm's own replay is NEGATIVE after the
+haircut (-4.41R), i.e. its entire edge is three trades.
+
+Threshold is a plateau, not a point: +0.3R gives $243, +1.0R gives $250, +0.0R
+weakens (ex-top3 -0.71). Chosen 0.3.
+
+### One guard was measured, not assumed
+
+A 60-minute minimum age felt prudent and **halved the effect** — t_day
++2.00 -> +1.03, ex-top3 +9.44 -> -1.37, evictions 16 -> 9. It blocks precisely
+the valuable ones: a position below +0.3R inside the first hour has already
+failed. Swept: 0 and 15 min are indistinguishable, 30+ degrades monotonically.
+**Set to 15 min (one bar)** — anti-churn for free.
+
+### Defects found by adversarial review BEFORE deploy (13 confirmed, 5 critical)
+
+| defect | consequence |
+|---|---|
+| `sl_price == 0` made `one_r = entry` | a +25% winner computed as +0.248R and was eligible for eviction. Reachable: `/reconcile` adopts orphans with no stop. Now returns None — unknowable R is never evictable |
+| eviction happened BEFORE the veto | a vetoed or unfillable candidate left the book one real position poorer with nothing opened. Moved INSIDE the candidate loop, after the veto |
+| a failed close left a stopless position | `_close_position_for_exit` cancels the exchange TP/SL first; if the close raised, the scan swallowed it as one WARNING. Now re-arms the stop and sends a Telegram alert |
+| replacement sized off a stale balance | freed margin was not in the snapshot, undersizing the replacement ~10-15% — exactly the trade the eviction paid for. Re-read after the close |
+| budget charged at SELECTION | a transient price-fetch failure burned an eviction with nothing closed. Charged only on a successful close |
+| budget was memory-only | a redeploy reset it; a crash-loop granted unlimited evictions. Now persisted in the state file |
+
+Unpaired evictions log `EVICTED_UNFILLED` so the case the replay cannot model
+is measurable rather than silent.
+
+### Kill conditions
+
+- Any eviction followed by no fill more than **3 times in 24h** -> disable.
+- Overall netR below the pre-preemption baseline at **n >= 20** -> disable.
+- Rollback: `FUTURES_WILDCARD_PREEMPT_ENABLED=0`, no deploy.
+
+**Unchanged:** 24h clock, 450s cadence, both sides, majors band 24, range
+pre-filter, $3M floor, retention trail, 2 slots.
+
+## Also measured this session, and NOT changed
+
+- **Turnover floor.** Swept 3.00 / 2.75 / 2.50 / 2.25M. $2.75M is a no-op (the
+  extra signals never get a slot; identical 31 trades). $2.50M and below
+  COLLAPSE the result (+10.54R -> +2.12R) — not because the added trades lose
+  (they are ~breakeven) but because they **displace** better ones under a
+  binding slot cap. Independent confirmation that slots, not universe, bind.
+- **Dynamic/volatility-scaled clock.** Tuned to land where a fixed 6h clock
+  already sits it performs the same; anywhere else it is worse. Adds a fitted
+  parameter for no measurable gain.
+- **The 'crypto only' filter** (290 pairs). All genuinely non-crypto; only 3
+  clear turnover AND range, all marginal; the largest member (XAU) produced
+  trial 4's worst trade at -3.79R in 60 seconds.
+
+### Standing caveat on all of the above
+
+One 8-day window, a survivorship-selected pool, counterfactual fills. LEVELS
+are inflated ceilings; only DIFFERENCES between arms sharing the same universe
+and bars are trusted. Two simulation errors were made and caught in this same
+harness today — both inflated the result before correction.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 10 (from 2026-08-10)
 
 ## Trial 9 closed at 0 closes after 1.5h. It tested nothing.
