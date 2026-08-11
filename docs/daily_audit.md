@@ -1,3 +1,134 @@
+# Daily Audit — 2026-08-11
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Window 2026-08-10 16:09 -> 2026-08-11 16:09 UTC. Equity **$142.35**, available
+$142.35, **0 open positions**, 0 unrealized — identical to the cent to the
+08-10 close. `pytest -q` **853 passed**. Feature store **56 rows, unchanged**.
+
+### 1. Trades — ZERO closes, ZERO opens
+
+Nothing opened and nothing closed in 24h, on any sleeve. PMT `entries_disabled`
+(by design), squeeze OFF, sniper retired 08-10 (`cb2334d`). The only live entry
+path is WILDCARD, and it produced **4 candidates, 4 vetoes, 0 entries**:
+
+| time UTC | symbol | side | lateness | reject | counterfactual (net) |
+|---|---|---|---|---|---|
+| 08-11 01:27 | TST_USDT | SHORT | 1.00 | `veto:ref_not_listed` | +0.28 (trail) |
+| 08-11 04:03 | PROM_USDT | SHORT | 0.74 | `veto:ref_not_listed` | -1.01 (stop) |
+| 08-11 04:11 | PROM_USDT | SHORT | 0.75 | `veto:ref_not_listed` | -1.01 (stop) |
+| 08-11 12:43 | TST_USDT | LONG | 1.00 | `veto:ref_not_listed` | unresolved |
+
+Net of the three resolved: **-1.74R avoided.** The veto was right again.
+
+### 1-OPEN. Open positions
+
+**None**, and none since 08-08 03:21 (BTW_USDT). Slots have been **free for
+5 consecutive days**.
+
+### 1b. WILDCARD DIAGNOSIS — the constraint is upstream of the last three trials
+
+Trials 9 (cadence 900s->450s), 10 (shorts re-enabled) and 11 (slot preemption,
+deployed today 16:06:52 UTC) are all **capacity** changes. Capacity has not
+bound since 08-05. Every candidate since then died at the reference-listing
+veto with both slots empty.
+
+**Tested this run: is the ref veto structurally emptying the universe?** No.
+Re-derived the live band from the MEXC ticker and checked Bybit/OKX listing on
+every survivor:
+
+| stage | n |
+|---|---|
+| USDT perps | 968 |
+| band (ex top-24 turnover) | 944 |
+| turnover >= $3M | 72 |
+| 24h range >= 8% | 23 |
+| **of which ref-listed** | **18 (78%)** |
+| not listed | 5 (SKYAI, SAMSUNGSTOCK, GUA, PROM, RKLBSTOCK) |
+
+**The bias is in the signal, not the universe.** 78% of the tradeable band is
+ref-listed, but the `|3h ROC| >= MIN_ROC` ranking preferentially surfaces the
+MEXC-only pumps — the violent 3h movers *are* the unlisted micro-caps. August
+scoreboard: **10 candidates vetoed as not-listed vs 5 entries taken**, and all
+5 taken were ref-listed (BICO, BTW x2, HFT, BICO). Today's scan histogram is
+the same mechanism from the other side: 15 movers scanned, `roc_below_min` 13,
+`low_volume_z` 1, `climax_wick` 1, **candidates 0**.
+
+**Do NOT relax the veto.** Record now **14 rows / 13 resolved / netR -5.52 net
+of cost, 10 of 13 negative.** It is the most clearly earning gate in the stack.
+
+**Do NOT loosen MIN_ROC to manufacture trades** — no backtest evidence that the
+rejected movers continued. Per 1b(b), dormancy without evidence is correct
+behaviour.
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** 56 rows, reconciles with the exchange (0 closes, 0 growth).
+
+**(b) Conditional expectancy** — corpus frozen at 56, so **verdicts are
+unchanged from 08-10** and are restated, not re-derived: `hold>=120min` FAVOR
+(+$1.758 gap), `roc>=12pct` FAVOR, `side=SHORT` FAVOR, `side=LONG` AVOID,
+`regime_trimmed` AVOID, `leverage>=7` AVOID. Propose-only; nothing applied.
+
+**(c) Shadow ledger** — 94 rows (+4, all four the vetoes above).
+
+| bucket | n | resolved | netR (cost-net) | reading |
+|---|---|---|---|---|
+| `veto:ref_not_listed` | 14 | 13 | **-5.52** | protective, past the >=10 bar |
+| `slot_occupied` | 17 | 17 | +5.36 | **no new rows since 08-05**; post-2-slot n still 1 |
+| `min_vol_skip` | 11 | 11 | +8.04 | account-size constraint, not tunable |
+| `side_disabled` | 4 | 4 | +2.16 | closed (shorts live since 08-10) |
+| `shadow_only` (sniper) | 46 | 46 | +13.70 | sleeve retired |
+
+**(d) Decision rule** — convex (WILDCARD+SQUEEZE) since 2026-07-13: **n=27,
+netR +1.65, ex-best -3.44, net $+8.45.** Wildcard alone n=17 netR +7.95;
+squeeze alone n=10 netR -6.30 (sleeve OFF). Equity at programme peak, **0%
+drawdown**. `USE_DRAWDOWN_KILL` is now **1** (the prior operator override to 0
+is resolved).
+
+**Exit-kind tripwire:** post-`70a8b06` only **6** convex rows carry a correctly
+scored `exit_kind` (STOP 1, OTHER 5, TP 0). That is below the >=15 bar, so the
+TP-completion tripwire is **not triggerable** and no TP3R proposal is made.
+
+### 2. Champion vs shadow
+
+**Shadow stale, comparison suppressed pending resync.**
+
+### 3. Lever for the next 24h — measure, do not ship a fourth capacity change
+
+Three consecutive trials have closed at zero because each addressed a
+constraint downstream of the binding one. In $ terms the sleeve is currently
+**0 entries / 6 days = a $0/month envelope in both directions**, which makes
+time-to-verdict — the standing objective's stated priority — unbounded.
+
+**PROPOSED (operator-gated, not applied):** before opening trial 12, run
+`tools/wildcard_backtest.py` restricted to the **ref-listed subset**, sweeping
+MIN_ROC / MIN_VOL_Z, and report *tradeable candidates per week* and their net R
+under the live exit policy. Decision content: if no setting yields >= 5
+ref-listed candidates/week at non-negative net R, the sleeve is not fixable by
+tuning and that should be stated plainly rather than iterating a fourth
+capacity trial.
+
+### 4-5. Validate / Deploy
+
+No candidate reached the V-stack. **No deploy.** Trial 11 has ~3 minutes of
+runtime, 1 boot, 0 tracebacks; its kill conditions (unpaired eviction x3/24h,
+netR below baseline at n>=20) are not yet assessable. **Trial 11 must not be
+judged by its close count** — with 0 open positions there is nothing to preempt.
+
+### 6. Verdict on the last 7 days of changes
+
+| change | shipped | earning its keep? |
+|---|---|---|
+| 450s cadence (trial 9) | 08-10 | untested — 0 closes |
+| shorts re-enabled (trial 10) | 08-10 | 3 of 4 candidates were shorts (arrival doubled as predicted) but all vetoed; **0 closes** |
+| sniper retired | 08-10 | correct — sleeve was -0.90R / -$0.11 over 8 |
+| slot preemption (trial 11) | 08-11 | 3 min old, unassessable |
+
+---
+
 # Daily Audit — 2026-08-10
 
 ---
