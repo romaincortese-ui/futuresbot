@@ -25,6 +25,69 @@ increase wearing one's clothes.
 
 ---
 
+# Pre-registered decision rule — CONVEX TRIAL 13 (from 2026-08-12)
+
+## Trial 12 closed at 0 closes, ~1h. Same as trial 11: it tested nothing.
+
+## Trial 13: the risk cap is bound to EQUITY, not to a score-scaled term
+
+`FUTURES_WILDCARD_MAX_MARGIN_PCT=0.25` replaces
+`FUTURES_WILDCARD_RISK_MARGIN_CAP_MULT=1.5`.
+
+**The defect.** `_entry_margin` capped margin at `legacy x 1.5`, where
+`legacy = balance_fraction x available`. The comment above it calibrated that
+cap assuming `balance_fraction ~= 0.12` and roughly constant. It is
+score-scaled and varies at least 3x live — 0.0235 on INX_USDT against >=0.067
+on ALLO_USDT — so a cap expressed as a multiple of `legacy` bound hard on
+low-score signals and not at all on high-score ones. **INX_USDT opened risking
+0.53% of equity against a 1.87% target: 28% of intended size**, and nothing
+recorded that it had happened. The risk dial silently reverted to legacy sizing
+for exactly the trades furthest from its target.
+
+**The fix.** The cap's stated purpose was to bound the tail where a very tight
+stop demands a large margin and a gap through it loses more than the modelled
+1R. That is a DEPLOYMENT bound, so it now bounds deployment: margin may not
+exceed 25% of the account. Equity is not score-scaled, so the cap means the
+same thing on every signal.
+
+It binds only when `sl_margin_pct < risk_pct*100/max_pct ~ 7.5%`. The live
+range is 15-20%, so **on ordinary trades it does not bind at all** — which is
+the point. Two slots can therefore deploy at most 50% of the account.
+
+Verified: identical stop + identical account now produce identical size
+whatever the score; INX would have received ~$17.35 of margin rather than
+$4.91, risking 1.87% rather than 0.53%.
+
+Rollback: `FUTURES_WILDCARD_MAX_MARGIN_PCT=10` (never binds), or
+`FUTURES_WILDCARD_RISK_TARGETED=0` for legacy sizing entirely.
+
+## On the reset count, honestly
+
+This is the **9th reset in ~13 days**. It follows the 2026-07-31 standard,
+which lists sizing as a treatment change, and the rule was followed rather than
+argued around — partly because trials 11 and 12 had produced ZERO closes
+between them, so the reset cost nothing and an exception would have been free
+only in appearance.
+
+But the count has stopped being informative. Two better numbers:
+
+| metric | value |
+|---|---|
+| trials that reached a scored readout | **0** |
+| longest uninterrupted run | **~47h** (trial 7) |
+| live wildcard closes, all time | **22** (netR +14.64, $+9.19, 45% win) |
+
+The 22 closes are the real accumulating record and they are unaffected by
+resets, because the trial boundary changes what is being tested, not what has
+been traded. **The scoreboard that matters is the 22-trade live record, not the
+trial counter.**
+
+Carried into trial 13 and still untested: preemption (0 evictions since
+2026-08-11), shorts (n=8 live, contradicted by a 14-day replay), the
+calm-shock filter (0 refusals since shipping ~1h ago).
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 12 (from 2026-08-12)
 
 ## Trial 11 closed at 1 close, ~24h. Preemption tested NOTHING.

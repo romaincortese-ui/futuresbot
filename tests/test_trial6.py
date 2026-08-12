@@ -494,14 +494,22 @@ def test_risk_dial_targets_a_constant_fraction_of_the_account(rt, monkeypatch):
 def test_risk_dial_margin_is_bounded_on_a_pathologically_tight_stop(rt, monkeypatch):
     """Equalising MUST be allowed to size up on a tight stop — that is the
     mechanism. But an extreme stop would demand an unbounded position, and a
-    gap-through then loses far more than the modelled 1R, so the margin is
-    capped at 1.5x legacy."""
+    gap-through then loses far more than the modelled 1R, so deployment is
+    capped.
+
+    2026-08-12: the cap was `1.5 x legacy`, i.e. a multiple of
+    balance_fraction x available. balance_fraction is SCORE-SCALED and varies
+    3x live, so the cap bound on low-score signals and not high-score ones —
+    INX_USDT opened at 28% of target size. It is now a share of EQUITY, which
+    is not score-scaled and therefore means the same thing on every signal."""
     monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
     monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0187")
-    s = _Sig(); s.sl_margin_pct = 4.0          # would want ~3.9x legacy
-    assert rt._entry_margin(s, 140.0) == pytest.approx(1.5 * 0.12 * 140.0)
+    monkeypatch.setenv("FUTURES_WILDCARD_MAX_MARGIN_PCT", "0.25")
+    s = _Sig(); s.sl_margin_pct = 4.0          # pathological -> bounded
+    assert rt._entry_margin(s, 140.0) == pytest.approx(0.25 * 140.0)
     s.sl_margin_pct = 11.0                     # realistic tight -> must be ALLOWED up
     assert rt._entry_margin(s, 140.0) > 0.12 * 140.0
+    assert rt._last_entry_sizing["risk_cap_bound"] == 0.0
 
 
 def test_risk_dial_falls_back_when_it_cannot_solve(rt, monkeypatch):
@@ -1560,10 +1568,16 @@ def test_cap_bound_flag_is_set_only_when_the_cap_actually_binds(rt, monkeypatch)
     assert rt._last_entry_sizing["risk_cap_bound"] == 0.0
     assert abs(rt._last_entry_sizing["risk_pct_actual"] - 1.87) < 0.05
 
-    _S.balance_fraction = 0.0235         # INX_USDT's live value
+    # INX_USDT's live balance_fraction. Under the OLD cap this bound and the
+    # trade opened at 28% of target; under the equity-bound cap it must not.
+    _S.balance_fraction = 0.0235
     rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="INX_USDT")
+    assert rt._last_entry_sizing["risk_cap_bound"] == 0.0, "score still drives sizing"
+    assert abs(rt._last_entry_sizing["risk_pct_actual"] - 1.87) < 0.05
+    # the flag still fires where the cap genuinely belongs
+    _S.sl_margin_pct = 2.0
+    rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="TIGHT_USDT")
     assert rt._last_entry_sizing["risk_cap_bound"] == 1.0
-    assert rt._last_entry_sizing["risk_pct_actual"] < 1.0, "the 3.5x under-size is real"
     assert rt._last_entry_sizing["margin_used"] < rt._last_entry_sizing["margin_wanted"]
 
 
@@ -1633,3 +1647,60 @@ def test_calm_filter_is_disabled_by_setting_the_threshold_to_zero(rt):
 
     src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
     assert "if max_calm > 0:" in src, "no rollback path"
+
+
+def test_risk_cap_is_bound_to_equity_not_to_a_score_scaled_term(rt, monkeypatch):
+    """THE FIX. The old cap was `margin <= balance_fraction * available * 1.5`.
+    balance_fraction is score-scaled and varies 3x live, so the cap bound on
+    low-score signals and not high-score ones — INX opened at 28% of target
+    size. Equity is not score-scaled, so the cap now means the same thing on
+    every signal."""
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0187")
+
+    class _S:
+        balance_fraction = 0.0235        # INX_USDT's live value
+        sl_margin_pct = 15.03
+
+    m_low = rt._entry_margin(_S(), 139.5, kind="WILDCARD", symbol="INX_USDT")
+    low = dict(rt._last_entry_sizing)
+    _S.balance_fraction = 0.12           # ALLO-ish, high score
+    m_high = rt._entry_margin(_S(), 139.5, kind="WILDCARD", symbol="ALLO_USDT")
+
+    # identical stop + identical account => identical size, whatever the score
+    assert abs(m_low - m_high) < 1e-6, "sizing still depends on balance_fraction"
+    assert low["risk_cap_bound"] == 0.0, "the cap still binds on an ordinary stop"
+    assert abs(low["risk_pct_actual"] - 1.87) < 0.05, "the dial is not hitting target"
+    # INX would have been ~$17.35, not the $4.91 it actually got
+    assert 16.0 < m_low < 19.0
+
+
+def test_the_cap_still_bounds_a_pathologically_tight_stop(rt, monkeypatch):
+    """The cap exists for the tail where a very tight stop demands a huge
+    margin and a gap through it loses far more than the modelled 1R."""
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0187")
+    monkeypatch.setenv("FUTURES_WILDCARD_MAX_MARGIN_PCT", "0.25")
+
+    class _S:
+        balance_fraction = 0.12
+        sl_margin_pct = 2.0              # pathological
+
+    m = rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="TIGHT_USDT")
+    assert abs(m - 0.25 * 140.0) < 1e-6, "deployment is not bounded"
+    assert rt._last_entry_sizing["risk_cap_bound"] == 1.0
+    # ...and an ordinary 15-20% stop is nowhere near the cap
+    _S.sl_margin_pct = 18.0
+    rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="NORMAL_USDT")
+    assert rt._last_entry_sizing["risk_cap_bound"] == 0.0
+
+
+def test_two_slots_cannot_deploy_more_than_half_the_account(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
+    monkeypatch.setenv("FUTURES_WILDCARD_MAX_MARGIN_PCT", "0.25")
+
+    class _S:
+        balance_fraction = 0.12
+        sl_margin_pct = 1.0
+
+    assert rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="X") * 2 <= 140.0 * 0.5

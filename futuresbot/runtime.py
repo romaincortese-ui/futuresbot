@@ -1641,9 +1641,26 @@ class FuturesRuntime:
         # range (11%-20%) spans 0.79x-1.44x legacy, so 1.5x permits full
         # equalisation while still bounding the tail case where a stop gaps
         # through and the loss exceeds the modelled 1R.
-        cap_mult = max(1.0, self._env_float("FUTURES_WILDCARD_RISK_MARGIN_CAP_MULT", 1.5))
+        # CAP THE THING THE CAP IS FOR (2026-08-12). The old rule was
+        # `margin <= legacy * 1.5`, calibrated on a comment assuming
+        # balance_fraction ~= 0.12 and constant. It is score-scaled and varies
+        # 3x live (0.0235 on INX_USDT vs >=0.067 on ALLO_USDT), so a cap
+        # expressed as a multiple of `legacy` bound on low-score signals and
+        # not on high-score ones: INX opened at 28% of target size, risking
+        # 0.53% of equity against a 1.87% target, and nothing recorded it.
+        #
+        # The stated purpose was to bound the tail where a very tight stop
+        # demands a large margin and a gap through it loses more than the
+        # modelled 1R. That is a DEPLOYMENT bound, so bound deployment: margin
+        # may not exceed a fixed share of the account. Equity is not
+        # score-scaled, so the cap now means the same thing on every signal.
+        #
+        # It binds only when sl_margin_pct < risk_pct*100/max_pct = ~7.5%, i.e.
+        # genuinely pathological stops. The live range is 15-20%, so on ordinary
+        # trades it does not bind at all — which is the point.
+        max_margin_pct = max(0.01, self._env_float("FUTURES_WILDCARD_MAX_MARGIN_PCT", 0.25))
         wanted = margin
-        margin = min(margin, legacy * cap_mult)
+        margin = min(margin, max_margin_pct * available_balance)
         # The cap was calibrated assuming balance_fraction ~= 0.12 and roughly
         # constant. It is not — it is score-scaled and varies at least 3x live
         # (0.0235 on INX_USDT vs >=0.067 on ALLO_USDT), so a cap defined as a
@@ -1661,13 +1678,16 @@ class FuturesRuntime:
                 (margin * sl_margin_pct / 100.0) / available_balance * 100.0, 4)
             if available_balance > 0 else 0.0,
             "risk_cap_bound": 1.0 if margin < wanted - 1e-9 else 0.0,
+            "legacy_margin": round(legacy, 6),   # what the OLD cap was built on
         }
         if margin < wanted - 1e-9:
             log.warning("[RISK_CAP_BOUND] %s %s wanted $%.2f capped to $%.2f "
-                        "(legacy $%.2f x %.1f) — risking %.2f%% not %.2f%%",
-                        kind, symbol, wanted, margin, legacy, cap_mult,
+                        "(%.0f%% of $%.2f) — risking %.2f%% not %.2f%%; "
+                        "sl_margin %.2f%% is unusually tight",
+                        kind, symbol, wanted, margin, max_margin_pct * 100.0,
+                        available_balance,
                         margin * sl_margin_pct / 100.0 / available_balance * 100.0,
-                        risk_pct * 100.0)
+                        risk_pct * 100.0, sl_margin_pct)
         log.info("[RISK_TARGETED] %s %s sl_margin=%.2f%% risk_pct=%.3f%% "
                  "margin %.2f -> %.2f (risk $%.2f)", kind, symbol, sl_margin_pct,
                  risk_pct * 100, legacy, margin, margin * sl_margin_pct / 100.0)
