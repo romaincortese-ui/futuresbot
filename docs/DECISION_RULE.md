@@ -25,6 +25,117 @@ increase wearing one's clothes.
 
 ---
 
+# Pre-registered decision rule — CONVEX TRIAL 12 (from 2026-08-12)
+
+## Trial 11 closed at 1 close, ~24h. Preemption tested NOTHING.
+
+One wildcard close (ALLO_USDT SHORT, -1.05R / -$2.80, a clean stop) and one
+position still open (INX_USDT SHORT). **Zero evictions** — there was never a
+second signal competing for a slot, so the change trial 11 existed to test got
+no opportunity to act. It carries into trial 12 untouched and still untested.
+
+## Trial 12: CALM-SHOCK EXCLUSION
+
+`FUTURES_WILDCARD_MAX_CALM_RATIO=0.75` (new). A signal is refused when
+
+    calm_ratio = |3h move| / (range of the PRIOR 21h)  >=  0.75
+
+i.e. when the three-hour move is most of, or bigger than, the whole preceding
+day. The baseline window deliberately EXCLUDES the move itself, or a large drop
+inflates its own denominator and every shock scores as ordinary.
+
+### Where this came from
+
+Owner observation on the ALLO_USDT loss: *"if a pair is stable for a long
+period and suddenly drops, it is very likely to bounce back. The dip was way
+too sudden for it to be a good trade."* ALLO scores **1.36** — a 9.75% drop out
+of a ~7% day. It is not a fitted parameter; it is a stated mechanism that was
+then measured.
+
+### The measurement (47 symbols, 14 days, 58 signals)
+
+| | n | netR | mean R | t_day | ex-top3 | win |
+|---|---|---|---|---|---|---|
+| calm < 0.75 (keep) | 50 | +36.03 | +0.721 | **+2.02** | **+21.07** | 64% |
+| calm >= 0.75 (refuse) | 8 | -3.52 | -0.440 | -2.15 | -5.10 | 38% |
+
+The refused tail is negative on every measure. Keeping only the rest lifts the
+book from +32.51R to +36.03R and day-clustered t from +1.74 to +2.02.
+
+**It is a TAIL exclusion, not a ranking variable.** Quintiles are NOT monotonic
+(Q1 +0.328, Q2 +0.998, Q3 +0.266, Q4 +1.292, Q5 +0.056) — only the extreme is
+reliably bad. Do not read calm_ratio as a quality score.
+
+### What was tested and REJECTED on the way here
+
+The owner's follow-up — *could an ALLO-type move be a LONG instead?* — was
+tested as its own scan (own detector, no continuation filters, 4 variants,
+14 days):
+
+| variant | n | netR | mean R | ex-top3 |
+|---|---|---|---|---|
+| long the shock, 5R target, calm >= 0.4 | 64 | -3.27 | -0.051 | -16.35 |
+| ...calm >= 1.0 | 16 | -0.06 | -0.004 | -3.33 |
+| ...+ wait for first up-bar, calm >= 1.0 | 14 | +1.85 | +0.132 | -1.75 |
+| reversion target instead of 5R | 24 | -1.87 | -0.078 | -4.28 |
+| **CONTROL: any 8% drop, no calm filter** | **214** | **+17.81** | **+0.083** | **+2.84** |
+
+Buying ANY 8% drop is mildly positive; adding the calm filter makes it WORSE.
+The filter is anti-predictive on the long side. Combined with the short side
+being negative in that tail (-0.440R), the conclusion is that a shock out of
+calm is **noise, not a reversal**: no edge in either direction. Hence exclusion
+rather than inversion.
+
+### Design: filtered AFTER the candidate list, never inside the detector
+
+Same rule as long-only, for the same reason: `_shadow_log_untaken` only fires
+on objects that reached the candidate list, so rejecting inside
+`detect_wildcard_signal` would produce zero shadow rows and destroy the
+question permanently. Refused signals are logged as `calm_shock(1.36)` and
+resolved counterfactually, so the filter keeps being scored after it ships.
+`calm_ratio` is stamped on every signal regardless.
+
+Verified live before deploy: ALLO_USDT scores **1.36 -> REFUSED**; INX_USDT
+(open, and superficially identical on RSI 14.9 / lateness 1.00) scores
+**0.10 -> KEPT**. Across the current 23-symbol pool, 0 of 20 would be refused
+right now — this is a rare filter, not a throttle.
+
+### Kill conditions
+
+- Refused population (`calm_shock` rows) resolving NET POSITIVE at n >= 15 ->
+  remove the filter; it is costing money.
+- Fewer than 2 wildcard entries per week attributable to this filter blocking
+  them -> the filter is not the constraint and should not be credited.
+- Rollback: `FUTURES_WILDCARD_MAX_CALM_RATIO=0`, no deploy.
+
+**Unchanged:** preemption, 24h clock, 450s cadence, both sides, majors band 24,
+range pre-filter, $3M floor, retention trail, 2 slots.
+
+## Standing caveats, restated because they keep applying
+
+- One 14-day window, a survivorship-selected pool, counterfactual fills. Only
+  DIFFERENCES between arms sharing the same bars are trusted; LEVELS are
+  inflated ceilings.
+- **n=8 in the refused tail.** This is thin. It ships because the mechanism was
+  stated in advance and the tail is negative on every measure, not because the
+  sample is adequate.
+- Trial 12 now carries preemption (untested), shorts (n=8 live, contradicted by
+  a 14-day replay showing the short side negative) and this filter. The queue
+  of untested changes is itself becoming the risk.
+
+## OPEN, pre-registered for the next boundary
+
+**The risk-dial cap binds silently.** `_entry_margin` caps margin at
+`legacy x 1.5` where `legacy = balance_fraction x available`, calibrated
+assuming balance_fraction ~= 0.12 and constant. It is score-scaled and varies
+3x live (0.0235 on INX vs >=0.067 on ALLO), so INX opened risking **0.53% of
+equity against a 1.87% target — 28% of intended size.** Telemetry to measure it
+shipped 2026-08-12 (`risk_cap_bound`, `margin_wanted`, `risk_pct_actual`); the
+fix — bound RISK directly rather than as a multiple of a score-scaled term — is
+a sizing change and waits for a boundary.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 11 (from 2026-08-11)
 
 ## Trial 10 closed at 0 closes, ~24h. Shorts worked; one gate ate everything.

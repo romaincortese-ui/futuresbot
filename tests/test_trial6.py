@@ -2,6 +2,7 @@
 
 Each test pins a defect this session MEASURED, not one someone imagined.
 """
+import math
 import json
 import os
 import time
@@ -1564,3 +1565,71 @@ def test_cap_bound_flag_is_set_only_when_the_cap_actually_binds(rt, monkeypatch)
     assert rt._last_entry_sizing["risk_cap_bound"] == 1.0
     assert rt._last_entry_sizing["risk_pct_actual"] < 1.0, "the 3.5x under-size is real"
     assert rt._last_entry_sizing["margin_used"] < rt._last_entry_sizing["margin_wanted"]
+
+
+# --------------------------------------------------------------------------
+# trial 12: calm-shock exclusion (2026-08-12, owner observation on ALLO)
+# --------------------------------------------------------------------------
+
+def _shock_frame(pre_range=0.06, drop=0.10, n=140):
+    """A calm 21h, then a sudden drop in the last 3h."""
+    import numpy as np
+    base = 100.0
+    closes = [base * (1 + pre_range * 0.5 * math.sin(i / 7.0)) for i in range(n - 12)]
+    last = closes[-1]
+    closes += [last * (1 - drop * (k + 1) / 12) for k in range(12)]
+    idx = pd.date_range("2026-08-01", periods=len(closes), freq="15min", tz="UTC")
+    return pd.DataFrame({"open": closes,
+                         "high": [c * 1.002 for c in closes],
+                         "low": [c * 0.998 for c in closes],
+                         "close": closes,
+                         "volume": [1000.0] * len(closes)}, index=idx)
+
+
+def test_calm_ratio_measures_the_move_against_the_PRIOR_window():
+    """The baseline must exclude the move itself, or a big drop inflates its own
+    denominator and every shock scores as ordinary."""
+    from futuresbot.wildcard import calm_ratio
+
+    quiet = calm_ratio(_shock_frame(pre_range=0.04, drop=0.10))
+    wild = calm_ratio(_shock_frame(pre_range=0.60, drop=0.10))
+    assert quiet is not None and wild is not None
+    assert quiet > wild, "a 10% drop out of quiet must score higher than out of chaos"
+    assert quiet > 1.0 and wild < 0.5
+    # too little history -> None, never a fabricated ratio
+    assert calm_ratio(_shock_frame(n=40)) is None
+
+
+def test_shock_signals_are_refused_but_still_shadow_logged(rt):
+    """Filtered AFTER the candidate list, exactly like long-only: only objects
+    that reach that list get shadow-logged, so rejecting inside the detector
+    would produce zero rows and destroy the question permanently."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert "FUTURES_WILDCARD_MAX_CALM_RATIO" in src
+    assert '_shadow_log_untaken(sig, "WILDCARD", f"calm_shock' in src
+    # after the candidate list is built, before the entry loop
+    assert src.index("cands.sort") < src.index("MAX_CALM_RATIO")
+    assert src.index("MAX_CALM_RATIO") < src.index("_open_wildcard_position(sig")
+    assert "shock_blocked" in src, "the count must be visible in the scan summary"
+
+
+def test_the_ALLO_shape_is_refused_and_the_INX_shape_is_not(rt, monkeypatch):
+    """ALLO_USDT: 9.75% drop out of a 6.3% day -> ratio 1.55, refused.
+    INX_USDT: 8.32% move inside an 84.86% day -> ratio 0.10, kept. They looked
+    identical on RSI and lateness; only the regime context separates them."""
+    from futuresbot.wildcard import calm_ratio
+
+    allo = calm_ratio(_shock_frame(pre_range=0.063, drop=0.0975))
+    inx = calm_ratio(_shock_frame(pre_range=0.849, drop=0.0832))
+    assert allo is not None and inx is not None
+    assert allo >= 0.75, "the ALLO shape must be refused"
+    assert inx < 0.75, "the INX shape must still trade"
+
+
+def test_calm_filter_is_disabled_by_setting_the_threshold_to_zero(rt):
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert "if max_calm > 0:" in src, "no rollback path"

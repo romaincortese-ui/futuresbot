@@ -126,6 +126,33 @@ class WildcardSignal:
     rsi: float
     roc_z: float | None = None          # trigger in the symbol's own sigma
     sl_frac_designed: float | None = None   # pre-margin-cap stop distance
+    calm_ratio: float | None = None     # |3h move| / prior 21h range
+
+
+def calm_ratio(frame: pd.DataFrame) -> float | None:
+    """|3h move| divided by the range of the 21h BEFORE it.
+
+    Above ~1 the three-hour move was bigger than the whole preceding day: the
+    symbol was quiet and then something happened. Owner's observation on
+    ALLO_USDT (ratio 1.55), and it measures: signals in that tail are negative
+    SHORT (mean -0.44R) and flat LONG (mean ~0.00R over n=16-23) — no edge in
+    either direction, because a shock out of calm is uncertainty, not a
+    reversal. The tradeable regime is a move that is ordinary FOR THAT SYMBOL.
+    """
+    need = 96 + ROC_BARS + 1
+    if len(frame) < need:
+        return None
+    h = frame["high"].astype(float); l = frame["low"].astype(float)
+    c = frame["close"].astype(float)
+    cur = float(c.iloc[-1]); base = float(c.iloc[-(ROC_BARS + 1)])
+    if base <= 0 or cur <= 0:
+        return None
+    # the window BEFORE the move, so the move cannot inflate its own baseline
+    pre_h = float(h.iloc[-(96 + ROC_BARS):-ROC_BARS].max())
+    pre_l = float(l.iloc[-(96 + ROC_BARS):-ROC_BARS].min())
+    if pre_l <= 0 or pre_h <= pre_l:
+        return None
+    return abs(cur / base - 1.0) / ((pre_h - pre_l) / pre_l)
 
 
 def _atr_pct(frame: pd.DataFrame) -> float | None:
@@ -284,4 +311,5 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
         rsi=round(rsi, 1),
         roc_z=(round(roc_z, 3) if roc_z is not None else None),
         sl_frac_designed=round(sl_frac_designed, 6),
+        calm_ratio=(round(cr, 3) if (cr := calm_ratio(frame)) is not None else None),
     )

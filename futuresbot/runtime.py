@@ -4641,6 +4641,26 @@ class FuturesRuntime:
             # detector would produce zero shadow rows and destroy the question
             # permanently. Shorts are detected, logged, and simply not taken —
             # the ledger keeps accruing ~3.8x faster than the book would.
+            # CALM-SHOCK EXCLUSION (trial 12). Filtered HERE, after the
+            # candidate list, for the same reason long-only is: only objects
+            # that reached this list get shadow-logged, so rejecting inside the
+            # detector would produce zero rows and destroy the question
+            # permanently. Refused signals keep accruing evidence.
+            max_calm = self._env_float("FUTURES_WILDCARD_MAX_CALM_RATIO", 0.75)
+            shock_blocked = 0
+            if max_calm > 0:
+                kept = []
+                for key, sig, lat in cands:
+                    cr = getattr(sig, "calm_ratio", None)
+                    if cr is not None and cr >= max_calm:
+                        shock_blocked += 1
+                        self._pending_entry_lateness = lat
+                        self._shadow_log_untaken(sig, "WILDCARD", f"calm_shock({cr:.2f})")
+                    else:
+                        kept.append((key, sig, lat))
+                cands = kept
+                best = cands[0][1] if cands else None
+                best_lateness = cands[0][2] if cands else None
             shorts_blocked = 0
             if wildcard_long_only():
                 kept = []
@@ -4670,8 +4690,9 @@ class FuturesRuntime:
                      "range24" if range_prefilter else "move24h",
                      min_move * 100, funnel["move_24h_ok"], scan_capped, scanned, len(cands))
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d shorts_blocked=%d "
-                     "histogram=%s signal=%s",
-                     len(movers), scanned, len(cands), shorts_blocked, hist or "{}",
+                     "shock_blocked=%d histogram=%s signal=%s",
+                     len(movers), scanned, len(cands), shorts_blocked,
+                     locals().get("shock_blocked", 0), hist or "{}",
                      best.symbol if best else "none")
             if best is None:
                 return
