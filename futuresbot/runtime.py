@@ -239,6 +239,8 @@ class FuturesRuntime:
         self._wildcard_block_logged: set[tuple[str, str]] = set()
         # Timestamps of recent preemptions, for the rolling 24h budget.
         self._preempt_log: list[float] = []
+        # Last sizing decision, stamped onto the next position opened.
+        self._last_entry_sizing: dict[str, float] = {}
         self._pending_entry_lateness: float | None = None
         self._pending_ref_listed: bool | None = None
         self._last_shadow_resolve_at = 0.0
@@ -1640,7 +1642,32 @@ class FuturesRuntime:
         # equalisation while still bounding the tail case where a stop gaps
         # through and the loss exceeds the modelled 1R.
         cap_mult = max(1.0, self._env_float("FUTURES_WILDCARD_RISK_MARGIN_CAP_MULT", 1.5))
+        wanted = margin
         margin = min(margin, legacy * cap_mult)
+        # The cap was calibrated assuming balance_fraction ~= 0.12 and roughly
+        # constant. It is not — it is score-scaled and varies at least 3x live
+        # (0.0235 on INX_USDT vs >=0.067 on ALLO_USDT), so a cap defined as a
+        # MULTIPLE OF legacy binds hard on low-score signals and not at all on
+        # high-score ones. INX was clamped to 28% of target size and nothing
+        # recorded it. Stamp the decision so it can be audited instead of
+        # back-solved from two trades.
+        self._last_entry_sizing = {
+            "balance_fraction": float(getattr(sig, "balance_fraction", 0.0) or 0.0),
+            "equity_at_entry": float(available_balance),
+            "margin_wanted": round(wanted, 6),
+            "margin_used": round(margin, 6),
+            "risk_usdt": round(margin * sl_margin_pct / 100.0, 6),
+            "risk_pct_actual": round(
+                (margin * sl_margin_pct / 100.0) / available_balance * 100.0, 4)
+            if available_balance > 0 else 0.0,
+            "risk_cap_bound": 1.0 if margin < wanted - 1e-9 else 0.0,
+        }
+        if margin < wanted - 1e-9:
+            log.warning("[RISK_CAP_BOUND] %s %s wanted $%.2f capped to $%.2f "
+                        "(legacy $%.2f x %.1f) — risking %.2f%% not %.2f%%",
+                        kind, symbol, wanted, margin, legacy, cap_mult,
+                        margin * sl_margin_pct / 100.0 / available_balance * 100.0,
+                        risk_pct * 100.0)
         log.info("[RISK_TARGETED] %s %s sl_margin=%.2f%% risk_pct=%.3f%% "
                  "margin %.2f -> %.2f (risk $%.2f)", kind, symbol, sl_margin_pct,
                  risk_pct * 100, legacy, margin, margin * sl_margin_pct / 100.0)
@@ -3683,6 +3710,14 @@ class FuturesRuntime:
                 # this trade in. Without it a trial-8 verdict cannot be split.
                 "legacy_major": md.get("legacy_major"),
                 "legacy_prefilter_ok": md.get("legacy_prefilter_ok"),
+                # Sizing audit. None of these were recorded before, so whether
+                # the risk cap was binding could only be back-solved by hand.
+                "balance_fraction": md.get("balance_fraction"),
+                "equity_at_entry": md.get("equity_at_entry"),
+                "margin_wanted": md.get("margin_wanted"),
+                "margin_used": md.get("margin_used"),
+                "risk_pct_actual": md.get("risk_pct_actual"),
+                "risk_cap_bound": md.get("risk_cap_bound"),
                 "exit_rule": trade.get("exit_rule"),
                 "risk_usdt": trade.get("risk_usdt"),
                 "sl_frac_designed": md.get("sl_frac_designed"),
@@ -5728,6 +5763,7 @@ class FuturesRuntime:
             "wildcard": 1.0, "pmt_stop_first": 1.0,
             **{k: float(v) for k, v in
                self._wildcard_attribution.get(str(getattr(sig, "symbol", "")), {}).items()},
+            **{k: float(v) for k, v in (getattr(self, "_last_entry_sizing", {}) or {}).items()},
             "sl_margin_pct": float(sig.sl_margin_pct), "tp_margin_pct": float(sig.tp_margin_pct),
             "wildcard_roc_pct": round(float(sig.roc_pct), 4), "wildcard_rsi": float(sig.rsi),
             # Record what the regime scaler DID. Previously applied but never

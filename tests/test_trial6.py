@@ -1528,3 +1528,39 @@ def test_preempt_budget_survives_a_restart(rt):
     import inspect
 
     assert '"preempt_log"' in inspect.getsource(FuturesRuntime._save_state)
+
+
+def test_sizing_decision_is_recorded_not_back_solved(rt, monkeypatch):
+    """INX_USDT was clamped to 28% of target size and NOTHING recorded it —
+    the cap could only be found by back-solving arithmetic from two trades.
+    balance_fraction is score-scaled and varies 3x live, so a cap defined as a
+    multiple of `legacy` binds on low-score signals and not high-score ones."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._entry_margin)
+    for f in ("balance_fraction", "equity_at_entry", "margin_wanted",
+              "margin_used", "risk_pct_actual", "risk_cap_bound"):
+        assert f in src, f"{f} not recorded"
+    assert "RISK_CAP_BOUND" in src, "a bound cap must be visible in the log"
+    store = inspect.getsource(FuturesRuntime._append_feature_store)
+    for f in ("balance_fraction", "risk_cap_bound", "margin_wanted", "risk_pct_actual"):
+        assert f'"{f}"' in store, f"{f} never reaches the feature store"
+
+
+def test_cap_bound_flag_is_set_only_when_the_cap_actually_binds(rt, monkeypatch):
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_TARGETED", "1")
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0187")
+
+    class _S:
+        balance_fraction = 0.12          # the value the cap was calibrated for
+        sl_margin_pct = 15.0
+
+    rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="X_USDT")
+    assert rt._last_entry_sizing["risk_cap_bound"] == 0.0
+    assert abs(rt._last_entry_sizing["risk_pct_actual"] - 1.87) < 0.05
+
+    _S.balance_fraction = 0.0235         # INX_USDT's live value
+    rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="INX_USDT")
+    assert rt._last_entry_sizing["risk_cap_bound"] == 1.0
+    assert rt._last_entry_sizing["risk_pct_actual"] < 1.0, "the 3.5x under-size is real"
+    assert rt._last_entry_sizing["margin_used"] < rt._last_entry_sizing["margin_wanted"]
