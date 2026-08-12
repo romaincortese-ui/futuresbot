@@ -1,3 +1,178 @@
+# Daily Audit — 2026-08-12
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Window 2026-08-11 16:09 -> 2026-08-12 16:09 UTC. Equity **$139.55**, available
+$139.55, **0 open positions**, 0 unrealized. `pytest -q` **853 passed**.
+Feature store **57 rows (+1)**, shadow ledger **95 rows (+1)** — both reconcile
+with the exchange exactly (1 close, 1 skip).
+
+### 1. Trades — ONE close, the first entry in 6 days
+
+**ALLO_USDT SHORT, WILDCARD, x3, stopped out.**
+
+| field | value |
+|---|---|
+| open / close | 08-12 12:29 -> 14:44 UTC (2.24h) |
+| entry / exit | 0.27859 -> 0.29607 |
+| realised | **-$2.7985** (fee $0.072, 2.6% of gross) |
+| pnl_pct / margin | -19.32% on $14.50 margin |
+| **R** | **-1.05R** (sl_margin_pct 18.35, under the 20% cap) |
+| exit | `STOP_LOSS` / `exit_kind=STOP` |
+| peak_r | **+0.048** |
+| entry_lateness | **1.00** |
+| ref_listed | 1 (cross-listed, not a MEXC-only pump) |
+| 3h ROC at entry | 10.0% |
+| regime_size_mult / size_efficiency | 1.0 / 0.999 |
+
+**Judged against convex intent: mechanically clean, directionally wrong.**
+Sizing behaved exactly as designed — risk $2.71 against a $2.66 1R target, no
+regime trim, no undersizing, stop inside the 20% cap. The exit was the resting
+-1R server stop; **no non-convex exit path fired**, so there is no bug to flag.
+What the trade did not do is work at any point: peak +0.048R means it went
+adverse from the first bar and never returned. This is a -1R paid in full for
+zero information about the exit stack.
+
+PMT: `entries_disabled` all 24h (by design). Squeeze: OFF. Sniper: retired.
+
+**Note on ALLO specifically:** third live entry on this symbol, third loss —
+LONG 07-19 -1.09R, SHORT 07-25 -1.05R, SHORT 08-12 -1.05R, **-3.19R / -$5.63**
+across the three. All three at lateness 1.00. The universe is locked and this
+is not a proposal to drop the pair; it is recorded because the symbol keeps
+producing the same setup and the same outcome.
+
+### 1-OPEN. Open positions
+
+**None.** ALLO closed 14:44 UTC; both wildcard slots and the squeeze slot are
+free.
+
+### 1b. WILDCARD DIAGNOSIS — the funnel is working; the ranking rule is inverted
+
+**(a) Scan diagnostics.** Over the retained log window (9 scans, 217 mover
+evaluations): `roc_below_min` **173 (80%)**, `no_pullback_resume` 30 (14%),
+`low_volume_z` 11, `climax_wick` 2, `rsi_exhausted` 1, **candidates 0**. Funnel
+shape unchanged: 981 USDT perps -> 662 in-band -> 47 over the $3M floor -> 22
+over the 8% range pre-filter. **No order rejects (5003/2015), no tracebacks, no
+`[SIZE_TRIM]` lines.** The ALLO entry itself filled and armed its TPSL
+correctly. This is not an execution problem.
+
+**(b) Dormancy.** Not dormant today — one candidate cleared every gate and was
+taken. The ref-listing veto did NOT bind on it (`ref_listed=1`), which is the
+direct counter-evidence to the "the veto empties the universe" worry: when a
+listed mover appears, it trades.
+
+**(c) The finding — the pullback preference is backwards.** Design ranks
+deep-pullback candidates (lateness 0.50-0.70) **first**. Measured over every
+wildcard row carrying a lateness value (17 live + 27 shadow counterfactual,
+n=44):
+
+| lateness | n | netR | avgR | win | ex-best |
+|---|---|---|---|---|---|
+| <0.60 | 1 | -1.02 | -1.02 | 0% | — |
+| 0.60-0.75 (**ranked first**) | 4 | -2.38 | -0.59 | 25% | -3.04 |
+| 0.75-0.95 | 9 | -0.69 | -0.08 | 33% | -5.78 |
+| **>=0.95 (no pullback at all)** | **30** | **+8.48** | **+0.28** | **53%** | **+3.42** |
+
+The bucket the design prefers is the worst one, and the bucket it treats as
+late is the only one that survives its own top-trade haircut. Live-only the
+signal is weaker and noisier (0.75-0.95 n=4 avgR +0.74 vs >=0.95 n=11 avgR
++0.14), which is exactly why this is being recorded rather than shipped.
+
+**Two honest caveats.** Shadow outcomes are directional counterfactuals, never
+backtest-grade, and 19 of the 30 rows in the winning bucket are shadow. And
+lateness is a **ranking** input, not a gate — it only changes anything when two
+or more candidates clear on the same scan, which at ~0.7 candidates/day is
+rare. In $ terms the immediate envelope of flipping it is **near zero**; its
+value is that it is a cheap, pre-registerable hypothesis rather than another
+capacity trial.
+
+**Do NOT loosen MIN_ROC.** 80% of rejections are `roc_below_min` and there is
+still no backtest evidence those movers continued.
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** 57 rows, +1, reconciles with the exchange (1 close).
+
+**(b) Conditional expectancy** — corpus 57; the single new row moves no
+condition across the n>=10 bar, so the 08-10 verdicts stand unchanged and are
+restated, not re-derived: `hold>=120min` FAVOR, `roc>=12pct` FAVOR,
+`side=SHORT` FAVOR, `side=LONG` AVOID, `regime_trimmed` AVOID, `leverage>=7`
+AVOID. Propose-only. ALLO was a SHORT held 134min at 10% ROC — it satisfied two
+FAVOR conditions and lost anyway, which is ordinary behaviour for a 53%-win
+lottery, not a falsification.
+
+**(c) Shadow ledger** — 95 rows (+1: TUT_USDT SHORT, `min_vol_skip`, +0.665).
+
+| bucket | n | resolved | netR (cost-net) | reading |
+|---|---|---|---|---|
+| `shadow_only` (sniper) | 46 | 46 | +13.70 | sleeve retired |
+| `slot_occupied` | 17 | 17 | +5.36 | **no new rows since 08-05**; post-2-slot n still 1 |
+| `veto:ref_not_listed` | 14 | **14** | **-6.53** | protective; TST 08-11 resolved -1.02 |
+| `min_vol_skip` | 12 | 12 | +8.71 | account-size constraint, not tunable |
+| `side_disabled` | 4 | 4 | +2.16 | closed (shorts live since 08-10) |
+| `veto:move_not_corroborated` | 1 | 1 | +0.86 | — |
+| `veto:crowded_longs` | 1 | 1 | -1.02 | — |
+
+The ref veto is now **14/14 resolved at -6.53R**. It remains the clearest
+earning gate in the stack. **Slot cost is still zero**: no candidate was
+blocked while ALLO was open (the second slot was free the whole 2.24h).
+
+**(d) Decision rule** — convex since 2026-07-13, recomputed from the feature
+store excluding SNIPER and the lev-13 major rows: **n=27, netR +0.26, ex-best
+-4.83, net $+5.54, win rate 37%.** Max equity drawdown from the $142.90 peak is
+**-2.3%**, far inside the 20% flag. *Basis note: this classification differs by
+roughly one row from the n=27 / +1.65R stated on 08-11 (the sniper/major
+boundary in pre-labelling rows); the direction and size of today's move — ALLO
+-1.05R / -$2.80 — are not in doubt.*
+
+**Exit-kind tripwire:** 7 correctly scored convex rows (STOP 2, OTHER 5,
+**TP 0**). Below the >=15 bar, so the tripwire is **not triggerable** and no
+TP3R proposal is made. It is now 7 of 15.
+
+### 2. Champion vs shadow
+
+**Shadow stale, comparison suppressed pending resync.**
+
+### 3. Lever for the next 24h — none. Let trial 11 have its window.
+
+Trial 11 (slot preemption) shipped 08-11 16:06 and is 24h old with **n=1 and
+zero preemption opportunities** — ALLO held one of two slots and nothing
+arrived to contest it. Shipping a trial 12 now would repeat the exact error
+that closed trials 9, 10 and 11 at zero: superseding a change before it could
+be measured. The standing objective prices time-to-verdict above funnel width,
+and the way to shorten time-to-verdict here is to stop resetting the clock.
+
+Trial 11 kill conditions: unpaired evictions **0** (none possible), netR vs
+baseline unassessable at n=1. Neither triggers.
+
+**PRE-REGISTERED for trial 12 (operator-gated, NOT applied):** invert the
+lateness ranking — rank `lateness >= 0.95` candidates first instead of
+0.50-0.70. Env-only if a rank key is exposed; otherwise a one-line code change.
+Bar for opening it: **>= 10 further resolved wildcard rows carrying lateness**,
+and the >=0.95 bucket still ahead of 0.60-0.95 ex-best. Expected $ impact
+stated honestly: **under $10/month at current arrival rate**, because it binds
+only on multi-candidate scans. It is proposed as the cheapest available test of
+whether this sleeve's core premise (join the pullback, not the extreme) is
+true, not as a P&L improvement.
+
+### 4-5. Validate / Deploy
+
+No candidate reached the V-stack. **No deploy.** `pytest -q` 853 passed; bot
+healthy at cycle 1639, no tracebacks, ACCOUNT line current.
+
+### 6. Verdict on the last 7 days of changes
+
+| change | shipped | earning its keep? |
+|---|---|---|
+| 450s cadence (trial 9) | 08-10 | still untested — 1 close in 2 days |
+| shorts re-enabled (trial 10) | 08-10 | **first short entry taken** (ALLO, -1.05R). n=1; verdict pending, but the sleeve is no longer half-blind |
+| sniper retired | 08-10 | correct — was -0.90R / -$0.11 over 8 |
+| slot preemption (trial 11) | 08-11 | 24h old, 0 preemption opportunities, unassessable — **must be allowed to run** |
+
+---
+
 # Daily Audit — 2026-08-11
 
 ---
