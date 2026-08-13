@@ -1,3 +1,251 @@
+# Daily Audit — 2026-08-13
+
+---
+
+## Automated Assessment (UTC 16:36)
+
+Window 2026-08-12 16:36 -> 2026-08-13 16:36 UTC. Equity **$142.73** (cash
+$116.39 + margin $22.07 + unrealized $4.27), **2 open wildcard positions**.
+`pytest -q` **862 passed**. Feature store **59 rows (+2)**, shadow ledger
+**96 rows (+1)** — both reconcile with the exchange exactly (2 closes, 1 skip).
+
+### 1. Trades — two closes, both losses, and the FIRST EVER preemption
+
+**INX_USDT SHORT, WILDCARD, x2 — `CONVEX_PREEMPTED`.**
+
+| field | value |
+|---|---|
+| open / close | 08-12 16:37 -> 08-13 11:10 UTC (18.55h) |
+| entry / exit | 0.00755 -> 0.00776 |
+| realised | **-$0.2889** (fee $0.016, 5.8% of gross) |
+| pnl_pct / margin | -5.89% on ~$4.9 margin |
+| **R** | **-0.39R** (sl_margin_pct 15.03) |
+| exit | `CONVEX_PREEMPTED` / `exit_kind=OTHER` |
+| peak_r | +0.110 |
+| lateness / ref_listed | 1.00 / 1 |
+| regime_size_mult / size_efficiency | **0.291 / 0.283** |
+
+**This is not a bug — it is the trial-11 feature finally acting.** Preemption
+carried untested through trials 11, 12 and the first day of 13 ("0 evictions").
+At 11:10 both wildcard slots were full (TUT at ~+2R, INX at -0.39R), a BANK_USDT
+signal arrived, and `_preemption_candidate` gave up the position that had failed
+to work and kept the one that had. That is exactly the specified behaviour, and
+it chose correctly between the two. Flagged loudly per the convex-exit rule (any
+exit other than -1R/+5R gets flagged), but the verdict is **working as designed**,
+not an unhandled path.
+
+**Was the eviction worth it?** Honest scoring at n=1:
+
+| | R |
+|---|---|
+| INX realised on eviction | -0.39 |
+| BANK, the replacement | -1.03 |
+| **eviction path total** | **-1.42** |
+| INX held to now (0.00811 mark) | ~-0.99, still open |
+
+The first eviction **cost ~-0.43R** versus doing nothing. INX did dip to 0.00732
+post-eviction (+0.3% for the short) — no large win was surrendered. n=1 decides
+nothing; recorded so the next ones accumulate against it.
+
+**BANK_USDT LONG, WILDCARD, x2 — clean -1R stop.**
+
+| field | value |
+|---|---|
+| open / close | 08-13 10:30 -> 13:43 UTC (2.54h) |
+| entry / exit | 0.04431 -> 0.04043 |
+| realised | **-$0.7896** (fee $0.014, 1.7% of gross) |
+| pnl_pct / margin | -17.82% on $4.43 margin |
+| **R** | **-1.03R** (sl_margin_pct 17.28, under the 20% cap) |
+| exit | `EXCHANGE_CLOSE` / `exit_kind=STOP` — the resting server stop filled |
+| peak_r | +0.114 |
+| lateness / ref_listed | 1.00 / 1 |
+| streak_mult / regime_mult / size_efficiency | **0.50 / 0.924 / 0.335** |
+
+Both closes went adverse from the first bar (peak +0.11R each). Two -1R-class
+losses paid in full for zero information about the exit stack. **24h realised
+-$1.078, 0/2 win.**
+
+PMT: `entries_disabled` all 24h (by design). Squeeze: `FUTURES_SQUEEZE_ENABLED=0`
+— OFF, no slot in play. Sniper: retired.
+
+### 1-OPEN. Open positions — a +2.3R runner and a fresh entry
+
+**TUT_USDT SHORT x1, WILDCARD** — opened 08-13 06:41, held **9.9h**.
+
+| | |
+|---|---|
+| entry / mark | 0.05616 -> 0.04088 |
+| current R | **+2.30R** (+$4.40 unrealized on $16.87 margin, +26.1%) |
+| peak R (Min15) / giveback | **+2.57R** / **-0.27R** |
+| distance to +5R TP (0.0281) | **-31.3%** of price |
+| distance to -1R stop (0.0628) | **+53.6%** of price |
+| sl_margin_pct | 11.82 |
+| regime_size_mult / undersizing | 1.0 — **full intended margin, no trim** |
+
+The best-sized trade in the book right now, and the one the preemption rule
+correctly refused to touch.
+
+**COTI_USDT LONG x1, WILDCARD** — opened 08-13 16:10, held 0.4h.
+
+| | |
+|---|---|
+| entry / mark | 0.012637 -> 0.012225 |
+| current R / peak R | **-0.33R** / +0.11R |
+| distance to +5R TP (~0.01904) | **+55.7%** of price |
+| distance to -1R stop (~0.011357) | **-7.1%** of price |
+| **intended vs actual margin** | **$22.45 -> $5.19 (23%)** |
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** 59 rows, +2, reconciles with the exchange (2 closes).
+
+**(b) Conditional expectancy** (corpus 59, all sleeves). Verdicts with n>=10 and
+OOS consistency:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| `hold>=120min` | **FAVOR** | +1.565 | 35 / +$0.772 / 60% | 24 / -$0.793 / 17% |
+| `roc>=12pct` | **FAVOR** | +1.379 | 9 / +$1.304 / 67% | 50 / -$0.075 / 38% |
+| `regime_trimmed_hard(<0.5)` | **AVOID** | -0.427 | 17 / -$0.169 / 41% | 42 / +$0.258 / 43% |
+| `fee_heavy>=30pct` | **AVOID** | -0.161 | 11 / +$0.004 / 45% | 48 / +$0.165 / 42% |
+
+`side=SHORT` FAVOR / `side=LONG` AVOID have **fallen below the OOS bar** and now
+read "weak" — restated so the 08-10/08-12 verdicts are not carried forward
+stale. Propose-only.
+
+**(c) The sizing stack is not a defect — it is de-sizing the right trades.**
+Both closes and today's COTI entry were cut hard (efficiency 0.28 / 0.34 / 0.23),
+which looks like the undersizing failure trial 13 was built to fix. It is not the
+same thing. Trial 13 fixed a cap that bound *silently and inconsistently*; BANK
+carries the new telemetry and shows it behaving (`risk_pct_actual=1.87`,
+`risk_cap_bound=0`). What cut these was the two *declared* multipliers, and both
+are earning their keep on live convex trades:
+
+| streak bucket | n | netR | meanR | win |
+|---|---|---|---|---|
+| streak 0-1 (x1.00) | 25 | +16.15 | **+0.646** | 12/25 |
+| streak 2 (x0.50) | 4 | -0.73 | -0.183 | 1/4 |
+| streak >=3 (x0.25) | 8 | +0.16 | +0.020 | 2/8 |
+
+| regime bucket (wildcard) | n | netR | meanR | win |
+|---|---|---|---|---|
+| `regime_mult>=0.5` | 19 | +13.78 | **+0.725** | 8/19 |
+| `regime_mult<0.5` | 5 | -0.56 | -0.112 | 2/5 |
+
+Trades taken while throttled, and trades taken in a trimmed regime, are the
+**worse** trades — so the throttles are shrinking size on the losing tail, not
+taxing the winners. **No proposal to loosen either.** (n=12 and n=5; weak, and
+serial-correlation claims at this sample are hypotheses.)
+
+The one thing that IS wrong is a **log line**: `[SIZE_TRIM]` prints
+`regime_mult=0.92 margin 22.45 -> 5.19`, attributing the whole cut to the regime
+scaler when the streak throttle did most of it (a separate `[STREAK_THROTTLE]`
+line above carries the truth). Cosmetic, but misleading in exactly the place a
+future audit will look. Not deployed today — bundled for the next code push.
+
+**(d) Shadow ledger** — 96 rows (+1: BTW_USDT LONG, `veto:crowded_longs
+(funding=0.104%)`, unresolved).
+
+| bucket | n | resolved | netR | reading |
+|---|---|---|---|---|
+| `shadow_only` (sniper) | 46 | 46 | +16.20 | sleeve retired |
+| `slot_occupied` | 17 | 17 | **+10.86** | **no new rows since 08-05** |
+| `veto:ref_not_listed` | 14 | 14 | **-4.46** | protective, the clearest earning gate |
+| `min_vol_skip` | 12 | 12 | +8.99 | account-size constraint, not tunable |
+| `side_disabled` | 4 | 4 | +2.23 | closed (shorts live since 08-10) |
+| `veto:crowded_longs` | 2 | 1 | -1.00 | 1 unresolved |
+| `veto:move_not_corroborated` | 1 | 1 | +0.91 | — |
+
+**Slot cost was zero again, and today shows why it will stay near zero:** with
+preemption live, a signal arriving into a full book no longer produces a
+`slot_occupied` row — it produces an eviction. The +10.86R in that bucket is a
+pre-preemption artefact and is now a **closed measurement**, not a live one. The
+recurring "am I missing out on blocked candidates?" question has been
+structurally answered by shipping preemption; what needs measuring from here is
+whether evictions beat holding, and that ledger stands at **1 eviction, -0.43R**.
+
+**(e) Scan telemetry.** 6 scans retained: `movers` 18-20/scan, `candidates` 1
+across the window (COTI). Histogram dominated by **`roc_below_min` 14-17 per scan
+(~78%)**, then `no_pullback_resume` 1-6, `low_volume_z` 0-2. `shorts_blocked=0`,
+`shock_blocked=0` — **the calm-shock filter has still refused nothing since
+shipping 08-12**. Funnel: 987 USDT perps -> 663 in-band -> 45 over the $3M
+turnover floor -> 18 over the 8% range pre-filter -> 1 candidate. **No order
+rejects (5003/2015), no tracebacks, no ERROR lines.** One `[SIZE_TRIM]` (COTI,
+above). Execution is clean.
+
+**(f) Decision rule (docs/DECISION_RULE.md).**
+
+| | |
+|---|---|
+| Trial 13 closes | **2 / 30** (INX -0.39R, BANK -1.03R) |
+| Trial 13 netR / ex-best | **-1.42R** / -1.03R |
+| Max drawdown, flow-adjusted (since 07-21) | **-2.7%** vs the <30% bar |
+| Every close names its exit rule | **yes** (CONVEX_PREEMPTED, EXCHANGE_CLOSE/STOP) |
+| TP completions, live | **0** — watch item 3, NOTE only at this n |
+
+**The scoreboard that matters** (unaffected by the 9 resets): live wildcard
+closes all-time **24, netR +13.22, ex-best +8.13, net $+8.11, win 10/24 (42%)**.
+
+### 1b. WILDCARD DIAGNOSIS
+
+**(a)** Funnel healthy, execution clean, one candidate found and taken. Not an
+execution problem; no tick-snapping failures.
+
+**(b) Not dormant.** Two positions open, two closed, one new entry inside the
+window. Nothing to loosen. `roc_below_min` remains ~78% of rejections with no
+backtest evidence those movers continued — **do NOT loosen MIN_ROC.**
+
+**(c) Improvement.** Nothing proposed. The two live-fire findings of the day —
+preemption's first eviction and the throttle stack — both need more n before they
+can be scored, and neither is tunable at <=25%/day into a better place today. Per
+the standing $ objective: at 1R = $2.66 and ~0.7 entries/day, no available knob
+moves more than a few dollars a month, so the correct action is to let trial 13
+accumulate closes.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 3. Diagnosis — the lever
+
+**No change.** Two candidate levers were examined and both rejected on their own
+evidence, not on caution:
+
+1. *Soften the streak throttle* (it cut COTI to 23% of intent) — rejected: the
+   throttled buckets have meanR +0.02 / -0.18 against +0.646 unthrottled. The
+   throttle is de-sizing the bad tail.
+2. *Turn `regime_mult<0.5` into a veto* (conditional expectancy says AVOID,
+   n=17, OOS-consistent) — rejected on the $ objective: those trades already run
+   at ~30% size, so vetoing them saves cents per trade, and it would **remove
+   ~20% of entries** and lengthen time-to-verdict. Widening the funnel on an
+   unmeasured edge is a variance increase; narrowing it against a $0 saving is a
+   measurement loss.
+
+### 4. Validate
+
+`pytest -q` 862 passed. No replay/MC run — nothing was proposed to gate.
+
+### 5. Deploy
+
+**None.** No code change, no variable change.
+
+### 6. Verdict on changes deployed in the last 7 days
+
+| change | date | live verdict |
+|---|---|---|
+| Preemption (`PREEMPT_ENABLED`) | 08-11 | **first eviction fired today**, -0.43R vs holding at n=1 — still unscored |
+| Calm-shock filter (`MAX_CALM_RATIO=0.75`) | 08-12 | **0 refusals in 24h** — untested |
+| Risk cap bound to equity (`MAX_MARGIN_PCT=0.25`) | 08-12 | **working**: BANK logged `risk_pct_actual=1.87`, `risk_cap_bound=0`; did not bind, as designed |
+| Sizing telemetry | 08-12 | **working**, and it is what made tonight's throttle analysis possible |
+
+### Action item (operator-gated, carried)
+
+Resync Futures-shadow to champion HEAD (`railway up --service Futures-shadow`,
+paper, env-only, zero live risk). Until then the shadow comparison stays
+suppressed.
+
+---
+
 # Daily Audit — 2026-08-12
 
 ---
