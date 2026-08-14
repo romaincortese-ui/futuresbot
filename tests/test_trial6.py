@@ -897,6 +897,60 @@ def test_deflator_fails_open_to_the_old_behaviour(rt, monkeypatch):
     assert rt._turnover_deflator("X_USDT") == 1.0
 
 
+def _hourly(vols):
+    import pandas as pd
+    return pd.DataFrame(
+        {"close": [1.0] * len(vols), "volume": list(vols)},
+        index=pd.date_range("2026-08-05", periods=len(vols), freq="h", tz="UTC"))
+
+
+def test_deflator_sees_a_spike_that_is_still_in_progress(rt):
+    """THE DEFECT (2026-08-14). The multiplier is applied to amount24, a ROLLING
+    24h figure that fully contains an in-progress move, but was computed from
+    Day1 bars with the still-forming bar dropped — so its denominator was the
+    last COMPLETE calendar day, a window that by construction excludes today.
+    Rank on a window containing the move, correct with one that cannot see it.
+
+    Every symbol spiking that day read exactly 1.000. ACE_USDT (+150%/24h, the
+    day's largest mover, raw $51M) therefore sat inside the majors band and was
+    never scanned; replaying it produces a LONG that resolves +4.98R."""
+    class _Klines:
+        def get_klines(self, symbol, interval="Min60", **k):
+            assert interval == "Min60", "the baseline must cover a TRAILING window"
+            return _hourly([1.0] * (24 * 8) + [10.0] * 24)
+
+    rt.client = _Klines()
+    rt._turnover_baseline = {}
+    d = rt._turnover_deflator("SPIKE_USDT")
+    assert d < 0.2, f"an in-progress 10x spike must still deflate, got {d}"
+
+
+def test_deflator_is_a_noop_for_a_steadily_liquid_symbol(rt):
+    """A genuine major trades at its own baseline every day, so the correction
+    must do nothing to it — otherwise the band churns on every scan."""
+    class _Klines:
+        def get_klines(self, symbol, interval="Min60", **k):
+            return _hourly([1.0] * (24 * 9))
+
+    rt.client = _Klines()
+    rt._turnover_baseline = {}
+    assert rt._turnover_deflator("BTC_USDT") == 1.0
+
+
+def test_deflator_ignores_a_spike_that_has_already_passed(rt):
+    """Symmetry check on the window. A symbol that spiked three days ago and has
+    since returned to normal is NOT currently distorted, so it must not be
+    demoted — only the trailing 24h may move the multiplier."""
+    vols = [1.0] * (24 * 5) + [10.0] * 24 + [1.0] * (24 * 3)
+    class _Klines:
+        def get_klines(self, symbol, interval="Min60", **k):
+            return _hourly(vols)
+
+    rt.client = _Klines()
+    rt._turnover_baseline = {}
+    assert rt._turnover_deflator("OLDSPIKE_USDT") == 1.0
+
+
 def test_the_exclusion_count_holds_the_treatment_constant(rt):
     """Ranking crypto-only at 30 would have WIDENED the exclusion by the ~6
     slots the tokenised equities used to occupy, silently making BMT_USDT

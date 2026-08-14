@@ -4928,16 +4928,33 @@ class FuturesRuntime:
         return not any(base.startswith(p) or base.endswith(p) for p in excluded)
 
     def _turnover_deflator(self, symbol: str) -> float:
-        """How inflated is this symbol's 24h turnover by TODAY specifically?
+        """How inflated is this symbol's TRAILING 24h turnover by the move it is
+        making right now?
 
-        Returns ``median(last 7 complete days' turnover) / (last complete day's
-        turnover)``, computed from the symbol's OWN daily bars so contract size
+        Returns ``median(the 7 preceding 24h windows) / (the trailing 24h
+        window)``, computed from the symbol's OWN hourly bars so contract size
         cancels in the ratio and the result is a pure, cross-comparable
         multiplier. ~1.0 for a symbol trading normally; well under 1.0 for one
         having an exceptional day.
 
-        Cached, because a baseline moves on a scale of days and the scan runs
-        every 15 minutes."""
+        WINDOW MISMATCH FIXED 2026-08-14. The multiplier is applied to
+        ``amount24``, which is a ROLLING 24h figure that fully contains an
+        in-progress move. The deflator used to be computed from Day1 bars with
+        the still-forming bar dropped, so its denominator was the last COMPLETE
+        calendar day — a window that by construction excludes today. The two
+        halves therefore disagreed: rank on a window containing the move,
+        correct with one that could not see it. The deflator could only detect a
+        spike a full day after it finished, by which point the opportunity is
+        gone, and it read exactly 1.000 on every symbol currently spiking.
+
+        Measured cost on 2026-08-14: ACE_USDT (+150% /24h, the day's largest
+        mover, deflator 1.000, raw $51M) sat inside the majors band and was
+        never scanned. Replaying it produces a LONG that resolves +4.98R.
+        TUT_USDT and BEAT_USDT read 1.000 the same day for the same reason.
+
+        Hourly bars, so the denominator covers the same trailing 24h that
+        ``amount24`` does. Cached, because a baseline moves on a scale of days
+        and the scan runs every 15 minutes."""
         now_t = time.time()
         hit = self._turnover_baseline.get(symbol)
         ttl = max(1.0, self._env_float("FUTURES_WILDCARD_BASELINE_CACHE_HOURS", 12.0)) * 3600.0
@@ -4945,15 +4962,22 @@ class FuturesRuntime:
             return hit[1]
         ratio = 1.0
         try:
-            df = self.client.get_klines(symbol, interval="Day1",
-                                        start=int(now_t) - 12 * 86400, end=int(now_t))
-            # Drop the still-forming final bar: comparing a partial day against
-            # complete ones would report every symbol as quiet.
-            turn = [float(c) * float(v) for c, v in zip(df["close"], df["volume"])][:-1]
-            turn = [x for x in turn if x > 0][-7:]
-            if len(turn) >= 4:
-                med = sorted(turn)[len(turn) // 2]
-                last = turn[-1]
+            df = self.client.get_klines(symbol, interval="Min60",
+                                        start=int(now_t) - 9 * 86400, end=int(now_t))
+            turn = [float(c) * float(v) for c, v in zip(df["close"], df["volume"])]
+            # The trailing 24h — the SAME window amount24 measures — against the
+            # seven non-overlapping 24h windows before it.
+            if len(turn) >= 24 * 5:
+                last = sum(turn[-24:])
+                prior: list[float] = []
+                for day in range(1, 8):
+                    end = len(turn) - 24 * day
+                    if end - 24 < 0:
+                        break
+                    window = sum(turn[end - 24:end])
+                    if window > 0:
+                        prior.append(window)
+                med = sorted(prior)[len(prior) // 2] if len(prior) >= 4 else 0.0
                 if last > 0 and med > 0:
                     # CLAMPED AT 1.0 — the correction is one-sided because the
                     # distortion is. Turnover is inflated BY a move, so the rule

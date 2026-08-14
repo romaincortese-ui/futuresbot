@@ -25,6 +25,96 @@ increase wearing one's clothes.
 
 ---
 
+# Pre-registered decision rule — CONVEX TRIAL 14 (from 2026-08-14)
+
+## TURNOVER-DEFLATOR WINDOW MISMATCH — a defect, not a parameter
+
+`_major_symbols` ranks on `amount24`, a **rolling trailing-24h** turnover figure
+that fully contains an in-progress move. It multiplies that by
+`_turnover_deflator`, whose job is to stop a small cap being called a major just
+because it is spiking. The deflator was computed from `Day1` klines **with the
+still-forming bar dropped**, so its denominator was the last COMPLETE calendar
+day — a window that by construction cannot see today.
+
+Rank on a window containing the move; correct with one that excludes it. The
+deflator could only detect a spike a full day after it finished, by which point
+the opportunity is gone.
+
+### Measured cost, 2026-08-14
+
+Top-10 movers on MEXC futures that day. Eight of ten never reached the detector:
+two excluded as "majors", six under the $3M turnover floor.
+
+| symbol | 24h | raw turnover | old deflator | outcome |
+|---|---|---|---|---|
+| ACE_USDT | **+150.5%** | $51M | **1.000** | excluded as major; replays **+4.98R** |
+| BEAT_USDT | -32.1% | $31M | 1.000 | excluded as major |
+| TUT_USDT | -28.1% | $16M | 1.000 | excluded as major |
+
+ACE was the single largest mover on the exchange and the deflator applied **no
+correction at all**. At 1R = $2.66 that is **$13.25** on one trade.
+
+### The fix
+
+`Min60` bars over 9 days. `last` = sum of the trailing 24 hourly bars — the SAME
+window `amount24` measures. `prior` = the seven non-overlapping 24h windows
+before it. `ratio = min(1.0, median(prior) / last)`.
+
+Units still cancel (both sides are `close x volume` from the symbol's own bars),
+so the multiplier stays cross-comparable. The one-sided clamp is unchanged and
+still load-bearing — an unclamped ratio ranked SOXL (deflator 16.98) above every
+crypto major.
+
+### Verified before deploy
+
+- 865 tests pass, including three new regression tests: an in-progress 10x spike
+  must deflate (0.100), a steadily liquid symbol must be untouched (1.000), and a
+  spike that has already passed must NOT demote (1.000).
+- Live: ACE deflator **1.000 -> 0.050**, deflated $51M -> $2.8M, **now in pool**;
+  its signal fires and resolves +4.98R.
+- BTC/ETH/SOL/XRP/DOGE/BNB all still excluded.
+- Band churn is 2 symbols: ACE and CAP become tradeable, ENA and FILECOIN become
+  majors. Both newcomers to the band are genuinely steady high-turnover markets.
+
+### Kill conditions
+
+- Any symbol with >$100M steady turnover entering the tradeable pool -> the
+  deflator is promoting, not demoting; revert.
+- `FUTURES_WILDCARD_TURNOVER_BASELINE=0` restores raw-turnover ranking, no deploy.
+- Deflators reading 1.000 across the whole shortlist -> the Min60 call is failing
+  and the code has failed OPEN back into the old bug. Watch for this specifically.
+
+## What this trial does NOT change
+
+Exits are untouched. The near-target family (lock, dwell, arm/floor grid,
+scale-out, time-conditioned scale-out) was measured roughly fifteen ways on
+2026-08-14 and **every corrected estimate sits between -0.13R and +0.13R per
+event**, with the only |t| > 2 cells negative. The reason is structural: trades
+that touch 87% of target complete **74.4%** of the time against a **74.7%**
+break-even, so the market prices it fairly at every level. A simulator
+fill-ordering defect (scale-out evaluated after the TP break, against the prior
+bar's peak) had manufactured an apparent +0.207R; corrected, it is +0.015R
+(t=+0.17). Do not re-litigate without new data.
+
+## OPEN, carried forward
+
+- **The pullback gate does not select.** Clean ablation, 90 days, separately
+  deduped: gate ON longs +0.189R (n=568, t_day +2.29); gate OFF longs +0.193R
+  (n=941, t_day +2.72); the signals it rejects score +0.256R (n=646) — a
+  difference of t=0.74, i.e. no selection at all. It discards 40% of the
+  candidate pool for no measurable quality gain. Removing it is worth ~$0.60/mo
+  at current capacity, so the value is not in removing it but in whether a
+  larger pool can be RANKED. Unstudied.
+- **`pinned90.pkl` had a dedup defect** — one 2h window shared across all
+  candidates, so the 17k rejected sub-8%-ROC signals hid passing ones. Any
+  number sourced from it (including the long/short asymmetry) is a biased
+  subsample. Clean sampling gives shorts -0.043R (t=-0.79), i.e. roughly FLAT,
+  not the -0.225R previously recorded.
+- Survivorship: the replay pool is selected on CURRENT turnover, and five
+  symbols carry 76% of the long-side effect. Unresolved.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 13 (from 2026-08-12)
 
 ## Trial 12 closed at 0 closes, ~1h. Same as trial 11: it tested nothing.
