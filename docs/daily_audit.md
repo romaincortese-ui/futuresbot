@@ -1,3 +1,230 @@
+# Daily Audit — 2026-08-14
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Window 2026-08-13 16:10 -> 2026-08-14 16:10 UTC. Equity **$143.37**, all cash,
+**0 open positions** — a new account high. `pytest -q` **862 passed**. Feature
+store **61 rows (+2)** reconciles with the exchange exactly (2 closes). Shadow
+ledger **96 rows (+0)** — nothing to log, because nothing qualified (below).
+
+**24h realised +$4.894, +1.63R, 1/2 win.**
+
+### 1. Trades — the clock took a 4.14R peak off the table
+
+**TUT_USDT SHORT x1, WILDCARD — `CONVEX_TIME_STOP`, the day's whole P&L.**
+
+| field | value |
+|---|---|
+| open / close | 08-13 06:41 -> 08-14 06:41 UTC (**24.0h exactly**) |
+| entry / exit | 0.05616 -> 0.03802 |
+| realised | **+$5.4194** (fee $0.023, 0.4% of gross) |
+| pnl_pct / margin | +32.17% on $16.85 margin |
+| **R** | **+2.69R** (sl_margin_pct 11.965) |
+| **peak R / giveback** | **+4.137R / -1.45R** |
+| exit | `CONVEX_TIME_STOP` / `exit_kind=OTHER` |
+| lateness / ref_listed | 1.00 / 1 |
+| regime_mult / streak_mult / size_efficiency | 1.0 / 1.0 / **0.801** — best-sized trade in the record |
+
+Flagged per the convex-exit rule (any exit that is not -1R/+5R gets flagged).
+**Verdict: working as designed, not an unhandled path.** The 24h clock is a
+documented trial-7 component (`runtime.py:1731`, `FUTURES_CONVEX_TIME_STOP_HOURS`),
+retained deliberately as the only backstop against a stale position or a dropped
+stop order. The standing brief's "NO time limit" line describes a design two
+trials old; the live convex stack is **-1R stop / ~4.2R TP / 0.30xpeak retention
+floor / 24h clock**.
+
+**The uncomfortable part:** TUT reached 4.137R against a 4.18R target — **98.9%
+of the way** — then faded to 2.69R and the clock booked it there. The retention
+floor was sitting at 0.30 x 4.137 = **1.24R**, far below, so it never engaged.
+Nothing in the stack defends a trade that has all but hit its target. Measured
+below (section 3), and **rejected on the dollars**.
+
+**COTI_USDT LONG x1, WILDCARD — clean -1R stop.**
+
+| field | value |
+|---|---|
+| open / close | 08-13 16:10 -> 18:32 UTC (2.36h) |
+| entry / exit | 0.012637 -> 0.011299 |
+| realised | **-$0.5266** (fee $0.008, 1.4% of gross) |
+| **R** | **-1.06R** (sl_margin_pct 10.128) |
+| exit | `EXCHANGE_CLOSE` / `exit_kind=STOP` — resting server stop filled |
+| peak_r | +0.183 |
+| streak_mult / loss_streak / size_efficiency | **0.25 / 3 / 0.231** |
+
+Correction to yesterday's entry: COTI's margin was **$22.45, the full intended
+size** (`margin_used == intended_margin_usdt`), not the $5.19 reported. The
+figure quoted then was a mid-flight snapshot, not the sizing decision.
+
+**The throttle earned its keep this window.** It ran the two losers at 0.25x and
+0.50x and the winner at 1.00x. Same three trades at flat size would have been
+roughly +$3.1 instead of +$4.9.
+
+PMT: `entries_disabled` all 24h (by design, cycle 3010+). Squeeze: OFF.
+Sniper: retired.
+
+### 1-OPEN. Open positions — none
+
+Book is flat and has been since 06:41 UTC. No open-position telemetry to report.
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** 61 rows (+2), reconciles. Conditional expectancy over the
+full corpus, conditions with a verdict and n>=10 per group:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold>=120min | FAVOR | +1.654 | 37 / +$0.861 / 59.5% | 24 / -$0.793 / 16.7% |
+| side=SHORT | FAVOR | +0.771 | 24 / +$0.678 / 50.0% | 37 / -$0.093 / 37.8% |
+| regime_trimmed_hard(<0.5) | AVOID | -0.526 | 17 / -$0.169 / 41.2% | 44 / +$0.357 / 43.2% |
+| fee_heavy>=30pct | AVOID | -0.252 | 11 / +$0.004 / 45.5% | 50 / +$0.256 / 42.0% |
+
+`hold>=120min` is tautological — winners are what get held — and is not
+actionable. **`side=SHORT` FAVOR directly contradicts the 90-day drift-controlled
+replay** that put the entire edge in the longs (+0.244R vs -0.225R). The live
+reading is unadjusted for size and $5.42 of the SHORT arm's $16.27 is TUT alone.
+Two measurements disagree; the replay has the larger sample and the drift
+control. **No action, and the conflict is recorded rather than resolved.**
+
+**(b) Shadow ledger** 96 rows, **all 96 resolved, +0 this window**.
+
+| split | n | netR (net of cost) | outcomes |
+|---|---|---|---|
+| `slot_occupied` | 17 | **+5.36** | trail 7, stop 6, tp 2, timeout 2 |
+| `veto:ref_not_listed` | 14 | **-6.53** | stop 9, trail 4, timeout 1 |
+| `veto:crowded_longs` | 2 | -0.39 | stop 1, timeout 1 |
+| `veto:move_not_corroborated` | 1 | +0.86 | trail 1 |
+| `min_vol_skip` | 12 | +1.71 | tp 5, trail 4, stop 3 |
+| `side_disabled` | 4 | +2.16 | trail 2, tp 1, stop 1 |
+| `shadow_only` | 46 | +5.15 | stop 18, tp 15, timeout 13 |
+
+**Vetoes are protective and the reference-listing veto is the strongest single
+guard in the stack** — 14 resolved rows that would have lost **-6.53R (~-$17)**.
+Keep it.
+
+**Slot cost, honestly.** +5.36R over 17 resolved rows reads like an argument for
+a third slot. It is not, yet: **+9.96R of that +5.36R is two rows** — SNXX
+(+4.97, tp) and HEI (+4.99, tp). Strip those two and the remaining 15 blocked
+candidates net **-4.60R**. The slot-lock is being paid for by lottery tickets,
+not by a broad positive. With 2 slots already live, a third is not supported.
+
+**(c) Scan telemetry** — 80 `[WILDCARD_SCAN_SUMMARY]` over the 10.5h log window,
+**0 candidates, 0 entries**. Rejection histogram, 1,726 gate hits:
+
+| bucket | n | share |
+|---|---|---|
+| `roc_below_min` | 1,495 | 87% |
+| `no_pullback_resume` | 196 | 11% |
+| `low_volume_z` | 25 | 1.4% |
+| `climax_wick` | 9 | 0.5% |
+| `vertical_blowoff` / `rsi_exhausted` | 1 / 1 | — |
+
+21-23 movers scanned per cycle; 87% simply are not moving hard enough to clear
+`MIN_ROC`. No `shorts_blocked`, no `shock_blocked`, no `[SIZE_TRIM]`, **no 5003
+/ 2015 order rejects, no tracebacks**. This is a quiet-regime dormancy, which
+is correct behaviour — not an execution block, and not a reason to loosen a gate.
+
+**(d) Decision rule — trial 13 progress**
+
+| | |
+|---|---|
+| convex closes since 2026-08-12 | **5 / 30** |
+| net R | **-0.84R** |
+| net R ex-best (ex-TUT) | **-3.53R** |
+| net $ | **+$0.98** |
+| max drawdown (ledger equity path) | **-2.7%**, well inside the 20% flag |
+
+All-time wildcard record: **49 closes, netR +16.24, net $+14.00, 41% win**;
+ex-best (ESPORTS +5.09R) netR +11.15.
+
+### 2. Champion vs shadow
+
+**Shadow: stale, comparison suppressed pending resync.**
+
+### 3. The lever — the TP tripwire fired, was measured, and is REJECTED
+
+The trial-4 watch item's trigger is now formally met: over the 21 closes carrying
+`exit_kind`, **TP completions = 0 (0%)**, stop 9 (43%), **OTHER 12 (57%)** —
+under 10% TP with OTHER dominating. The prescribed response is to propose scaling
+the TP down at wide stops. Proposed, measured, and it does not pay:
+
+**Evidence 1 — the live peak record.** Of 11 closes carrying `peak_r`, exactly
+one ever traded above 2R. Re-pricing every one of them against a smaller target:
+
+| candidate TP | live trades completed | delta vs actual | $ |
+|---|---|---|---|
+| 2.0R | 1 / 11 | -0.69R | **-$1.84** |
+| 2.5R | 1 / 11 | -0.19R | -$0.51 |
+| 3.0R | 1 / 11 | +0.31R | **+$0.82** |
+| 3.5R | 1 / 11 | +0.81R | +$2.15 |
+
+The entire benefit is TUT booking 3.0R instead of 2.69R. **+$0.82 across the
+whole live record.**
+
+**Evidence 2 — the shadow counterfactuals, bucketed by target size.** Completion
+rate collapses with target size exactly as the watch item assumed — but mean R
+does not improve:
+
+| tp_r | n | tp hit | mean R |
+|---|---|---|---|
+| 2.0-2.5 | 49 | 20 (41%) | +0.07 |
+| 2.5-3.5 | 9 | 1 (11%) | +0.30 |
+| >=4.5 | 14 | 1 (7%) | -0.07 |
+
+A 41% completion rate at the low target earns **+0.07R per trade**. Completion
+rate is not the objective; R is. **Scaling the TP down buys a better-looking
+histogram and no dollars.**
+
+**Evidence 3 — the clock is not the culprit either.** The hypothesis that the
+24h clock truncates winners before target is now dead: of 96 resolved shadow
+rows, **8 resolved after the 24h mark and all 8 were timeouts. Zero TPs were
+ever struck after 24h** (0 of 23). Holding past 24h wins nothing.
+
+**Also measured and dropped: the near-TP lock.** TUT's 1.45R giveback from a
+98.9%-of-target peak motivates a fixed floor at k x target once peak reaches
+k x target. At k=0.80 it converts TUT's +2.69R to +3.34R: **+0.65R = +$1.73 per
+event, ~1 event per 11 trades, ~$3.5/month.** Under the standing objective's $10/mo
+materiality bar, on n=1. **Say so and drop it.**
+
+**Also observed, no action: the retention floor is unholdable at high leverage.**
+AVAX_USDT (08-09) peaked +1.68R with a floor at +0.50R and exited at **-0.01R**
+under `CONVEX_RETENTION_TRAIL`. Not a rule defect — at x13 leverage with
+`sl_margin_pct` 4.79, 1R is only **0.37% of price**, so the floor sat 0.18% away
+and a 45s poll gap plus market-close slippage swallows it whole. The two
+low-leverage retention exits (BICO x1, BTW x3, sl% 16-17) missed their floors by
+0.02-0.06R — the floor holds fine when 1R is a real distance. Cost: 0.50R once in
+49 trades, ~$1.33. Recorded, not acted on.
+
+### 4. Validate / 5. Deploy
+
+`pytest -q` **862 passed**. No candidate reached the V-stack — every proposal
+generated today was rejected on its own $ evidence before staging. **No deploy,
+no config change, no self-applied parameter move.**
+
+### 6. Outstanding
+
+- **Uncommitted working-tree change:** `futuresbot/shadow_ledger.py` carries a
+  `near_tp_lock` parameter on `resolve_outcome` with **no caller** — inert study
+  code, tests green. The feature it implements is the one measured at ~$3.5/mo
+  above. Recommend reverting the file to keep the tree clean before the next
+  deploy; not self-applied, since it is prior WIP.
+- **Action item (raised once, still open):** resync Futures-shadow to champion
+  HEAD (`railway up --service Futures-shadow`, paper, zero live risk). Until then
+  the comparison stays suppressed.
+- Trial 13 at 5/30 with 8 months of calendar unused. Entries, not exits, are the
+  binding constraint: 87% of gate hits are `roc_below_min` in a quiet tape.
+
+### Verdict
+
+**No change.** The day produced a +$4.89 realised win, a new equity high, and —
+more valuable — it closed two open questions with data: the TP-completion
+tripwire is a measurement artefact of target size rather than a defect, and the
+24h clock costs nothing in foregone take-profits. Both are now settled and need
+not be re-litigated.
+
+---
+
 # Daily Audit — 2026-08-13
 
 ---
