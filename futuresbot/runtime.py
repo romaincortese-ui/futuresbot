@@ -222,6 +222,10 @@ class FuturesRuntime:
         self._last_wildcard_scan_at = 0.0
         # symbol -> (sampled_at, deflator). See _turnover_deflator.
         self._turnover_baseline: dict[str, tuple[float, float]] = {}
+        # (sub-1.0 deflators, shortlist size) from the last majors-band build.
+        # Surfaced in the scan summary so the trial-14 kill condition — "the
+        # deflator has silently failed open to 1.000 everywhere" — is visible.
+        self._last_deflator_stats: tuple[int, int] = (0, 0)
         # symbol -> which side of the pre-trial-8 gates it sat on, this scan.
         self._wildcard_attribution: dict[str, dict[str, bool]] = {}
         # Last wildcard scan funnel, kept for /status. Previously the funnel and
@@ -4710,10 +4714,11 @@ class FuturesRuntime:
                      "range24" if range_prefilter else "move24h",
                      min_move * 100, funnel["move_24h_ok"], scan_capped, scanned, len(cands))
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d shorts_blocked=%d "
-                     "shock_blocked=%d histogram=%s signal=%s",
+                     "shock_blocked=%d deflated=%d/%d histogram=%s signal=%s",
                      len(movers), scanned, len(cands), shorts_blocked,
-                     locals().get("shock_blocked", 0), hist or "{}",
-                     best.symbol if best else "none")
+                     locals().get("shock_blocked", 0),
+                     self._last_deflator_stats[0], self._last_deflator_stats[1],
+                     hist or "{}", best.symbol if best else "none")
             if best is None:
                 return
             if slot_blocked and best is not None and self._preemption_possible():
@@ -4948,9 +4953,19 @@ class FuturesRuntime:
         gone, and it read exactly 1.000 on every symbol currently spiking.
 
         Measured cost on 2026-08-14: ACE_USDT (+150% /24h, the day's largest
-        mover, deflator 1.000, raw $51M) sat inside the majors band and was
-        never scanned. Replaying it produces a LONG that resolves +4.98R.
-        TUT_USDT and BEAT_USDT read 1.000 the same day for the same reason.
+        mover, old deflator 1.000, raw $51M) sat inside the majors band and was
+        never scanned. Replaying it produces a LONG that resolves +4.98R. Under
+        the fix it reads 0.050 and is tradeable.
+
+        SCOPE, stated precisely because the next reader will judge the failure
+        mode from this block: of the three symbols reading 1.000 that day, the
+        fix recovers ONE. TUT_USDT moves 1.000 -> 0.761 and stays inside the
+        band; BEAT_USDT stays at 1.000 because its turnover genuinely is at its
+        own baseline — for BEAT, 1.000 was the correct answer all along and is
+        not evidence of the defect. A symbol listed less than 5 days ago still
+        reads 1.000 (the len >= 24*5 guard) and is ranked on raw spiked
+        turnover: the ACE failure mode remains open for new listings, which are
+        the most spike-prone class of all.
 
         Hourly bars, so the denominator covers the same trailing 24h that
         ``amount24`` does. Cached, because a baseline moves on a scale of days
@@ -4987,7 +5002,14 @@ class FuturesRuntime:
                     # zero, deflator 16.98) as a crypto major.
                     ratio = min(1.0, med / last)
         except Exception:
-            ratio = 1.0                      # fail-open: behave like the old rule
+            # FAIL-OPEN, BUT DO NOT CACHE IT (2026-08-14). The cache write sat
+            # outside the try, so a single transient kline failure pinned the
+            # symbol at 1.0 for the full 12h TTL even after the exchange
+            # recovered — the residual path by which the window-mismatch bug
+            # silently reappears. Return the safe value and let the next scan
+            # retry; the cost is one extra request, the alternative is half a
+            # day of a symbol being mis-ranked with no way to tell.
+            return 1.0
         self._turnover_baseline[symbol] = (now_t, ratio)
         return ratio
 
@@ -5024,8 +5046,19 @@ class FuturesRuntime:
         # multiplier is <= ~1), so its baseline is never worth an API call.
         pool_mult = max(1.0, self._env_float("FUTURES_WILDCARD_BASELINE_POOL_MULT", 2.0))
         shortlist = rows[:int(n * pool_mult)]
-        scored = sorted(((turn * self._turnover_deflator(sym), sym)
-                         for turn, sym in shortlist), reverse=True)
+        defl = {sym: self._turnover_deflator(sym) for _turn, sym in shortlist}
+        scored = sorted(((turn * defl[sym], sym) for turn, sym in shortlist),
+                        reverse=True)
+        # OBSERVABILITY for the trial-14 kill condition (2026-08-14). That
+        # condition is "deflators reading 1.000 across the whole shortlist means
+        # the Min60 call is failing and the code has failed OPEN back into the
+        # window-mismatch bug" — and there was no instrument to watch it with.
+        # funnel["major_excl"] cannot serve: this returns scored[:n], so it is
+        # always exactly n whether the deflator works or is uniformly 1.0.
+        # 21 of 48 were sub-1.0 the day this shipped; a drift toward 0 is the
+        # alarm.
+        self._last_deflator_stats = (sum(1 for r in defl.values() if r < 1.0),
+                                     len(defl))
         return {sym for _turn, sym in scored[:n]}
 
     @staticmethod

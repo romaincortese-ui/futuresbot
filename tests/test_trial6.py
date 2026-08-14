@@ -937,6 +937,45 @@ def test_deflator_is_a_noop_for_a_steadily_liquid_symbol(rt):
     assert rt._turnover_deflator("BTC_USDT") == 1.0
 
 
+def test_a_transient_kline_failure_is_not_cached_for_12h(rt):
+    """The cache write used to sit outside the try, so ONE failed request pinned
+    a symbol at 1.0 for the whole TTL even after the exchange recovered. That is
+    the residual path by which the window-mismatch bug silently returns: the
+    deflator reads 1.000 and nothing distinguishes it from a genuinely calm
+    symbol. Fail open, but retry next scan."""
+    calls = {"n": 0}
+
+    class _Flaky:
+        def get_klines(self, symbol, interval="Min60", **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient api error")
+            return _hourly([1.0] * (24 * 8) + [10.0] * 24)
+
+    rt.client = _Flaky()
+    rt._turnover_baseline = {}
+    assert rt._turnover_deflator("X_USDT") == 1.0        # fails open
+    assert "X_USDT" not in rt._turnover_baseline, "fail-open must not be cached"
+    assert rt._turnover_deflator("X_USDT") < 0.2, "must retry once the api recovers"
+
+
+def test_the_scan_can_tell_whether_the_deflator_is_alive(rt, monkeypatch):
+    """The trial-14 kill condition is 'deflators reading 1.000 everywhere means
+    the code failed open back into the old bug'. funnel['major_excl'] cannot
+    detect that — _major_symbols returns scored[:n], always exactly n. So the
+    band build records how many of the shortlist were actually deflated."""
+    ticks = [_tick("BTC_USDT", 1_000_000_000), _tick("ETH_USDT", 900_000_000),
+             _tick("SPIKE_USDT", 80_000_000), _tick("CALM_USDT", 40_000_000)]
+    monkeypatch.setattr(rt, "_turnover_deflator",
+                        lambda sym: 0.1 if sym == "SPIKE_USDT" else 1.0)
+    rt._major_symbols(ticks, 2)
+    assert rt._last_deflator_stats == (1, 4), rt._last_deflator_stats
+
+    monkeypatch.setattr(rt, "_turnover_deflator", lambda sym: 1.0)
+    rt._major_symbols(ticks, 2)
+    assert rt._last_deflator_stats == (0, 4), "a silent fail-open must be visible"
+
+
 def test_deflator_ignores_a_spike_that_has_already_passed(rt):
     """Symmetry check on the window. A symbol that spiked three days ago and has
     since returned to normal is NOT currently distorted, so it must not be
