@@ -1,3 +1,252 @@
+# Daily Audit — 2026-08-15
+
+---
+
+## Automated Assessment (UTC 19:30)
+
+Window 2026-08-14 16:10 -> 2026-08-15 19:30 UTC (27.3h, from the last audit, so
+nothing falls in a gap). Equity **$140.76**, all cash, **0 open positions**.
+`pytest -q` **869 passed**. Shadow ledger **97 rows (+1)**.
+
+**24h realised -$2.611, 0/2 win.**
+
+Feature store **62 rows (+1) against 2 closes — it does not reconcile.** That
+single missing row is the headline, and chasing it turned up four more.
+
+### 1. Trades — two losses, and one of them the bot does not know it made
+
+**US_USDT SHORT x1, WILDCARD — server-side stop. NOT IN ANY BOT LEDGER.**
+
+| field | value |
+|---|---|
+| open / close | 08-14 16:25 -> 18:03 UTC (1.63h) |
+| entry / exit | 0.015276 -> 0.01809 |
+| realised | **-$1.9316** (order profit -$1.9135, fees $0.0181) |
+| pnl_pct / margin | -18.56% on ~$10.41 margin |
+| **R** | **~-0.93R** — *estimated*; the bot recorded no `sl_margin_pct` |
+| exit | resting server stop filled (`stoporder_STOP_LOSS_1469707401_...`) |
+| feature store / trade_history / last_exit_by_symbol / shadow ledger | **absent / absent / absent / absent** |
+
+The entry order carries MEXC's `_m_<uuid>` API-order prefix — the same prefix on
+LAB_USDT's entry, which *is* in the ledger — so it came through the API, not the
+web UI. Sizing carries the wildcard fingerprint: non-PMT small cap, x1 leverage,
+stop landing at 18.6% of margin just under the 20% cap. **The bot opened it,
+armed its stop, and then recorded nothing when the stop filled.**
+
+**LAB_USDT SHORT x3, WILDCARD — `CONVEX_TIME_STOP`, the clock again.**
+
+| field | value |
+|---|---|
+| open / close | 08-14 18:54 -> 08-15 18:54 UTC (**24.0h exactly**) |
+| entry / exit | 0.0848 -> 0.0877 |
+| realised | **-$0.6792** (fee $0.033, 4.8% of gross) |
+| **R** | **-0.63R** (`sl_margin_pct` 17.19) |
+| **peak R** | **+0.28R** — never worked, not once |
+| exit | `CONVEX_TIME_STOP` / `exit_kind=OTHER` |
+| lateness / ref_listed | 1.00 / 1 |
+| regime_mult / streak_mult / size_efficiency | **0.459** / 1.0 / 0.441 |
+
+Flagged per the convex-exit rule; **working as designed**, same documented 24h
+clock as TUT. Design was intact throughout: TP 0.0606 / SL 0.0898 = a 4.97R
+target on a 5.9%-of-price stop. The regime scaler hard-trimmed it to 0.459 and
+that trim *saved* money — at full size this was -$1.48 rather than -$0.68.
+
+PMT: `entries_disabled` all window (by design). Squeeze: OFF. Sniper: retired.
+
+### 1-OPEN. Open positions — none
+
+Flat since 18:54 UTC. Nothing to report.
+
+### 1a. THE LEAK — five closed trades that never entered the corpus
+
+The missing US row prompted a full reconciliation of **every** exchange close
+since the feature store opened (2026-06-27) against the store itself: 67
+exchange closes, 62 ledger rows.
+
+**Six exchange closes have no matching ledger row.** One (BILL_USDT 07-16) *is*
+in the corpus at a timestamp 8h off its exchange close — a matching artefact, not
+a missing trade. The other five are simply absent:
+
+| closed (UTC) | symbol | side | lev | realised | ratio |
+|---|---|---|---|---|---|
+| 07-14 00:55 | BTC_USDT | SHORT | x20 | **-$3.4877** | -20.89% |
+| 07-19 17:02 | SOL_USDT | LONG | x5 | -$0.1309 | -4.28% |
+| 07-25 21:06 | ONDO_USDT | LONG | x5 | -$0.2402 | -6.22% |
+| 07-30 03:18 | BEAT_USDT | LONG | x4 | -$0.7743 | -21.41% |
+| 08-14 18:03 | US_USDT | SHORT | x1 | -$1.9316 | -18.56% |
+| | | | | **-$6.5647** | |
+
+**Every single missing row is a loss. Not one win is missing.** That is not
+chance, and it has a mechanism: winners close through the bot's own decision
+(`CONVEX_TIME_STOP`, `CONVEX_RETENTION_TRAIL`, TP) and run in-process through
+`_finalize_close`, which writes the row. Losers close **exchange-side** on a
+resting stop, and only get recorded if `_reconcile_closed_position`
+(`runtime.py:3886`) wins a race afterwards. When it loses, the trade is gone.
+
+Two code paths in that function clear a position **"without recording P&L"**
+(runtime.py:3903 and :3933) — the second fires when MEXC's open-position endpoint
+already reports flat but its history endpoint has not yet published the closed
+row. There is no retry: one miss and the trade is discarded permanently. A second
+candidate mechanism — the fill never being adopted into `open_positions` at all —
+fits the evidence equally well. **I cannot separate them: Railway retains ~500 log
+lines and today's 19:30 restart wiped the window.** Naming the mechanism is not
+required to act; the leak is proven either way.
+
+**What this contaminates.** Every measurement the operator makes rests on this
+corpus, and it is biased in one direction:
+
+| | reported | corrected |
+|---|---|---|
+| convex closes (all-time) | 40 | **43** |
+| convex net $ | +$13.41 | **+$10.47** |
+| convex win rate | 40.0% | **37.2%** |
+| convex net R | +16.58 | **~+14.3** (approx; missing rows carry no `sl_margin_pct`) |
+| trial 13 | 5 closes, netR -0.84, +$0.98 | **6 closes, netR ~-1.77, -$0.95** |
+
+Trial 13 did not end fractionally positive in dollars. It ended negative. The
+`side=SHORT FAVOR` reading in yesterday's conditional-expectancy table is also
+suspect: two of the five missing losses are shorts.
+
+The corpus has been leaking for **32 days** and every prior audit reported it as
+reconciling, because every prior audit checked the row count against *that day's*
+closes rather than against the full exchange history.
+
+### 1a-bis. Learning loop
+
+**(a) Conditional expectancy** over the 62 rows — conditions with a verdict and
+n>=10 per group. **Read these knowing the corpus is missing 5 losses.**
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold>=120min | FAVOR | +1.612 | 38 / +$0.819 / 57.9% | 24 / -$0.793 / 16.7% |
+| roc>=12pct | FAVOR | +1.297 | 9 / +$1.304 / 66.7% | 53 / +$0.007 / 37.7% |
+| regime_trimmed_hard(<0.5) | AVOID | -0.557 | 18 / -$0.200 / 38.9% | 44 / +$0.357 / 43.2% |
+| fee_heavy>=30pct | AVOID | -0.233 | 11 / +$0.004 / 45.5% | 51 / +$0.237 / 41.2% |
+
+`hold>=120min` remains tautological. `roc>=12pct` FAVOR now clears n>=10 on the
+"without" arm only (n=9 with) — not yet actionable. **No proposal from this table
+until the corpus is repaired**; acting on a loss-censored sample is how a bot
+learns that everything works.
+
+**(b) Shadow ledger** 97 rows, 96 resolved (+1: ACE_USDT, unresolved).
+
+| split | n | netR | outcomes |
+|---|---|---|---|
+| `shadow_only` | 46 | +5.15 | stop 18, tp 15, timeout 13 |
+| `slot_occupied` | 17 | **+5.36** | trail 7, stop 6, tp 2, timeout 2 |
+| `veto:ref_not_listed` | 14 | **-6.53** | stop 9, trail 4, timeout 1 |
+| `min_vol_skip` | 12 | +1.71 | tp 5, trail 4, stop 3 |
+| `side_disabled` | 4 | +2.16 | trail 2, tp 1, stop 1 |
+| `veto:crowded_longs` | 2 | -0.39 | stop 1, timeout 1 |
+| `veto:move_not_corroborated` | 1 | +0.86 | trail 1 |
+
+Unchanged from yesterday and the reading is unchanged. The reference-listing veto
+is the strongest guard in the stack (-6.53R avoided over 14 rows). **Slot cost:
++5.36R over 17 rows, but +9.96R of it is two lottery tickets (HEI +4.99, SNXX
++4.97); strip them and the other 15 net -4.60R. The slot-lock is protective. A
+third slot is not supported.**
+
+**(c) Scan telemetry — coverage gap.** Only ~1h of logs survive (today's 19:30
+deploy restarted the container; Railway retains ~500 lines). Across the 7
+`[WILDCARD_SCAN_SUMMARY]` cycles available: movers 17, scanned 17, **candidates
+0**, dominated by `roc_below_min` (13-15 per cycle), `no_pullback_resume` (1-3),
+`low_volume_z` (0-1). No `[SIZE_TRIM]`, no `shorts_blocked`, **no 5003/2015 order
+rejects, no tracebacks**. Quiet-regime dormancy, correct behaviour, no gate
+loosening. **The 24h histogram is genuinely unavailable — stated, not papered
+over.**
+
+**(d) Decision rule — trial 14** (from 2026-08-14 18:14 UTC, the deflator deploy):
+
+| | |
+|---|---|
+| convex closes | **1 / 30** (LAB) |
+| net R / net $ | **-0.63R / -$0.73** |
+| max drawdown | **-1.8%** from the $143.37 peak, well inside the 20% flag |
+
+**Trial-14 kill conditions — both checked, both CLEAR:**
+- *"Deflators reading 1.000 across the shortlist -> failed OPEN back into the
+  bug."* Live telemetry reads `deflated=20/48` every cycle, against 21/48 the day
+  it shipped. The Min60 call is working.
+- *">$100M steady turnover entering the tradeable pool -> reverting."* Checked
+  the full ticker list: no symbol below the majors band has >$100M raw turnover
+  with a >=8% 24h range. The >$100M names (BTC, ETH, SOL, XRP, LINK, HYPE, SOXL,
+  XAU, SKHYNIX) are all excluded as majors or non-crypto.
+
+**And the fix demonstrably fired.** ACE_USDT — $78.8M raw turnover, **+145% 24h
+range**, the exact symbol the trial was built for — reached the detector today and
+produced a signal. It was then vetoed by `crowded_shorts (funding -2.000%)` and
+logged to the shadow ledger. Trial 14 is doing what it was designed to do.
+
+### 2. Champion vs shadow
+
+**Shadow: stale, comparison suppressed pending resync.**
+
+### 3. The lever — instrument the ledger against the exchange
+
+Every candidate lever this month has been a strategy parameter measured in
+fractions of a dollar. This one is different: **the measurement surface itself is
+wrong, and it is wrong in the direction that flatters the bot.** Nothing else
+proposed today would matter if the numbers feeding it are loss-censored.
+
+**Proposed (NOT self-applied):** a reconciliation guard, purely additive and
+measurement-only — it cannot open, size, or close anything.
+
+1. Once per cycle, pull exchange closes for the last 48h and diff `positionId`
+   against `trade_history`.
+2. On a miss: synthesise the feature-store row from exchange data
+   (symbol/side/leverage/entry/exit/realised/margin; `sl_margin_pct` null and the
+   row marked `reconstructed=1` so it is never mistaken for a first-class
+   observation) and fire a **loud Telegram alert**. A silently vanishing
+   real-money trade must never again be discoverable only by a monthly hand audit.
+3. In `_reconcile_closed_position`, replace both "cleared without recording P&L"
+   branches with a bounded retry (N consecutive misses before dropping), so the
+   history-lag race stops destroying rows.
+
+**Why no V-stack gate:** step 4 gates exit/sizing/entry changes on replayed
+dollars. This changes no trading decision, so there is no EV to replay; the
+correct test is the three regression cases (history-lag miss, unadopted fill,
+already-recorded close must not double-write). Staging it on a stale shadow
+proves nothing.
+
+**Also proposed, separately: backfill the 5 missing rows** so the trial ledgers
+and the expectancy corpus are correct going forward. This writes to `/data` and
+is an operator call, not mine.
+
+**Not proposed:** anything derived from the current corpus. The TP-completion
+tripwire (still 0 TP / 9 STOP / 13 OTHER) was measured and rejected on the
+dollars yesterday and is not re-litigated. `margin_used` still records intent
+rather than the filled size — the same class as today's `risk_usdt` fix
+(7311eab), noted and left alone.
+
+### 4. Validate / 5. Deploy
+
+`pytest -q` **869 passed**. **No deploy, no config change, no self-applied
+parameter move.** Abort-safely posture is correct here on two counts: the log
+window needed to confirm the root-cause mechanism is gone, and an operator deploy
+(7311eab) landed 90 minutes ago and has not yet been observed through a close.
+
+### 6. Outstanding
+
+- **NEW, top priority:** the ledger leak above. 5 unrecorded closes, -$6.56, all
+  losses, 32 days running.
+- **Action item (raised once, still open):** resync Futures-shadow to champion
+  HEAD (`railway up --service Futures-shadow`, paper, zero live risk).
+- Trial 14 at 1/30. Entries remain the binding constraint — `roc_below_min` is
+  the dominant rejection in a quiet tape.
+
+### Verdict
+
+**No change deployed.** The day's two trades lost $2.61 and taught nothing new
+about the exit stack. What the day did produce is worth more than a trade: the
+bot's learning corpus has been silently discarding losing trades for a month, and
+every convex number reported since 2026-07-14 — win rate, net dollars, net R,
+trial 13's verdict — has been flattered by the omission. The corrected convex
+record is 43 closes at +$10.47 and 37.2%, not 40 at +$13.41 and 40%. Trial 13
+closed negative, not positive. Fix the instrument before tuning anything it
+measures.
+
+---
+
 # Daily Audit — 2026-08-14
 
 ---
