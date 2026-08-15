@@ -937,6 +937,30 @@ def test_deflator_is_a_noop_for_a_steadily_liquid_symbol(rt):
     assert rt._turnover_deflator("BTC_USDT") == 1.0
 
 
+def test_metadata_risk_reflects_the_size_actually_taken(rt):
+    """_entry_margin stamps risk from the margin it computed, before the regime
+    scaler, the streak throttle, the drawdown brake and integer truncation. On
+    LAB_USDT the scaler cut size to 46% of intended and the record still claimed
+    1.87% of equity at risk against an actual 0.84%."""
+    md = {"risk_usdt": 2.644918, "risk_pct_actual": 1.87,
+          "equity_at_open_usdt": 141.4395}
+    rt._stamp_realised_risk(md, contracts=24, contract_size=10.0,
+                            entry=0.0848, sl_price=0.08976428571428571)
+    assert md["risk_usdt"] == pytest.approx(240 * 0.00496428571, rel=1e-6)
+    assert md["risk_pct_actual"] == pytest.approx(0.8423, abs=1e-3)
+    # the intended figure survives: the GAP is the regime scaler's effect
+    assert md["risk_usdt_intended"] == 2.644918
+    assert md["risk_pct_intended"] == 1.87
+
+
+def test_realised_risk_survives_a_missing_equity_reading(rt):
+    md = {"risk_usdt": 5.0}
+    rt._stamp_realised_risk(md, contracts=10, contract_size=1.0,
+                            entry=100.0, sl_price=95.0)
+    assert md["risk_usdt"] == pytest.approx(50.0)
+    assert md["risk_pct_actual"] == 0.0        # no equity -> 0, never a crash
+
+
 def test_a_transient_kline_failure_is_not_cached_for_12h(rt):
     """The cache write used to sit outside the try, so ONE failed request pinned
     a symbol at 1.0 for the whole TTL even after the exchange recovered. That is

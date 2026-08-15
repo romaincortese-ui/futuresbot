@@ -1108,6 +1108,40 @@ class FuturesRuntime:
             return None
         return abs(position.entry_price - position.sl_price) * position.base_qty
 
+    @staticmethod
+    def _stamp_realised_risk(metadata: dict[str, Any], *, contracts: float,
+                             contract_size: float, entry: float, sl_price: float) -> None:
+        """Re-stamp risk_usdt/risk_pct_actual from the size ACTUALLY taken.
+
+        _entry_margin writes these into _last_entry_sizing from the margin it
+        computed, which is then multiplied by the regime scaler, the loss-streak
+        throttle and the drawdown brake, truncated to whole contracts, and can be
+        cut again by the balance guard. None of that fed back, so the metadata
+        described a position that was never opened.
+
+        Measured on LAB_USDT (2026-08-15): the regime scaler cut size to 46% of
+        intended and the record still claimed risk_pct_actual=1.87 against an
+        actual 0.84%. The closed-trade ledger was never affected — that path
+        recomputes from position.margin_usdt via _position_stop_risk_usdt — so
+        this is a telemetry defect on OPEN positions, not a corrupted P&L series.
+        It still matters: /status, the [RISK_CAP_BOUND] warning and any review of
+        a live position all read the metadata, and it silently disagreed with the
+        ledger by ~2x on every scaled entry.
+
+        The intended figure is kept as risk_usdt_intended so the gap between what
+        sizing asked for and what it got stays measurable — that gap IS the
+        regime scaler's effect, and it is the thing worth watching.
+        """
+        qty = abs(float(contracts) * float(contract_size))
+        risk = qty * abs(float(entry) - float(sl_price))
+        if metadata.get("risk_usdt") is not None:
+            metadata["risk_usdt_intended"] = metadata["risk_usdt"]
+        if metadata.get("risk_pct_actual") is not None:
+            metadata["risk_pct_intended"] = metadata["risk_pct_actual"]
+        metadata["risk_usdt"] = round(risk, 6)
+        equity = float(metadata.get("equity_at_open_usdt") or 0.0)
+        metadata["risk_pct_actual"] = round(risk / equity * 100.0, 4) if equity > 0 else 0.0
+
     def _position_stop_risk_pct_of_margin(self, position: FuturesPosition | None) -> float | None:
         stop_risk = self._position_stop_risk_usdt(position)
         if position is None or stop_risk is None or position.margin_usdt <= 0:
@@ -5901,6 +5935,9 @@ class FuturesRuntime:
             metadata["ref_listed"] = 1.0 if self._pending_ref_listed else 0.0
         self._pending_ref_listed = None  # consumed — never leak across candidates
         if self.config.paper_trade:
+            self._stamp_realised_risk(metadata, contracts=contracts,
+                                      contract_size=contract_size,
+                                      entry=sig.entry_price, sl_price=sig.sl_price)
             position = FuturesPosition(
                 symbol=symbol, side=side_name, entry_price=sig.entry_price, contracts=contracts,
                 contract_size=contract_size, leverage=sig.leverage,
@@ -5960,6 +5997,12 @@ class FuturesRuntime:
             # No live position confirmed — order didn't fill (price-limit/reject).
             log.warning("[WILDCARD] entry order %s for %s did not fill (no live position) — skipping", order_id, symbol)
             return False
+        # Stamped HERE, not before the order: contracts is only final after the
+        # balance guard and the exchange-confirmed volume above, and `fill` can
+        # differ from the quoted entry — both change the real risk.
+        self._stamp_realised_risk(metadata, contracts=contracts,
+                                  contract_size=contract_size,
+                                  entry=fill, sl_price=sig.sl_price)
         position = FuturesPosition(
             symbol=symbol, side=side_name, entry_price=fill, contracts=contracts,
             contract_size=contract_size, leverage=sig.leverage,
