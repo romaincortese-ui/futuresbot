@@ -2289,10 +2289,17 @@ class FuturesRuntime:
         for cls, chg, sym, reason, extra in picks:
             more = f" (+{extra} more)" if extra else ""
             n, usd = (prices or {}).get(sym, (0, 0.0))
+            # Sub-floor names are deliberately NOT priced, and an unexplained
+            # blank reads as "$0 missed" — the opposite of unknown. Measured on
+            # GPUBSC_USDT 2026-08-16: ~$21 of top-10 ask depth against a $16.89
+            # entry and a 2.22% spread, versus the 0.19% round-trip the
+            # counterfactual assumes. The arithmetic is not wrong there, it is
+            # inapplicable, and saying so is the honest output.
+            tag = (" · <i>not priced</i>" if cls == "liquidity"
+                   else self._usd_tag(n, usd))
             lines.append(f"{self._WHY_ICONS.get(cls, '•')} "
                          f"<b>{html.escape(sym.replace('_USDT', ''))}</b> "
-                         f"{chg * 100:+.0f}% — {html.escape(reason)}{more}"
-                         f"{self._usd_tag(n, usd)}")
+                         f"{chg * 100:+.0f}% — {html.escape(reason)}{more}{tag}")
         if len(lines) == 1:
             lines.append("  nothing moved enough to rank")
         return lines
@@ -2618,9 +2625,15 @@ class FuturesRuntime:
                 lines.append("")
                 lines += self._why_mover_lines(title, rows, prices)
             total = sum(u for _n, u in prices.values())
+            unpriced = sum(1 for rows in picks.values() for p in rows if p[0] == "liquidity")
             if any(n_ for n_, _u in prices.values()):
+                # Name the exclusion. A total that quietly omits rows reads
+                # exactly like a total that covered everything.
+                skip = (f"; {unpriced} sub-floor name(s) unpriced — book too thin "
+                        f"to model a fill" if unpriced else "")
                 lines.append(f"💵 These movers: <b>{'missed' if total > 0 else 'saved'} "
-                             f"${abs(total):.2f}</b> net, at the size the sleeve would take")
+                             f"${abs(total):.2f}</b> net, at the size the sleeve "
+                             f"would take{skip}")
         except Exception as exc:  # pragma: no cover — diagnosis is best effort
             lines.append(f"\n❔ Mover scan failed ({html.escape(str(exc)[:60])})")
 

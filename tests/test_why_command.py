@@ -332,5 +332,21 @@ def test_sub_floor_movers_get_no_dollar_claim(rt, monkeypatch):
                         lambda s, *a, **k: priced.append(s) or (1, 9.99))
     text = rt._build_why_message()
     assert "DUST" in text and "under $3M" in text
-    assert priced == [], "a fill that cannot be obtained must not be priced"
+    assert priced == [], "a fill that cannot be modelled must not be priced"
     assert "9.99" not in text
+    assert "not priced" in text, "a silent blank reads as '$0 missed', not 'unknown'"
+
+
+def test_mover_total_names_what_it_left_out(rt, monkeypatch):
+    """A total that quietly omits rows reads exactly like one that covered
+    everything — the same silent-truncation failure the audit brief bans."""
+    tick = {"DUST_USDT": _ticker("DUST_USDT", amount24=2e5),
+            "BIG_USDT": _ticker("BIG_USDT")}
+    monkeypatch.setattr(rt, "_why_context", lambda: _ctx(
+        rt, tickers=list(tick.values()), by_symbol=tick))
+    monkeypatch.setattr(rt, "_is_tradeable_crypto", staticmethod(lambda s: True))
+    monkeypatch.setattr(rt, "_why_frames", lambda syms, **kw: {s: _frame() for s in syms})
+    monkeypatch.setattr(rt, "_counterfactual_usd", lambda s, *a, **k: (1, 4.00))
+    text = rt._build_why_message()
+    assert "sub-floor name(s) unpriced" in text
+    assert "book too thin" in text
