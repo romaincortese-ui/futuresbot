@@ -242,21 +242,6 @@ def test_why_only_fetches_deep_frames_for_symbols_that_need_them(rt, monkeypatch
     assert deep and deep[0][1] == ("BIG_USDT",), f"deep fetch overreached: {deep}"
 
 
-def test_24h_ranking_uses_the_exchange_figure_not_reconstructed_bars(rt, monkeypatch):
-    """riseFallRate is already in the ticker payload and is the exchange's own
-    24h number. Rebuilding it from klines costs a round trip per symbol and is
-    less authoritative — so the 24h block must survive with no frames at all."""
-    tick = {"AAA_USDT": _ticker("AAA_USDT", rise=-0.44),
-            "BBB_USDT": _ticker("BBB_USDT", rise=0.05)}
-    monkeypatch.setattr(rt, "_why_context", lambda: _ctx(
-        rt, tickers=list(tick.values()), by_symbol=tick, majors={"AAA_USDT", "BBB_USDT"}))
-    monkeypatch.setattr(rt, "_is_tradeable_crypto", staticmethod(lambda s: True))
-    monkeypatch.setattr(rt, "_why_frames", lambda syms, **kw: {})   # no bars at all
-    text = rt._build_why_message()
-    block = text.split("📈")[1].split("📉")[0]
-    assert "AAA" in block and "-44%" in block, "24h must not depend on klines"
-
-
 def test_why_renders_both_mover_windows(rt, monkeypatch):
     monkeypatch.setattr(rt, "_why_context", lambda: _ctx(
         rt, tickers=[_ticker("AAA_USDT")], by_symbol={"AAA_USDT": _ticker("AAA_USDT")}))
@@ -298,3 +283,54 @@ def test_why_stays_short_enough_for_telegram(rt, monkeypatch):
         by_symbol={f"S{i}_USDT": _ticker(f"S{i}_USDT") for i in range(40)}))
     monkeypatch.setattr(rt, "_why_frames", lambda syms, **kw: {s: _frame() for s in syms})
     assert len(rt._build_why_message()) < 4096
+
+
+# --------------------------------------------------------------------------
+# riseFallRate is NOT a 24h change (2026-08-16)
+# --------------------------------------------------------------------------
+
+def test_24h_ranking_never_uses_risefallrate(rt, monkeypatch):
+    """MEXC ships `riseFallRates.zone: "UTC+8"` — riseFallRate is a CALENDAR-DAY
+    change anchored to Hong Kong midnight (16:00 UTC), not a rolling 24h. It
+    resets to ~0 for every symbol at that hour, and the 24h list silently became
+    a ranking of however many minutes had elapsed since. Measured live on
+    CYS_USDT: riseFallRate +0.96% against a true rolling 24h of -38.95%."""
+    tick = {"CYS_USDT": _ticker("CYS_USDT", rise=0.0096)}   # the real live value
+    monkeypatch.setattr(rt, "_why_context", lambda: _ctx(
+        rt, tickers=list(tick.values()), by_symbol=tick, majors={"CYS_USDT"}))
+    monkeypatch.setattr(rt, "_is_tradeable_crypto", staticmethod(lambda s: True))
+    # A frame that fell 39% over the trailing 24 hourly bars.
+    closes = [1.1848] * 26 + [1.1848 * (1 - 0.39 * i / 24) for i in range(1, 25)]
+    monkeypatch.setattr(rt, "_why_frames", lambda syms, **kw: {
+        "CYS_USDT": pd.DataFrame({"open": closes, "high": closes, "low": closes,
+                                  "close": closes, "volume": [1.0] * len(closes)})})
+    block = rt._build_why_message().split("📈")[1].split("📉")[0]
+    assert "-39%" in block, f"24h must be the rolling window, got: {block}"
+    assert "+1%" not in block
+
+
+def test_flat_symbols_are_not_printed_as_top_movers(rt, monkeypatch):
+    """The pool is seeded partly by turnover, to catch 48h grinders. Those names
+    have not moved, and one-row-per-class let a flat mega-cap take the majors
+    row under a "Top movers" heading — HYPE_USDT did, at +1%."""
+    picks = rt._why_pick_rows([(0.010, "HYPE_USDT"), (0.42, "AAA_USDT")],
+                              _ctx(rt, majors={"HYPE_USDT", "AAA_USDT"}), {}, 4)
+    assert [p[2] for p in picks] == ["AAA_USDT"], "a mover has to have moved"
+
+
+def test_sub_floor_movers_get_no_dollar_claim(rt, monkeypatch):
+    """The counterfactual prices a fill at the sleeve's size. On a $0.2M-turnover
+    micro-cap that fill does not exist — which is why the turnover floor is
+    there — so "missed $1.08" against GPUBSC was money nothing could collect."""
+    tick = {"DUST_USDT": _ticker("DUST_USDT", amount24=2e5)}
+    monkeypatch.setattr(rt, "_why_context", lambda: _ctx(
+        rt, tickers=list(tick.values()), by_symbol=tick))
+    monkeypatch.setattr(rt, "_is_tradeable_crypto", staticmethod(lambda s: True))
+    monkeypatch.setattr(rt, "_why_frames", lambda syms, **kw: {"DUST_USDT": _frame()})
+    priced: list[str] = []
+    monkeypatch.setattr(rt, "_counterfactual_usd",
+                        lambda s, *a, **k: priced.append(s) or (1, 9.99))
+    text = rt._build_why_message()
+    assert "DUST" in text and "under $3M" in text
+    assert priced == [], "a fill that cannot be obtained must not be priced"
+    assert "9.99" not in text

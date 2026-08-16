@@ -2264,9 +2264,17 @@ class FuturesRuntime:
 
         Returns picks rather than text so the caller can fetch bars for exactly
         the symbols that will be shown, and price them, before rendering."""
+        # The pool is seeded partly by TURNOVER, to catch a 48h grinder that
+        # never shows on a 24h range. Those names are not movers, and with one
+        # row per class a flat mega-cap can take the majors row and be printed
+        # under a heading that says "Top movers" — HYPE_USDT did exactly that at
+        # +1% on 2026-08-16. A mover has to have moved.
+        floor = self._env_float("FUTURES_WHY_MOVER_FLOOR_PCT", 3.0) / 100.0
         groups: dict[str, list[Any]] = {}
         order: list[str] = []
         for chg, sym in ranked:
+            if abs(chg) < floor:
+                continue
             cls, reason = self._why_symbol_verdict(sym, ctx, frames.get(sym))
             if cls in groups:
                 groups[cls][4] += 1
@@ -2556,17 +2564,24 @@ class FuturesRuntime:
                  if self._is_tradeable_crypto(str(t.get("symbol") or ""))),
                 key=lambda s: -float((ctx["by_symbol"].get(s) or {}).get("amount24") or 0.0),
             )[:6] if s not in top]
-            # 24h needs NO klines: riseFallRate is the exchange's own 24h change,
-            # already in the ticker payload, and more authoritative than a close-
-            # to-close figure reconstructed from bars.
-            r24 = sorted(((float((ctx["by_symbol"].get(s) or {}).get("riseFallRate") or 0.0), s)
-                          for s in top), key=lambda r: -abs(r[0]))
-            # 48h is the only window that needs bars, and Min60 x 50 is the
-            # cheapest frame that spans it.
+            # BOTH windows come from bars. `riseFallRate` looked like a free 24h
+            # change and is not one: the ticker ships
+            # `riseFallRates.zone: "UTC+8"`, so it is a CALENDAR-DAY change
+            # anchored to Hong Kong midnight (16:00 UTC), and it resets to ~0
+            # for every symbol at that hour. Measured on CYS_USDT 2026-08-16
+            # 17:35 UTC — 1h35m into the UTC+8 day — riseFallRate read +0.96%
+            # against a true rolling 24h of -38.95%, and the "top movers · 24h"
+            # list silently became a ranking of the last ninety minutes.
+            # Reading 24 bars off the frame the 48h ranking already needs costs
+            # nothing, so the "free" version was never even cheaper.
             coarse = self._why_frames(top, interval="Min60", bars=50)
-            r48 = [(c, s) for s in top
-                   if (c := self._why_change(coarse.get(s), 48)) is not None]
-            r48.sort(key=lambda r: -abs(r[0]))
+            ranks = {}
+            for hours in (24, 48):
+                rows = [(c, s) for s in top
+                        if (c := self._why_change(coarse.get(s), hours)) is not None]
+                rows.sort(key=lambda r: -abs(r[0]))
+                ranks[hours] = rows
+            r24, r48 = ranks[24], ranks[48]
             # The scan's own deep frame, but ONLY for symbols that clear every
             # ticker-level gate — a verdict of "data" is exactly the verdict
             # "cheap gates passed, now I need bars". Reusing the verdict to
@@ -2582,7 +2597,17 @@ class FuturesRuntime:
             # gate that blocked a symbol says nothing about what the detector
             # would have done with it, so a blocked mover still needs its bars —
             # but fetching them for the whole pool is the 18s mistake again.
-            shown = {p[2] for rows in picks.values() for p in rows}
+            # NOT sub-floor names. The counterfactual prices a fill at the size
+            # the sleeve would take, and on a $0.2M-turnover micro-cap that fill
+            # does not exist at any price close to the replayed one — which is
+            # the whole reason the turnover floor is there. Pricing them anyway
+            # put "missed $1.08" against GPUBSC_USDT, a number nothing could
+            # have collected. Report the block, claim no dollars.
+            # Majors are NOT excluded here: the band is a strategy choice, not a
+            # liquidity limit, so that fill is real and "CYS saved $8.76" on a
+            # $50M-turnover name is the most decision-relevant line /why prints.
+            shown = {p[2] for rows in picks.values() for p in rows
+                     if p[0] != "liquidity"}
             frames.update(self._why_frames([s for s in shown if s not in frames],
                                            interval="Min15", bars=deep_bars))
             equity = float(self._last_known_equity() or 0.0)
