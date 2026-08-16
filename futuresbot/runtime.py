@@ -2345,6 +2345,9 @@ class FuturesRuntime:
 
         bars = [(_ts(i), highs[i], lows[i], closes[i]) for i in range(n)]
         now_t = time.time()
+        # Fetched once for the symbol, not per replayed signal: settlements are
+        # discrete past facts and every signal on this symbol reads the same set.
+        settlements = self._funding_settlements(symbol)
         signals = 0
         net = 0.0
         i = max(200, n - bars_back)
@@ -2365,7 +2368,8 @@ class FuturesRuntime:
                                           horizon_s=shadow.CONVEX_HORIZON_S, convex=True)
             if done is None:      # still in flight — no P&L to claim
                 break
-            usd = shadow.net_usd(done, equity)
+            usd = shadow.net_usd(done, equity,
+                                 funding_r=shadow.funding_cost_r(done, settlements))
             if usd is not None:
                 signals += 1
                 net += usd
@@ -2397,7 +2401,8 @@ class FuturesRuntime:
         rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
                 if str(r.get("sleeve") or "") in shadow.CONVEX_SLEEVES]
         equity = float(self._last_known_equity() or 0.0)
-        by = shadow.gate_cost_usd(rows, equity, since_ts=time.time() - days * 86400.0)
+        by = shadow.gate_cost_usd(rows, equity, since_ts=time.time() - days * 86400.0,
+                                  funding_r_of=self._row_funding_r)
         by.pop("shadow_only", None)
         if not by:
             return ["", f"💵 Gate cost, {days:.0f}d: nothing blocked and resolved yet"]
@@ -2419,6 +2424,67 @@ class FuturesRuntime:
         tail = f" (n={n})" if n is not None else ""
         return f"{label} {'cost' if usd > 0 else 'saved'} ${abs(usd):.2f}{tail}"
 
+    def _funding_settlements(self, symbol: str) -> list[tuple[float, float]]:
+        """(unix_ts, rate) for each SETTLED funding payment, most recent first.
+
+        Cached per symbol: a settlement is a discrete past fact, so re-fetching
+        it inside one report is pure latency. Empty list on any failure — the
+        caller then falls back to a flat-rate estimate and says so."""
+        cache = getattr(self, "_funding_hist_cache", None)
+        if cache is None:
+            cache = self._funding_hist_cache = {}
+        hit = cache.get(symbol)
+        ttl = self._env_float("FUTURES_FUNDING_HISTORY_TTL_S", 3600.0)
+        if hit is not None and time.time() - hit[0] < ttl:
+            return hit[1]
+        out: list[tuple[float, float]] = []
+        try:
+            payload = self.client.public_get(
+                "/api/v1/contract/funding_rate/history",
+                {"symbol": symbol, "page_num": 1, "page_size": 100})
+            for r in ((payload.get("data") or {}).get("resultList") or []):
+                try:
+                    out.append((float(r["settleTime"]) / 1000.0, float(r["fundingRate"])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+        except Exception as exc:
+            log.debug("funding history failed for %s: %s", symbol, exc)
+        cache[symbol] = (time.time(), out)
+        return out
+
+    def _row_funding_r(self, row: dict[str, Any]) -> float:
+        """Funding paid over a counterfactual's hold, in R.
+
+        Prefers the ACTUAL settled rates inside the window. MEXC's interval is
+        per-contract (`collectCycle`) — ACE_USDT settles every 4h, not 8 — and
+        the rate moves between settlements, so the flat fallback is a genuine
+        approximation rather than a shortcut to the same number."""
+        sym = str(row.get("symbol") or "")
+        if not sym:
+            return 0.0
+        from futuresbot import shadow_ledger as shadow
+
+        settlements = self._funding_settlements(sym)
+        if settlements:
+            return shadow.funding_cost_r(row, settlements)
+        return shadow.funding_cost_r(row, None, cycle_hours=self._funding_cycle_hours(sym))
+
+    def _funding_cycle_hours(self, symbol: str) -> float:
+        cache = getattr(self, "_funding_cycle_cache", None)
+        if cache is None:
+            cache = self._funding_cycle_cache = {}
+        if symbol not in cache:
+            hours = 8.0
+            try:
+                detail = self.client.get_contract_detail(symbol) or {}
+                raw = detail.get("collectCycle") or detail.get("fundingInterval")
+                if raw:
+                    hours = max(1.0, float(raw))
+            except Exception:
+                pass
+            cache[symbol] = hours
+        return cache[symbol]
+
     def _gate_cost_history_path(self) -> Path:
         return self._feature_store_path.parent / "futures_gate_cost.jsonl"
 
@@ -2435,7 +2501,8 @@ class FuturesRuntime:
         rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
                 if str(r.get("sleeve") or "") in shadow.CONVEX_SLEEVES]
         equity = float(self._last_known_equity() or 0.0)
-        by = shadow.gate_cost_usd(rows, equity, since_ts=time.time() - days * 86400.0)
+        by = shadow.gate_cost_usd(rows, equity, since_ts=time.time() - days * 86400.0,
+                                  funding_r_of=self._row_funding_r)
         by.pop("shadow_only", None)
         total = round(sum(v for _n, v in by.values()), 2)
         n = sum(c for c, _v in by.values())

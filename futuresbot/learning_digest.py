@@ -13,24 +13,19 @@ import os
 from datetime import datetime, timezone
 
 from futuresbot.conditional_expectancy import default_conditions, rank_conditions
-from futuresbot.shadow_ledger import CONVEX_SLEEVES, cost_r
+from futuresbot.shadow_ledger import CONVEX_SLEEVES, cost_r, net_r as _net_r
 
 
-def _net(row: dict) -> float:
-    """Counterfactual R after round-trip cost.
+def _net(row: dict, funding_r: float = 0.0) -> float:
+    """Counterfactual R after round-trip cost AND funding.
 
     Rows resolved before 2026-08-09 carry no ``outcome_net``; deriving it from
     the row's own stop geometry keeps the historical rows comparable instead of
-    silently reporting them as free."""
-    if row.get("outcome_net") is not None:
-        try:
-            return float(row["outcome_net"])
-        except (TypeError, ValueError):
-            pass
-    try:
-        return float(row.get("outcome") or 0.0) - cost_r(row)
-    except (TypeError, ValueError):
-        return 0.0
+    silently reporting them as free. Delegates to shadow_ledger.net_r so the R
+    scorecard here and the $ scorecard in /why cannot drift apart on what "net"
+    means — they did, briefly, when funding was priced in one and not the
+    other."""
+    return _net_r(row, funding_r)
 
 
 def _trial_start() -> float:

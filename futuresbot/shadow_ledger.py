@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from typing import Any
 
@@ -343,25 +344,20 @@ def one_r_usd(row: dict[str, Any], equity_usdt: float,
 
 
 def net_usd(row: dict[str, Any], equity_usdt: float,
-            balance_fraction: float | None = None) -> float | None:
-    """Net counterfactual dollars for a RESOLVED row, cost included.
+            balance_fraction: float | None = None, funding_r: float = 0.0) -> float | None:
+    """Net counterfactual dollars for a RESOLVED row — execution cost AND
+    funding included.
 
     None for an unresolved row — a signal still in flight has no P&L, and
     treating it as zero would drag every average toward nothing."""
     if row.get("outcome") is None:
         return None
-    net_r = row.get("outcome_net")
-    if net_r is None:
-        try:
-            net_r = float(row.get("outcome") or 0.0) - cost_r(row)
-        except (TypeError, ValueError):
-            return None
-    return float(net_r) * one_r_usd(row, equity_usdt, balance_fraction)
+    return net_r(row, funding_r) * one_r_usd(row, equity_usdt, balance_fraction)
 
 
 def gate_cost_usd(rows: list[dict[str, Any]], equity_usdt: float, *,
                   since_ts: float = 0.0, balance_fraction: float | None = None,
-                  ) -> dict[str, tuple[int, float]]:
+                  funding_r_of: Any = None) -> dict[str, tuple[int, float]]:
     """{reject reason class -> (resolved n, net $)} over rows since ``since_ts``.
 
     Keyed on the reason CLASS (``veto:crowded_longs(funding=0.10%)`` ->
@@ -375,7 +371,11 @@ def gate_cost_usd(rows: list[dict[str, Any]], equity_usdt: float, *,
                 continue
         except (TypeError, ValueError):
             continue
-        usd = net_usd(row, equity_usdt, balance_fraction)
+        try:
+            f_r = float(funding_r_of(row)) if funding_r_of else 0.0
+        except Exception:
+            f_r = 0.0
+        usd = net_usd(row, equity_usdt, balance_fraction, f_r)
         if usd is None:
             continue
         key = str(row.get("reject_reason") or "?").split(":", 1)[0].split("(", 1)[0].strip()
@@ -383,3 +383,105 @@ def gate_cost_usd(rows: list[dict[str, Any]], equity_usdt: float, *,
         agg[0] += 1
         agg[1] += usd
     return {k: (int(n), round(v, 2)) for k, (n, v) in out.items()}
+
+
+# ---------------------------------------------------------------------------
+# FUNDING
+#
+# The cost model priced taker fees and slippage and stopped there, so every
+# counterfactual short held through a funding settlement was scored as if
+# carrying it were free. That is not a uniform error: it is largest on exactly
+# the rows that decide whether the funding veto is worth keeping, and it always
+# points the same way — toward deleting the gate. ACE_USDT (vetoed at
+# crowded_shorts, held the full 24h horizon) scored +1.433R and paid 6.53% of
+# notional in funding over six settlements: a real +1.11R.
+#
+# Two things the first implementation got wrong and this one does not:
+#   - The interval is NOT 8h everywhere. MEXC ships `collectCycle` per contract
+#     and ACE settles every FOUR hours, so a 24h hold crosses six settlements,
+#     not three.
+#   - The rate is not the rate at signal time. ACE was vetoed at a quoted
+#     -2.000% and actually settled between -0.63% and -1.65%. Using the veto
+#     instant over the whole hold is a different number that happened to land
+#     nearby by cancelling two errors.
+# So this sums the ACTUAL settled rates inside the hold window, and only falls
+# back to a flat-rate estimate when that history is unavailable.
+# ---------------------------------------------------------------------------
+
+
+def funding_rate_of(row: dict[str, Any]) -> float | None:
+    """The row's own funding rate: stamped field first, else the number the
+    funding veto already wrote into its reject_reason."""
+    raw = row.get("funding_rate")
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    m = re.search(r"funding=(-?[0-9.]+)%", str(row.get("reject_reason") or ""))
+    if m:
+        try:
+            return float(m.group(1)) / 100.0
+        except ValueError:
+            return None
+    return None
+
+
+def funding_cost_r(row: dict[str, Any], settlements: list[tuple[float, float]] | None = None,
+                   *, cycle_hours: float = 8.0, horizon_s: float | None = None) -> float:
+    """Funding paid over the hold, in R. Positive = it cost the position.
+
+    ``settlements`` is (unix_ts, rate) pairs; only those strictly inside the
+    hold window count, which is what makes a 2h stop-out that crossed no
+    settlement correctly cost ZERO rather than a pro-rata fraction. Without
+    history, falls back to the row's own rate across the settlements a hold of
+    that length would have crossed.
+
+    Sign convention is the exchange's: rate > 0 means longs pay shorts, so a
+    SHORT in positive funding EARNS and this returns a negative number. Making
+    it one-sided would just bias the measurement the other way."""
+    try:
+        entry = abs(float(row.get("entry") or 0.0))
+        sl_frac = abs(entry - float(row.get("sl") or 0.0)) / entry if entry else 0.0
+        ts0 = float(row.get("ts") or 0.0)
+        ts1 = float(row.get("resolved_ts") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if sl_frac <= 0 or ts0 <= 0 or ts1 <= ts0:
+        return 0.0
+    # THE ROW'S OWN CLOCK, for the same reason resolve_outcome enforces it on
+    # the bar walk: a position cannot pay funding after the horizon that closed
+    # it. XAUT_USDT carries resolved_ts 364.6h after ts under a 24h policy, and
+    # charging fifteen days of settlements against its 0.054% stop produced a
+    # 2.29R funding bill on a row whose whole counterfactual is -0.74R.
+    if horizon_s is None:
+        horizon_s = CONVEX_HORIZON_S if str(row.get("sleeve") or "") in CONVEX_SLEEVES \
+            else RESOLVE_HORIZON_S
+    if horizon_s and horizon_s > 0:
+        ts1 = min(ts1, ts0 + float(horizon_s))
+    sgn = 1.0 if str(row.get("side")) == "LONG" else -1.0
+    if settlements:
+        total = sum(r for t, r in settlements if ts0 < t <= ts1)
+    else:
+        rate = funding_rate_of(row)
+        if rate is None:
+            return 0.0
+        cycle_s = max(1.0, float(cycle_hours) * 3600.0)
+        total = rate * int((ts1 - ts0) // cycle_s)
+    return (total * sgn) / sl_frac
+
+
+def net_r(row: dict[str, Any], funding_r: float = 0.0) -> float:
+    """The single definition of a counterfactual's net R: outcome, less
+    execution cost, less funding. Every surface reads this so the R and $
+    scorecards can never disagree about what "net" means."""
+    base = row.get("outcome_net")
+    if base is None:
+        try:
+            base = float(row.get("outcome") or 0.0) - cost_r(row)
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return float(base) - float(funding_r or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
