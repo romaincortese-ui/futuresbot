@@ -2099,11 +2099,192 @@ class FuturesRuntime:
             parts.append(f"event {html.escape(event[:80])}")
         return " | ".join(parts)
 
-    def _build_why_message(self) -> str:
-        """On-demand entry diagnosis: per symbol, the current trend label and
-        moves, the last round-number level-cross, and the exact reason the
-        scorer is (not) firing right now — the same analysis the operator
-        previously had to run by hand."""
+    # ---- /why -------------------------------------------------------------
+    # Gate CLASS -> icon. One icon per class, so the operator reads the column
+    # instead of the sentence and learns which KIND of thing stopped the trade.
+    #
+    # The previous /why answered a question about a strategy that cannot trade:
+    # it walked the six PMT pairs and printed diagnose_pmt_threshold_rejection
+    # for each, while PMT entries have been blocked by
+    # FUTURES_ENTRY_MIN_SCORE>=999 since 2026-07-13. Even its "would fire" verdict
+    # was false — the floor blocks it either way — and it said NOTHING about the
+    # wildcard and squeeze sleeves, which are the only live entry paths. The PMT
+    # walk is kept below and reappears the moment the floor comes back down.
+    _WHY_ICONS = {
+        "open": "📌", "universe": "⛔", "liquidity": "💧", "quiet": "😴",
+        "shape": "🔍", "veto": "🚫", "capacity": "🎰", "ready": "✅",
+        "data": "❔",
+    }
+    # detector reject enum -> (gate class, phone-readable reason)
+    _WHY_DETECTOR = {
+        "short_frame": ("data", "not enough history"),
+        "bad_price": ("data", "bad price data"),
+        "no_roc_sigma": ("data", "no volatility baseline yet"),
+        "roc_z_below_min": ("quiet", "3h move below the sigma trigger"),
+        "roc_below_min": ("quiet", "3h move too small"),
+        "no_pullback_resume": ("shape", "no pullback-resume, still one-way"),
+        "rsi_exhausted": ("shape", "RSI exhausted"),
+        "climax_wick": ("shape", "climax candle"),
+        "no_atr": ("data", "no ATR"),
+        "vertical_blowoff": ("shape", "vertical blow-off"),
+        "low_volume_z": ("shape", "no volume expansion"),
+    }
+
+    def _why_context(self) -> dict[str, Any]:
+        """The live wildcard funnel's own inputs, resolved once per /why.
+
+        Read from the SAME env and the SAME helpers _maybe_scan_wildcard uses. A
+        second copy of these thresholds would let the diagnosis drift away from
+        the scanner and quietly start lying, which is the failure mode this
+        command exists to prevent."""
+        tickers = self.client.get_all_tickers() or []
+        range_prefilter = self._flag("FUTURES_WILDCARD_RANGE_PREFILTER", default=True)
+        min_roc = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_ROC", 0.08))
+        min_move = (max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_RANGE", min_roc))
+                    if range_prefilter
+                    else max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_MOVE", 0.08)))
+        exclude_top = int(self._env_float("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24.0))
+        return {
+            "tickers": tickers,
+            "by_symbol": {str(t.get("symbol") or ""): t for t in tickers},
+            "majors": self._major_symbols(tickers, exclude_top),
+            "exclude_top": exclude_top,
+            "floor": wildcard_min_turnover_usdt(),
+            "min_move": min_move,
+            "min_roc": min_roc,
+            "range_prefilter": range_prefilter,
+            "max_calm": self._env_float("FUTURES_WILDCARD_MAX_CALM_RATIO", 0.75),
+            "slot_free": self._convex_open_count("WILDCARD") < wildcard_max_positions(),
+        }
+
+    def _why_symbol_verdict(self, sym: str, ctx: dict[str, Any], frame: Any) -> tuple[str, str]:
+        """(gate class, reason) for one symbol — the live funnel, in order.
+
+        Mirrors _maybe_scan_wildcard step for step: universe, open, majors,
+        turnover, 24h range, detector, calm-shock, side, external veto, slot.
+        First gate that fires wins, which is what the scanner does too."""
+        from futuresbot.wildcard import ROC_BARS, detect_wildcard_signal, wildcard_long_only
+
+        ticker = ctx["by_symbol"].get(sym) or {}
+        if sym in self.open_positions:
+            return "open", "already open"
+        if not self._is_tradeable_crypto(sym):
+            return "universe", "not a crypto perp"
+        if sym in ctx["majors"]:
+            return "universe", f"majors band (top {ctx['exclude_top']} by deflated turnover)"
+        turn = float(ticker.get("amount24") or 0.0)
+        if turn < ctx["floor"]:
+            return "liquidity", f"turnover ${turn / 1e6:.1f}M under ${ctx['floor'] / 1e6:.0f}M"
+        chg = (self._range_24h(ticker) if ctx["range_prefilter"]
+               else abs(float(ticker.get("riseFallRate") or 0.0)))
+        if chg < ctx["min_move"]:
+            label = "24h range" if ctx["range_prefilter"] else "24h move"
+            return "quiet", f"{label} {chg * 100:.0f}% under {ctx['min_move'] * 100:.0f}%"
+        if frame is None or len(frame) < ROC_BARS + 2:
+            return "data", "no kline data"
+        reasons: list[str] = []
+        sig = detect_wildcard_signal(frame, sym, reasons)
+        if sig is None:
+            key = reasons[0] if reasons else "unknown"
+            cls, text = self._WHY_DETECTOR.get(key, ("shape", key.replace("_", " ")))
+            if cls == "quiet":
+                try:
+                    c = frame["close"].astype(float)
+                    roc = float(c.iloc[-1]) / float(c.iloc[-(ROC_BARS + 1)]) - 1.0
+                    text += f" ({roc * 100:+.1f}% vs {ctx['min_roc'] * 100:.0f}% needed)"
+                except Exception:
+                    pass
+            return cls, text
+        calm = getattr(sig, "calm_ratio", None)
+        if ctx["max_calm"] > 0 and calm is not None and calm >= ctx["max_calm"]:
+            return "veto", f"shock out of a calm regime ({calm:.2f})"
+        if sig.side == "SHORT" and wildcard_long_only():
+            return "veto", "shorts are off"
+        if self._flag("FUTURES_EXTERNAL_GATE_ENABLED", default=False):
+            allow, reason = self._external_entry_veto(sig, "WILDCARD")
+            if not allow:
+                return "veto", self._reject_label(reason)
+        if not ctx["slot_free"]:
+            return "capacity", "no free wildcard slot"
+        return "ready", f"signal live — {sig.side} {float(getattr(sig, 'roc_pct', 0.0) or 0.0) * 100:+.1f}%/3h"
+
+    def _why_frames(self, symbols: list[str], interval: str = "Min15",
+                    bars: int = 672) -> dict[str, Any]:
+        """Klines for `symbols`, fetched concurrently. Best-effort per symbol.
+
+        Two tiers use this. Ranking the movers needs only a 48h window, so it
+        pulls Min60 x 50; the detector needs the same Min15 x 672 depth the live
+        scan uses, and only the handful of symbols that clear the cheap gates
+        ever pay for it. Fetching the deep frame for the whole pool cost 18s on
+        a live run, which is not a phone command."""
+        secs = {"Min1": 60, "Min5": 300, "Min15": 900, "Min60": 3600}.get(interval, 900)
+        end = int(time.time())
+        out: dict[str, Any] = {}
+
+        def _one(sym: str) -> tuple[str, Any]:
+            try:
+                return sym, self.client.get_klines(sym, interval=interval,
+                                                   start=end - bars * secs, end=end)
+            except Exception:
+                return sym, None
+
+        if not symbols:
+            return out
+        try:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                for sym, frame in pool.map(_one, symbols):
+                    out[sym] = frame
+        except Exception as exc:  # pragma: no cover — diagnosis is best effort
+            log.debug("why frame fetch failed: %s", exc)
+        return out
+
+    @staticmethod
+    def _why_change(frame: Any, bars: int) -> float | None:
+        """Close-to-close change over `bars` bars of the frame's own interval
+        (Min60: 24 = 24h, 48 = 48h)."""
+        try:
+            c = frame["close"].astype(float)
+            if len(c) < bars + 1:
+                return None
+            base = float(c.iloc[-(bars + 1)])
+            return (float(c.iloc[-1]) / base - 1.0) if base > 0 else None
+        except Exception:
+            return None
+
+    def _why_mover_lines(self, title: str, ranked: list[tuple[float, str]],
+                         ctx: dict[str, Any], frames: dict[str, Any], limit: int) -> list[str]:
+        """One row per REASON — biggest mover of that class, then a count.
+
+        Ranked purely by size, the exchange's top movers are routinely four dust
+        pumps in a row (a live run returned GPUBSC -58%, ASTEROIDBSC -36%,
+        UPROBINHOOD -31%, all "turnover under $3M"). Four identical lines answer
+        the question once and then waste the screen, so same-class rows collapse
+        and the distinct reasons get the space instead. The single biggest mover
+        always survives: it ranks first, so it always opens its own class."""
+        lines = [title]
+        groups: dict[str, list[Any]] = {}
+        order: list[str] = []
+        for chg, sym in ranked:
+            cls, reason = self._why_symbol_verdict(sym, ctx, frames.get(sym))
+            if cls in groups:
+                groups[cls][3] += 1
+            elif len(order) < limit:
+                groups[cls] = [chg, sym, reason, 0]
+                order.append(cls)
+        for cls in order:
+            chg, sym, reason, extra = groups[cls]
+            more = f" (+{extra} more)" if extra else ""
+            lines.append(f"{self._WHY_ICONS.get(cls, '•')} "
+                         f"<b>{html.escape(sym.replace('_USDT', ''))}</b> "
+                         f"{chg * 100:+.0f}% — {html.escape(reason)}{more}")
+        if len(lines) == 1:
+            lines.append("  nothing moved enough to rank")
+        return lines
+
+    def _why_pmt_lines(self) -> list[str]:
+        """The original per-pair PMT diagnosis. Only rendered when PMT entries
+        are actually reachable — otherwise it is six paragraphs about a strategy
+        that cannot open a position."""
         import math
 
         from futuresbot.pmt_strategy import (
@@ -2112,18 +2293,13 @@ class FuturesRuntime:
             mental_threshold_step,
         )
 
-        lines = [
-            f"🔬 <b>Entry Diagnosis</b> [{self._mode_label()}]",
-            "━━━━━━━━━━━━━━━",
-            f"Slots: <b>{len(self.open_positions)}/{self.config.max_concurrent_positions}</b>"
-            + (" | ⏸️ paused" if self._paused else ""),
-        ]
+        lines = ["", "🎯 <b>PMT pairs</b>"]
         end = int(time.time())
         for sym in (list(self._active_symbols) or [self.config.symbol]):
             try:
                 frame = self.client.get_klines(sym, interval="Min15", start=end - 900 * 160, end=end)
                 if frame is None or len(frame) < 10:
-                    lines.append(f"<b>{html.escape(sym)}</b>: no kline data")
+                    lines.append(f"❔ <b>{html.escape(sym)}</b>: no kline data")
                     continue
                 pmt = classify_pair_market_trend(frame, sym)
                 trend = f"{pmt.label} {pmt.move_24h_pct * 100:+.1f}%/24h" if pmt else "trend n/a"
@@ -2134,16 +2310,96 @@ class FuturesRuntime:
                     if math.floor(closes[i - 1] / step) != math.floor(closes[i] / step) or math.ceil(closes[i - 1] / step) != math.ceil(closes[i] / step):
                         last_cross = i
                 if last_cross is not None and hasattr(frame, "index"):
-                    when = frame.index[last_cross]
-                    cross_text = f"last cross {when.strftime('%H:%M')} UTC"
+                    cross_text = f"last cross {frame.index[last_cross].strftime('%H:%M')} UTC"
                 else:
                     cross_text = "no level-cross in 40h"
-                scoped = self._config_for_symbol(sym)
-                why = diagnose_pmt_threshold_rejection(frame, scoped)
-                why_text = html.escape((why or "would fire")[:120])
-                lines.append(f"<b>{html.escape(sym)}</b> — {trend} | {cross_text}\n  {why_text}")
+                why = diagnose_pmt_threshold_rejection(frame, self._config_for_symbol(sym))
+                lines.append(f"<b>{html.escape(sym)}</b> — {trend} | {cross_text}\n"
+                             f"  {html.escape((why or 'would fire')[:120])}")
             except Exception as exc:  # pragma: no cover — diagnosis is best effort
-                lines.append(f"<b>{html.escape(sym)}</b>: diagnosis failed ({html.escape(str(exc)[:60])})")
+                lines.append(f"❔ <b>{html.escape(sym)}</b>: failed ({html.escape(str(exc)[:60])})")
+        return lines
+
+    def _build_why_message(self) -> str:
+        """Why the bot is not in a trade right now, answered against the sleeves
+        that can actually enter — plus the exchange's biggest 24h and 48h movers
+        with the gate that stopped each one."""
+        from futuresbot.squeeze import squeeze_enabled, squeeze_max_positions
+
+        wc_open, wc_max = self._convex_open_count("WILDCARD"), wildcard_max_positions()
+        sq = (f"squeeze {self._convex_open_count('SQUEEZE')}/{squeeze_max_positions()}"
+              if squeeze_enabled() else "squeeze off")
+        lines = [
+            f"🔬 <b>Why no trade</b> [{self._mode_label()}]",
+            "━━━━━━━━━━━━━━━",
+            f"🎰 Slots: wildcard <b>{wc_open}/{wc_max}</b> · {sq}"
+            + (" · ⏸️ paused" if self._paused else ""),
+        ]
+        if not wildcard_enabled():
+            lines.append("⛔ Wildcard is DISABLED — no sleeve can enter.")
+
+        snap = self._last_wildcard_scan
+        if snap:
+            f = snap.get("funnel") or {}
+            age_m = max(0.0, (time.time() - float(snap.get("at") or 0.0)) / 60.0)
+            lines.append(f"🔭 Scan {age_m:.0f}m ago: {int(f.get('in_band') or 0)} in-band → "
+                         f"{int(snap.get('scanned') or 0)} scanned → "
+                         f"<b>{int(snap.get('cands') or 0)}</b> signals")
+            hist = snap.get("hist") or {}
+            if hist:
+                top = sorted(hist.items(), key=lambda kv: -kv[1])[:3]
+                lines.append("🚧 Blocked: " + " · ".join(
+                    f"{self._WHY_DETECTOR.get(k, ('', k.replace('_', ' ')))[1]} ×{v}"
+                    for k, v in top))
+        else:
+            lines.append("🔭 No scan has completed yet.")
+        last = self._last_wildcard_reject()
+        if last:
+            lines.append("🕒" + last.replace("  last skip:", " Last skip:", 1))
+
+        try:
+            ctx = self._why_context()
+            pool: dict[str, float] = {}
+            for t in ctx["tickers"]:
+                sym = str(t.get("symbol") or "")
+                if sym.endswith("_USDT") and self._is_tradeable_crypto(sym):
+                    pool[sym] = self._range_24h(t)
+            top = sorted(pool, key=lambda s: -pool[s])[:12]
+            top += [s for s in sorted(
+                (str(t.get("symbol") or "") for t in ctx["tickers"]
+                 if self._is_tradeable_crypto(str(t.get("symbol") or ""))),
+                key=lambda s: -float((ctx["by_symbol"].get(s) or {}).get("amount24") or 0.0),
+            )[:6] if s not in top]
+            # 24h needs NO klines: riseFallRate is the exchange's own 24h change,
+            # already in the ticker payload, and more authoritative than a close-
+            # to-close figure reconstructed from bars.
+            r24 = sorted(((float((ctx["by_symbol"].get(s) or {}).get("riseFallRate") or 0.0), s)
+                          for s in top), key=lambda r: -abs(r[0]))
+            # 48h is the only window that needs bars, and Min60 x 50 is the
+            # cheapest frame that spans it.
+            coarse = self._why_frames(top, interval="Min60", bars=50)
+            r48 = [(c, s) for s in top
+                   if (c := self._why_change(coarse.get(s), 48)) is not None]
+            r48.sort(key=lambda r: -abs(r[0]))
+            # The scan's own deep frame, but ONLY for symbols that clear every
+            # ticker-level gate — a verdict of "data" is exactly the verdict
+            # "cheap gates passed, now I need bars". Reusing the verdict to
+            # decide this keeps one copy of the funnel order, not two.
+            deep = [s for s in top if self._why_symbol_verdict(s, ctx, None)[0] == "data"]
+            frames = self._why_frames(deep, interval="Min15",
+                                      bars=int(self._env_float("FUTURES_WILDCARD_SCAN_BARS", 672)))
+            n = int(self._env_float("FUTURES_WHY_MOVERS", 4))
+            for title, ranked in (("📈 <b>Top movers · 24h</b>", r24),
+                                  ("📉 <b>Top movers · 48h</b>", r48)):
+                lines.append("")
+                lines += self._why_mover_lines(title, ranked, ctx, frames, n)
+        except Exception as exc:  # pragma: no cover — diagnosis is best effort
+            lines.append(f"\n❔ Mover scan failed ({html.escape(str(exc)[:60])})")
+
+        if self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0) >= 999.0:
+            lines.append("\n🎯 PMT entries decommissioned — convex sleeves only.")
+        else:
+            lines += self._why_pmt_lines()
         return "\n".join(lines)
 
     def _feature_rows_cached(self, max_age_s: float = 300.0) -> list[dict[str, Any]]:
@@ -2731,7 +2987,7 @@ class FuturesRuntime:
             "🤖 <b>Futures Telegram Commands</b>\n"
             "━━━━━━━━━━━━━━━\n"
             "/status — Futures status and every open position\n"
-            "/why — Per-symbol entry diagnosis: trend, last level-cross, block reason\n"
+            "/why — Why no trade: slots, last scan, and the gate that stopped each 24h/48h top mover\n"
             "/pnl — Realized and open futures P&L across all symbols\n"
             "/logs — Recent runtime activity\n"
             "/reconcile — Adopt any untracked MEXC open positions into bot state (orphan recovery)\n"
