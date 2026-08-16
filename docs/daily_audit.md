@@ -1,3 +1,164 @@
+# Daily Audit — 2026-08-16
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Window 2026-08-15 19:30 -> 2026-08-16 16:10 UTC (20.7h). Equity **$140.76**, all
+cash, **0 open positions**, **0 closed trades**. `pytest -q` **892 passed**.
+Feature store **62 rows** (unchanged, mtime 08-15 18:54). Shadow ledger **97
+rows** (0 new; ACE resolved).
+
+**24h realised $0.00. Flat since LAB closed 08-15 18:54 UTC.**
+
+A genuinely empty day: no entries, no closes, and — more unusual — **not one new
+shadow-ledger row**, meaning the detector produced no signal at all, not even a
+vetoed one. Equity is bit-identical to yesterday's reading.
+
+### 1. Trades — none
+
+No PMT (`entries_disabled` by design), no wildcard, no squeeze
+(`FUTURES_SQUEEZE_ENABLED=0`). Exchange history confirms the last close is
+LAB_USDT at 08-15 18:54 UTC, already reported.
+
+### 1-OPEN. Open positions — none
+
+`positions=0` on every `[ACCOUNT]` line in the retained log window.
+
+### 1b. Wildcard — why nothing fired
+
+Six `[WILDCARD_SCAN_SUMMARY]` cycles survive (container restarted 15:29 UTC on
+the operator's `feat(why)` deploy; Railway retains ~500 lines). They are
+identical in shape:
+
+| | |
+|---|---|
+| movers / scanned / candidates | 22 / 22 / **0** every cycle |
+| dominant rejection | `roc_below_min` **16-18 of 22** |
+| secondary | `no_pullback_resume` 2-5, `low_volume_z` 0-2, `climax_wick` 0-2 |
+| deflated | **21-22 / 48** |
+| shorts_blocked / shock_blocked | 0 / 0 |
+| order rejects (5003 / 2015) | **none** |
+| tracebacks | **none** |
+
+This is dormancy from an absent tape, not from an execution fault: the universe
+is being scanned in full, and the movers present simply do not move enough
+(|3h ROC| under the floor). **Correct behaviour — no gate loosening proposed.**
+The deflator continues to read 21-22/48, so trial 14's "failed OPEN" kill
+condition stays clear.
+
+### 1a-bis. Learning loop
+
+**(a) Conditional expectancy** — corpus unchanged at 62 rows, so the table is
+identical to yesterday's and is restated only for continuity: `hold>=120min`
+FAVOR (tautological), `roc>=12pct` FAVOR (+1.297, n=9 on the "with" arm — still
+under the n>=10 bar), `regime_trimmed_hard` AVOID (-0.557), `fee_heavy>=30pct`
+AVOID (-0.233). **No proposal. The corpus is still missing five losses** (see
+§3); nothing derived from it is actionable until that is repaired.
+
+**(b) Shadow ledger** — 97 rows, all 97 now resolved. ACE_USDT resolved
+`timeout +1.443R`, i.e. the `crowded_shorts` funding veto **cost** money on that
+one row.
+
+| split | n | netR | outcomes |
+|---|---|---|---|
+| `shadow_only` | 46 | +16.20 | stop 18, tp 15, timeout 13 |
+| `slot_occupied` | 17 | **+10.86** | trail 7, stop 6, tp 2, timeout 2 |
+| `min_vol_skip` | 12 | +8.99 | tp 5, trail 4, stop 3 |
+| `veto:ref_not_listed` | 14 | **-4.46** | stop 9, trail 4, timeout 1 |
+| `side_disabled` | 4 | +2.23 | trail 2, tp 1, stop 1 |
+| `veto:crowded_shorts` | 1 | +1.44 | timeout 1 |
+| `veto:move_not_corroborated` | 1 | +0.91 | trail 1 |
+| `veto:crowded_longs` | 2 | -0.36 | stop 1, timeout 1 |
+
+**Slot cost: +10.86R over 17 resolved — but +10.00R of it is two lottery tickets
+(SNXX +5.00, HEI +5.00 tp). Strip them and the other 15 net +0.86R, i.e. flat.
+The slot-lock is not costing money; a third slot is not supported.** The
+reference-listing veto remains the strongest guard in the stack (-4.46R avoided
+over 14 rows).
+
+**Arithmetic discrepancy, flagged not resolved.** These netR figures are the
+per-row sum of the resolver's own `outcome` field. They do **not** match
+yesterday's published table (`shadow_only` +5.15, `slot_occupied` +5.36,
+`ref_not_listed` -6.53) even though the outcome-*kind* counts per split are
+identical row-for-row. Same rows, same classifications, different magnitudes.
+Either yesterday's sums were computed differently, or stored outcomes are being
+rewritten after resolution (the file was rewritten today at 09:37 UTC when ACE
+resolved). **I cannot tell which without yesterday's raw file, and I do not have
+it.** Today's copy is preserved so tomorrow's run can diff and settle it. Until
+then the qualitative readings above — vetoes protective, slot-lock protective,
+tail-dependent — hold under both versions; the absolute R figures should not be
+quoted as settled.
+
+**(c) Scan telemetry** — covered in §1b. No `[SIZE_TRIM]`, no `slot_occupied`
+candidates (no positions were held), no `[POSITION_RECONCILE_DROP]`.
+
+**(d) Decision rule — trial 14** (from 2026-08-14 18:14 UTC):
+
+| | |
+|---|---|
+| convex closes | **1 / 30** (LAB, unchanged) |
+| net R / net $ | **-0.63R / -$0.73** |
+| max drawdown | **-1.8%** from the $143.37 peak, inside the 20% flag |
+
+Two days into the trial and one close deep. Entries, not exits, remain the
+binding constraint on time-to-verdict.
+
+`USE_DRAWDOWN_KILL` now reads **1** in the live variables, not the 0 recorded as
+a standing operator override on 2026-07-17. Stated as an observation; not
+changed, and immaterial at -1.8% drawdown.
+
+### 2. Champion vs shadow
+
+**Shadow: stale, comparison suppressed pending resync.**
+
+### 3. The lever — unchanged from yesterday, still unapplied
+
+Yesterday's proposal stands and nothing today displaces it: **the reconciliation
+guard**. Verified still absent — `runtime.py:4170` and `:4201` both still clear a
+position "without recording P&L" with no retry, so a history-lag race still
+destroys the row permanently. Five real-money closes totalling **-$6.56, every
+one a loss**, remain outside the corpus.
+
+Today adds a second, independent reason to distrust the measurement layer: the
+shadow-ledger arithmetic above does not reproduce. Two of the three data
+surfaces this bot learns from now have an open integrity question. Proposing a
+strategy parameter against them would be measuring with a bent ruler.
+
+**Proposed (NOT self-applied, unchanged):** per-cycle 48h exchange-vs-`trade_history`
+diff on `positionId`; synthesise a `reconstructed=1` row plus a loud Telegram
+alert on a miss; bounded retry in place of both "cleared without recording P&L"
+branches. Plus the separate operator call to backfill the five missing rows.
+
+**Not proposed:** anything derived from the current corpus, and no gate
+loosening to manufacture trades in a quiet tape.
+
+### 4. Validate / 5. Deploy
+
+`pytest -q` **892 passed** (up from 869; the operator's `feat(why)` deploy
+d0e0397 landed 15:28 UTC and is running clean — `[ACCOUNT]` lines present, no
+traceback). **No deploy, no config change, no self-applied parameter move.**
+Nothing to gate: zero trades, zero closes, and the two candidate levers are both
+operator-gated.
+
+### 6. Outstanding
+
+- **Top priority, day 2:** the ledger leak — 5 unrecorded closes, -$6.56, all
+  losses, 33 days running. Fix unshipped.
+- **New:** shadow-ledger netR does not reproduce against yesterday's published
+  table. Copy preserved for tomorrow's diff.
+- **Action item (raised once, still open):** resync Futures-shadow to champion
+  HEAD.
+- Trial 14 at 1/30. `roc_below_min` dominant in a quiet tape.
+
+### Verdict
+
+**No change deployed, and correctly so.** Nothing traded, nothing signalled, and
+the day's only new information is negative: a second measurement surface that
+does not reconcile. The instrument problem is now two days old and unfixed; it
+outranks every strategy parameter on the board.
+
+---
 # Daily Audit — 2026-08-15
 
 ---
