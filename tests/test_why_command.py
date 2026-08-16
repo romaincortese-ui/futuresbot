@@ -185,8 +185,9 @@ def test_change_over_bars_reads_the_right_window(rt):
 def test_mover_lines_carry_one_icon_per_gate_class(rt):
     ctx = _ctx(rt, majors={"AAA_USDT"},
                by_symbol={"BBB_USDT": _ticker("BBB_USDT", amount24=1e6)})
-    lines = rt._why_mover_lines("📈 t", [(1.45, "AAA_USDT"), (0.31, "BBB_USDT")],
-                                ctx, {"AAA_USDT": _frame(), "BBB_USDT": _frame()}, 4)
+    picks = rt._why_pick_rows([(1.45, "AAA_USDT"), (0.31, "BBB_USDT")],
+                              ctx, {"AAA_USDT": _frame(), "BBB_USDT": _frame()}, 4)
+    lines = rt._why_mover_lines("📈 t", picks)
     assert lines[1].startswith("⛔") and "AAA" in lines[1]
     assert lines[2].startswith("💧") and "BBB" in lines[2]
     assert "_USDT" not in "\n".join(lines), "symbol suffix is noise on a phone"
@@ -196,9 +197,10 @@ def test_mover_lines_collapse_repeats_of_the_same_reason(rt):
     """A live run returned GPUBSC -58%, ASTEROIDBSC -36%, UPROBINHOOD -31% —
     three separate lines all saying "turnover under $3M". One line, one count."""
     thin = {s: _ticker(s, amount24=2e5) for s in ("AAA_USDT", "BBB_USDT", "CCC_USDT")}
-    lines = rt._why_mover_lines(
-        "📈 t", [(-0.58, "AAA_USDT"), (-0.36, "BBB_USDT"), (-0.31, "CCC_USDT")],
+    picks = rt._why_pick_rows(
+        [(-0.58, "AAA_USDT"), (-0.36, "BBB_USDT"), (-0.31, "CCC_USDT")],
         _ctx(rt, by_symbol=thin), {}, 4)
+    lines = rt._why_mover_lines("📈 t", picks)
     assert len(lines) == 2, f"expected title + one collapsed row, got {lines}"
     assert "AAA" in lines[1] and "-58%" in lines[1], "biggest mover must survive"
     assert "(+2 more)" in lines[1]
@@ -210,8 +212,9 @@ def test_mover_lines_keep_distinct_reasons_apart(rt):
     ctx = _ctx(rt, majors={"AAA_USDT"},
                by_symbol={"BBB_USDT": _ticker("BBB_USDT", amount24=2e5),
                           "CCC_USDT": _ticker("CCC_USDT", amount24=2e5)})
-    lines = rt._why_mover_lines(
-        "📈 t", [(1.4, "AAA_USDT"), (0.9, "BBB_USDT"), (0.5, "CCC_USDT")], ctx, {}, 4)
+    picks = rt._why_pick_rows(
+        [(1.4, "AAA_USDT"), (0.9, "BBB_USDT"), (0.5, "CCC_USDT")], ctx, {}, 4)
+    lines = rt._why_mover_lines("📈 t", picks)
     assert len(lines) == 3 and lines[1].startswith("⛔") and lines[2].startswith("💧")
     assert "(+1 more)" in lines[2]
 

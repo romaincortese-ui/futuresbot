@@ -289,3 +289,97 @@ def rewrite(path: str, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             fh.write(json.dumps(row, default=str) + "\n")
     os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------------------
+# Pricing a counterfactual in DOLLARS
+#
+# Every consumer of this ledger has reported R, and R is the right unit for a
+# verdict: it is deposit-invariant and comparable across symbols. It is the
+# wrong unit for the question "is this gate worth keeping", which is asked in
+# money. 1R is not a constant — it is the stop distance times the size actually
+# risked — so a -1R block on a 20%-stop candidate costs more than twice what a
+# -1R block on a 9%-stop candidate costs, and an R-only scorecard hides that.
+#
+# HONESTY NOTE, because this number is the easiest one in the repo to misuse:
+# it is NOT "upside we left on the table". It prices the signal the DETECTOR
+# would have fired, resolved forward at the sleeve's own stop, target and 24h
+# clock, at the size the bot would actually have taken — so blocked candidates
+# that spiked and reversed come out NEGATIVE, and a negative total means the
+# gate paid for itself. Ranking symbols by how far they moved and pricing the
+# move would produce a large positive number every week and justify deleting
+# every gate in the stack.
+# ---------------------------------------------------------------------------
+
+DEFAULT_BALANCE_FRACTION = 0.12
+
+
+def _balance_fraction(explicit: float | None = None) -> float:
+    if explicit is not None and explicit > 0:
+        return float(explicit)
+    try:
+        raw = float(os.environ.get("FUTURES_WILDCARD_BALANCE_PCT") or DEFAULT_BALANCE_FRACTION)
+    except (TypeError, ValueError):
+        raw = DEFAULT_BALANCE_FRACTION
+    return min(0.15, max(0.05, raw))
+
+
+def one_r_usd(row: dict[str, Any], equity_usdt: float,
+              balance_fraction: float | None = None) -> float:
+    """Dollar value of 1R for this candidate, at the size the sleeve would take.
+
+    ``margin = balance_fraction x equity``; 1R is ``sl_margin_pct`` of that
+    margin. Deliberately EXCLUDES the regime and cold-streak trims: both are
+    backward-looking state that was not knowable for a trade never taken, and
+    including them would make the same blocked candidate worth a different
+    amount depending on an unrelated position's outcome."""
+    try:
+        sl_margin_pct = float(row.get("sl_margin_pct") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if sl_margin_pct <= 0 or equity_usdt <= 0:
+        return 0.0
+    return float(equity_usdt) * _balance_fraction(balance_fraction) * sl_margin_pct / 100.0
+
+
+def net_usd(row: dict[str, Any], equity_usdt: float,
+            balance_fraction: float | None = None) -> float | None:
+    """Net counterfactual dollars for a RESOLVED row, cost included.
+
+    None for an unresolved row — a signal still in flight has no P&L, and
+    treating it as zero would drag every average toward nothing."""
+    if row.get("outcome") is None:
+        return None
+    net_r = row.get("outcome_net")
+    if net_r is None:
+        try:
+            net_r = float(row.get("outcome") or 0.0) - cost_r(row)
+        except (TypeError, ValueError):
+            return None
+    return float(net_r) * one_r_usd(row, equity_usdt, balance_fraction)
+
+
+def gate_cost_usd(rows: list[dict[str, Any]], equity_usdt: float, *,
+                  since_ts: float = 0.0, balance_fraction: float | None = None,
+                  ) -> dict[str, tuple[int, float]]:
+    """{reject reason class -> (resolved n, net $)} over rows since ``since_ts``.
+
+    Keyed on the reason CLASS (``veto:crowded_longs(funding=0.10%)`` ->
+    ``veto``) so a scorecard does not fragment into one bucket per funding
+    rate. A POSITIVE total is money the gate cost; a NEGATIVE total is money it
+    saved."""
+    out: dict[str, list[Any]] = {}
+    for row in rows:
+        try:
+            if float(row.get("ts") or 0.0) < since_ts:
+                continue
+        except (TypeError, ValueError):
+            continue
+        usd = net_usd(row, equity_usdt, balance_fraction)
+        if usd is None:
+            continue
+        key = str(row.get("reject_reason") or "?").split(":", 1)[0].split("(", 1)[0].strip()
+        agg = out.setdefault(key or "?", [0, 0.0])
+        agg[0] += 1
+        agg[1] += usd
+    return {k: (int(n), round(v, 2)) for k, (n, v) in out.items()}

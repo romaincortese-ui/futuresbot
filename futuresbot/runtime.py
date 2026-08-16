@@ -2251,8 +2251,8 @@ class FuturesRuntime:
         except Exception:
             return None
 
-    def _why_mover_lines(self, title: str, ranked: list[tuple[float, str]],
-                         ctx: dict[str, Any], frames: dict[str, Any], limit: int) -> list[str]:
+    def _why_pick_rows(self, ranked: list[tuple[float, str]], ctx: dict[str, Any],
+                       frames: dict[str, Any], limit: int) -> list[list[Any]]:
         """One row per REASON — biggest mover of that class, then a count.
 
         Ranked purely by size, the exchange's top movers are routinely four dust
@@ -2260,26 +2260,212 @@ class FuturesRuntime:
         UPROBINHOOD -31%, all "turnover under $3M"). Four identical lines answer
         the question once and then waste the screen, so same-class rows collapse
         and the distinct reasons get the space instead. The single biggest mover
-        always survives: it ranks first, so it always opens its own class."""
-        lines = [title]
+        always survives: it ranks first, so it always opens its own class.
+
+        Returns picks rather than text so the caller can fetch bars for exactly
+        the symbols that will be shown, and price them, before rendering."""
         groups: dict[str, list[Any]] = {}
         order: list[str] = []
         for chg, sym in ranked:
             cls, reason = self._why_symbol_verdict(sym, ctx, frames.get(sym))
             if cls in groups:
-                groups[cls][3] += 1
+                groups[cls][4] += 1
             elif len(order) < limit:
-                groups[cls] = [chg, sym, reason, 0]
+                groups[cls] = [cls, chg, sym, reason, 0]
                 order.append(cls)
-        for cls in order:
-            chg, sym, reason, extra = groups[cls]
+        return [groups[c] for c in order]
+
+    def _why_mover_lines(self, title: str, picks: list[list[Any]],
+                         prices: dict[str, tuple[int, float]] | None = None) -> list[str]:
+        lines = [title]
+        for cls, chg, sym, reason, extra in picks:
             more = f" (+{extra} more)" if extra else ""
+            n, usd = (prices or {}).get(sym, (0, 0.0))
             lines.append(f"{self._WHY_ICONS.get(cls, '•')} "
                          f"<b>{html.escape(sym.replace('_USDT', ''))}</b> "
-                         f"{chg * 100:+.0f}% — {html.escape(reason)}{more}")
+                         f"{chg * 100:+.0f}% — {html.escape(reason)}{more}"
+                         f"{self._usd_tag(n, usd)}")
         if len(lines) == 1:
             lines.append("  nothing moved enough to rank")
         return lines
+
+    def _counterfactual_usd(self, symbol: str, frame: Any, *, min_roc: float,
+                            bars_back: int, equity: float) -> tuple[int, float]:
+        """(signals, net $) the detector WOULD have produced on this symbol.
+
+        Replays the live detector bar by bar over the window, resolves each
+        signal forward under the live convex stack (-1R stop / own target /
+        0.30xpeak retention floor / 24h clock) and prices it at the size the
+        sleeve would have taken.
+
+        ONE POSITION AT A TIME, because that is what the bot can do. The
+        detector fires on many adjacent bars of the same move — a single 40%
+        run can produce a dozen consecutive triggers — so after a signal
+        resolves, replay skips past its exit before it will take another.
+        Without that, one move gets counted a dozen times and the "missed"
+        figure becomes a multiple of anything reachable.
+
+        A blocked candidate that spiked and reversed returns a NEGATIVE number:
+        that is the gate paying for itself, and it is the reason this is worth
+        recording rather than guessing."""
+        from futuresbot import shadow_ledger as shadow
+        from futuresbot.wildcard import ROC_BARS, detect_wildcard_signal
+
+        try:
+            closes = [float(x) for x in frame["close"]]
+            highs = [float(x) for x in frame["high"]]
+            lows = [float(x) for x in frame["low"]]
+            idx = frame.index
+        except Exception:
+            return (0, 0.0)
+        n = len(closes)
+        if n < 200:
+            return (0, 0.0)
+
+        def _ts(i: int) -> float:
+            try:
+                return float(idx[i].timestamp())
+            except Exception:
+                return time.time() - (n - 1 - i) * 900.0
+
+        bars = [(_ts(i), highs[i], lows[i], closes[i]) for i in range(n)]
+        now_t = time.time()
+        signals = 0
+        net = 0.0
+        i = max(200, n - bars_back)
+        while i <= n:
+            if i <= ROC_BARS:
+                i += 1
+                continue
+            if abs(closes[i - 1] / closes[i - 1 - ROC_BARS] - 1.0) < min_roc:
+                i += 1
+                continue
+            sig = detect_wildcard_signal(frame.iloc[:i], symbol)
+            if sig is None:
+                i += 1
+                continue
+            row = shadow.candidate_row(sig, sleeve="WILDCARD", reject_reason="replay")
+            row["ts"] = _ts(i - 1)
+            done = shadow.resolve_outcome(row, bars, now_t,
+                                          horizon_s=shadow.CONVEX_HORIZON_S, convex=True)
+            if done is None:      # still in flight — no P&L to claim
+                break
+            usd = shadow.net_usd(done, equity)
+            if usd is not None:
+                signals += 1
+                net += usd
+            # Skip past this trade's own exit before looking for the next.
+            exit_ts = float(done.get("resolved_ts") or 0.0)
+            nxt = i + 1
+            while nxt <= n and _ts(nxt - 1) <= exit_ts:
+                nxt += 1
+            i = max(nxt, i + 1)
+        return (signals, round(net, 2))
+
+    _GATE_COST_LABELS = {
+        "veto": "external gate", "slot_occupied": "no free slot",
+        "side_disabled": "shorts off", "min_vol_skip": "size below min",
+        "calm_shock": "calm-shock guard", "shadow_only": "shadow mode",
+    }
+
+    def _gate_cost_lines(self, days: float | None = None) -> list[str]:
+        """What the gates cost — in dollars — over the trailing window.
+
+        Reads only rows the sleeve ALREADY logged as blocked and has already
+        resolved, so it costs one file read and no kline calls. `shadow_only`
+        is excluded: those rows are not a gate refusing a trade, they are the
+        sleeve running in observation mode, and folding them in would price a
+        decision nobody made."""
+        from futuresbot import shadow_ledger as shadow
+
+        days = days if days is not None else self._env_float("FUTURES_GATE_COST_DAYS", 7.0)
+        rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
+                if str(r.get("sleeve") or "") in shadow.CONVEX_SLEEVES]
+        equity = float(self._last_known_equity() or 0.0)
+        by = shadow.gate_cost_usd(rows, equity, since_ts=time.time() - days * 86400.0)
+        by.pop("shadow_only", None)
+        if not by:
+            return ["", f"💵 Gate cost, {days:.0f}d: nothing blocked and resolved yet"]
+        total = sum(v for _n, v in by.values())
+        n = sum(c for c, _v in by.values())
+        verb = "cost" if total > 0 else "saved"
+        return ["", f"💵 Gates {verb} <b>${abs(total):.2f}</b> over {days:.0f}d ({n} resolved)",
+                "  " + " · ".join(self._gate_part(k, v) for k, (_c, v)
+                                  in sorted(by.items(), key=lambda kv: kv[1][1], reverse=True))]
+
+    def _gate_part(self, key: str, usd: float, n: int | None = None) -> str:
+        """One gate's contribution, spelled out.
+
+        A bare signed number is ambiguous here — "external gate -9.76" reads as
+        a loss when it means the opposite. The sign convention is positive =
+        the gate cost us money, and it is not worth making the reader hold that
+        in their head."""
+        label = self._GATE_COST_LABELS.get(key, key)
+        tail = f" (n={n})" if n is not None else ""
+        return f"{label} {'cost' if usd > 0 else 'saved'} ${abs(usd):.2f}{tail}"
+
+    def _gate_cost_history_path(self) -> Path:
+        return self._feature_store_path.parent / "futures_gate_cost.jsonl"
+
+    def _record_gate_cost(self, days: float) -> list[str]:
+        """Stamp this window's gate cost to disk and report it against the last.
+
+        The weekly digest is the only artifact an absent operator reads, and a
+        single week's figure cannot answer "is a gate drifting from protective
+        to expensive" — that needs a series. One row per digest, so the trend
+        exists to be read later instead of being recomputed from a ledger whose
+        equity denominator has since moved."""
+        from futuresbot import shadow_ledger as shadow
+
+        rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
+                if str(r.get("sleeve") or "") in shadow.CONVEX_SLEEVES]
+        equity = float(self._last_known_equity() or 0.0)
+        by = shadow.gate_cost_usd(rows, equity, since_ts=time.time() - days * 86400.0)
+        by.pop("shadow_only", None)
+        total = round(sum(v for _n, v in by.values()), 2)
+        n = sum(c for c, _v in by.values())
+        path = self._gate_cost_history_path()
+        prev = None
+        try:
+            hist = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+            prev = hist[-1] if hist else None
+        except Exception:
+            pass
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({
+                    "ts": round(time.time()), "days": days, "equity_usdt": equity,
+                    "resolved": n, "net_usd": total,
+                    "by_gate": {k: {"n": c, "usd": v} for k, (c, v) in by.items()},
+                }, default=str) + "\n")
+        except Exception as exc:  # pragma: no cover — the report must still send
+            log.warning("[GATE_COST] history unwritable: %s", exc)
+        if not by:
+            return ["💵 <b>Gate cost</b>: nothing blocked and resolved this window"]
+        verb = "cost" if total > 0 else "saved"
+        parts = " | ".join(self._gate_part(k, v, c) for k, (c, v)
+                           in sorted(by.items(), key=lambda kv: kv[1][1], reverse=True))
+        out = [f"💵 <b>Gates {verb} ${abs(total):.2f}</b> over {days:.0f}d, {n} resolved",
+               f"  {parts}"]
+        if prev is not None:
+            try:
+                out.append(f"  <i>previous window: {float(prev.get('net_usd') or 0.0):+.2f} "
+                           f"over {int(prev.get('resolved') or 0)} resolved</i>")
+            except (TypeError, ValueError):
+                pass
+        out.append("<i>counterfactual: the signal the detector would have fired, resolved "
+                   "at the sleeve's own stop/target/clock and sized as it would have sized. "
+                   "Negative = the gate paid for itself.</i>")
+        return out
+
+    @staticmethod
+    def _usd_tag(signals: int, usd: float, floor: float = 0.50) -> str:
+        """The money clause appended to a mover line. Silent below `floor`:
+        a two-cent counterfactual is noise wearing a dollar sign."""
+        if not signals or abs(usd) < floor:
+            return ""
+        return f" · <b>{'missed' if usd > 0 else 'saved'} ${abs(usd):.2f}</b>"
 
     def _why_pmt_lines(self) -> list[str]:
         """The original per-pair PMT diagnosis. Only rendered when PMT entries
@@ -2385,16 +2571,38 @@ class FuturesRuntime:
             # ticker-level gate — a verdict of "data" is exactly the verdict
             # "cheap gates passed, now I need bars". Reusing the verdict to
             # decide this keeps one copy of the funnel order, not two.
+            deep_bars = int(self._env_float("FUTURES_WILDCARD_SCAN_BARS", 672))
             deep = [s for s in top if self._why_symbol_verdict(s, ctx, None)[0] == "data"]
-            frames = self._why_frames(deep, interval="Min15",
-                                      bars=int(self._env_float("FUTURES_WILDCARD_SCAN_BARS", 672)))
+            frames = self._why_frames(deep, interval="Min15", bars=deep_bars)
             n = int(self._env_float("FUTURES_WHY_MOVERS", 4))
-            for title, ranked in (("📈 <b>Top movers · 24h</b>", r24),
-                                  ("📉 <b>Top movers · 48h</b>", r48)):
+            picks = {t: self._why_pick_rows(r, ctx, frames, n)
+                     for t, r in (("📈 <b>Top movers · 24h</b>", r24),
+                                  ("📉 <b>Top movers · 48h</b>", r48))}
+            # Price ONLY the handful of rows that will actually be shown. The
+            # gate that blocked a symbol says nothing about what the detector
+            # would have done with it, so a blocked mover still needs its bars —
+            # but fetching them for the whole pool is the 18s mistake again.
+            shown = {p[2] for rows in picks.values() for p in rows}
+            frames.update(self._why_frames([s for s in shown if s not in frames],
+                                           interval="Min15", bars=deep_bars))
+            equity = float(self._last_known_equity() or 0.0)
+            prices = {s: self._counterfactual_usd(s, frames.get(s), min_roc=ctx["min_roc"],
+                                                  bars_back=192, equity=equity)
+                      for s in shown if frames.get(s) is not None}
+            for title, rows in picks.items():
                 lines.append("")
-                lines += self._why_mover_lines(title, ranked, ctx, frames, n)
+                lines += self._why_mover_lines(title, rows, prices)
+            total = sum(u for _n, u in prices.values())
+            if any(n_ for n_, _u in prices.values()):
+                lines.append(f"💵 These movers: <b>{'missed' if total > 0 else 'saved'} "
+                             f"${abs(total):.2f}</b> net, at the size the sleeve would take")
         except Exception as exc:  # pragma: no cover — diagnosis is best effort
             lines.append(f"\n❔ Mover scan failed ({html.escape(str(exc)[:60])})")
+
+        try:
+            lines += self._gate_cost_lines()
+        except Exception:  # pragma: no cover — the ledger read must never break /why
+            pass
 
         if self._env_float("FUTURES_ENTRY_MIN_SCORE", 0.0) >= 999.0:
             lines.append("\n🎯 PMT entries decommissioned — convex sleeves only.")
@@ -5439,6 +5647,13 @@ class FuturesRuntime:
                     missed = self._missed_opportunity_lines()
                 except Exception:  # a forensic extra must never block the digest
                     missed = []
+            # Priced separately from the missed-opportunity walk: this one reads
+            # the ledger, costs no kline calls, and must therefore still be
+            # reported on the runs where the walk above was skipped.
+            try:
+                missed = (missed or []) + [""] + self._record_gate_cost(days)
+            except Exception as exc:  # pragma: no cover — never block the digest
+                log.warning("[GATE_COST] skipped: %s", exc)
             # Claim the slot BEFORE the expensive work and the send. If the
             # marker cannot be written — /data unmounted, read-only volume —
             # `last` reads back as 0.0 forever, the throttle always passes, and
