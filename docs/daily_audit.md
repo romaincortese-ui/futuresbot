@@ -1,3 +1,210 @@
+# Daily Audit — 2026-08-19
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Window 2026-08-18 16:10 -> 2026-08-19 16:10 UTC. Equity **$139.82**, all cash,
+**0 open positions**. **1 closed trade** (ACE_USDT, +$0.79). `pytest -q` **925
+passed**. Feature store **64 rows** (+2 since 08-16, reconciles to GPS + ACE).
+Shadow ledger **102 rows**, 101 resolved.
+
+**24h realised +$0.79 (+0.61R).**
+
+### 0. Coverage gap — this run also closes 08-17 and 08-18
+
+No audit entries exist for 2026-08-17 or 2026-08-18; the scheduled run did not
+produce them. As a consequence **GPS_USDT (closed 08-17 13:12 UTC, -0.99R,
+-$1.81) was never reported**. It is reviewed below alongside the in-window
+trade. Nothing was lost from the ledger — the feature store and exchange history
+both carry it — but two days of narrative are missing from this file. Flagged as
+an operational item, not a bot fault.
+
+### 1. Trades
+
+| close (UTC) | sym | side | lev | entry_lat | roc3h | peak R | exit | R | $ | acct% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 08-19 02:04 | ACE_USDT | LONG | x1 | 1.00 | +31.0% | **+2.12** | CONVEX_RETENTION_TRAIL | **+0.61** | **+0.79** | +0.57% |
+| 08-17 13:12 | GPS_USDT | LONG | x1 | 1.00 | +9.4% | +0.17 | EXCHANGE_CLOSE (stop) | -0.99 | -1.81 | -1.29% |
+
+Both are WILDCARD. PMT remains `entries_disabled` by design; squeeze remains off
+(`FUTURES_SQUEEZE_ENABLED=0`). No PMT trades, none expected.
+
+**ACE_USDT — the trial-14 treatment paid.** This is the symbol the turnover
+deflator was rebuilt for on 08-14: under the old rolling-window deflator ACE read
+1.000 and was excluded as a "major". It is now in the tradeable band, it fired,
+and it made money. Held 17.9h, margin $19.93, sl_margin 13.04%, fee 2.0% of
+gross. The mover was liquid and cross-listed (`ref_listed=1`).
+
+Two honest qualifications:
+
+- **Peak +2.12R, exit +0.61R — 71% of built profit given back.** That is the
+  retention trail behaving exactly as specified (floor = 0.30 x peak, raised to
+  the sleeve's cost floor), and the design invariant "never give back more than
+  100%" held. But 0.30 is a *floor*, and a trade that reaches +2R and exits at
+  +0.6R is the case the floor is least flattering on. n=1; not a proposal.
+- **The cold-streak throttle halved it.** `streak_multiplier=0.50`
+  (loss_streak=2 from LAB and GPS), `regime_size_mult=1.0`, so realised risk was
+  **0.90% of equity against the 1.87% target** — 48% of intended size. The
+  winner was cut in half; forgone profit ~$0.79.
+
+**GPS_USDT** — entered at `entry_lateness=1.0` on a +9.4% 3h ROC, stopped
+cleanly at -0.99R in 1.5h. No fault: the stop resolved server-side at the
+modelled distance, fee share 1.3%. It is an ordinary loss of the kind the sleeve
+is built to absorb.
+
+**Exit-path check.** Neither exit is a bug. `CONVEX_RETENTION_TRAIL` (trial-7
+proportional retention) and `CONVEX_TIME_STOP` (24h clock) are shipped,
+deliberate convex exit rules in `runtime.py`; the skill file's "-1R stop or +5R
+TP only" description of the convex sleeve is **stale** and should be updated.
+
+### 1-OPEN. Open positions — none
+
+`positions=0` on every `[ACCOUNT]` line in the retained window; equity is 100%
+available. Nothing to report.
+
+### 1a-bis. Learning loop
+
+**(a) Feature store — in sync.** 64 rows, +2 since the 08-16 reading of 62,
+matching exactly the two closes since (GPS, ACE). No censoring in this window.
+Conditional expectancy unchanged in substance at this corpus size; no condition
+newly clears the n>=10 bar. No proposal.
+
+**(b) Shadow ledger — 102 rows, 101 resolved. The funding charge changes the
+numbers materially.** Commit `2016002` now charges funding on counterfactual
+holds, so `outcome_net` is the figure to read, not `outcome`:
+
+| split | n | netR (gross) | **netR (net of cost+funding)** | outcomes |
+|---|---|---|---|---|
+| `shadow_only` | 46 | +16.20 | **+13.70** | stop 18, tp 15, timeout 13 |
+| `veto:ref_not_listed` | 17 | -7.46 | **-9.57** | stop 12, trail 4, timeout 1 |
+| `slot_occupied` | 17 | +10.86 | **+5.36** | trail 7, stop 6, tp 2, timeout 2 |
+| `min_vol_skip` | 12 | +8.99 | +8.71 | tp 5, trail 4, stop 3 |
+| `side_disabled` | 4 | +2.23 | +2.16 | stop 1, tp 1, trail 2 |
+| `calm_shock` | 1 | -1.00 | -1.01 | stop 1 |
+| `veto:crowded_*` / `move_not_corroborated` | 4 | +1.99 | +1.90 | — |
+
+- **Slot cost: +5.36R net over 17 resolved — and +10.00R of the gross is two
+  lottery tickets (SNXX +5.00, HEI +5.00).** Strip those two and the other 15
+  net **-4.64R after funding**. A third slot is **not** supported; the slot-lock
+  is protective. Note also that **no new `slot_occupied` row has appeared since
+  08-05** — with one position at a time and a quiet tape, slot contention is not
+  currently happening at all, so this question is dormant rather than close.
+- **`veto:ref_not_listed` is the strongest guard in the stack and got stronger:
+  -9.57R avoided over 17 rows** (was -4.46R over 14 on 08-16). All three new
+  rows this window are NIULAI_USDT, all three resolved `-1.0R stop`. A
+  MEXC-only micro-pump veto doing precisely its job.
+- One row unresolved: ACE_USDT SHORT, `veto:crowded_shorts(funding=-0.240%)`,
+  opened 08-19 15:13.
+
+**(c) Scan telemetry.** Eight `[WILDCARD_SCAN_SUMMARY]` cycles in the retained
+window, identical in shape:
+
+| | |
+|---|---|
+| movers / scanned / candidates | 28-30 / 24-25 / **0** every cycle |
+| dominant rejection | `roc_below_min` **19-23 of 25** |
+| secondary | `no_pullback_resume` 2-4, `low_volume_z` 0-2, `climax_wick` 0-1 |
+| deflated | **30-31 / 48** |
+| shorts_blocked / shock_blocked | 0 / 0 |
+| order rejects (5003 / 2015), tracebacks | **none** |
+| `[SIZE_TRIM]` lines | none in window |
+
+`[WILDCARD_FUNNEL]` confirms the universe is being scanned in full: usdt=1008 ->
+in_band=670 -> turnover>=$3M: 52 -> range24>=8%: 28 -> scanned 25. The deflator
+reads 30-31/48, so trial 14's "fail OPEN" kill condition (deflators reading
+1.000 across the shortlist) stays clear.
+
+Dormancy cause: an absent tape, not an execution fault. `roc_below_min` is
+rejecting 19-23 of 25 scanned movers every cycle — the movers present simply do
+not move enough. **Correct behaviour; no gate loosening proposed.**
+
+**(d) Decision rule — CONVEX TRIAL 14 progress.**
+
+| | |
+|---|---|
+| closes since 2026-08-14 | **4 / 30** |
+| net R | **+1.68** |
+| net R ex-best | **-1.01** |
+| net $ | **+3.67** |
+| equity drawdown from peak (~$142) | **-1.5%** (kill flag is -20%) |
+| all-time wildcard | n=52, netR +15.23, net $+12.25, win 40% |
+
+Four closes in five days. Nothing is decidable at n=4 and no threshold is
+editorialised here.
+
+### 2. Champion vs shadow
+
+**Shadow stale, comparison suppressed pending resync.** `Futures-shadow` is
+still emitting PMT gate blocks on the 6-pair universe with no wildcard scan at
+all — it remains on the 2026-06-14 build. Action item, unchanged and
+operator-gated: `railway up --service Futures-shadow` (paper, zero live risk).
+
+### 3. Diagnose — the lever
+
+**No lever. Trial 14 runs untouched.**
+
+The one candidate this window suggested was the retention floor (ACE gave back
+71% of a +2.12R peak). Three reasons it is not proposed:
+
+1. n=1, and the floor was set on 444 adversarially re-simulated entries.
+2. Changing an exit parameter mid-trial resets the trial. Trial 14 is at 4/30
+   after nine resets in ~13 days. A tenth reset costs more measurement than the
+   change could plausibly return.
+3. **Dollars.** At 1R = $2.66 and ~24 closes/month, moving the retention floor
+   0.30 -> 0.375 is worth single-digit dollars per month either way — below the
+   $10/month bar the standing objective sets for even discussing a change.
+
+The cold-streak throttle was checked rather than assumed, since it halved this
+window's only winner. Across the 23 rows carrying streak telemetry it has fired
+3 times: it cut BANK (-$0.79 loss) and COTI (-$0.56 loss at x0.25) and ACE
+(+$0.79 win). **Net effect +$1.67 saved.** Throttled trades average -0.493R
+against +0.106R unthrottled — it is firing on genuinely worse trades. It earns
+its keep; no change.
+
+**TRIAL-4 watch item — TP completions.** Of the 24 rows carrying `exit_kind`:
+TP **0 (0%)**, stop 10, OTHER 14. That trips the letter of the watch item
+(<10% TP over >=15 trades, OTHER dominant). It should **not** trigger the TP3R
+proposal, and the reason matters: OTHER now dominates **by design**, not because
++5R is unreachable. `CONVEX_TIME_STOP` and `CONVEX_RETENTION_TRAIL` were shipped
+deliberately and pre-empt the TP by construction. Across the full 52-trade
+ledger six trades did reach ~+5R (ESPORTS +5.09, NIL +5.06, AAVE +5.02, O +5.00,
+TRIA +4.94, USOIL +4.72) — **~12%**, above the bar. The watch item's exit_kind
+proxy is measuring the new exit stack, not target reachability. Recommend the
+watch item be re-specified against R-attainment rather than `exit_kind`.
+
+### 4. Validate
+
+`pytest -q` **925 passed** (up from 892; the gate-cost and shadow-funding commits
+added tests). No candidate staged, so no replay, no MC, no shadow A/B.
+
+### 5. Deploy
+
+**None.** No config change, no code change, no promotion. Docs only.
+
+### 6. Verdict on recent changes
+
+| change | shipped | live evidence | verdict |
+|---|---|---|---|
+| Turnover deflator (trial 14) | 08-14 | ACE now in band, traded, +$0.79; TUT +$5.42; deflator 30-31/48, no fail-open | **earning its keep** |
+| Retention trail (0.30 x peak) | trial 7 | ACE +0.61R off a +2.12R peak; invariant held | works as specified; giveback is the open question |
+| 24h convex time stop | trial ~13 | TUT +2.69R off +4.14R; LAB -0.63R | neutral-to-positive, n=4 |
+| Cold-streak throttle | earlier | 3 firings, +$1.67 net saved | **earning its keep** |
+| Funding on counterfactuals | 08-18 | slot_occupied +10.86R -> +5.36R | corrects an over-optimistic ledger; keep |
+| `ref_not_listed` veto | earlier | -9.57R avoided over 17 | **strongest guard in the stack** |
+
+### 7. Summary
+
+- 1 close in window (ACE +0.61R / +$0.79); GPS (-0.99R / -$1.81) recovered from
+  the unreported 08-17 gap.
+- 0 open positions, equity $139.82, drawdown -1.5% from peak.
+- Trial 14 at 4/30, netR +1.68, ex-best -1.01.
+- No lever, no deploy. Three items for the operator: resync Futures-shadow;
+  update the skill file's stale convex-exit description; re-specify the TP watch
+  item against R-attainment.
+
+---
+
 # Daily Audit — 2026-08-16
 
 ---
