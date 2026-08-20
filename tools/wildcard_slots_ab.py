@@ -50,6 +50,31 @@ live sleeve took ~25 and earns far more than the live ledger's +$12.40. The
 SLOT COMPARISON is still fair — every arm carries the same omissions — but do
 not read +$95.71 as money the live bot would have made.
 
+SAME-SYMBOL STACKING, tested 2026-08-20 (continuous pass, 109 band symbols, 62d,
+each stacked entry idealised as fully independent):
+
+    per-symbol cap  slots  trades    net $   win%   maxDD  ret/DD
+      1/symbol        2     139   +107.66  60.4%  -27.61   3.90
+      1/symbol        3     166   +126.81  59.6%  -31.80   3.99  <- best cell
+      1/symbol        4     174   +114.96  58.0%  -36.64   3.14
+      2/symbol        3     202    +91.76  56.9%  -35.34   2.60
+      3/symbol        3     206    +83.62  56.8%  -35.34   2.37
+
+STACKING IS HARMFUL HERE — the exact opposite of the TREND sleeve, where a
+second position per symbol nearly doubled return. The mechanism is slot
+scarcity: TREND has 2 symbols and idle slots, so stacking fills capacity that
+would otherwise go unused. WILDCARD has ~109 symbols competing for 3 slots, so a
+second position on a name already held CROWDS OUT a fresh signal elsewhere — and
+at band correlation r=+0.211 that fresh signal is worth far more than another
+copy of the same bet. At 3 slots stacking costs -$35.05 and 2.7 points of win
+rate.
+
+The 3-slot optimum is reconfirmed by this independent framing. NOTE the two runs
+are not the same computation: the windowed sweep above resets slot state every 7
+days and resolves at each window end (conservative), while the stacking run is a
+single continuous pass. Same trade count at 3 slots (166) but +$95.71 vs
++$126.81, so treat MAGNITUDES as approximate and the RANK ORDER as the signal.
+
 Read-only. Places nothing.
 
 Env: WS_SPAN_D (56) WS_WINDOW_D (7) WS_MAX_SLOTS (6) WS_POOL_TURNOVER (1e6)
