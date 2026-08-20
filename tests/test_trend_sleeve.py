@@ -207,3 +207,45 @@ def test_trend_status_line_reports_what_the_scan_saw(rt):
     assert "3 scanned" in text and "0</b> signals" in text
     assert "24h move too small ×3" in text
     assert "roc_below_min" not in text, "enums are jargon on a phone"
+
+
+# --------------------------------------------------------------------------
+# The entry message must not promise machinery this sleeve does not have
+# --------------------------------------------------------------------------
+
+def test_no_partial_bank_promise_on_a_convex_position(rt, monkeypatch):
+    """The first live TREND entry advertised "Bank 50% at +1R | runner to TP".
+    _maybe_partial_bank refuses every convex position, so that was a promise the
+    bot could not keep — and it appeared because the guard was a hand-maintained
+    tuple of sleeve names that nobody extended when TREND shipped."""
+    monkeypatch.setenv("FUTURES_PARTIAL_BANK_ENABLED", "1")
+    for marker in ({"trend": 1.0}, {"squeeze": 1.0}, {}):
+        pos = _pos(pmt_stop_first=1.0, **marker)
+        if marker:
+            assert rt._partial_bank_plan_line(pos) == "", f"{marker} must not promise a bank"
+
+
+def test_the_guard_is_not_a_list_of_sleeve_names():
+    """Pinned as source: a new convex sleeve must be excluded by construction,
+    not by remembering to edit a tuple in a message builder."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._partial_bank_plan_line)
+    assert '!= "PMT"' in src
+    assert '"WILDCARD", "SNIPER", "SQUEEZE"' not in src
+
+
+def test_every_registry_that_lists_sleeves_knows_about_trend():
+    """Three separate hand-maintained lists missed TREND on the day it shipped:
+    the bank-line guard, per-account sleeve gating, and the learning engine's
+    convex bucket. Fail loudly if a fourth appears."""
+    from futuresbot import accounts
+    from futuresbot import shadow_ledger as shadow
+    from futuresbot.conditional_expectancy import default_conditions
+
+    assert "TREND" in accounts.KNOWN_SLEEVES
+    assert "TREND" in shadow.CONVEX_SLEEVES
+    convex = [k for k in default_conditions() if k.startswith("kind=CONVEX")]
+    assert convex, "the convex bucket disappeared"
+    row = {"kind": "TREND"}
+    assert default_conditions()[convex[0]](row), "TREND must land in the convex bucket"

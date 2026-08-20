@@ -3169,8 +3169,15 @@ class FuturesRuntime:
         if not partial_bank_enabled() or not self._metadata_float(metadata, "pmt_stop_first"):
             return ""
         # _maybe_partial_bank refuses every convex position, so advertising a
-        # "+1R bank" on one was a promise the bot could not keep.
-        if self._sleeve_kind(position) in ("WILDCARD", "SNIPER", "SQUEEZE"):
+        # "+1R bank" on one is a promise the bot cannot keep.
+        #
+        # Tested as "not PMT" rather than against a list of sleeve names. The
+        # list version silently broke the moment TREND shipped (2026-08-20): a
+        # BTC_USDT TREND_LONG entry advertised "Bank 50% at +1R" it would never
+        # take, because nobody remembered to extend a tuple in a message
+        # builder. Partial banking is PMT machinery; every other sleeve is
+        # convex and must be excluded by construction, not by memory.
+        if self._sleeve_kind(position) != "PMT":
             return ""
         entry = float(position.entry_price or 0.0)
         sl = float(position.sl_price or 0.0)

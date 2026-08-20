@@ -27,7 +27,7 @@ DEFAULT_ACCOUNT_ID = "main"
 
 # Sleeves that can be enabled per account. PMT is decommissioned but named here
 # so an old config that mentions it resolves rather than raising.
-KNOWN_SLEEVES = ("WILDCARD", "SQUEEZE", "PMT")
+KNOWN_SLEEVES = ("WILDCARD", "SQUEEZE", "TREND", "PMT")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -115,7 +115,8 @@ class Policy:
     leverage_max: int = 25
     max_stop_margin_pct: float = 20.0
     risk_pct_per_trade: float = 0.0          # 0 = disabled, matching today
-    max_concurrent: Mapping[str, int] = field(default_factory=lambda: {"WILDCARD": 2, "SQUEEZE": 1})
+    max_concurrent: Mapping[str, int] = field(
+        default_factory=lambda: {"WILDCARD": 2, "SQUEEZE": 1, "TREND": 1})
     sleeves_enabled: frozenset[str] = frozenset(("WILDCARD", "SQUEEZE"))
     hard_limits: HardLimits = field(default_factory=HardLimits)
 

@@ -141,7 +141,7 @@ def default_conditions() -> dict:
     return {
         "kind=WILDCARD": lambda r: r.get("kind") == "WILDCARD" or bool(r.get("is_wildcard")),
         "kind=SQUEEZE": lambda r: r.get("kind") == "SQUEEZE",
-        "kind=CONVEX(wc+sq)": lambda r: r.get("kind") in ("WILDCARD", "SQUEEZE") or bool(r.get("is_wildcard")),
+        "kind=CONVEX(wc+sq+tr)": lambda r: r.get("kind") in ("WILDCARD", "SQUEEZE", "TREND") or bool(r.get("is_wildcard")),
         "kind=PMT": lambda r: r.get("kind") == "PMT",
         "side=SHORT": lambda r: r.get("side") == "SHORT",
         "side=LONG": lambda r: r.get("side") == "LONG",
