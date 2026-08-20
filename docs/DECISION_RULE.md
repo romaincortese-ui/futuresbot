@@ -98,6 +98,42 @@ drift-controlled study put the entire measured edge in the LONGS (+0.244R vs
   `FUTURES_TREND_LONG_ONLY=1`, keeping the long arm.
 - `FUTURES_TREND_ENABLED=0` disables the whole sleeve, env-only, no deploy.
 
+### Amendment, 2026-08-20 (same day): 3 slots, LONG ONLY
+
+Operator asked whether 1 slot was too restrictive. Measured on the big 3 with
+the shipped detector, live exits, funding, 63d x 8 windows:
+
+| arm | 1 slot | 2 slots | 3 slots | win% |
+|---|---|---|---|---|
+| LONG only | +$6.45 | +$14.31 | **+$16.12** | 53% |
+| SHORT only | -$14.05 | -$24.78 | -$33.64 | 24% and falling |
+| both (as shipped) | -$7.60 | -$10.47 | -$17.51 | 43% |
+
+Two findings, and they are coupled:
+
+1. **More slots help — but only the arm that works.** Long-only return more than
+   doubles 1 -> 3 while max drawdown rises 13% (-15.62 -> -17.64); the third slot
+   LOWERS drawdown against the second. Return/DD 0.41 -> 0.79 -> 0.91. BTC/ETH
+   correlate at **r=+0.914**, so the expectation was that three concurrent longs
+   are one 3x bet — but each name sets its own new 24h closing extreme at a
+   different moment, so the holdings only partly overlap.
+2. **The short arm loses and slots amplify it.** Shipping 3 slots with shorts on
+   would have produced the worst cell in the table.
+
+Drift-controlled: over the span BTC +14.3%, ETH +34.0%, SOL +25.2%, yet a RANDOM
+long entry with the same sizing and exits lost **-$73.10 over 595 fills**
+(-$0.12/trade, -$3.69 scaled to 30 trades). The long arm at 3 slots is ~+$20
+ahead of random, so it is not beta.
+
+Live config becomes `FUTURES_TREND_MAX_POSITIONS=3`, `FUTURES_TREND_LONG_ONLY=1`.
+Short signals are still DETECTED and shadow-logged, so the live short question
+stays answerable. `FUTURES_TREND_LONG_ONLY=0` restores them, env-only.
+
+Concurrent exposure at the new cap: 3 trend + 2 wildcard = 5 slots, ~$82 margin
+(59% of equity) and ~$13.00 of risk at stops (**9.4% of equity**) if all five are
+open and all five stop out together. The wildcard's 20% SL cap and the 2-slot
+wildcard limit are unchanged.
+
 ## What this trial does NOT change
 
 Wildcard (2 slots, small-cap band, 3h impulse), squeeze (off), PMT (off), the

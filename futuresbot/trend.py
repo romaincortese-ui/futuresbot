@@ -62,10 +62,26 @@ def trend_symbols() -> tuple[str, ...]:
 
 
 def trend_max_positions() -> int:
+    """Three by default — one per big-3 name, which is the natural ceiling since
+    the scan already refuses a symbol it is holding.
+
+    Measured 2026-08-20, 63d x 8 windows, long arm, shipped detector and exits:
+
+        slots   net $    trades   maxDD    return/DD
+          1     +6.45      19    -15.62      0.41
+          2    +14.31      25    -18.19      0.79
+          3    +16.12      30    -17.64      0.91
+
+    Return more than doubles while drawdown rises 13%, and the third slot
+    LOWERS drawdown against the second. That is not what adding leverage looks
+    like. BTC/ETH are correlated at r=+0.914, so the naive expectation was that
+    three concurrent longs are one 3x bet — but the entries fire at different
+    moments (each name sets its own new 24h closing extreme), so the holdings
+    only partly overlap and the diversification is real."""
     try:
-        return max(1, int(_f("FUTURES_TREND_MAX_POSITIONS", 1)))
+        return max(1, int(_f("FUTURES_TREND_MAX_POSITIONS", 3)))
     except ValueError:
-        return 1
+        return 3
 
 
 def trend_scan_interval_seconds() -> int:
@@ -75,12 +91,24 @@ def trend_scan_interval_seconds() -> int:
 def trend_long_only() -> bool:
     """Shorts are DETECTED by default and taken unless this is on.
 
-    The operator asked for both directions and that is the default here. The
-    honest caveat, recorded where it will be read: the 90-day drift-controlled
-    study put the entire measured edge in the LONGS (+0.244R vs -0.225R), and
-    the 63-day probe behind this sleeve was long-only. The short arm is live on
-    the operator's instruction, not on evidence."""
-    return _b("FUTURES_TREND_LONG_ONLY", False)
+    Shipped bidirectional on 2026-08-20 at the operator's request, with the
+    caveat recorded that the 90-day drift-controlled study put the entire edge
+    in the LONGS and the probe behind this sleeve was long-only. Measuring the
+    short arm on the big 3 the same day settled it:
+
+        arm          1 slot    2 slots   3 slots   win%
+        LONG only    +$6.45   +$14.31   +$16.12   53%
+        SHORT only  -$14.05   -$24.78   -$33.64   24% and falling
+
+    Shorts lose, and slots AMPLIFY whichever arm they are given — so shipping
+    the 3-slot change with shorts enabled would have taken the sleeve to its
+    worst configuration of all (-$17.51). The two are coupled, which is why the
+    default flipped with the slot count.
+
+    Set FUTURES_TREND_LONG_ONLY=0 to restore shorts; env-only, no deploy. Short
+    signals are still DETECTED and shadow-logged either way, so the question
+    stays answerable from live data."""
+    return _b("FUTURES_TREND_LONG_ONLY", True)
 
 
 def _rej(reasons, tag):

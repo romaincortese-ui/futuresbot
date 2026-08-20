@@ -139,11 +139,29 @@ def test_defaults_to_the_big_three():
     assert T.trend_symbols() == ("BTC_USDT", "ETH_USDT", "SOL_USDT")
 
 
-def test_shorts_are_live_by_default(monkeypatch):
-    """The operator asked for both directions explicitly."""
-    assert T.trend_long_only() is False
-    monkeypatch.setenv("FUTURES_TREND_LONG_ONLY", "1")
+def test_shorts_are_off_by_default_on_the_evidence(monkeypatch):
+    """Shipped bidirectional at the operator's request, then measured on the big
+    3 the same day: LONG +$6.45/+$14.31/+$16.12 at 1/2/3 slots (53% win), SHORT
+    -$14.05/-$24.78/-$33.64 (24% win and falling). Slots amplify whichever arm
+    they are given, so 3 slots WITH shorts is the worst cell of all (-$17.51).
+    The two settings are coupled."""
     assert T.trend_long_only() is True
+    monkeypatch.setenv("FUTURES_TREND_LONG_ONLY", "0")
+    assert T.trend_long_only() is False, "restoring shorts must stay env-only"
+
+
+def test_three_slots_by_default():
+    """One per big-3 name — the natural ceiling, since the scan already refuses
+    a symbol it holds. Return more than doubled 1->3 slots while drawdown rose
+    13%, and return/DD improved 0.41 -> 0.91."""
+    assert T.trend_max_positions() == 3
+
+
+def test_short_signals_are_still_detected_when_not_taken():
+    """Turning shorts off must not blind the ledger: the detector still emits
+    them so the question stays answerable from live data."""
+    sig = T.detect_trend_signal(_frame(_ramp(total=-0.20)), "ETH_USDT")
+    assert sig is not None and sig.side == "SHORT"
 
 
 # --------------------------------------------------------------------------
@@ -195,7 +213,7 @@ def test_status_and_why_both_surface_the_trend_slot(rt, monkeypatch):
     monkeypatch.setattr(rt, "_why_context",
                         lambda: (_ for _ in ()).throw(RuntimeError("no net")))
     why = rt._build_why_message()
-    assert "trend 0/1" in why and "Big-3 trend" in why
+    assert "trend 0/3" in why and "Big-3 trend" in why
 
 
 def test_trend_status_line_reports_what_the_scan_saw(rt):
