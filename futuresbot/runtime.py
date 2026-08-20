@@ -107,6 +107,7 @@ from futuresbot.pmt_strategy import diagnose_pmt_threshold_rejection, pmt_balanc
 from futuresbot.risk_controls import regime_size_multiplier, risk_capped_contracts, trend_efficiency
 from futuresbot.sniper import VARIANTS, active_variants, capped_available, detect_sniper_signal, sniper_enabled, sniper_live_variants, sniper_max_notional_pct, sniper_max_positions, sniper_min_turnover_usdt, sniper_rearm_seconds, sniper_scan_interval_seconds, sniper_shadow_only, sniper_universe, symbol_allowed
 from futuresbot.wildcard import detect_wildcard_signal, wildcard_enabled, wildcard_long_only, wildcard_max_positions, wildcard_min_turnover_usdt, wildcard_scan_interval_seconds
+from futuresbot.trend import detect_trend_signal, trend_enabled, trend_long_only, trend_max_positions, trend_scan_interval_seconds, trend_symbols
 from futuresbot.squeeze import detect_squeeze_signal, squeeze_enabled, squeeze_max_positions
 from futuresbot.sharp_opportunity import (
     build_sharp_event_signal,
@@ -234,6 +235,8 @@ class FuturesRuntime:
         # "Signal: none", and the owner had no surface that showed it.
         self._last_wildcard_scan: dict[str, Any] | None = None
         self._last_squeeze_scan_at = 0.0
+        self._last_trend_scan_at = 0.0
+        self._last_trend_scan: dict[str, Any] | None = None
         self._last_sniper_scan_at: dict[str, float] = {}
         self._sniper_last_signal_at: dict[tuple[str, str, str], float] = {}
         # Candidates already shadow-logged during the CURRENT slot-blocked
@@ -1392,7 +1395,7 @@ class FuturesRuntime:
         stop makes round-trip cost 0.52R, so a 0.30xpeak retention floor sits
         BELOW its own breakeven and banks a loss at any peak under ~1.7R
         (AVAX_USDT 2026-08-09: peak +1.68R -> closed -0.01R)."""
-        return (self._sleeve_kind(position) in ("WILDCARD", "SQUEEZE")
+        return (self._sleeve_kind(position) in ("WILDCARD", "SQUEEZE", "TREND")
                 and self._flag("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", default=False))
 
     def _skips_discretionary_locks(self, position: FuturesPosition) -> bool:
@@ -2383,6 +2386,7 @@ class FuturesRuntime:
 
     _GATE_COST_LABELS = {
         "veto": "external gate", "slot_occupied": "no free slot",
+        "trend_slot": "no free trend slot",
         "side_disabled": "shorts off", "min_vol_skip": "size below min",
         "calm_shock": "calm-shock guard", "shadow_only": "shadow mode",
     }
@@ -2597,10 +2601,12 @@ class FuturesRuntime:
         wc_open, wc_max = self._convex_open_count("WILDCARD"), wildcard_max_positions()
         sq = (f"squeeze {self._convex_open_count('SQUEEZE')}/{squeeze_max_positions()}"
               if squeeze_enabled() else "squeeze off")
+        tr = (f"trend {self._convex_open_count('TREND')}/{trend_max_positions()}"
+              if trend_enabled() else "trend off")
         lines = [
             f"🔬 <b>Why no trade</b> [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
-            f"🎰 Slots: wildcard <b>{wc_open}/{wc_max}</b> · {sq}"
+            f"🎰 Slots: wildcard <b>{wc_open}/{wc_max}</b> · {sq} · {tr}"
             + (" · ⏸️ paused" if self._paused else ""),
         ]
         if not wildcard_enabled():
@@ -2624,6 +2630,12 @@ class FuturesRuntime:
         last = self._last_wildcard_reject()
         if last:
             lines.append("🕒" + last.replace("  last skip:", " Last skip:", 1))
+
+        if trend_enabled():
+            lines.append("")
+            lines.append("📈 <b>Big-3 trend</b> (BTC · ETH · SOL)")
+            lines += [l.replace("  📈 trend", "  scan").replace("    ", "  ")
+                      for l in self._trend_status_lines()]
 
         try:
             ctx = self._why_context()
@@ -2797,6 +2809,43 @@ class FuturesRuntime:
                 else f"real $, {one_r_txt.strip(' |') or 'tiny'}, no edge at taker fees")
         return (f"  🎯 <b>{html.escape(str(variant_name))}</b> meter ({what}): "
                 f"<b>{len(fills)}/{target_fills}</b> fills | net <b>${net:+.2f}</b>")
+
+    def _trend_status_lines(self) -> list[str]:
+        """One line of trend-sleeve state, mirroring the wildcard block.
+
+        A sleeve that reports nothing is a sleeve nobody can tell is broken —
+        the wildcard ran with `Signal: none` hard-coded for weeks. This prints
+        what the last scan actually saw."""
+        snap = self._last_trend_scan
+        if not snap:
+            return ["  📈 trend: no scan yet"]
+        age_m = max(0.0, (time.time() - float(snap.get("at") or 0.0)) / 60.0)
+        lines = [f"  📈 trend {age_m:.0f}m ago: {int(snap.get('scanned') or 0)} scanned → "
+                 f"<b>{int(snap.get('cands') or 0)}</b> signals "
+                 f"({int(snap.get('lookback_h') or 24)}h window)"]
+        best = snap.get("best")
+        if best:
+            lines.append(f"    best: <b>{html.escape(str(best.get('symbol')))}</b> "
+                         f"{best.get('side')} {float(best.get('roc') or 0) * 100:+.1f}%/"
+                         f"{int(snap.get('lookback_h') or 24)}h")
+        else:
+            hist = snap.get("hist") or {}
+            if hist:
+                top = sorted(hist.items(), key=lambda kv: -kv[1])[:2]
+                lines.append("    blocked: " + " · ".join(
+                    f"{self._TREND_LABELS.get(k, k.replace('_', ' '))} ×{v}" for k, v in top))
+        return lines
+
+    _TREND_LABELS = {
+        "roc_below_min": "24h move too small",
+        "no_new_extreme": "not at a new 24h extreme",
+        "rsi_exhausted": "RSI exhausted",
+        "short_frame": "not enough history",
+        "no_atr": "no ATR",
+        "symbol_open": "already open",
+        "kline_error": "no bars",
+        "bad_price": "bad price data",
+    }
 
     def _wildcard_status_lines(self) -> list[str]:
         """What the wildcard sleeve is actually seeing, for /status.
@@ -2981,6 +3030,8 @@ class FuturesRuntime:
             slots.append(f"🎲 WC <b>{self._convex_open_count('WILDCARD')}</b>/{wildcard_max_positions()}")
         if squeeze_enabled():
             slots.append(f"🌀 SQ <b>{self._convex_open_count('SQUEEZE')}</b>/{squeeze_max_positions()}")
+        if trend_enabled():
+            slots.append(f"📈 TR <b>{self._convex_open_count('TREND')}</b>/{trend_max_positions()}")
         pmt_live = pmt_strategy_enabled() and not pmt_blocked
         if pmt_live:
             slots.append(f"PMT <b>{sum(1 for p in self.open_positions.values() if self._sleeve_kind(p) == 'PMT')}</b>"
@@ -2988,7 +3039,8 @@ class FuturesRuntime:
         # "PMT decommissioned" was printed twice (standalone line + Sys line).
         # It belongs here, once, next to the other sleeve that is switched off.
         off = [n for n, on in (("PMT", pmt_live), ("Squeeze", squeeze_enabled()),
-                               ("Sniper", sniper_enabled())) if not on]
+                               ("Trend", trend_enabled()), ("Sniper", sniper_enabled()))
+               if not on]
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
@@ -2998,6 +3050,7 @@ class FuturesRuntime:
                f"({html.escape(self._universe_label(active_syms))}): "
                f"{html.escape(', '.join(active_syms))}"] if not pmt_blocked else []),
             *(self._wildcard_status_lines() if wildcard_enabled() else []),
+            *(self._trend_status_lines() if trend_enabled() else []),
             self._btc_trend_line(),
             # One system line instead of three (calibration / overlay / entries):
             # each was a full row of mostly-static state.
@@ -4148,7 +4201,8 @@ class FuturesRuntime:
         streak = 0
         for row in reversed(self.trade_history[-20:]):
             es = str(row.get("entry_signal") or "")
-            if not (es.startswith("WILDCARD") or es.startswith("SQUEEZE")):
+            if not (es.startswith("WILDCARD") or es.startswith("SQUEEZE")
+                    or es.startswith("TREND")):
                 continue  # PMT/other rows don't inform the convex streak
             if float(row.get("pnl_usdt") or 0.0) < 0:
                 streak += 1
@@ -4303,7 +4357,9 @@ class FuturesRuntime:
         (Stage-2 conditional-expectancy corpus). Best-effort; never breaks a close."""
         try:
             es = str(trade.get("entry_signal") or getattr(position, "entry_signal", "") or "")
-            kind = ("SQUEEZE" if es.startswith("SQUEEZE") else "WILDCARD" if es.startswith("WILDCARD")
+            kind = ("TREND" if es.startswith("TREND")
+                    else "SQUEEZE" if es.startswith("SQUEEZE")
+                    else "WILDCARD" if es.startswith("WILDCARD")
                     else "SNIPER" if es.startswith("SNIPER") else "PMT")
             try:
                 ts = datetime.fromisoformat(trade["exit_time"]).timestamp()
@@ -5392,6 +5448,100 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — wildcard never breaks the cycle
             log.warning("[WILDCARD_SCAN] failed: %s", exc)
 
+    def _maybe_scan_trend(self) -> None:
+        """BIG-3 TREND sleeve: a sustained 24h move on BTC/ETH/SOL, entered on a
+        new 24h closing extreme, in its OWN slot.
+
+        Closes a structural gap, not a missed trade: on 2026-08-19 ETH ran
+        +17.4%/24h and nothing could touch it, because the wildcard excludes
+        majors and hunts a 3h impulse, the squeeze needs a coil to release, and
+        PMT is decommissioned. Off unless FUTURES_TREND_ENABLED=1. Best-effort;
+        never raises into the cycle."""
+        if not trend_enabled() or self._paused:
+            return
+        now_t = time.time()
+        if now_t - self._last_trend_scan_at < trend_scan_interval_seconds():
+            return
+        self._last_trend_scan_at = now_t
+        # Scan even with the slot full, so the untaken candidate is shadow-logged
+        # and resolved as a counterfactual (same reason the wildcard does).
+        slot_blocked = self._convex_open_count("TREND") >= trend_max_positions()
+        try:
+            snapshot = self._account_snapshot(self._get_reference_price())
+            available = float(snapshot.get("available_usdt", 0.0) or 0.0)
+            if available <= 0:
+                return
+            symbols = trend_symbols()
+            lookback = int(self._env_float("FUTURES_TREND_LOOKBACK_HOURS", 24.0))
+            bars = int(self._env_float("FUTURES_TREND_SCAN_BARS", 400))
+            end = int(now_t)
+            cands: list = []
+            hist: dict[str, int] = {}
+            scanned = 0
+            for sym in symbols:
+                if sym in self.open_positions:
+                    hist["symbol_open"] = hist.get("symbol_open", 0) + 1
+                    continue
+                try:
+                    df = self.client.get_klines(sym, interval="Min15",
+                                                start=end - bars * 900, end=end)
+                except Exception:
+                    hist["kline_error"] = hist.get("kline_error", 0) + 1
+                    continue
+                scanned += 1
+                reasons: list[str] = []
+                sig = detect_trend_signal(df, sym, reasons)
+                for r in reasons:
+                    hist[r] = hist.get(r, 0) + 1
+                if sig is not None:
+                    cands.append(sig)
+            # Strongest move first. No lateness ranking here: unlike the wildcard
+            # there is no "deep pullback" tier to prefer — the entry IS the
+            # extreme, so |roc| is the only ordering that means anything.
+            cands.sort(key=lambda x: abs(float(x.roc_pct or 0.0)), reverse=True)
+            shorts_blocked = 0
+            if trend_long_only():
+                kept = []
+                for sig in cands:
+                    if sig.side == "SHORT":
+                        shorts_blocked += 1
+                        self._shadow_log_untaken(sig, "TREND", "side_disabled")
+                    else:
+                        kept.append(sig)
+                cands = kept
+            best = cands[0] if cands else None
+            self._last_trend_scan = {
+                "at": now_t, "scanned": scanned, "cands": len(cands),
+                "hist": dict(hist or {}), "shorts_blocked": shorts_blocked,
+                "lookback_h": lookback,
+                "best": ({"symbol": best.symbol, "side": best.side,
+                          "roc": float(best.roc_pct or 0.0)} if best is not None else None),
+            }
+            log.info("[TREND_SCAN_SUMMARY] symbols=%d scanned=%d candidates=%d "
+                     "shorts_blocked=%d lookback=%dh histogram=%s signal=%s",
+                     len(symbols), scanned, len(cands), shorts_blocked, lookback,
+                     hist or "{}", best.symbol if best else "none")
+            if best is None:
+                return
+            if slot_blocked:
+                self._shadow_log_untaken(best, "TREND", "slot_occupied")
+                log.info("[TREND_SCAN_SUMMARY] skipped=slot_occupied candidate=%s open=%d",
+                         best.symbol, self._convex_open_count("TREND"))
+                return
+            for sig in cands:
+                if self._flag("FUTURES_EXTERNAL_GATE_ENABLED", default=False):
+                    allow, reason = self._external_entry_veto(sig, "TREND")
+                    if not allow:
+                        log.info("[EXTERNAL_GATE] VETO TREND %s %s — %s (trying next)",
+                                 sig.side, sig.symbol, reason)
+                        self._shadow_log_untaken(sig, "TREND", f"veto:{reason}")
+                        continue
+                if self._open_wildcard_position(sig, available, kind="TREND",
+                                                veto_checked=True):
+                    return
+        except Exception as exc:  # pragma: no cover — never breaks the cycle
+            log.warning("[TREND_SCAN] failed: %s", exc)
+
     def _maybe_scan_squeeze(self) -> None:
         """Coiled-Spring strategy: scan the LIQUID universe for a volatility
         squeeze that just RELEASED (futuresbot.squeeze) and open it in the shared
@@ -5672,6 +5822,8 @@ class FuturesRuntime:
         entry primitive sets it), so the specific markers must be tested first.
         """
         md = (position.metadata if position and isinstance(position.metadata, dict) else {}) or {}
+        if md.get("trend"):
+            return "TREND"
         if md.get("squeeze"):
             return "SQUEEZE"
         if md.get("sniper"):
@@ -6490,7 +6642,13 @@ class FuturesRuntime:
             "sl_frac_designed": getattr(sig, "sl_frac_designed", None),
             "equity_at_open_usdt": self._last_known_equity(),
         }
-        if kind == "SQUEEZE":
+        if kind == "TREND":
+            # Marker checked BEFORE wildcard in _sleeve_kind, so a trend
+            # position gets its own slot and its own attribution rather than
+            # silently consuming a wildcard one — the exact defect that made a
+            # SNIPER position indistinguishable from a wildcard in trial 6.
+            metadata["trend"] = 1.0
+        elif kind == "SQUEEZE":
             metadata["squeeze"] = 1.0
         elif kind == "SNIPER":
             # ROOT CAUSE FIX 2026-08-09. This primitive is shared by all three
@@ -10429,6 +10587,7 @@ class FuturesRuntime:
                 # Best-effort; never affects the PMT path. Off unless enabled.
                 self._maybe_scan_wildcard()
                 self._maybe_scan_squeeze()  # Coiled-Spring (off unless FUTURES_SQUEEZE_ENABLED=1)
+                self._maybe_scan_trend()   # Big-3 trend (off unless FUTURES_TREND_ENABLED=1)
                 self._maybe_scan_sniper()   # liquid-pair continuation, SHADOW-only by default
                 # Counterfactual resolution belongs to the CYCLE, not to a sleeve:
                 # it lived inside the squeeze scan, so disabling that sleeve

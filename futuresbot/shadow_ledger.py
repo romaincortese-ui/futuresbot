@@ -43,7 +43,7 @@ CONVEX_COST_FLOOR_MULT = 1.5
 CONVEX_HORIZON_S = 24 * 3600
 # Sleeves the convex stack applies to. SNIPER is deliberately absent: it is
 # excluded from the convex exits in the runtime too, so the bracket is right.
-CONVEX_SLEEVES = frozenset({"WILDCARD", "SQUEEZE"})
+CONVEX_SLEEVES = frozenset({"WILDCARD", "SQUEEZE", "TREND"})
 # Round-trip taker + slippage as a percent of notional; same constant the live
 # trail floors on (FUTURES_CONVEX_COST_PCT).
 COST_PCT = 0.190

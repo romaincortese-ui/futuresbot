@@ -73,7 +73,11 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
                           missed_lines: list[str] | None = None) -> str:
     # Trial 7 is scored on WILDCARD closes (docs/DECISION_RULE.md). Counting
     # SQUEEZE here made the digest disagree with /status on the same "n/30".
-    convex = [r for r in store_rows if str(r.get("kind") or "").upper() == "WILDCARD"]
+    # Trial 15 (2026-08-20) adds the big-3 TREND sleeve. The scoreboard counts
+    # the convex BOOK, not one sleeve — scoring a trial while ignoring the sleeve
+    # the trial exists to test is how trials 11 and 12 closed at "0 closes".
+    convex = [r for r in store_rows
+              if str(r.get("kind") or "").upper() in ("WILDCARD", "TREND")]
     trial = [r for r in convex if float(r.get("ts") or 0) >= trial_start]
     rs = [float(r.get("r_multiple") or 0) for r in trial]
     lines = ["🧭 <b>Weekly learning digest</b>", "━━━━━━━━━━━━━━━"]
@@ -101,6 +105,15 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
             r_arm = [float(r.get("r_multiple") or 0) for r in arm]
             w = sum(1 for x in r_arm if x > 0)
             lines.append(f"  {side}: <b>{len(arm)}</b> | netR <b>{sum(r_arm):+.2f}</b> "
+                         f"| ${sum(float(r.get('pnl_usdt') or 0) for r in arm):+.2f} "
+                         f"| win {100 * w / len(arm):.0f}%")
+
+    for sleeve in ("WILDCARD", "TREND"):
+        arm = [r for r in trial if str(r.get("kind") or "").upper() == sleeve]
+        if arm:
+            r_arm = [float(r.get("r_multiple") or 0) for r in arm]
+            w = sum(1 for x in r_arm if x > 0)
+            lines.append(f"  {sleeve}: <b>{len(arm)}</b> | netR <b>{sum(r_arm):+.2f}</b> "
                          f"| ${sum(float(r.get('pnl_usdt') or 0) for r in arm):+.2f} "
                          f"| win {100 * w / len(arm):.0f}%")
 

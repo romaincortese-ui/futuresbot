@@ -25,6 +25,87 @@ increase wearing one's clothes.
 
 ---
 
+# Pre-registered decision rule — CONVEX TRIAL 15 (from 2026-08-20)
+
+## Trial 14 closed at 3 closes: netR -1.01, net $-1.75.
+
+LAB -0.63R (24h clock), GPS -0.99R (clean stop), ACE +0.61R (retention trail
+from a +2.12R peak). Nothing about the deflator fix was disproved; the sample
+was simply too small to say anything, which is the ninth time in a row.
+
+## Trial 15: the BIG-3 TREND sleeve — a STRUCTURAL gap, not a parameter
+
+On 2026-08-19 the US Treasury doubled long-dated bond buybacks and the SEC
+proposed a crypto framework. ETH ran **+17.4%/24h**, SOL +11.7%, BTC +8.3%,
+amplified by $1.11B of short liquidations on BTC alone. The bot could not touch
+any of it, and three independent blocks explain why:
+
+| block | evidence |
+|---|---|
+| wildcard excludes majors AND hunts a 3h impulse | BTC peak 3h **+6.00%**, SOL **+6.16%** — under its 8% floor |
+| ...and ETH DID clear that floor | peak 3h **+9.45%** @ 21:15, then killed by `no_pullback_resume` **x7** |
+| squeeze needs a coil to RELEASE | 72h replay: **0 signals** on all three; 285/247/230 bars `no_active_coil` |
+| PMT was the only majors sleeve | decommissioned 2026-07-13 |
+
+This is additive capacity — the class of change that has historically worked
+here — not a trigger tweak, the class that is 5-for-5 rejected.
+
+### The rule
+
+LONG or SHORT on BTC/ETH/SOL when the **24h return clears 4%** and the bar sets
+a **new 24h CLOSING extreme** in that direction. Wildcard sizing (3xATR stop,
+20%-of-margin cap re-deriving leverage to x5-x10 on a major), convex exits with
+**TP 3R** — not 5R — and its **own slot**.
+
+Deliberately absent: no pullback-resume, no majors exclusion, no coil test.
+
+### Evidence, and its limits
+
+63d x 29 majors, 8 disjoint windows, funding charged, 2-slot cap, point-in-time
+turnover floor. Against a RANDOM-ENTRY control on the same universe, sizing and
+exits — which itself bled **-$0.389/trade** — every one of **27 parameter cells**
+came out ahead by **$50-105 per 120 trades**.
+
+Replayed on the actual 2026-08-19 event: 7 entries, **+$22.74** realised, two
+still open; upper bound at a perfect exit was +$44.23.
+
+**What that does NOT establish.** No cell exceeded **5/8** positive windows, and
+the surface is non-monotonic (at look=12h the threshold sweep runs +21.28 /
+-17.76 / +8.26). The 72h replay is a hand-picked outlier window — the same rule
+made +$57.55 over the whole 56 days, so that one event is ~40% of two months'
+expected return. This is a LEAN. It goes live as a real-money observation test,
+exactly as the wildcard did.
+
+**The short arm is live on operator instruction, not on evidence.** The 90-day
+drift-controlled study put the entire measured edge in the LONGS (+0.244R vs
+-0.225R) and the probe behind this sleeve was long-only.
+`FUTURES_TREND_LONG_ONLY=1` disables shorts without a deploy.
+
+### Pass criteria
+
+| | |
+|---|---|
+| closes | 30 convex (WILDCARD + TREND) |
+| pass | net R > 0 AND net R ex-best > 0 |
+| flag | equity drawdown from peak > 20% |
+
+### Kill conditions
+
+- Any single TREND loss worse than **-1.5R** -> the 20% margin cap is not
+  binding as designed; investigate before the next entry.
+- TREND net R < -3.0 over its first 10 closes -> propose `FUTURES_TREND_ENABLED=0`.
+- Short arm net R < -2.0 over its first 5 short closes -> propose
+  `FUTURES_TREND_LONG_ONLY=1`, keeping the long arm.
+- `FUTURES_TREND_ENABLED=0` disables the whole sleeve, env-only, no deploy.
+
+## What this trial does NOT change
+
+Wildcard (2 slots, small-cap band, 3h impulse), squeeze (off), PMT (off), the
+20% SL cap, the cold-streak throttle, and every existing veto. The trend sleeve
+runs in its OWN slot, so total concurrent exposure goes from 2 to 3.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 14 (from 2026-08-14)
 
 ## TURNOVER-DEFLATOR WINDOW MISMATCH — a defect, not a parameter
