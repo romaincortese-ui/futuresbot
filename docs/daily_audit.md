@@ -1,3 +1,201 @@
+# Daily Audit — 2026-08-20
+
+---
+
+## Automated Assessment (UTC 16:20)
+
+Window 2026-08-19 16:10 -> 2026-08-20 16:20 UTC. Equity **$139.14**
+($121.98 cash + $17.00 margin + $0.16 unrealised), **2 open TREND positions**.
+**2 closed trades**, net **-$0.70**. `pytest -q` **947 passed**. Feature store
+**66 rows** (+2, reconciles to BTC + PRL). Shadow ledger **110 rows**.
+
+Trial 15 (big-3 TREND sleeve) shipped this morning; this is its first audit.
+
+### Closed trades
+
+| sym | side | sleeve | entry -> exit | lev | R | $ | exit |
+|---|---|---|---|---|---|---|---|
+| BTC_USDT | LONG | TREND | 70026.1 -> 70306.0 | x10 | **+0.45** | +0.17 | `TAKE_PROFIT` after **3.4s** |
+| PRL_USDT | LONG | WILDCARD | 0.3256 -> 0.2971 | x2 | -0.99 | -0.87 | `EXCHANGE_CLOSE` (-1R stop) |
+
+PRL is a clean trade: entered on a 17.3% 3h impulse, stopped at -17.8% of
+margin against a 17.9% designed stop, i.e. the 20% cap held exactly as
+designed. Nothing to fix.
+
+### THE DEFECT — a convex position was executed by PMT machinery
+
+The first live TREND entry ever placed was closed **3.4 seconds after fill**,
+at **+0.45R**, by an exit reason (`TAKE_PROFIT`) that **does not exist in the
+convex model**. Convex is -1R stop or +3R TP, nothing else.
+
+Reconstruction from the trade record:
+
+- state file shows the position was opened correctly:
+  `entry_signal=TREND_LONG, tp=71857.0 (+2.96R), sl=69407.8 (-1R)`
+- the closed record shows `entry_signal="RECOVERED", sleeve="PMT", score=0,
+  risk_usdt=0, sl_frac_designed=null, peak_r=null`
+
+Between those two states, `runtime._refresh_live_positions` re-adopted the
+position. That function walks `self._active_symbols` — **the six PMT pairs** —
+and any exchange position not present in `self.open_positions` at that instant
+is rebuilt as a `RECOVERED` position **with tp=0 and sl=0**. `exits.py` then
+applies `MICRO_LOCK_DEFAULT_RECOVERED_ENTRY_SIGNALS = {"RECOVERED"}`, a micro
+profit-lock written for orphaned PMT positions, and it took the +0.45R.
+
+The TREND sleeve trades BTC/ETH/SOL. Those are three of the six symbols that
+path scans. **Every TREND entry is exposed to this**, and the exposure window
+is a race, which is why SOL (08:12) and ETH (15:58) survived and BTC (08:07)
+did not.
+
+Dollar cost: a hijacked winner is truncated from a 3R target to ~0.4R.
+At 1R = $2.66 that is up to **-$7 per occurrence**, and it destroys the trial's
+convexity on a random subset of entries — the R-ledger the trial is being
+judged on gets silently censored.
+
+**Proposed fix (NOT applied):**
+1. `_refresh_live_positions` must skip any symbol already held by a non-PMT
+   sleeve, and must not create `RECOVERED` positions at all while a convex
+   sleeve owns the symbol.
+2. The micro-lock must be gated on `_sleeve_kind(position) == "PMT"`, the same
+   construction `fcd93f3` used for `_maybe_partial_bank` — this is the **fourth**
+   instance of the hand-maintained-sleeve-list class of bug, and the regression
+   test added in `fcd93f3` should be extended to cover both call sites.
+3. Env-only stopgap available immediately, zero live risk (PMT is
+   decommissioned and holds nothing): clear
+   `FUTURES_MICRO_LOCK_RECOVERED_ENTRY_SIGNALS`.
+
+Not deployed today: two TREND positions are open on the affected symbols, the
+change is code not config, and it has not been through the gate.
+
+### Open positions
+
+| sym | side | lev | held | R now | peak R | giveback | to TP | to SL | margin |
+|---|---|---|---|---|---|---|---|---|---|
+| SOL_USDT | LONG | x10 | 8.2h | +0.06 | +0.71 | -0.65 | +4.0% | -1.6% | $14.07 (as intended) |
+| ETH_USDT | LONG | x8 | 0.4h | +0.00 | +0.05 | -0.05 | +7.3% | -2.4% | **$2.93 vs $14.99 intended** |
+
+SOL traded down to 86.03 — **0.08R from its stop** — before recovering.
+
+### Sizing: the trial is running at a fifth of its design size
+
+ETH's entry log, in three steps:
+
+```
+[RISK_TARGETED] TREND ETH_USDT sl_margin=19.39% risk_pct=1.870% margin 14.99 -> 12.05
+[REGIME]        ETH_USDT eff=0.24 -> size x0.37
+[SIZE_TRIM]     TREND ETH_USDT regime_mult=0.37 margin 12.05 -> 4.44 (intended 12% of balance)
+```
+
+and contract quantization (ETH minimum step = 1 contract = 0.01 ETH) took the
+final fill to **$2.93** — **19.5%** of the 12%-of-balance intent.
+
+`size_efficiency`, last six convex closes: 0.80, 0.44, 0.70, 0.50, 0.37, and now
+~0.20. The regime scaler is running the entire trial at half size or less.
+R-multiples are unaffected (R = pnl_pct / sl_margin_pct), so the **trial's
+verdict survives** — but under the standing $-objective the **dollar** result of
+trial 15 is not the dollar result of the strategy being tested.
+
+The learning loop independently flags the same mechanism:
+`regime_trimmed_hard(<0.5)` is **AVOID**, n=19, **-$0.235 vs +$0.316** per
+trade, OOS-consistent. Read carefully, that says the scaler **identifies bad
+regimes correctly and then takes the trade anyway at a smaller size**. A veto
+is worth more than a multiplier. Not proposed today — it is a sizing change and
+needs `replay_exits.py` over >=7d plus `mc_ledger.py`.
+
+### Learning loop
+
+Corpus 66 closed trades, 2026-06-27 .. 2026-08-20, overall +$0.157/trade,
+win 42.4%, meanR 0.18.
+
+| condition | verdict | n | with | without |
+|---|---|---|---|---|
+| `hold>=120min` | FAVOR | 39 | +$0.819 / 59.0% | -$0.798 / 18.5% |
+| `hold<=30min` | AVOID | 11 | -$0.187 / 27.3% | +$0.226 / 45.5% |
+| `regime_trimmed_hard(<0.5)` | AVOID | 19 | -$0.235 / 36.8% | +$0.316 / 44.7% |
+| `roc>=12pct` | FAVOR | 11 | +$1.060 / 63.6% | -$0.023 / 38.2% |
+| `leverage>=7` | AVOID | 27 | -$0.019 / 48.1% | +$0.280 / 38.5% |
+| `side=SHORT` | FAVOR | 25 | +$0.622 / 48.0% | -$0.126 / 39.0% |
+| `side=LONG` | AVOID | 41 | -$0.126 / 39.0% | +$0.622 / 48.0% |
+
+`hold>=120min` FAVOR / `hold<=30min` AVOID is the strongest pair in the corpus
+and it is exactly the convex thesis: no time stops, no early exits. It is also
+a second, independent indictment of the 3.4-second BTC close.
+
+**The long/short reading now contradicts itself.** The 90-day drift-controlled
+study (2026-08-14) put the entire edge in the longs, +0.244R vs -0.225R, and
+that study is what justified shipping `FUTURES_TREND_LONG_ONLY=1` this morning.
+The feature store now says the opposite, with OOS markers showing it is a
+late-window effect only (`side=LONG e=-0.071 l=-1.129`). Flagged, not acted on.
+Two contradictory measurements on n=25/41 is not a decision, and reversing a
+same-day operator decision on it would be the worst kind of overfitting.
+
+### Shadow-ledger counterfactuals
+
+**Slot cost — `slot_occupied`, 20 resolved: net +9.16R.** Read past the
+headline: two +5.0R take-profits (SNXX 07-30, HEI 08-05) contribute +10R.
+Ex-those-two the remaining 18 net **-0.84R**. The positive number is two
+lottery tickets, not a distribution. **This is not evidence for more slots**,
+and the 2-slot wildcard raise on 07-31 has produced exactly one resolved row
+since. Reported to close out the operator's recurring "am I missing out?"
+question: on the current evidence, no.
+
+**Vetoes — 22 resolved: net -6.46R** (14 of 22 resolved to -1R). The external
+gates are **saving** money. Keep them; no veto-tuning proposal.
+
+### Wildcard
+
+Dormant and correct. Per scan: 50-56 movers, 25 scanned, **0 candidates**.
+Rejections `roc_below_min` 22-24 and `no_pullback_resume` 2-3; the turnover
+deflator excludes 47/48 (the trial-14 fix, working). **Zero 5003/2015 order
+rejects — the sleeve is not execution-blocked**, it is genuinely finding nothing
+in a quiet tape, with both slots free. No gate loosening proposed.
+
+### Exits
+
+`TP 0 (0%) | stop 11 | other 14 | unlabelled 28` over 53 convex closes.
+
+The pre-registered watch item asks for a TP3R proposal when TP completions are
+<10% over >=15 trades. **Declining it, on arithmetic.** Peak-R across the 20
+convex trades that carry the field: only **1 reached +3R**, 2 reached +2R.
+A 5R->3R wildcard TP therefore changes about **1 trade in 20**, worth roughly
+**$2.66 in total**. The standing objective says say so and drop it. The TREND
+sleeve already ships at TP 3R.
+
+### Decision rule progress
+
+**2/30 convex closes, netR -0.54, net $-0.70.** BTC's +0.45R is contaminated by
+the defect above and should not be counted as evidence for or against the trend
+sleeve. Equity -2.9% from the $143.37 peak — no drawdown flag. No kill condition
+tripped: no TREND loss worse than -1.5R (none closed cleanly yet).
+
+### Config drift
+
+`DECISION_RULE.md` records TREND at 3 slots over BTC/ETH/SOL. Live env is
+`FUTURES_TREND_MAX_POSITIONS=2`, `FUTURES_TREND_SYMBOLS=ETH_USDT,SOL_USDT` —
+BTC was dropped after this afternoon's standalone-record study found its trend
+arm negative. The env is newer than the doc; the doc needs a line.
+Also noted: `USE_DRAWDOWN_KILL=1` — the override that was 0 has been restored.
+
+### Lever & deploy
+
+**Lever:** guard `_refresh_live_positions` and the micro-lock against non-PMT
+sleeves. **Deployed: nothing.** Code change, unstaged, two open positions on
+the affected symbols, shadow stale. Aborting safely per protocol.
+
+**Shadow:** stale, comparison suppressed pending resync
+(`railway up --service Futures-shadow`, paper, zero live risk, operator-gated).
+
+### 7-day verdicts on shipped changes
+
+| change | shipped | verdict |
+|---|---|---|
+| turnover-deflator fix (trial 14) | 08-14 | earning it — 47/48 majors correctly excluded per scan, no false small-cap promotions |
+| TREND sleeve (trial 15) | 08-20 | too early — 1 close, and it was destroyed by the recovery-path defect |
+| TREND long-only, BTC dropped | 08-20 | too early — no clean close yet |
+| wildcard 2 slots | 07-31 | unproven — 1 resolved counterfactual row since |
+
+---
+
 # Daily Audit — 2026-08-19
 
 ---
