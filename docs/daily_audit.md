@@ -1,3 +1,186 @@
+# Daily Audit — 2026-08-21
+
+---
+
+## Automated Assessment (UTC 16:15)
+
+Window 2026-08-20 16:20 -> 2026-08-21 16:15 UTC. Equity **$157.37**
+($137.86 free), **1 open wildcard position**, unrealised **+$2.44**.
+**6 closed trades**, net **+$15.87 / +8.02R**, 5 wins. `pytest -q` **953
+passed**. Feature store **77 rows** (66 + 6 backfilled reconstructions + 5
+live-logged closes). Shadow ledger **113 rows**.
+
+Best day the convex book has had. It is also one day.
+
+### Closed trades
+
+| sym | side | sleeve | lev | R | $ | hold | exit | size_eff |
+|---|---|---|---|---|---|---|---|---|
+| SOL_USDT | LONG | TREND | x10 | **+2.83** | +5.52 | 21.8h | `TP` (3R) | 0.75 |
+| ENA_USDT | LONG | WILDCARD | x4 | **+4.96** | +11.11 | 13.2h | `TP` (5R) | 0.98 |
+| SOL_USDT | LONG | TREND | x10 | +0.38 | +0.86 | 2.8h | retention trail (peak 1.66) | 0.94 |
+| ORDI_USDT | LONG | WILDCARD | x5 | -1.03 | -2.72 | 0.6h | stop (**reconstructed**) | n/a |
+| ETH_USDT | LONG | TREND | x8 | +0.57 | +0.32 | 19.6h | retention trail (peak 2.17) | **0.24** |
+| TUT_USDT | LONG | WILDCARD | x2 | +0.31 | +0.79 | 1.9h | retention trail (peak 1.17) | 0.99 |
+
+Every exit reason is a legal convex exit (-1R stop, TP, or the retention
+trail). No PMT vocabulary fired on a convex position today. **The first two
++3R/+5R take-profits the trial has ever completed both landed today** — before
+today the all-time TP count was 0.
+
+ORDI was erased live by the history-lag race and recovered by
+`tools/backfill_missing_closes.py`; the race itself was fixed this morning
+(`aa6a59c`). Its P&L is real and is counted.
+
+### THE DEFECT — corrected diagnosis, and it is worse than reported
+
+Yesterday's entry blamed the 3.4-second BTC close on the micro profit-lock and
+offered an env-only stopgap (`FUTURES_MICRO_LOCK_RECOVERED_ENTRY_SIGNALS=`).
+**Both halves are wrong.**
+
+1. `recovered_entry_signals` is a **dead parameter**. `exits.py:274` reads
+   `_ = (entry_signals, recovered_entry_signals)` and discards it — micro-lock
+   eligibility is lane-agnostic. Clearing that variable is a no-op.
+2. The mechanism is `_pmt_hard_exit` (`runtime.py:4880-4889`), not the
+   micro-lock. `_refresh_live_positions` builds a `RECOVERED` position with
+   **`tp_price = 0.0` and `sl_price = 0.0`**. For a LONG that evaluates as:
+
+   ```
+   current_price <= sl_price (0.0)   -> False
+   current_price >= tp_price (0.0)   -> ALWAYS TRUE  -> TAKE_PROFIT
+   ```
+
+   So a recovered position is force-closed on the **very next tick**,
+   deterministically, and `_close_position_for_exit` is handed
+   `current_price = position.tp_price = 0.0`. (The realised P&L still comes
+   from the exchange fill, which is why BTC booked +0.45R rather than -100%.)
+
+This raises the severity. It is not a probabilistic lock that sometimes takes
+a small profit — **every** position that `_refresh_live_positions` adopts is
+guaranteed to be closed immediately at whatever the market happens to be. The
+only randomness is the race that decides whether the adoption happens at all.
+`_active_symbols` is the six PMT pairs; `FUTURES_TREND_SYMBOLS=ETH_USDT,SOL_USDT`
+sits inside that set, so every TREND entry remains exposed. Today's three TREND
+trades simply won the race.
+
+**There is no working env-only stopgap.** `FUTURES_MICRO_LOCK_ENABLED=0` would
+close the micro-lock path, but the micro-lock is not the path.
+
+**Proposed fix (NOT applied — code change, live money, no gate run):**
+
+```python
+    def _pmt_hard_exit(self, position: FuturesPosition, *, current_price: float) -> bool:
+        # A RECOVERED position carries tp=0/sl=0. Comparing against 0 makes the
+        # TP branch unconditionally true, which force-closes it on the next tick.
+        if position.tp_price <= 0 or position.sl_price <= 0:
+            return False
+```
+
+plus the structural half: `_refresh_live_positions` must skip any symbol a
+non-PMT sleeve already owns, and must not mint `RECOVERED` positions on symbols
+inside `FUTURES_TREND_SYMBOLS`. This is the **fifth** hand-maintained-sleeve-list
+bug of the same class.
+
+Dollar cost: up to **-$7 per occurrence** (a 3R target truncated to ~0.4R), and
+it silently censors the R-ledger the trial is judged on — which is the metric
+the standing objective says is the highest-$ work.
+
+### Open position
+
+| sym | side | lev | held | R now | peak R | giveback | to TP | to SL | margin |
+|---|---|---|---|---|---|---|---|---|---|
+| GALA_USDT | LONG | x2 | 6.4h | +0.88 | +1.08 | -0.20 | +31.7% | -14.7% | $17.02 (as intended, regime 1.0) |
+
+Armed (peak > 1.0R). Retention floor sits at 0.30 x 1.076 = **+0.32R**.
+Not a PMT pair, so not exposed to the defect above.
+
+### Retention trail — 7 exits, behaving exactly as specified
+
+| date | sym | peak R | exit R | retained | $ |
+|---|---|---|---|---|---|
+| 08-08 | BICO | 1.46 | 0.42 | 29% | +1.17 |
+| 08-08 | BTW | 1.98 | 0.53 | 27% | +0.65 |
+| 08-09 | AVAX | 1.68 | -0.01 | -1% | -0.00 |
+| 08-19 | ACE | 2.12 | 0.61 | 29% | +0.79 |
+| 08-21 | SOL | 1.66 | 0.38 | 23% | +0.86 |
+| 08-21 | ETH | 2.17 | 0.57 | 26% | +0.32 |
+| 08-21 | TUT | 1.17 | 0.31 | 27% | +0.79 |
+
+RETAIN=0.30 is landing at 23-29% net of cost, as designed. The trail never
+touched today's two big winners — ENA and SOL ran to TP without ever retracing
+to 0.30 x peak. That is the intended split: the trail harvests fades, the TP
+harvests runners. `656454a` / `4d38b3b` already measured this family; not
+re-opened.
+
+### Learning loop
+
+Corpus n=77, **overall now net-positive: +$19.70, meanR +0.178, win 42.9%**
+(first time the store has been positive).
+
+OOS-consistent verdicts with n>=10 both sides:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold >= 120min | FAVOR | +1.807 | 47 / +0.960 / 57.4% | 30 / -0.847 / 20.0% |
+| roc >= 12% | FAVOR | +1.355 | 13 / +1.382 / 69.2% | 64 / +0.027 / 37.5% |
+| hold <= 30min | AVOID | -0.517 | 11 / -0.187 | 66 / +0.330 |
+| regime_trimmed_hard (<0.5x) | AVOID | -0.626 | 20 / -0.208 / 40.0% | 57 / +0.418 / 43.9% |
+
+`regime_trimmed_hard` is the interesting one: a size multiplier cannot turn a
+positive-expectancy trade negative, so the trimmed cohort has genuinely
+negative expectancy. The scaler is correctly identifying bad setups and then
+taking them anyway at reduced size; the coherent action is a veto, not a trim.
+**Sized, it is not worth doing:** ~11 such trades/month x $0.208 = **$2.3/month**.
+The standing objective says under $10/month, say so and drop it. Dropped.
+
+`side=LONG AVOID / side=SHORT FAVOR` reverses the 90-day drift-controlled
+study; both are weak (e=+-0.113) and the short arm is operator-set. Ignored.
+
+### Shadow ledger
+
+- **slot_occupied: 23 resolved, net +18.16R (avg +0.79R).** Strongly positive,
+  and the operator has already acted (wildcard 2 -> 3 slots, TREND 2). Caveat:
+  five of the rows are the same 2026-08-19/20 majors event re-signalled on
+  BTC/ETH; excluding them leaves **17 resolved at +10.86R**, still clearly
+  positive. Four blocked BTC TREND rows resolved +9.3R combined — worth noting
+  against BTC's removal from `FUTURES_TREND_SYMBOLS`, but they are one event
+  counted four times, not four observations. Not a proposal.
+- **veto:*: 24 resolved, net -7.13R.** Vetoes are SAVING money; `ref_not_listed`
+  is 18 of 24. Protective, leave alone.
+- Gate-cost file agrees: 4 of 5 daily rows negative (blocked trades lost).
+
+### Scan telemetry
+
+Wildcard 1/3 slots, TREND 0/2. ~65 movers in band, 60 scanned, 0 signals;
+`roc_below_min` x53-57 dominates, then `no_pullback_resume` x1-5,
+`low_volume_z` x1-2. TREND: 2 symbols, blocked on `roc_below_min` x1 +
+`no_new_extreme` x1. Correct dormancy — the 08-19 event has decayed. No
+`[SIZE_TRIM]` lines. No `5003`/`2015` order rejects. No Traceback / ERROR in
+400 log lines.
+
+### Decision rule
+
+**Trial 15: 8/30 convex closes, net R +7.48, net $ +15.17, net R ex-best
++2.52.** Both criteria positive on 27% of the sample. Max equity drawdown from
+peak well under 20%; `USE_DRAWDOWN_KILL=1`.
+
+Exits all-time (n=36 with exit_kind): **TP 2 (5.6%) | stop 17 | other 17**. The
+old "TP completion <10% -> propose TP3R" watch item is superseded: TREND
+already runs TP 3R, and both of today's TPs completed. Re-evaluate at n>=50.
+
+### Lever & deploy
+
+**Lever: the `_pmt_hard_exit` tp=0 guard.** It is the only item on the board
+with a real dollar number ($7/occurrence) that also shortens time-to-verdict by
+un-censoring the ledger. **Not deployed** — it is a code change on a live-money
+service and has not been through the gate. The window is favourable right now
+(TREND book empty, GALA is not a PMT pair), so this is the cheap moment for the
+operator to take it.
+
+Everything else: no change. Shadow stale, comparison suppressed pending resync.
+
+---
+
 # Daily Audit — 2026-08-20
 
 ---
