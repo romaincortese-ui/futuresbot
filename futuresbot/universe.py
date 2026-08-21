@@ -69,8 +69,53 @@ def select_major_usdt_symbols(
     return tuple(result)
 
 
+# MEXC tags every listing with `conceptPlate`, and its own tags separate the
+# tokenised equities, FX and commodity synthetics from real crypto perfectly:
+# TESLA/COINBASE/COPPER/ANTHROPIC/EUR/JPY carry a tradfi tag, while SPK, SPELL,
+# HOODRAT and SPACE — which a name-based rule would flag — do not.
+#
+# This replaced NON_CRYPTO_BASES as the primary filter because that hand-kept
+# list was structurally unmaintainable: an audit on 2026-08-21 found 68 non-
+# crypto perps still passing it, including the leveraged equity ETFs (TQQQ,
+# SQQQ, TSLL, SOXX), FX (EUR, JPY, GBP, TRY) and commodities (ALUMINUM, COPPER,
+# USO). They gap across equity-market closes and weekends, which is exactly the
+# hazard an ATR-derived stop cannot price. The static list is kept as the
+# fallback for when the refresh has not run.
+_TRADFI_TAGS: tuple[str, ...] = (
+    "tradfi", "-stock", "forex", "commodit", "metalsfutures", "preipo",
+)
+_EXCHANGE_NON_CRYPTO: set[str] = set()
+
+
+def _detail_is_tradfi(detail: Mapping[str, Any] | None) -> bool:
+    if not detail:
+        return False
+    plates = " ".join(str(x) for x in (detail.get("conceptPlate") or [])).lower()
+    return any(tag in plates for tag in _TRADFI_TAGS)
+
+
+def refresh_non_crypto_universe(details: Iterable[Mapping[str, Any]] | None) -> int:
+    """Learn the non-crypto perps from the exchange's own category tags.
+
+    Replaces the set wholesale, but only when the fetch returned something, so a
+    failed or empty call leaves the previous universe standing rather than
+    silently reopening the gate.
+    """
+    found = {
+        str(d.get("symbol") or "").upper()
+        for d in (details or [])
+        if str(d.get("symbol") or "").endswith("_USDT") and _detail_is_tradfi(d)
+    }
+    if found:
+        _EXCHANGE_NON_CRYPTO.clear()
+        _EXCHANGE_NON_CRYPTO.update(found)
+    return len(_EXCHANGE_NON_CRYPTO)
+
+
 def _is_crypto_usdt_symbol(symbol: str, detail: Mapping[str, Any] | None) -> bool:
     if not symbol.endswith("_USDT"):
+        return False
+    if symbol.upper() in _EXCHANGE_NON_CRYPTO or _detail_is_tradfi(detail):
         return False
     base = symbol.rsplit("_", 1)[0]
     if base in NON_CRYPTO_BASES or "STOCK" in base:

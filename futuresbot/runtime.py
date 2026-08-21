@@ -115,6 +115,7 @@ from futuresbot.sharp_opportunity import (
     sharp_event_margin_multiplier,
 )
 from futuresbot.universe import _is_crypto_usdt_symbol, select_major_usdt_symbols
+from futuresbot.universe import refresh_non_crypto_universe
 from futuresbot.websocket import FuturesFairPriceMonitor
 
 
@@ -5267,6 +5268,7 @@ class FuturesRuntime:
         raises into the cycle). Off unless FUTURES_WILDCARD_ENABLED=1."""
         if not wildcard_enabled() or self._paused:
             return
+        self._refresh_non_crypto_universe()
         now_t = time.time()
         if now_t - self._last_wildcard_scan_at < wildcard_scan_interval_seconds():
             return
@@ -5621,6 +5623,7 @@ class FuturesRuntime:
         Off unless FUTURES_SQUEEZE_ENABLED=1. Best-effort; never raises."""
         if not squeeze_enabled() or self._paused:
             return
+        self._refresh_non_crypto_universe()
         now_t = time.time()
         interval = max(60, int(self._env_float("FUTURES_SQUEEZE_SCAN_INTERVAL_SECONDS", 900.0)))
         if now_t - self._last_squeeze_scan_at < interval:
@@ -5642,6 +5645,10 @@ class FuturesRuntime:
             for t in tickers:
                 sym = str(t.get("symbol") or "")
                 if not sym.endswith("_USDT") or sym in self.open_positions:
+                    continue
+                # The squeeze scan is the ONLY sleeve that never applied this,
+                # which is how it came to trade XAU_USDT and USOIL_USDT.
+                if not self._is_tradeable_crypto(sym):
                     continue
                 turn = float(t.get("amount24") or 0.0)
                 if turn >= floor:
@@ -5734,6 +5741,26 @@ class FuturesRuntime:
             return (hi - lo) / lo if lo > 0 and hi > lo else 0.0
         except (TypeError, ValueError):
             return 0.0
+
+    def _refresh_non_crypto_universe(self) -> None:
+        """Re-learn the non-crypto perps from MEXC's category tags.
+
+        TTL-guarded to one call per FUTURES_NON_CRYPTO_REFRESH_SECONDS (6h by
+        default) because listings change on the order of days, not cycles.
+        Best-effort: on failure the previous universe stands, and beneath it the
+        static NON_CRYPTO_BASES fallback.
+        """
+        ttl = max(600.0, self._env_float("FUTURES_NON_CRYPTO_REFRESH_SECONDS", 21600.0))
+        now_t = time.time()
+        if now_t - getattr(self, "_last_non_crypto_refresh_at", 0.0) < ttl:
+            return
+        self._last_non_crypto_refresh_at = now_t
+        try:
+            n = refresh_non_crypto_universe(self.client.get_all_contract_details())
+        except Exception as exc:
+            log.debug("Non-crypto universe refresh failed: %s", exc)
+            return
+        log.info("Non-crypto universe: %d tokenised-equity/FX/commodity perps excluded", n)
 
     @staticmethod
     def _is_tradeable_crypto(symbol: str) -> bool:
