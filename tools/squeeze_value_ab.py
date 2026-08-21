@@ -18,6 +18,42 @@ Scored over ~208 days in weekly windows, with the positive-week count and a
 half-split, because a 60-day pilot has now twice produced a result that did not
 survive the longer window.
 
+RESULT, 2026-08-22 -- 92 symbols, 208 days, 29 weekly windows, 3 shared slots.
+KEEP IT OFF.
+
+    book                        net $   pos wk  fills by sleeve
+    wildcard+trend (LIVE)     +337.71   20/29   TREND 182  WILDCARD 247
+    + squeeze                 +355.63   19/29   SQUEEZE 101  TREND 183  WILDCARD 239
+
+    squeeze is worth +$17.92 over 208 days (+$2.58/month)
+      recent half:  +34.35
+      older  half:  -16.42
+      survives both halves? ONE HALF ONLY
+
+Three things, and they all point the same way.
+
+1. IT FAILS THE HALF-SPLIT. All of the gain and more is in the recent half; the
+   older half is NEGATIVE. That is the exact shape that has now killed BEAT in
+   the trend universe scan, the tiered retention trail, and the $0.5M turnover
+   floor. There is a tempting mechanism available -- the sleeve is long-biased
+   and convex, so it "should" do better in the trending market of the recent
+   half -- but that story was also available for the tiered trail and it did not
+   hold up.
+
+2. THE SLOTS WERE NOT THE PROBLEM, SO THE TRADES ARE. 101 squeeze fills
+   displaced only 8 wildcard fills (247 -> 239), because the book has spare
+   capacity. So this is very nearly a clean ADD of 101 trades -- and 101 trades
+   bought +$17.92, about +$0.18 each. Against a ~$10 run-to-run noise band on
+   this window, that is not distinguishable from zero.
+
+3. IT MAKES THE BOOK LESS CONSISTENT, NOT MORE: 20/29 positive weeks becomes
+   19/29. A sleeve that adds a third more trades and reduces weekly consistency
+   is adding variance, not edge.
+
+This is the FIRST CLEAN READ of the sleeve. Its live n=13/+$1.17 came from a
+universe that included XAU_USDT and USOIL_USDT, because the squeeze scan never
+applied the crypto filter. This study runs the fixed universe.
+
 Read-only. Places nothing.
 
 Env: SQ_DAYS (190) SQ_POOL (70) SQ_SLOTS (3)
