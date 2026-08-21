@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import logging
 import threading
 from dataclasses import replace
@@ -2010,6 +2011,19 @@ def test_reconcile_clears_stale_live_position_with_missing_history(tmp_path):
         )
     )
 
+    # FIRST poll must NOT clear it. MEXC removes a closed position from
+    # open_positions BEFORE publishing the closed row, so "gone from both" is
+    # the signature of history LAG, not of a vanished position. Clearing here
+    # is what erased ORDI_USDT's -$2.72 on 2026-08-21, and five losses before
+    # it. The position is held while the exchange catches up.
+    runtime._reconcile_closed_position()
+    assert "BNB_USDT" in runtime.open_positions, "a single miss must not drop the position"
+    assert runtime.trade_history == []
+
+    # ...and once the grace window has genuinely expired, it clears as before.
+    runtime.open_positions["BNB_USDT"].metadata["reconcile_miss_since"] = (
+        time.time() - runtime._reconcile_grace_seconds() - 1
+    )
     runtime._reconcile_closed_position()
 
     assert runtime.open_positions == {}

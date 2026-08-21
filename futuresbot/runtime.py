@@ -4515,6 +4515,48 @@ class FuturesRuntime:
         except Exception:  # pragma: no cover — tagging must never break a close
             return {}
 
+    def _reconcile_grace_seconds(self) -> float:
+        """How long the exchange gets to publish a closed row before the bot
+        concludes the position simply vanished."""
+        return max(5.0, self._env_float("FUTURES_RECONCILE_MISS_GRACE_SECONDS", 120.0))
+
+    def _clear_reconcile_miss(self, position: "FuturesPosition") -> None:
+        """Forget any in-flight miss. Called whenever the position is seen again
+        on the exchange, or is finally closed properly — so a single transient
+        miss can never accumulate toward a drop across unrelated cycles."""
+        md = position.metadata if isinstance(position.metadata, dict) else None
+        if md is not None and md.pop("reconcile_miss_since", None) is not None:
+            self._save_state()
+
+    def _reconcile_miss_expired(self, position: "FuturesPosition") -> bool:
+        """True once the grace window has elapsed since the FIRST miss.
+
+        The marker is PERSISTED on the position rather than held in memory, so a
+        restart mid-grace cannot silently reset the clock and hand the race
+        another free pass."""
+        if not isinstance(position.metadata, dict):
+            position.metadata = {}
+        md = position.metadata
+        now_t = time.time()
+        raw = md.get("reconcile_miss_since")
+        try:
+            first = float(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            first = None
+        if first is None or first > now_t:
+            md["reconcile_miss_since"] = now_t
+            self._save_state()
+            log.info("[POSITION_RECONCILE_RETRY] symbol=%s position_id=%s no exchange "
+                     "position and no history row yet; holding up to %.0fs",
+                     position.symbol, position.position_id or "",
+                     self._reconcile_grace_seconds())
+            return False
+        waited = now_t - first
+        if waited < self._reconcile_grace_seconds():
+            log.debug("[POSITION_RECONCILE_RETRY] %s waited %.0fs", position.symbol, waited)
+            return False
+        return True
+
     def _reconcile_closed_position(self) -> None:
         if not self.open_positions or self.config.paper_trade:
             return
@@ -4529,8 +4571,10 @@ class FuturesRuntime:
             position_id = str(position.position_id or "").strip()
             if position_id:
                 if any(str(row.get("positionId") or row.get("position_id") or "") == position_id for row in rows if isinstance(row, dict)):
+                    self._clear_reconcile_miss(position)
                     continue
             elif rows:
+                self._clear_reconcile_miss(position)
                 continue
             if not position_id:
                 log.warning(
@@ -4558,11 +4602,32 @@ class FuturesRuntime:
                 if str(row.get("positionId") or "") != position.position_id:
                     continue
                 exit_price = float(row.get("closeAvgPrice") or row.get("newCloseAvgPrice") or position.entry_price)
+                self._clear_reconcile_miss(position)
                 self._close_history_trade(position, exit_price=exit_price, reason="EXCHANGE_CLOSE")
                 self._clear_position(pos_symbol)
                 self._save_state()
                 break
             else:
+                # HISTORY LAG, NOT A VANISHED POSITION. MEXC drops a closed
+                # position out of open_positions BEFORE it publishes the
+                # closed row, so a reconcile poll landing inside that window
+                # sees neither and used to clear the position right here,
+                # discarding its P&L permanently.
+                #
+                # Proven live on ORDI_USDT 2026-08-21: the stop filled at
+                # 09:06:11 and this branch fired at 09:06:11.211 — the same
+                # SECOND. The history row was there moments later. -$2.72 was
+                # erased, and it is the 6th such loss. EVERY unrecorded close
+                # in the corpus is a LOSS, because winners exit through the
+                # bot's own decision in-process while losers exit exchange-
+                # side and depend on winning this race.
+                #
+                # So give the exchange time before believing it. The retry is
+                # on a CLOCK, not a poll count: the reconcile interval varies
+                # (~2s under the open-position guard, ~45s+ from the cycle),
+                # so a fixed count would mean wildly different grace periods.
+                if not self._reconcile_miss_expired(position):
+                    continue
                 log.warning(
                     "[POSITION_RECONCILE_DROP] symbol=%s position_id=%s order=%s reason=no_exchange_position_no_history_match",
                     pos_symbol,
