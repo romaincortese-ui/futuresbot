@@ -39,42 +39,49 @@ VALIDATED: this file's resolver was compared against the SHIPPED
 resolve_outcome(convex=True) on 125 real signals at flat/0.30/arm1.0 — 125/125
 agree, max difference 0.0005R. The sweep is measuring the real bot.
 
-RESULT, 2026-08-21 — 62 symbols, 60d, 3 slots, 249 signals -> 68 trades:
+RESULT, 2026-08-21 (CORRECTED — see the note below), 63 symbols, 60d, 3 slots,
+271 signals:
 
-    variant                ALL $   TREND-UP    FLAT  TREND-DN
-    flat 0.20/arm1.0      +85.08      +0.18  +61.29    +23.61
-    flat 0.30/arm1.0      +83.38      +0.18  +58.38    +24.82   <- LIVE
-    flat 0.40/arm1.0      +88.54      +0.18  +62.34    +26.02
-    flat 0.50/arm1.0      +80.57      +0.18  +53.16    +27.23
-    flat 0.70/arm1.0      +32.34     -14.97  +37.13    +10.19
-    flat 0.30/arm1.5      +96.67      +0.18  +69.88    +26.61
-    flat 0.30/arm2.0     +105.17      +0.18  +78.37    +26.61
-    none                 +145.51      +0.18 +122.13    +23.20
-    tiered                +92.05      +0.18  +63.56    +28.32
-    atr                   +44.14     -13.51  +41.47    +16.18
-    breakeven             +76.90      +0.18  +52.47    +24.25
+    variant                ALL $    n   TP  stop  trail  t/out  avg h
+    flat 0.20/arm1.0     +132.54  114   12    43     42     17    9.1
+    flat 0.30/arm1.0     +128.93  116   11    45     44     16    8.8  <- LIVE
+    flat 0.40/arm1.0     +142.78  121   10    45     49     17    8.6
+    flat 0.50/arm1.0     +140.40  123    9    47     54     13    8.1
+    flat 0.70/arm1.0     +101.29  134    3    48     75      8    6.8
+    flat 0.30/arm1.5     +130.80  110   12    50     25     23   10.4
+    flat 0.30/arm2.0     +114.01  108   12    55     15     26   11.0
+    none                 +164.22  104   15    54      0     35   12.6
+    tiered               +143.90  118   10    47     49     12    8.3
+    atr                  +101.59  134    3    50     74      7    6.8
+    breakeven            +123.33  111   11    41     39     20    9.7
 
-THE FINDING IS THE ARM, NOT THE RETAIN. Sweeping `retain` at arm 1.0 does
-essentially nothing between 0.20 and 0.50 (+85 / +83 / +89 / +81) and only 0.70
-clearly hurts — which REPRODUCES the original 444-entry study. But nobody had
-ever swept the ARM threshold, and it is monotone:
+TWO BUGS IN THE FIRST VERSION OF THIS TOOL, both of which flattered `none`:
+  1. every variant released its slot at a FIXED 24h regardless of when the
+     trade actually exited, so the trail arms got no credit for freeing
+     capacity early — which is most of what a trail is for;
+  2. a trade whose data ran out before the horizon was marked to market as if
+     it had closed, crediting outcomes that had not resolved.
+Fixed: slots release at the real exit, and an unresolved trade returns None.
 
-    arm 1.0  +83.38   ->   arm 1.5  +96.67   ->   arm 2.0  +105.17   ->  none +145.51
+WHAT CHANGED WHEN THEY WERE FIXED. The apparent MONOTONE arm effect
+(1.0 -> 1.5 -> 2.0 -> none) DISAPPEARED. arm 2.0 now reads +114.01, WORSE than
+the live +128.93. The earlier "+$21.79 from arming at 2R" was a simulation
+artifact and is withdrawn.
 
-The later the trail engages, the more money the book makes. Trailing early is
-what costs.
+HOW `none` ACTUALLY MAKES MONEY — it is NOT take-profits. Only 15 of 104 trades
+(14%) reach TP. Removing the trail redistributes its 44 exits into +4 TP, +9
+extra full -1R STOPS and +19 TIMEOUTS, while taking 12 FEWER trades because
+positions hold longer (avg 8.8h -> 12.6h) and occupy slots. The gain comes from
+timing out at the 24h mark rather than trailing out early, so `none` is
+effectively a bet that HOLDING LONGER PAYS. That is true in a rising tape and
+false in a falling one, and this 60-day window contains the recent rally.
 
-THE REGIME SPLIT FAILED, and saying so matters: TREND-UP carries almost no
-sample in this window (BTC's run is ~1 week old against a 7d regime lookback),
-so the +0.18 column is one or two trades and is NOT evidence. The headline
-result is regime-agnostic here; it is driven by the FLAT bucket, which holds the
-bulk of the trades.
-
-WHAT `none` COSTS. It is the best cell by $62 and it BREAKS the owner-specified
-design invariant (2026-08-07): "once a trade has built profit, it must never
-give back more than 100% of it." With no trail a +2R trade can return -1R. That
-is a deliberate trade-off for the operator to make, not a parameter to tune.
-`tiered` (+$92.05) is the best cell that PRESERVES the invariant.
+SURVIVING CANDIDATES, all modest and all invariant-preserving:
+    tiered      +143.90  (+$14.97 vs live)
+    flat 0.40   +142.78  (+$13.85)
+    flat 0.50   +140.40  (+$11.47)
+Rejected by the data: atr (-$27), 0.70 retention (-$28), breakeven (-$6), and
+arm 1.5/2.0.
 
 Read-only. Places nothing.
 
@@ -110,12 +117,19 @@ def _env(n, d):
         return float(d)
 
 
-def resolve(bars, i0, entry, sl, tp, tp_r, side, horizon_s, cost_r, floor_fn, atr_frac):
-    """Walk bars from i0 under a pluggable trail. Mirrors the live semantics:
-    adverse-first within a bar, the armed floor checked BEFORE the hard stop
-    (live polls the mark every ~1s and cannot pass the floor without firing it),
-    peak measured from PRIOR bars only, timeout closes at the bar mark."""
-    sgn = 1.0 if side == "LONG" else -1.0
+def resolve(bars, i0, entry, sl, tp, tp_r, side, horizon_s, cost_r, floor_fn,
+            atr_frac, now_ts):
+    """Walk bars from i0 under a pluggable trail.
+
+    Returns (net_r, exit_ts, kind), or None when the trade is STILL OPEN.
+    That None matters: the first version marked an unfinished trade to market
+    as if it had closed, silently crediting the no-trail arm for positions
+    that had not resolved. The shipped resolver refuses those; so does this.
+
+    Otherwise mirrors the live semantics: adverse-first within a bar, the
+    armed floor checked BEFORE the hard stop, peak from PRIOR bars only,
+    timeout closing at the bar mark."""
+    sgn = 1.0 if side == 'LONG' else -1.0
     one_r = abs(entry - sl)
     if one_r <= 0:
         return None
@@ -135,16 +149,19 @@ def resolve(bars, i0, entry, sl, tp, tp_r, side, horizon_s, cost_r, floor_fn, at
             if level < peak_r:
                 adverse_r = ((lo if sgn > 0 else hi) - entry) * sgn / one_r
                 if adverse_r <= level:
-                    return level - cost_r
+                    return (level - cost_r, ts, 'trail')
         if (lo <= sl) if sgn > 0 else (hi >= sl):
-            return -1.0 - cost_r
+            return (-1.0 - cost_r, ts, 'stop')
         if (hi >= tp) if sgn > 0 else (lo <= tp):
-            return tp_r - cost_r
+            return (tp_r - cost_r, ts, 'tp')
         peak_r = max(peak_r, ((hi if sgn > 0 else lo) - entry) * sgn / one_r)
         last = close
     if not seen:
         return None
-    return ((last - entry) * sgn / one_r) - cost_r
+    # Only a trade whose 24h clock has genuinely expired counts as timed out.
+    if now_ts - t0 < horizon_s:
+        return None
+    return (((last - entry) * sgn / one_r) - cost_r, t0 + horizon_s, 'timeout')
 
 
 def make_floor(kind, retain, arm):
@@ -274,46 +291,55 @@ def main() -> int:
         floor_fn = make_floor(kind, retain, arm)
         live, per = [], {}
         out = {"TREND-UP": [], "FLAT": [], "TREND-DN": []}
-        for ts, s, sig, i, bars in cands:
+        kinds = {"tp": 0, "stop": 0, "trail": 0, "timeout": 0}
+        holds = []
+        for ts, sym, sig, i, bars in cands:
             live[:] = [x for x in live if x > ts]
-            per[s] = [x for x in per.get(s, []) if x > ts]
-            if per[s] or len(live) >= slots:
+            per[sym] = [x for x in per.get(sym, []) if x > ts]
+            if per[sym] or len(live) >= slots:
                 continue
             row = {"entry": float(sig.entry_price), "sl": float(sig.sl_price),
                    "tp": float(sig.tp_price), "side": sig.side}
             cr = shadow.cost_r(row)
             tp_r = shadow.signal_tp_r(sig)
             atr = float(getattr(sig, "atr_pct", 0.0) or 0.0)
-            r_net = resolve(bars, i, row["entry"], row["sl"], row["tp"], tp_r, sig.side,
-                            shadow.CONVEX_HORIZON_S, cr, floor_fn, atr)
-            if r_net is None:
+            got = resolve(bars, i, row["entry"], row["sl"], row["tp"], tp_r,
+                          sig.side, shadow.CONVEX_HORIZON_S, cr, floor_fn, atr, now)
+            if got is None:
                 continue
+            r_net, exit_ts, kind_ = got
             one_r_usd = eq * 0.12 * float(sig.sl_margin_pct) / 100.0
-            usd = r_net * one_r_usd
-            exit_ts = ts + shadow.CONVEX_HORIZON_S
+            kinds[kind_] += 1
+            holds.append((exit_ts - ts) / 3600.0)
+            # Release the slot when the trade ACTUALLY exited, not at a fixed
+            # 24h. Holding every variant for the full horizon gave the trail
+            # arms no credit for freeing capacity early, which is most of what
+            # a trail is for.
             live.append(exit_ts)
-            per[s].append(exit_ts)
-            out[regime_at(ts)].append(usd)
-        return out
+            per[sym].append(exit_ts)
+            out[regime_at(ts)].append(r_net * one_r_usd)
+        return out, kinds, (sum(holds) / len(holds) if holds else 0.0)
 
     variants = [("flat", 0.20, 1.0), ("flat", 0.30, 1.0), ("flat", 0.40, 1.0),
                 ("flat", 0.50, 1.0), ("flat", 0.70, 1.0),
                 ("flat", 0.30, 1.5), ("flat", 0.30, 2.0),
                 ("none", 0.0, 0.0), ("tiered", 0.0, 1.0),
                 ("atr", 0.0, 1.0), ("breakeven", 0.30, 1.0)]
-    print(f"\n{'variant':<22} {'ALL $':>9} {'TREND-UP':>10} {'FLAT':>9} "
-          f"{'TREND-DN':>10} {'n':>5}")
+    print('')
+    print('%-22s %9s %4s %4s %5s %6s %6s %6s' % (
+        'variant', 'ALL $', 'n', 'TP', 'stop', 'trail', 't/out', 'avg h'))
     base = None
     for kind, retain, arm in variants:
-        res = run(kind, retain, arm)
+        res, kinds, avg_h = run(kind, retain, arm)
         tot = sum(sum(v) for v in res.values())
         n = sum(len(v) for v in res.values())
-        label = (f"{kind} {retain:.2f}/arm{arm:.1f}" if kind == "flat" else kind)
-        if kind == "flat" and retain == 0.30 and arm == 1.0:
-            label += "  <-LIVE"
+        label = ('%s %.2f/arm%.1f' % (kind, retain, arm)) if kind == 'flat' else kind
+        if kind == 'flat' and retain == 0.30 and arm == 1.0:
+            label += ' <-LIVE'
             base = tot
-        print(f"{label:<22} {tot:+9.2f} {sum(res['TREND-UP']):+10.2f} "
-              f"{sum(res['FLAT']):+9.2f} {sum(res['TREND-DN']):+10.2f} {n:5d}")
+        print('%-22s %+9.2f %4d %4d %5d %6d %6d %6.1f' % (
+            label, tot, n, kinds['tp'], kinds['stop'], kinds['trail'],
+            kinds['timeout'], avg_h))
     if base is not None:
         print(f"\n(live baseline ${base:+.2f}; deltas are the column above minus that)")
     return 0
