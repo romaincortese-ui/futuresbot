@@ -36,10 +36,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from futuresbot.config import FuturesConfig
 from futuresbot.marketdata import MexcFuturesClient
-from futuresbot.runtime import FuturesRuntime
 
 PMT_PAIRS = {"BTC_USDT", "ETH_USDT", "SOL_USDT", "BNB_USDT", "SEI_USDT", "ZEC_USDT"}
 MATCH_WINDOW_S = 180
+
+
+def _opt(flag: str) -> str | None:
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
 
 
 def _stop_price(client, symbol: str, position_id: str) -> float | None:
@@ -68,10 +75,13 @@ def _stop_price(client, symbol: str, position_id: str) -> float | None:
 
 def main() -> int:
     apply = "--apply" in sys.argv
+    # --store lets this run OUTSIDE the container against a downloaded copy.
+    # The container's ssh shell cannot import pandas (missing libstdc++), so the
+    # runtime is deliberately not imported here.
+    store = Path(_opt("--store") or "/data/futures_feature_store.jsonl")
+    emit = _opt("--emit")
     cfg = FuturesConfig.from_env()
     client = MexcFuturesClient(cfg)
-    rt = FuturesRuntime(cfg, client)
-    store = rt._feature_store_path
 
     existing = []
     if store.exists():
@@ -84,6 +94,36 @@ def main() -> int:
                     pass
     print(f"feature store: {store} ({len(existing)} rows)")
     have = {(str(r.get("symbol")), float(r.get("ts") or 0)) for r in existing}
+
+    def already_recorded(sym: str, ts: float, pnl: float, side: str, lev: int) -> bool:
+        """Is this exchange close already in the store?
+
+        The timestamp match alone is not enough. _append_feature_store falls back
+        to time.time() when it cannot parse exit_time, so a recorded row can
+        carry a badly skewed ts — BILL_USDT sits 7h51m after its real close.
+        Matching on ts alone would have re-added it and DOUBLE-COUNTED a +$5.05
+        WINNER, which is the opposite of the bug being fixed here. So a
+        P&L/side/leverage match inside a wide window counts as recorded too."""
+        for r in existing:
+            if str(r.get("symbol")) != sym:
+                continue
+            try:
+                r_ts = float(r.get("ts") or 0)
+            except (TypeError, ValueError):
+                continue
+            if abs(r_ts - ts) <= MATCH_WINDOW_S:
+                return True
+            if abs(r_ts - ts) > 48 * 3600:
+                continue
+            if str(r.get("side")) != side or int(r.get("leverage") or 0) != lev:
+                continue
+            try:
+                r_pnl = float(r.get("pnl_usdt") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if abs(r_pnl - pnl) <= max(0.25, 0.05 * abs(pnl)):
+                return True
+        return False
 
     # Every closed position MEXC knows about, newest first.
     ex_rows, seen = [], set()
@@ -112,7 +152,9 @@ def main() -> int:
     for r in ex_rows:
         sym = str(r.get("symbol") or "")
         ts = float(r.get("updateTime") or 0) / 1000.0
-        if any(s == sym and abs(t - ts) <= MATCH_WINDOW_S for s, t in have):
+        side = "SHORT" if int(r.get("positionType") or 1) == 2 else "LONG"
+        if already_recorded(sym, ts, float(r.get("realised") or 0.0), side,
+                            int(r.get("leverage") or 0)):
             continue
         missing.append(r)
 
@@ -140,7 +182,7 @@ def main() -> int:
                     r_mult = round(ratio * 100.0 / sl_margin_pct, 2)
         kind = "PMT" if sym in PMT_PAIRS else "WILDCARD"
         built.append({
-            "account": rt.account.id, "ts": round(ts), "symbol": sym, "side": side,
+            "account": "main", "ts": round(ts), "symbol": sym, "side": side,
             "kind": kind, "leverage": lev,
             "pnl_usdt": pnl, "pnl_pct": round(ratio * 100.0, 6),
             "sl_margin_pct": sl_margin_pct, "setup_regime": None,
@@ -185,6 +227,11 @@ def main() -> int:
     if not built:
         print("\nnothing to do — the store already reconciles")
         return 0
+    if emit:
+        rows_text = ''.join(json.dumps(b, default=str) + '\n' for b in built)
+        Path(emit).write_text(rows_text, encoding='utf-8')
+        print('wrote %d row(s) -> %s' % (len(built), emit))
+        print(f"wrote {len(built)} row(s) -> {emit}")
     if not apply:
         print("\nDRY RUN. Re-run with --apply to write.")
         return 0
