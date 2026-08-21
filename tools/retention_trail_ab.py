@@ -169,11 +169,24 @@ def make_floor(kind, retain, arm):
         return lambda peak, atr, slf: None
     if kind == "flat":
         return lambda peak, atr, slf: (retain * peak) if peak >= arm else None
-    if kind == "tiered":
+    if kind.startswith("tier"):
+        # The tier schedule is a CHOICE, not a measurement. Sweeping it is the
+        # difference between "tiered helps" and "this particular tiering was a
+        # lucky pick" -- the failure mode this repo keeps rediscovering.
+        SCHED = {
+            "tiered":   (0.30, 0.50, 0.65, 2.0, 3.0),
+            "tierB":    (0.30, 0.45, 0.60, 2.0, 3.0),
+            "tierC":    (0.30, 0.55, 0.70, 2.0, 3.0),
+            "tierD":    (0.35, 0.50, 0.65, 2.0, 3.0),
+            "tierE":    (0.30, 0.50, 0.50, 2.0, 9.9),
+            "tierF":    (0.30, 0.50, 0.65, 1.5, 2.5),
+        }[kind]
+        lo_r, mid_r, hi_r, t1, t2 = SCHED
+
         def f(peak, atr, slf):
             if peak < arm:
                 return None
-            r = 0.30 if peak < 2 else (0.50 if peak < 3 else 0.65)
+            r = lo_r if peak < t1 else (mid_r if peak < t2 else hi_r)
             return r * peak
         return f
     if kind == "atr":
@@ -323,7 +336,9 @@ def main() -> int:
     variants = [("flat", 0.20, 1.0), ("flat", 0.30, 1.0), ("flat", 0.40, 1.0),
                 ("flat", 0.50, 1.0), ("flat", 0.70, 1.0),
                 ("flat", 0.30, 1.5), ("flat", 0.30, 2.0),
-                ("none", 0.0, 0.0), ("tiered", 0.0, 1.0),
+                ("none", 0.0, 0.0),
+                ("tiered", 0.0, 1.0), ("tierB", 0.0, 1.0), ("tierC", 0.0, 1.0),
+                ("tierD", 0.0, 1.0), ("tierE", 0.0, 1.0), ("tierF", 0.0, 1.0),
                 ("atr", 0.0, 1.0), ("breakeven", 0.30, 1.0)]
     print('')
     print('%-22s %9s %4s %4s %5s %6s %6s %6s' % (
