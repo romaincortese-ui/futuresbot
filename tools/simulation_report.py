@@ -30,7 +30,9 @@ _spec.loader.exec_module(_sim)
 SIM_BALANCES = _sim.SIM_BALANCES
 capacity_notional = _sim.capacity_notional
 risk_fraction = _sim.risk_fraction
+realised_pnl = _sim.realised_pnl
 simulate = _sim.simulate
+trial_opening_equity = _sim.trial_opening_equity
 
 CONVEX = {"WILDCARD", "SQUEEZE", "TREND"}
 
@@ -65,35 +67,29 @@ def main() -> int:
         print("no convex trades in scope")
         return 0
     net_r = sum(float(r.get("r_multiple") or 0) for r in rows)
-    real = sum(float(r.get("pnl_usdt") or 0) for r in rows)
-    eq1 = float(rows[-1].get("equity_at_close_usdt") or 0)
-    eq_start = eq1 - real
+    real = realised_pnl(rows)
+    eq_start = trial_opening_equity(rows)
     print(f"{len(rows)} closed convex trades | netR {net_r:+.3f} | realised ${real:+.2f}")
     print(f"mean risk/trade {sum(risk_fraction(r) for r in rows)/len(rows)*100:.2f}% of available")
-
-    # SELF-CHECK. Re-running the simulation at the account's OWN starting equity
-    # must reproduce the account's own result. Any gap is a modelling error, and
-    # this caught two of them: compounding overlapping trades in close order, and
-    # treating a fraction-of-available as a fraction-of-equity.
     if eq_start > 0:
-        chk = simulate(rows, eq_start)
+        print(f"account ${eq_start:.2f} -> ${eq_start + real:.2f} "
+              f"({real/eq_start*100:+.2f}%) over the trial")
+        chk = simulate(rows, eq_start, actual_opening=eq_start)
         err = chk["realised"] - real
-        tag = "OK" if abs(err) <= max(0.25, abs(real) * 0.03) else "** MODEL ERROR **"
-        print(f"self-check: at the real ${eq_start:.2f} opening the model says "
-              f"${chk['realised']:+.2f} vs ${real:+.2f} actual "
-              f"({err:+.2f}, {err/abs(real)*100 if real else 0:+.1f}%)  {tag}")
+        tag = "OK" if abs(err) < 0.01 else "** MODEL ERROR **"
+        print(f"self-check at k=1: ${chk['realised']:+.2f} vs ${real:+.2f} actual  {tag}")
 
     print()
     print(f"{'opening':>10} {'equity':>12} {'P&L':>11} {'return':>9}")
     for b in SIM_BALANCES:
-        s = simulate(rows, b)
-        print(f"{b:>10,.0f} {s['equity']:>12,.2f} {s['realised']:>+11,.2f} "
-              f"{s['return_pct']:>+8.2f}%")
+        sm = simulate(rows, b, actual_opening=eq_start)
+        print(f"{b:>10,.0f} {sm['equity']:>12,.2f} {sm['realised']:>+11,.2f} "
+              f"{sm['return_pct']:>+8.2f}%")
 
     print()
     print(f"{'opening':>10} {'median notional':>16} {'max notional':>14}")
     for b in SIM_BALANCES:
-        c = capacity_notional(rows, b)
+        c = capacity_notional(rows, b, actual_opening=eq_start)
         print(f"{b:>10,.0f} {c['median']:>16,.0f} {c['max']:>14,.0f}")
     print("\nMeasured median top-10 book depth in the wildcard band is ~$20k;")
     print("the thin tail holds a few hundred. Where max notional approaches that,")

@@ -1,148 +1,134 @@
 """/simulation — this trial's result on a bigger opening balance.
 
-The bot sizes as a FRACTION of equity, so the percentage equity curve is identical
-at any starting balance. That makes the simulation arithmetic rather than a
-forecast, and these pin the arithmetic — plus the two things that are easy to get
-wrong: which rows are in scope, and the fact that notional does NOT scale
-harmlessly.
+Sizing is a FRACTION of the balance, so scaling the opening balance scales every
+stake and every P&L by the same factor. The simulation is that scaling, and these
+pin it — plus the thing that does NOT scale, which is the order book.
+
+An earlier version reconstructed the equity path from each trade's risk fraction
+and R multiple. It had to model trade overlap and committed margin, got both
+wrong in turn (+20.94% then -8.3% against a real +18.33%), and was replaced.
+`test_scaling_reproduces_the_account_at_its_own_opening` is the property that
+version could not satisfy.
 """
 import pytest
 
-from futuresbot.simulation import (SIM_BALANCES, capacity_notional,
-                                   risk_fraction, simulate)
+from futuresbot.simulation import (SIM_BALANCES, capacity_notional, realised_pnl,
+                                   risk_fraction, simulate, trial_opening_equity)
 
 
-def _row(r, risk_pct=2.0, **kw):
-    row = {"r_multiple": r, "risk_pct_actual": risk_pct, "kind": "WILDCARD",
-           "equity_at_entry": 100.0, "margin_used": 10.0, "leverage": 3,
-           "sl_margin_pct": 20.0, "ts": 0.0, "hold_hours": 0.0}
+def _row(pnl, **kw):
+    row = {"pnl_usdt": pnl, "r_multiple": 1.0, "risk_pct_actual": 2.0,
+           "kind": "WILDCARD", "equity_at_entry": 100.0, "equity_at_close_usdt": 100.0,
+           "margin_used": 10.0, "leverage": 3, "sl_margin_pct": 20.0}
     row.update(kw)
     return row
 
 
+# --- the identity the whole module rests on --------------------------------
+
+def test_scaling_reproduces_the_account_at_its_own_opening():
+    """At k=1 the model must return exactly what the account did. Any deviation
+    is a modelling error, and this is the check the reconstruction failed."""
+    rows = [_row(10.0), _row(-4.0), _row(19.5)]
+    out = simulate(rows, 139.61, actual_opening=139.61)
+    assert out["scale"] == pytest.approx(1.0)
+    assert out["realised"] == pytest.approx(25.5)
+    assert out["equity"] == pytest.approx(139.61 + 25.5)
+
+
+def test_pnl_scales_linearly_and_the_return_does_not_move():
+    rows = [_row(25.54)]
+    a = simulate(rows, 1000.0, actual_opening=139.61)
+    b = simulate(rows, 10000.0, actual_opening=139.61)
+    assert b["realised"] == pytest.approx(a["realised"] * 10.0)
+    assert a["return_pct"] == pytest.approx(b["return_pct"])
+    # ...and it equals the account's own return
+    assert a["return_pct"] == pytest.approx(25.54 / 139.61 * 100.0)
+
+
+def test_a_losing_trial_shrinks_the_simulated_account():
+    out = simulate([_row(-25.0)], 10000.0, actual_opening=100.0)
+    assert out["realised"] == pytest.approx(-2500.0)
+    assert out["equity"] == pytest.approx(7500.0)
+
+
+def test_open_positions_are_scaled_but_kept_separate():
+    """Only realised is banked; the account still shows both."""
+    out = simulate([_row(10.0)], 1000.0, actual_opening=100.0, open_unrealised=5.0)
+    assert out["realised"] == pytest.approx(100.0)
+    assert out["unrealised"] == pytest.approx(50.0)
+    assert out["equity"] == pytest.approx(1150.0)
+
+
+def test_degenerate_inputs_are_graceful():
+    assert simulate([], 5000.0, actual_opening=0.0)["equity"] == 5000.0
+    assert simulate([_row(1.0)], 0.0, actual_opening=100.0)["equity"] == 0.0
+    assert simulate([], 5000.0, actual_opening=100.0)["return_pct"] == 0.0
+
+
+# --- deriving the trial's own starting balance -----------------------------
+
+def test_opening_equity_prefers_todays_equity_minus_the_trials_gains():
+    rows = [_row(20.0), _row(5.54)]
+    got = trial_opening_equity(rows, current_equity=173.21, open_unrealised=8.0)
+    assert got == pytest.approx(173.21 - 25.54 - 8.0)
+
+
+def test_opening_equity_falls_back_to_the_store_alone():
+    """Same identity read from the last close's stamp when no live equity is on
+    hand — used by the CLI twin, which has only the file."""
+    rows = [_row(20.0, equity_at_close_usdt=0.0), _row(5.54, equity_at_close_usdt=165.15)]
+    assert trial_opening_equity(rows) == pytest.approx(165.15 - 25.54)
+
+
+def test_opening_equity_is_zero_when_nothing_can_be_derived():
+    assert trial_opening_equity([]) == 0.0
+
+
+def test_realised_pnl_skips_unparseable_rows():
+    assert realised_pnl([_row(3.0), {"pnl_usdt": "x"}, _row(2.0)]) == pytest.approx(5.0)
+
+
+# --- risk_fraction is reporting-only now, but still has to be right --------
+
 def test_risk_fraction_prefers_the_stamped_value():
-    """risk_pct_actual is written at entry and already includes the regime
-    multiplier, so it reproduces the real allocation rather than a guess."""
-    assert risk_fraction(_row(1.0, risk_pct=2.41)) == pytest.approx(0.0241)
+    assert risk_fraction(_row(1.0, risk_pct_actual=2.41)) == pytest.approx(0.0241)
 
 
 def test_risk_fraction_falls_back_through_the_chain():
-    no_pct = {"risk_usdt": 3.0, "equity_at_entry": 150.0}
-    assert risk_fraction(no_pct) == pytest.approx(0.02)
+    assert risk_fraction({"risk_usdt": 3.0, "equity_at_entry": 150.0}) == pytest.approx(0.02)
     geometry = {"margin_used": 20.0, "sl_margin_pct": 15.0, "equity_at_entry": 200.0}
     assert risk_fraction(geometry) == pytest.approx(0.015)
 
 
-def test_an_unpriceable_row_contributes_nothing():
-    """Better a missing trade than a fabricated one."""
+def test_risk_fraction_is_zero_when_unpriceable():
+    """Better a missing number than a fabricated one."""
     assert risk_fraction({"r_multiple": 5.0}) == 0.0
-    out = simulate([{"r_multiple": 5.0}], 1000.0)
-    assert out["realised"] == 0.0 and out["equity"] == 1000.0
-
-
-def test_single_trade_is_balance_times_risk_times_r():
-    out = simulate([_row(2.0, risk_pct=2.0)], 1000.0)
-    assert out["realised"] == pytest.approx(40.0)      # 1000 * 0.02 * 2
-    assert out["equity"] == pytest.approx(1040.0)
-
-
-def test_it_compounds_when_trades_do_not_overlap():
-    """Sequential trades: the second is sized off what the first produced."""
-    a = _row(1.0, ts=1000.0, hold_hours=0.1)
-    b = _row(1.0, ts=2000.0, hold_hours=0.1)
-    out = simulate([a, b], 1000.0)                     # 2% risk, +1R each
-    assert out["equity"] == pytest.approx(1040.40)     # 1000 -> 1020 -> 1040.40
-
-
-def test_overlapping_trades_are_sized_at_entry_not_at_close():
-    """THE correction. This book runs up to five slots, so trades that were open
-    at the same time were each sized off an equity that did NOT yet contain the
-    others' P&L. Compounding them in close order sizes the second off gains that
-    had not landed — on trial 15 that read +20.94% against a real +18.33%."""
-    # both open at t=0, close at t=100 and t=200; margin_used=0 isolates the
-    # entry-time effect from the committed-margin one tested below
-    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0, margin_used=0.0)
-    b = _row(1.0, ts=200.0, hold_hours=200.0 / 3600.0, margin_used=0.0)
-    out = simulate([a, b], 1000.0)
-    # both staked 2% of 1000 = 20 at entry, both +1R -> +40 flat, NOT 40.40
-    assert out["equity"] == pytest.approx(1040.00)
-
-
-def test_committed_margin_reduces_what_a_concurrent_entry_can_stake():
-    """The sizing path stamps equity_at_entry from AVAILABLE balance — equity
-    minus margin already committed. Treating that as a fraction of total equity
-    over-sizes every entry made while the book was busy, and read trial 15 at
-    +20.32% against a real +18.33%."""
-    # margin_used 10 of an available 100 -> each position ties up 10% of free
-    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)
-    b = _row(1.0, ts=200.0, hold_hours=200.0 / 3600.0)
-    out = simulate([a, b], 1000.0)
-    # a stakes 2% of 1000 = 20 and ties up 100; b sees 900 free, stakes 18
-    assert out["realised"] == pytest.approx(38.0)
-    assert out["equity"] == pytest.approx(1038.0)
-
-
-def test_margin_is_released_when_the_position_closes():
-    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)   # closes at 100
-    b = _row(1.0, ts=300.0, hold_hours=100.0 / 3600.0)   # opens at 200
-    out = simulate([a, b], 1000.0)
-    # a's margin is freed before b opens, so b sizes off the full 1020
-    assert out["equity"] == pytest.approx(1040.40)
-
-
-def test_percentage_return_is_identical_at_every_opening_balance():
-    """THE core property: fractional sizing means the % curve does not depend on
-    the starting balance, so P&L scales exactly. This is a result, not an
-    approximation, and the report says so."""
-    rows = [_row(2.0), _row(-1.0), _row(0.5)]
-    pcts = [simulate(rows, b)["return_pct"] for b in SIM_BALANCES]
-    assert all(p == pytest.approx(pcts[0]) for p in pcts)
-    # ...and dollars scale with the balance
-    a = simulate(rows, 1000.0)["realised"]
-    b = simulate(rows, 10000.0)["realised"]
-    assert b == pytest.approx(a * 10.0)
-
-
-def test_a_losing_trial_shrinks_the_simulated_account():
-    out = simulate([_row(-1.0, risk_pct=2.41)], 10000.0)
-    assert out["realised"] == pytest.approx(-241.0)
-    assert out["equity"] == pytest.approx(9759.0)
-
-
-def test_open_positions_are_marked_but_kept_separate():
-    """Only realised is banked; the account still shows both."""
-    out = simulate([_row(1.0)], 1000.0, open_positions=[(0.02, 3.0)])
-    assert out["realised"] == pytest.approx(20.0)
-    assert out["unrealised"] == pytest.approx(1020.0 * 0.02 * 3.0)
-    assert out["equity"] == pytest.approx(1020.0 + 61.2)
-
-
-def test_empty_trial_is_graceful():
-    out = simulate([], 5000.0)
-    assert out["equity"] == 5000.0 and out["return_pct"] == 0.0
 
 
 # --- capacity: the one thing that does NOT scale harmlessly ----------------
 
 def test_notional_scales_with_the_balance():
-    """margin x leverage x (balance/equity). A $165 account carrying $50 of
-    notional carries ~$3,000 on $10,000, against a measured median top-10 book
-    depth of about $20k — which is why the report warns rather than implying
-    linearity holds forever."""
-    rows = [_row(1.0, margin_used=22.0, leverage=2, equity_at_entry=165.0)]
-    cap = capacity_notional(rows, 10000.0)
+    """A $165 account carrying ~$44 of notional carries ~$2,670 on $10,000,
+    against a measured median top-10 depth of about $20k — which is why the
+    report warns instead of implying linearity holds forever."""
+    rows = [_row(1.0, margin_used=22.0, leverage=2)]
+    cap = capacity_notional(rows, 10000.0, actual_opening=165.0)
     assert cap["n"] == 1
-    assert cap["median"] == pytest.approx(22.0 * 2 * (10000.0 / 165.0))
-    assert cap["max"] == pytest.approx(cap["median"])
+    assert cap["median"] == pytest.approx(44.0 * (10000.0 / 165.0))
 
 
 def test_capacity_ignores_rows_it_cannot_price():
-    assert capacity_notional([{"r_multiple": 1.0}], 10000.0)["n"] == 0
+    assert capacity_notional([{"pnl_usdt": 1.0}], 10000.0, actual_opening=165.0)["n"] == 0
+    assert capacity_notional([_row(1.0)], 10000.0, actual_opening=0.0)["n"] == 0
 
 
 def test_capacity_reports_median_and_max_separately():
-    rows = [_row(1.0, margin_used=m, leverage=1, equity_at_entry=100.0)
-            for m in (1.0, 2.0, 50.0)]
-    cap = capacity_notional(rows, 100.0)
+    rows = [_row(1.0, margin_used=m, leverage=1) for m in (1.0, 2.0, 50.0)]
+    cap = capacity_notional(rows, 100.0, actual_opening=100.0)
     assert cap["median"] == pytest.approx(2.0)
     assert cap["max"] == pytest.approx(50.0)
+
+
+def test_sim_balances_span_the_capacity_question():
+    assert SIM_BALANCES == (1000.0, 2000.0, 5000.0, 10000.0)

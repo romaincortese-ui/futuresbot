@@ -3138,7 +3138,8 @@ class FuturesRuntime:
         """
         from futuresbot.learning_digest import TRIAL_LABEL, TRIAL_START
         from futuresbot.simulation import (SIM_BALANCES, capacity_notional,
-                                           risk_fraction, simulate)
+                                           realised_pnl, simulate,
+                                           trial_opening_equity)
 
         rows = sorted(
             (r for r in self._feature_rows_cached()
@@ -3147,7 +3148,6 @@ class FuturesRuntime:
             key=lambda r: float(r.get("ts") or 0.0))
 
         # Open positions, so the figure matches what the account shows.
-        open_rs: list[tuple[float, float]] = []
         live_unreal = 0.0
         eq = self._last_known_equity() or 0.0
         for pos in self.open_positions.values():
@@ -3167,30 +3167,30 @@ class FuturesRuntime:
             if mark <= 0:
                 continue
             move = (mark / entry - 1.0) * (1.0 if pos.side == "LONG" else -1.0)
-            r_now = move / sl_frac
             lev = max(1.0, float(pos.leverage or 1))
-            risk_usd = float(pos.margin_usdt or 0.0) * sl_frac * lev
             live_unreal += move * float(pos.margin_usdt or 0.0) * lev
-            if eq > 0 and risk_usd > 0:
-                open_rs.append((risk_usd / eq, r_now))
 
         lines = [f"🧪 <b>Simulation</b> — Trial {TRIAL_LABEL}", "━━━━━━━━━━━━━━━"]
-        if not rows and not open_rs:
+        if not rows and abs(live_unreal) < 1e-9:
             lines.append("No convex trades yet this trial — nothing to simulate.")
             lines.append("<i>Resets automatically when the next trial opens.</i>")
             return "\n".join(lines)
 
         net_r = sum(float(r.get("r_multiple") or 0.0) for r in rows)
-        realised = sum(float(r.get("pnl_usdt") or 0.0) for r in rows)
+        realised = realised_pnl(rows)
+        opening = trial_opening_equity(rows, current_equity=eq,
+                                       open_unrealised=live_unreal)
         lines.append(f"{len(rows)} closed · netR <b>{net_r:+.2f}</b> · "
                      f"realised <b>${realised:+.2f}</b>"
-                     + (f" · open <b>${live_unreal:+.2f}</b>" if open_rs else ""))
-        if eq > 0:
-            lines.append(f"Live account: <b>${eq:.2f}</b>")
+                     + (f" · open <b>${live_unreal:+.2f}</b>" if abs(live_unreal) > 1e-9 else ""))
+        if opening > 0:
+            lines.append(f"Live: <b>${opening:.2f}</b> → <b>${eq:.2f}</b> "
+                         f"(<b>{(eq / opening - 1.0) * 100:+.2f}%</b>) this trial")
         lines.append("")
         lines.append("<code>opening    equity      P&amp;L      return</code>")
         for bal in SIM_BALANCES:
-            sim = simulate(rows, bal, open_rs)
+            sim = simulate(rows, bal, actual_opening=opening,
+                           open_unrealised=live_unreal)
             lines.append(
                 f"<code>${bal:<9,.0f} ${sim['equity']:>9,.0f} "
                 f"{sim['realised'] + sim['unrealised']:>+9,.0f} "
@@ -3199,7 +3199,7 @@ class FuturesRuntime:
         # The honest caveat, with numbers. Same % return at every balance is a
         # RESULT of fractional sizing, not a modelling shortcut — but only while
         # the fills stay free.
-        top = capacity_notional(rows, SIM_BALANCES[-1])
+        top = capacity_notional(rows, SIM_BALANCES[-1], actual_opening=opening)
         if top["n"]:
             lines.append("")
             lines.append(
