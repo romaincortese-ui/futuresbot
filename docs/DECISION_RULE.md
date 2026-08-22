@@ -1648,3 +1648,82 @@ baseline (-0.173/trade over this window). Fail -> revert and do not retry.
 long-only: it returned +$6.53 through the two CRASH weeks because its entry
 requires a new 24h closing HIGH, which a crash does not produce. It goes quiet
 rather than losing. Downside EARNING is the wildcard short arm's job.
+
+---
+
+## TRIAL 15 — CLOSED 2026-08-22. Result: both criteria positive, n short.
+
+Ran 2026-08-20 08:00 UTC to 2026-08-22 10:44 UTC (~2.1 days). Under test: the
+big-3 TREND sleeve in its own slots alongside the wildcard.
+
+**Convex record (feature store, reconciled against FULL exchange history —
+15 store rows = 15 exchange closes, no censoring):**
+
+```
+sleeve        n     netR    net $   wins
+TREND         7   +10.270   +19.42   7/7
+WILDCARD      7    +1.900    +6.12   3/7
+TOTAL        14   +12.170   +25.54
+  exBest netR +7.210   (best: ENA_USDT +4.96R / $+11.11)
+```
+
+Account: **$139.54 -> $165.12, +18.3%** over the window (the 15th exchange close,
+BTC +$0.17, is tagged PMT — an accidental position adopted as RECOVERED and
+closed by legacy exits — so it is correctly outside the convex count).
+
+**Verdict: PASS on both criteria, FAIL on n.** netR > 0 and netR ex-best > 0 were
+both met, and comfortably. But the rule requires 30 convex closes and the trial
+reached 14. This is NOT a scored verdict.
+
+**What the trial actually established.** The TREND sleeve went 7/7 on R and
+carried 76% of the P&L on 2 slots. That is a strong signal and a weak sample: the
+window was an exceptional market (BTC +2%, ETH/XRP/ZEC all running), the sleeve is
+long-only, and 7 wins in a rising market is close to what any long entry returns.
+The edge-vs-random discipline has NOT been applied to these live fills.
+
+**Defects fixed during the trial** (all live, all with regression tests): the
+PMT-recovery hijack (`692eae2`), the trial scoreboard counting one sleeve instead
+of the convex book (`7d96ffd`), and the non-crypto universe filter (`dfc2515`).
+
+## TRIAL 16 — OPEN 2026-08-22 10:44 UTC
+
+**Under test: renormalised position sizing.** `FUTURES_WILDCARD_RISK_PCT`
+0.0187 -> **0.0241**, regime-scaler shape unchanged at 0.20/0.45/0.25.
+
+The scaler's multipliers are all <= 1.0, so it could only ever shrink the book:
+mean multiplier 0.777 meant the sleeve ran at 78% of design size and realised
+1.45% risk per trade against a designed 1.87%. Renormalising restores the design
+level; it does not raise it. Peak per-trade risk becomes 2.41% against
+`FUTURES_MAX_TRADE_RISK_PCT=5`, and worst-case concurrent risk across all open
+slots goes 9.5% -> 11.4% of equity.
+
+**Evidence** (`tools/regime_scaler_ab.py`, `tools/scaler_equity_path_ab.py`;
+208 days, 1476 candidates, 516 fills, compounded with real slots):
+
+- Entry efficiency genuinely predicts: bottom buckets +0.103R / +0.019R, top
+  bucket +0.401R on 61.8% wins.
+- Renormalised LIVE compounds to +659.1% vs +615.2% for no scaler, with max
+  drawdown FALLING 24.2% -> 20.2%.
+- Run as two independent paths it beats the no-scaler null in BOTH halves
+  (+32.2%/+494.6% vs +27.5%/+491.6%) — the only variant besides floor-0.50 to
+  do so.
+- Every SHARPER tilt was rejected: all four underperform doing nothing in the
+  older half. "Aggressive 0.30/0.50/0.10" compounds best overall (+761.8%) and
+  its entire advantage is the recent half, with an older half marginally worse
+  than no scaler at all.
+
+**Everything else carries over unchanged:** TREND ETH/XRP/ZEC, 2 slots, long-only;
+WILDCARD 3 slots, both sides; turnover floor $2M; scan cap 90; squeeze off.
+
+**Pass criteria:** 30 convex closes, netR > 0 AND netR ex-best > 0.
+**Sizing-specific check:** realised mean risk per trade should land near 1.87%,
+not 1.45%. If it does not, the renormalisation is not doing what it claims and
+the trial is void regardless of P&L.
+
+**THE RESET COUNT IS NOW 12** (trials 5, 6, 6.5, 7, 8...16 in ~3 months, still
+zero scored verdicts). Trial 15 closed at 14/30 on a config change, not on
+results — the same pattern. It is worth stating plainly that this change is
+R-NEUTRAL by construction: sizing moves the dollar multiplier and cannot move R,
+so trial 15's R record remains valid evidence and is not invalidated by the
+reset. The counter is restarting for bookkeeping, not because the prior data
+became wrong.
