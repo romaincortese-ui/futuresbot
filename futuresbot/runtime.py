@@ -3177,6 +3177,7 @@ class FuturesRuntime:
         The one thing that does NOT scale is the order book, so the capacity line
         prints the notional each balance would actually have had to fill.
         """
+        from futuresbot import shadow_ledger as shadow
         from futuresbot.learning_digest import TRIAL_LABEL, TRIAL_START
         from futuresbot.simulation import (SIM_BALANCES, capacity_notional,
                                            realised_pnl, simulate,
