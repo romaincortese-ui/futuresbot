@@ -16,47 +16,68 @@ a same-side random-entry baseline so "shorts made money in the down week" is not
 mistaken for a detector edge, a half-split, and an ex-best figure — because a
 single week carried 78% of the wildcard result and that had to be said out loud.
 
-RESULT, 2026-08-22 -- 74 symbols, 208 days, 29 weekly windows.
-DO NOT ENABLE THEM UNCONDITIONALLY. The regime-gated question is UNRESOLVED.
+RESULT, 2026-08-22 -- 63 symbols, 360 days, 51 weekly windows.
+NO UNCONDITIONALLY. NO ON LOOSE GATES. The deep gate is unproven, not shipped.
 
     bucket             weeks  long-only $  both-sides $   delta $   S n
-    CRASH   <= -15%        2       +13.25        +87.91    +74.66    35
-    DOWN  -15..-5%         2        -1.05         +5.73     +6.78    24
-    FLAT   -5..+5%        21      +303.57       +188.69   -114.88   103
-    UP     +5..+15%        3       +17.73         +7.18    -10.55    16
-    SURGE   >= +15%        1       +92.94        +92.94     +0.00     0
-    TOTAL                 29      +426.45       +382.46    -43.99   178
-      ex-best week: -91.11   half-split: recent -35.93 / older -8.06 -> BOTH NEGATIVE
+    CRASH   <= -15%        2        +6.53        +81.20    +74.67    35
+    DOWN  -15..-5%         9        -3.73        +48.07    +51.80   106
+    FLAT   -5..+5%        34      +317.77       +142.71   -175.07   180
+    UP     +5..+15%        5       +24.78        +11.86    -12.91    22
+    SURGE   >= +15%        1       +96.83        +96.83     +0.00     0
+    TOTAL                 51      +442.18       +380.67    -61.51   343
+      ex-best week: -108.64     half-split: recent -80.67 / older +19.16
 
-    random SHORT baseline on the majors: -0.112/trade (n=600)
-    CRASH   35 shorts   +74.66   +2.133/trade   edge +2.245
-    DOWN    24 shorts    +6.78   +0.282/trade   edge +0.394
-    FLAT   103 shorts  -114.88   -1.115/trade   edge -1.004
-    UP      16 shorts   -10.55   -0.659/trade   edge -0.548
+    random SHORT baseline on the majors: -0.173/trade (n=600)
+    CRASH   35 shorts   +74.67   +2.133/trade   edge +2.306
+    DOWN   106 shorts   +43.43   +0.410/trade   edge +0.583
+    FLAT   180 shorts  -165.77   -0.921/trade   edge -0.748
+    UP      22 shorts   -12.91   -0.587/trade   edge -0.414
 
-UNCONDITIONALLY THIS IS A CLEAR NO: -$43.99, negative in BOTH halves, -$91.11
-ex-best. Unlike the wildcard short arm, which passed every one of those.
+The window was extended from 208d to 360d specifically to grow the down sample:
+the DOWN bucket went from 2 weeks to 9. CRASH stayed at 2 — 360 days simply does
+not contain more.
 
-THE REASON IS WHERE THE SIGNALS LAND. 103 of 178 trend shorts fire in FLAT weeks
-and lose -1.115 each. A 24h-extreme breakdown in a chopping market is a
-whipsaw generator: the sleeve enters on a new 24h closing LOW, and in a range
-that low is the bottom of the range.
+UNCONDITIONALLY IT IS A CLEAR NO: -$61.51, -$108.64 ex-best. 180 of 343 trend
+shorts fire in FLAT weeks and lose -0.921 each, with a NEGATIVE edge against a
+random short. A new 24h closing low in a range is the bottom of the range, so in
+chop the entry is a whipsaw generator.
 
-AND YET THE CRASH BUCKET IS ENORMOUS: +$74.66 over 2 weeks, +2.133/trade, edge
-+2.245 against a random short. The mechanism is sound -- a downtrend-following
-short in an actual downtrend. Gating trend shorts on "BTC 7d < -5%" would, on
-this data, capture +$81.44 and skip -$125.43.
+THE GATE HAD TO BE REBUILT BEFORE IT COULD BE TESTED. Bucketing a week by the
+move it went on to make is fine for DESCRIBING a regime and fatal for GATING on
+one: live, the bot knows only the past. The sweep below gates each signal on
+BTC's return over the 7 days BEFORE it.
 
-I DO NOT KNOW WHETHER THAT GATE WORKS, AND THIS DATA CANNOT SETTLE IT. The whole
-CRASH result rests on TWO weeks. Choosing the -5% threshold after seeing which
-buckets paid is exactly the fit the half-split exists to catch, and with 2 crash
-weeks a half-split has no power -- one week per half at best. It is recorded as
-an open question, not shipped as a finding.
+    gate    gated $  vs long-only   ex-best    recent     older  both halves?
+     -2%    +368.34        -73.83   -120.96    -88.33    +14.49  one half only
+     -5%    +394.67        -47.51    -94.63    -61.66    +14.15  one half only
+     -8%    +435.92         -6.26    -49.13     +4.52    -10.77  one half only
+    -12%    +479.78        +37.60    +11.82    +25.78    +11.82  YES
 
-WHAT THIS DOES SETTLE is that the sleeve is already SAFE in a crash without
-shorts: long-only it returns +$13.25 in the CRASH weeks, because its long entry
-needs a new 24h closing HIGH and a crash simply does not produce one. It goes
-quiet rather than losing. Downside earning is the wildcard short arm's job.
+TWO THINGS FALL OUT, AND THEY POINT OPPOSITE WAYS.
+
+1. LOOSE GATES ACTIVELY LOSE. "Turn shorts on when the market looks a bit weak"
+   is -$73.83 at -2% and -$47.51 at -5%. This kills the intuitive version of the
+   idea outright. The improvement is monotonic in gate depth, which is at least a
+   coherent shape: the tighter the gate, the more it isolates a genuine downtrend
+   from chop.
+
+2. ONLY THE DEEPEST GATE PASSES, AND IT PASSES ON ALMOST NOTHING. At -12% the
+   recent half is +25.78 and ex-best is +11.82 — so the recent half IS a single
+   week, and the older half is the ex-best remainder. That is roughly one
+   profitable episode per half. Two episodes is not evidence, and -12% is the
+   most extreme threshold tested, chosen after seeing the sweep. Shipping it
+   would be threshold-fitting of exactly the kind the half-split exists to catch.
+
+NOT SHIPPED. Recorded as a PRE-REGISTERED CANDIDATE instead: if BTC does fall
+>=12% over 7 days, the plan is already written down rather than improvised in the
+middle of a drawdown, and the live outcome becomes the out-of-sample test.
+
+WHAT IS SETTLED: the sleeve is already SAFE in a crash without shorts. Long-only
+it returns +$6.53 through the CRASH weeks, because its entry needs a new 24h
+closing HIGH and a crash does not produce one — it goes quiet rather than losing.
+Earning on the downside is the wildcard short arm's job, and that arm is measured
+on a far better sample (tools/wildcard_short_regime_ab.py).
 
 Read-only. Places nothing.
 
@@ -213,7 +234,22 @@ def main() -> int:
         r_net, ex, _k = g
         return r_net * eq * 0.12 * float(sig.sl_margin_pct) / 100.0, ex
 
-    def run_window(allow_trend_short, lo, hi):
+    # TRAILING BTC return, for gating without lookahead. Bucketing a week by the
+    # move it went on to make is fine for DESCRIBING regimes and fatal for
+    # gating on them: live, the bot only knows the past. This is BTC's return
+    # over the 7 days BEFORE each signal.
+    TRAIL_BARS = 672          # 7d of 15m bars
+    _bt = {int(t): k for k, t in enumerate(btc_t)}
+
+    def btc_trailing(ts):
+        k = _bt.get(int(ts))
+        if k is None:
+            k = min(range(len(btc_t)), key=lambda j: abs(btc_t[j] - ts))
+        j = max(0, k - TRAIL_BARS)
+        return (btc_c[k] / btc_c[j] - 1.0) if btc_c[j] > 0 else 0.0
+
+    def run_window(mode, lo, hi, gate=-0.05):
+        """mode: 'long_only' | 'both' | 'gated' (shorts only after a weak BTC)."""
         wc_live, tr_live, per = [], [], {}
         tot = 0.0
         tsn = 0
@@ -221,8 +257,11 @@ def main() -> int:
         for ts, sym, sig, i, bars, kind, side in cands:
             if not (lo <= ts < hi):
                 continue
-            if kind == "TREND" and side == "SHORT" and not allow_trend_short:
-                continue
+            if kind == "TREND" and side == "SHORT":
+                if mode == "long_only":
+                    continue
+                if mode == "gated" and btc_trailing(ts) > gate:
+                    continue
             wc_live[:] = [x for x in wc_live if x > ts]
             tr_live[:] = [x for x in tr_live if x > ts]
             per[sym] = [x for x in per.get(sym, []) if x > ts]
@@ -248,8 +287,8 @@ def main() -> int:
     for k in range(n_win):
         hi = now - k * win_s
         lo = hi - win_s
-        L, _a, _b = run_window(False, lo, hi)
-        B, tsn, tsp = run_window(True, lo, hi)
+        L, _a, _b = run_window("long_only", lo, hi)
+        B, tsn, tsp = run_window("both", lo, hi)
         if L == 0 and B == 0:
             continue
         rows.append((k, btc_move(lo, hi), L, B, B - L, tsn, tsp))
@@ -313,12 +352,35 @@ def main() -> int:
               f"edge {p/n - baseline:+8.3f}")
 
     print()
-    print("=== 3. HALF-SPLIT ===")
+    print("=== 3. HALF-SPLIT, unconditional shorts ===")
     mid = n_win // 2
     dr = sum(r[4] for r in rows if r[0] < mid)
     do = sum(r[4] for r in rows if r[0] >= mid)
     print(f"  recent {dr:+8.2f} | older {do:+8.2f} -> "
           f"{'YES' if dr > 0 and do > 0 else ('no' if dr < 0 and do < 0 else 'one half only')}")
+
+    print()
+    print("=== 4. GATED on TRAILING BTC (no lookahead), threshold sweep ===")
+    print(f"{'gate':>8} {'gated $':>10} {'vs long-only':>13} {'ex-best':>9} "
+          f"{'recent':>9} {'older':>9}  both halves?")
+    base_tot = sum(r[2] for r in rows)
+    for gate in (-0.02, -0.05, -0.08, -0.12):
+        per_week = []
+        for k in range(n_win):
+            hi = now - k * win_s
+            lo = hi - win_s
+            G, _n, _p = run_window("gated", lo, hi, gate=gate)
+            L = next((r[2] for r in rows if r[0] == k), None)
+            if L is None:
+                continue
+            per_week.append((k, G - L))
+        tot_d = sum(d for _k, d in per_week)
+        best = max((d for _k, d in per_week), default=0.0)
+        rec = sum(d for k, d in per_week if k < mid)
+        old = sum(d for k, d in per_week if k >= mid)
+        ok = "YES" if rec > 0 and old > 0 else ("no" if rec < 0 and old < 0 else "one half only")
+        print(f"{gate*100:+7.0f}% {base_tot + tot_d:+10.2f} {tot_d:+13.2f} "
+              f"{tot_d - best:+9.2f} {rec:+9.2f} {old:+9.2f}  {ok}")
     return 0
 
 
