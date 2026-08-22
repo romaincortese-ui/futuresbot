@@ -127,11 +127,14 @@ def test_digest_reports_tp_completion():
         {"ts": TRIAL_START + 4, "kind": "WILDCARD", "r_multiple": 0.2, "pnl_usdt": 0.3, "exit_kind": "OTHER"},
     ]
     msg = build_learning_digest(rows, [])
-    # The SQUEEZE row is excluded: trial 7 is scored on WILDCARD closes, and
-    # counting squeeze made the digest disagree with /status on the same n/30.
-    assert "Trial: <b>3/30</b> WC closes" in msg
-    assert "Exits: TP <b>1</b> (33%)" in msg
-    assert "stop 1" in msg and "other 1" in msg
+    # All four count. SQUEEZE used to be excluded here so the digest would agree
+    # with /status, which then filtered kind=="WILDCARD" — but that filter was
+    # the bug: it excluded TREND, the sleeve trial 15 exists to test. Both
+    # scoreboards now read shadow_ledger.CONVEX_SLEEVES, so they agree by
+    # construction and every sleeve sharing the convex slots is scored.
+    assert "Trial: <b>4/30</b> convex closes" in msg
+    assert "Exits: TP <b>1</b> (25%)" in msg
+    assert "stop 2" in msg and "other 1" in msg
 
 
 # --------------------------------------------------------------------------

@@ -76,8 +76,10 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
     # Trial 15 (2026-08-20) adds the big-3 TREND sleeve. The scoreboard counts
     # the convex BOOK, not one sleeve — scoring a trial while ignoring the sleeve
     # the trial exists to test is how trials 11 and 12 closed at "0 closes".
+    from futuresbot.shadow_ledger import CONVEX_SLEEVES
+
     convex = [r for r in store_rows
-              if str(r.get("kind") or "").upper() in ("WILDCARD", "TREND")]
+              if str(r.get("kind") or "").upper() in CONVEX_SLEEVES]
     trial = [r for r in convex if float(r.get("ts") or 0) >= trial_start]
     rs = [float(r.get("r_multiple") or 0) for r in trial]
     lines = ["🧭 <b>Weekly learning digest</b>", "━━━━━━━━━━━━━━━"]
@@ -86,11 +88,11 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
         usd = sum(float(r.get("pnl_usdt") or 0) for r in trial)
         wins = sum(1 for r in rs if r > 0)
         lines.append(
-            f"Trial: <b>{len(trial)}/{trial_target}</b> WC closes | netR <b>{net_r:+.2f}</b> "
+            f"Trial: <b>{len(trial)}/{trial_target}</b> convex closes | netR <b>{net_r:+.2f}</b> "
             f"| exBest <b>{net_r - max(rs):+.2f}</b> | ${usd:+.2f} | win {100 * wins / len(rs):.0f}%"
         )
     else:
-        lines.append(f"Trial: <b>0/{trial_target}</b> WC closes since the rule started")
+        lines.append(f"Trial: <b>0/{trial_target}</b> convex closes since the rule started")
 
     # TP completion (trial 4): the 3.0xATR stop doubled the price move +5R needs
     # (~75%). If completions collapse, the stop/TP pairing is too demanding and

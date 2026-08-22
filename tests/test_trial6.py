@@ -788,7 +788,7 @@ def test_trial_counter_is_scoped_to_the_trial_not_the_200_row_cap(rt, monkeypatc
         {"ts": 1700.0, "kind": "SNIPER", "r_multiple": -1.45, "pnl_usdt": -0.096},  # other sleeve
     ])
     line = rt._trial_progress_line()
-    assert "<b>2</b>/30 WC closes" in line
+    assert "<b>2</b>/30 convex closes" in line
     assert "netR <b>+0.95</b>" in line and "net <b>$+1.81</b>" in line
 
 
@@ -1439,7 +1439,7 @@ def test_short_arm_is_scored_separately_while_both_sides_are_live(rt, monkeypatc
         {"ts": 1700.0, "kind": "WILDCARD", "side": "SHORT", "r_multiple": 1.5, "pnl_usdt": 4.0},
     ])
     line = rt._trial_progress_line()
-    assert "<b>3</b>/30 WC closes" in line
+    assert "<b>3</b>/30 convex closes" in line
     assert "LONG 1: netR <b>+2.00</b>" in line
     assert "SHORT 2: netR <b>+0.50</b>" in line
 

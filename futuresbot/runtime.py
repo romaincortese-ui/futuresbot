@@ -2931,15 +2931,30 @@ class FuturesRuntime:
         Replaces "Trades: {len(self.trade_history)}", which was neither
         all-time nor a count: _save_state persists only trade_history[-200:],
         so after >200 lifetime closes the number is pinned at 200 forever."""
+        from futuresbot import shadow_ledger as shadow
         from futuresbot.learning_digest import TRIAL_LABEL, TRIAL_START, TRIAL_TARGET_TRADES
 
+        # Count the convex BOOK, not one sleeve. This filtered kind=="WILDCARD"
+        # while trial 15 IS the TREND sleeve, so the scoreboard excluded the very
+        # thing under test: on 2026-08-22 /status read 6 closes/+$7.64 while TREND
+        # had returned +$19.50 over 8 closes, all winners. The weekly digest had
+        # already been widened to WILDCARD+TREND, so the two disagreed on the same
+        # "n/30" — the exact failure its own comment warns about. Sourced from
+        # CONVEX_SLEEVES so a future sleeve cannot silently fall out again.
         rows = [r for r in self._feature_rows_cached()
-                if str(r.get("kind") or "").upper() == "WILDCARD"
+                if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
                 and float(r.get("ts") or 0.0) >= TRIAL_START]
         net_r = sum(float(r.get("r_multiple") or 0.0) for r in rows)
         net_usd = sum(float(r.get("pnl_usdt") or 0.0) for r in rows)
-        line = (f"Trial {TRIAL_LABEL}: <b>{len(rows)}</b>/{TRIAL_TARGET_TRADES} WC closes"
+        line = (f"Trial {TRIAL_LABEL}: <b>{len(rows)}</b>/{TRIAL_TARGET_TRADES} convex closes"
                 f" | netR <b>{net_r:+.2f}</b> | net <b>${net_usd:+.2f}</b>")
+        # Per-sleeve, because a pooled figure hides which sleeve is carrying the
+        # trial — and here they point in opposite directions.
+        for sleeve in sorted({str(r.get("kind") or "").upper() for r in rows}):
+            arm = [r for r in rows if str(r.get("kind") or "").upper() == sleeve]
+            line += ("\n" + f"  {sleeve} {len(arm)}: netR "
+                     f"<b>{sum(float(r.get('r_multiple') or 0) for r in arm):+.2f}</b>"
+                     f" | <b>${sum(float(r.get('pnl_usdt') or 0) for r in arm):+.2f}</b>")
         # Split by side while both arms are live: the short arm carries a
         # different payoff ceiling and a different prior, and pooling them
         # would make the trial unreadable in either direction.

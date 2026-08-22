@@ -74,7 +74,9 @@ gate that actually matters is SPREAD/DEPTH, not turnover; turnover is only a
 crude proxy for it. Building that veto is not justified while the P&L it would
 unlock is inside the noise band.
 
-VERDICT: leave FUTURES_WILDCARD_MIN_TURNOVER at $3M. Do not raise it.
+VERDICT: moved to $2M on the two non-noise tiebreaks (the only floor surviving
+the half-split; the lowest floor excluding ALL eight measured toxic books). Do
+not raise it — that side of the cliff costs -$41.72.
 
 Read-only. Places nothing.
 

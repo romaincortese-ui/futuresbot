@@ -458,7 +458,7 @@ def test_build_status_message_includes_signal_context_and_btc_trends(tmp_path):
     # 200 forever. Replaced by the trial scoreboard the decision rule is scored
     # on. Avail shows only when it differs from equity.
     assert "Equity: <b>$150.50</b> (free $123.45)" in message
-    assert "WC closes" in message and "netR" in message
+    assert "convex closes" in message and "netR" in message
     assert "Trades:" not in message
 
 
