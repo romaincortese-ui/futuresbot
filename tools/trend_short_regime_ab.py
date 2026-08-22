@@ -16,6 +16,48 @@ a same-side random-entry baseline so "shorts made money in the down week" is not
 mistaken for a detector edge, a half-split, and an ex-best figure — because a
 single week carried 78% of the wildcard result and that had to be said out loud.
 
+RESULT, 2026-08-22 -- 74 symbols, 208 days, 29 weekly windows.
+DO NOT ENABLE THEM UNCONDITIONALLY. The regime-gated question is UNRESOLVED.
+
+    bucket             weeks  long-only $  both-sides $   delta $   S n
+    CRASH   <= -15%        2       +13.25        +87.91    +74.66    35
+    DOWN  -15..-5%         2        -1.05         +5.73     +6.78    24
+    FLAT   -5..+5%        21      +303.57       +188.69   -114.88   103
+    UP     +5..+15%        3       +17.73         +7.18    -10.55    16
+    SURGE   >= +15%        1       +92.94        +92.94     +0.00     0
+    TOTAL                 29      +426.45       +382.46    -43.99   178
+      ex-best week: -91.11   half-split: recent -35.93 / older -8.06 -> BOTH NEGATIVE
+
+    random SHORT baseline on the majors: -0.112/trade (n=600)
+    CRASH   35 shorts   +74.66   +2.133/trade   edge +2.245
+    DOWN    24 shorts    +6.78   +0.282/trade   edge +0.394
+    FLAT   103 shorts  -114.88   -1.115/trade   edge -1.004
+    UP      16 shorts   -10.55   -0.659/trade   edge -0.548
+
+UNCONDITIONALLY THIS IS A CLEAR NO: -$43.99, negative in BOTH halves, -$91.11
+ex-best. Unlike the wildcard short arm, which passed every one of those.
+
+THE REASON IS WHERE THE SIGNALS LAND. 103 of 178 trend shorts fire in FLAT weeks
+and lose -1.115 each. A 24h-extreme breakdown in a chopping market is a
+whipsaw generator: the sleeve enters on a new 24h closing LOW, and in a range
+that low is the bottom of the range.
+
+AND YET THE CRASH BUCKET IS ENORMOUS: +$74.66 over 2 weeks, +2.133/trade, edge
++2.245 against a random short. The mechanism is sound -- a downtrend-following
+short in an actual downtrend. Gating trend shorts on "BTC 7d < -5%" would, on
+this data, capture +$81.44 and skip -$125.43.
+
+I DO NOT KNOW WHETHER THAT GATE WORKS, AND THIS DATA CANNOT SETTLE IT. The whole
+CRASH result rests on TWO weeks. Choosing the -5% threshold after seeing which
+buckets paid is exactly the fit the half-split exists to catch, and with 2 crash
+weeks a half-split has no power -- one week per half at best. It is recorded as
+an open question, not shipped as a finding.
+
+WHAT THIS DOES SETTLE is that the sleeve is already SAFE in a crash without
+shorts: long-only it returns +$13.25 in the CRASH weeks, because its long entry
+needs a new 24h closing HIGH and a crash simply does not produce one. It goes
+quiet rather than losing. Downside earning is the wildcard short arm's job.
+
 Read-only. Places nothing.
 
 Env: TS_DAYS (190) TS_POOL (70) TS_SLOTS (3) TS_TREND_SLOTS (2) TS_RANDOM (600)
