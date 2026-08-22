@@ -1727,3 +1727,49 @@ R-NEUTRAL by construction: sizing moves the dollar multiplier and cannot move R,
 so trial 15's R record remains valid evidence and is not invalidated by the
 reset. The counter is restarting for bookkeeping, not because the prior data
 became wrong.
+
+## Trail ratchet on exceptional trades (live 2026-08-22, inside trial 16)
+
+`FUTURES_CONVEX_TRAIL_RATCHET_R=3.0`, `FUTURES_CONVEX_TRAIL_RATCHET_RETAIN=0.75`
+(defaults in code; set `..._RATCHET_R=0` to revert). Below a 3R peak the floor is
+unchanged at 0.30 x peak.
+
+**Why, in one line:** the flat floor is right while a runner is growing and wrong
+once it has already made its money.
+
+`tools/peak_fate_ab.py`, 208 days, 1380 candidates. From a 3R peak only **13.2%**
+of trades exit within 20% of their high and **40.4%** hand the whole run back to
+the floor, while the mean peak there is 5.95R against a 5R target. Also: **13.4%
+of trades that touched 2.5R still finish at -1R**, because the floor is set from
+PRIOR bars — a bar that spikes to a new peak and collapses inside the same bar is
+floored on the old peak.
+
+Every threshold/retention pair tested is positive AND passes the half-split,
+which nothing else measured this session managed:
+
+```
+rule                          net $   vs live   pos wk    recent     older
+LIVE flat 0.30              +330.94     +0.00   17/29   +296.03    +34.91
+peak>=2.0 -> retain 0.60    +378.26    +47.32   15/29    +41.41     +5.91
+peak>=2.5 -> retain 0.75    +358.53    +27.59   16/29     +8.05    +19.55
+peak>=3.0 -> retain 0.75    +356.27    +25.33   17/29    +21.30     +4.03   <- shipped
+```
+
+3.0/0.75 was chosen over the larger 2.0/0.60 because the latter is 88%
+recent-half and costs two positive weeks — the same preference for an evenly
+distributed edge that rejected the sharper size tilts.
+
+**Why NOT the Telegram "record" trigger, which is what was actually asked for.**
+Re-measured 2026-08-22 it fires on 49% of armed trades with a median trigger of
+**3.04R**, so it currently means almost the same thing — and the 2026-08-08 note
+saying it costs -$38/yr no longer holds (it fired on 70% then; the account grew
+and the weekly-best bar rose with it). It was rejected because it DRIFTS: the
+threshold is weekly-best-close / 1R, so one weak week drops the bar and silently
+restores the 70%-firing rule that lost money. It also tests weaker — the best
+record variant surviving a half-split is +$20.38, and `record only -> 0.75` fails
+it outright (-2.50 recent). The 🏆 message now quotes the ratcheted floor, so the
+human sees the real number while the orders run off the stable trigger.
+
+**What this does not fix:** the ~13% that gap through inside a single bar, and
+the occasional runner cut short — that is the ~$20 of upside the 0.60 variants
+capture and 0.75 gives back.

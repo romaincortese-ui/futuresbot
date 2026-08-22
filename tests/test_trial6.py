@@ -271,10 +271,12 @@ def test_retention_floor_ratchets_with_the_peak(rt, monkeypatch):
     seen = {}
     monkeypatch.setattr(rt, "_close_position_for_exit",
                         lambda p, **k: seen.update(reason=k.get("reason")) or True)
+    # Peak kept BELOW the 3.0R ratchet trigger so this pins the base 0.30 path;
+    # the ratchet itself is covered in tests/test_trail_ratchet.py.
     p = _pos()
-    assert rt._convex_runner_trail_exit(p, 135.0) is False       # +3.5R, floor 1.05R
-    assert rt._convex_runner_trail_exit(p, 120.0) is False       # +2.0R, above floor
-    assert rt._convex_runner_trail_exit(p, 110.0) is True        # +1.0R < 1.05R floor
+    assert rt._convex_runner_trail_exit(p, 125.0) is False       # +2.5R, floor 0.75R
+    assert rt._convex_runner_trail_exit(p, 115.0) is False       # +1.5R, above floor
+    assert rt._convex_runner_trail_exit(p, 105.0) is True        # +0.5R < 0.75R floor
     assert seen["reason"] == "CONVEX_RETENTION_TRAIL"
 
 

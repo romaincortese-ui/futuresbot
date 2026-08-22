@@ -332,6 +332,102 @@ def main() -> int:
         print(f"{'peak>=' + format(trig, '.1f') + ' -> retain ' + format(hi, '.2f'):<28} "
               f"{tot:+10.2f} {tot-base_all:+9.2f} {pos:4d}/{n_win:<3d} "
               f"{rec:+9.2f} {old:+9.2f}  {ok}")
+
+    # ---------------------------------------------------------------
+    # 4. THE OWNER'S ACTUAL TRIGGER: the Telegram "record" condition —
+    #    unrealised $ above every close of the trailing week. runtime.py records
+    #    it as INFORMATION ONLY because acting on it measured -$38/yr on
+    #    2026-08-08, "because the condition fires on 70% of armed trades". That
+    #    verdict predates the current config, so it is re-measured rather than
+    #    cited, and the CONJUNCTION (record AND already far ahead) tested too.
+    # ---------------------------------------------------------------
+    one_r = {i_: eq * 0.12 * float(c_[2].sl_margin_pct) / 100.0
+             for i_, c_ in enumerate(cands)}
+
+    # Reference close history from the LIVE-floor arm: one lookahead-free series
+    # every variant is scored against, so the trigger cannot move with the rule
+    # being tested.
+    hist = []
+    live_slots, per_sym = [], {}
+    for i_, c_ in enumerate(cands):
+        ts0, sym = c_[0], c_[1]
+        live_slots[:] = [x for x in live_slots if x > ts0]
+        per_sym[sym] = [x for x in per_sym.get(sym, []) if x > ts0]
+        if per_sym[sym] or len(live_slots) >= slots:
+            continue
+        g = outcome(c_, LIVE_FLOOR)
+        if g is None:
+            continue
+        live_slots.append(g[1])
+        per_sym[sym].append(g[1])
+        hist.append((g[1], g[0] * one_r[i_]))
+    hist.sort()
+
+    def best_week(ts0):
+        vals = [u for t, u in hist if ts0 - 7 * 86400 <= t < ts0]
+        return max(vals) if vals else 0.0
+
+    # The peak in R at which unrealised $ would first exceed the week's best.
+    rec_r = {}
+    fires = armed = 0
+    for i_, c_ in enumerate(cands):
+        rec_r[i_] = max(0.0, best_week(c_[0]) / one_r[i_]) if one_r[i_] > 0 else 9e9
+        if c_[6] >= 1.0:
+            armed += 1
+            fires += 1 if c_[6] >= rec_r[i_] else 0
+    med = sorted(rec_r.values())[len(rec_r) // 2]
+    print()
+    print("=== THE RECORD TRIGGER, RE-MEASURED ===")
+    print(f"  fires on {fires}/{armed} armed trades "
+          f"({100.0 * fires / armed if armed else 0:.0f}%) | median trigger {med:.2f}R")
+
+    def rec_floor(i_, retain_hi, extra_r):
+        trig = max(rec_r[i_], extra_r)
+
+        def f(peak, atr, slf):
+            if peak < 1.0:
+                return None
+            return (retain_hi if peak >= trig else 0.30) * peak
+        return f
+
+    def book_rec(retain_hi, extra_r, k_lo=0, k_hi=None):
+        tot = 0.0
+        pos = 0
+        for k in range(k_lo, n_win if k_hi is None else k_hi):
+            hi_t = now - k * win_s
+            lo_t = hi_t - win_s
+            live, per, wt = [], {}, 0.0
+            for i_, c_ in enumerate(cands):
+                ts0, sym, sig = c_[0], c_[1], c_[2]
+                if not (lo_t <= ts0 < hi_t):
+                    continue
+                live[:] = [x for x in live if x > ts0]
+                per[sym] = [x for x in per.get(sym, []) if x > ts0]
+                if per[sym] or len(live) >= slots:
+                    continue
+                g = outcome(c_, rec_floor(i_, retain_hi, extra_r))
+                if g is None:
+                    continue
+                live.append(g[1])
+                per[sym].append(g[1])
+                wt += g[0] * eq * 0.12 * float(sig.sl_margin_pct) / 100.0
+            tot += wt
+            pos += 1 if wt > 0 else 0
+        return tot, pos
+
+    print(f"{'rule':<34} {'net $':>10} {'vs live':>9} {'pos wk':>8} "
+          f"{'recent':>9} {'older':>9}  both halves?")
+    for label, hi_, extra in (("record only -> 0.60", 0.60, 0.0),
+                              ("record only -> 0.75", 0.75, 0.0),
+                              ("record AND peak>=2.5 -> 0.75", 0.75, 2.5),
+                              ("record AND peak>=3.0 -> 0.75", 0.75, 3.0),
+                              ("record AND peak>=3.0 -> 0.60", 0.60, 3.0)):
+        tot, pos = book_rec(hi_, extra)
+        rec = book_rec(hi_, extra, 0, mid)[0] - base_rec
+        old = book_rec(hi_, extra, mid, n_win)[0] - base_old
+        ok = "YES" if rec > 0 and old > 0 else ("no" if rec < 0 and old < 0 else "one half only")
+        print(f"{label:<34} {tot:+10.2f} {tot-base_all:+9.2f} {pos:4d}/{n_win:<3d} "
+              f"{rec:+9.2f} {old:+9.2f}  {ok}")
     return 0
 
 

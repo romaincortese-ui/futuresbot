@@ -1789,6 +1789,33 @@ class FuturesRuntime:
         return self._close_position_for_exit(position, current_price=current_price,
                                              reason="CONVEX_TIME_STOP")
 
+    def _trail_retain_for(self, peak_r: float, base: float) -> float:
+        """Retention fraction for a peak: `base`, ratcheted once EXCEPTIONAL.
+
+        The flat 0.30 floor is right while a runner is still growing and wrong
+        once it has already made its money. Measured over 208 days / 1380
+        candidates (tools/peak_fate_ab.py): from a 3R peak only 13.2% of trades
+        exit within 20% of their high and 40.4% give the whole run back to the
+        floor, while the mean peak at that point is 5.95R against a 5R target.
+        The runner is done; the only question left is whether it is banked.
+
+        A BLANKET higher retention was tested first and LOST (-$4.09 over 188
+        days, tools/trail_bigmove_windows.py) because it also tightened trades
+        peaking 1-2R, taxing winners during the phase that pays for everything.
+        Conditioning on the peak is what makes it work: every threshold/retention
+        pair tested is positive AND passes the half-split, which no other change
+        measured this session managed.
+
+        Ratchet-only by construction: the fraction is a step that only rises with
+        peak, and peak itself only rises, so the floor can never fall. Set
+        FUTURES_CONVEX_TRAIL_RATCHET_R=0 to disable.
+        """
+        trigger = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0)
+        high = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN", 0.75)
+        if trigger <= 0 or high <= base:
+            return base
+        return high if peak_r >= trigger else base
+
     def _convex_runner_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
         """Proportional retention (trial 7): arm at +1R, floor = 0.30 x peak R.
 
@@ -1860,7 +1887,7 @@ class FuturesRuntime:
         if retain > 0:
             # trial 7: retention floor. Ratchet-only by construction (retain is
             # constant and peak only rises), and always >= retain x arm > 0.
-            exit_level = retain * peak_r
+            exit_level = self._trail_retain_for(peak_r, retain) * peak_r
             # ...but "above zero in R" is not "above zero in DOLLARS". Cost drag
             # is 0.190%/sl_frac, so a sleeve with a 0.37% stop pays 0.52R per
             # round trip and a 0.30 floor nets -0.22R BY CONSTRUCTION. That is
@@ -2763,11 +2790,24 @@ class FuturesRuntime:
 
     def _maybe_record_peak_notify(self, position: FuturesPosition, r_now: float) -> None:
         """🏆 once per position: unrealized $ has exceeded every close of the
-        trailing week. INFORMATION ONLY — measured 2026-08-08: acting on this
-        signal (tightening the trail on 'record' trades) costs ~-$38/yr and
-        collapses TP completions 17 -> 2, because the condition fires on 70% of
-        armed trades and taxes exactly the runners that create record closes.
-        The human gets the ping; the orders do not change."""
+        trailing week.
+
+        STILL INFORMATION ONLY, but no longer for the original reason. The
+        2026-08-08 note said acting on this signal cost ~-$38/yr because it fired
+        on 70% of armed trades. Re-measured 2026-08-22 it fires on 49% with a
+        median trigger of 3.04R — the account grew and the weekly-best bar rose
+        with it — and the record-conditioned ratchets now test POSITIVE.
+
+        It is still not the trigger the orders use, because it DRIFTS: the
+        threshold is weekly-best-close / 1R, so one weak week drops the bar and
+        silently restores the 70%-firing rule that lost money. The trail ratchets
+        on peak R instead, which is fixed, tests stronger (+$25.33 vs +$20.38 for
+        the best record variant that survives a half-split), and currently means
+        almost the same thing.
+
+        What DID change is this message: the floor it quotes is now the ratcheted
+        one, so a 🏆 on a 3R+ trade reports what is really locked in rather than
+        the base 0.30 figure."""
         md = position.metadata or {}
         if md.get("record_peak_notified"):
             return
@@ -2779,7 +2819,8 @@ class FuturesRuntime:
         best = self._best_weekly_close_usd()
         if best is None or peak_usd <= best:
             return
-        retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
+        retain = self._trail_retain_for(
+            r_now, self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30))
         floor_usd = max(0.0, retain * r_now) * one_r_usd if r_now >= 1.0 else 0.0
         position.metadata["record_peak_notified"] = 1.0
         self._notify(
