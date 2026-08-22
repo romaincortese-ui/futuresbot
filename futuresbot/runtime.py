@@ -3124,6 +3124,94 @@ class FuturesRuntime:
         lines.append(f"<i>{self._commands_hint()}</i>")
         return "\n".join(lines)
 
+    def _build_simulation_message(self) -> str:
+        """/simulation — this trial's result on a bigger opening balance.
+
+        Sizing is a FRACTION of equity, so the percentage equity curve is
+        identical at any starting balance and the answer is arithmetic rather
+        than a forecast: compound each closed trade's own stamped risk fraction
+        and R multiple from the chosen opening balance. Scoped to TRIAL_START, so
+        it resets itself when a new trial opens.
+
+        The one thing that does NOT scale is the order book, so the capacity line
+        prints the notional each balance would actually have had to fill.
+        """
+        from futuresbot.learning_digest import TRIAL_LABEL, TRIAL_START
+        from futuresbot.simulation import (SIM_BALANCES, capacity_notional,
+                                           risk_fraction, simulate)
+
+        rows = sorted(
+            (r for r in self._feature_rows_cached()
+             if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
+             and float(r.get("ts") or 0.0) >= TRIAL_START),
+            key=lambda r: float(r.get("ts") or 0.0))
+
+        # Open positions, so the figure matches what the account shows.
+        open_rs: list[tuple[float, float]] = []
+        live_unreal = 0.0
+        eq = self._last_known_equity() or 0.0
+        for pos in self.open_positions.values():
+            if self._sleeve_kind(pos) not in shadow.CONVEX_SLEEVES:
+                continue
+            entry = float(pos.entry_price or 0.0)
+            sl = float(pos.sl_price or 0.0)
+            if entry <= 0 or sl <= 0:
+                continue
+            sl_frac = abs(entry - sl) / entry
+            if sl_frac <= 0:
+                continue
+            try:
+                mark = float(self.client.get_fair_price(pos.symbol) or 0.0)
+            except Exception:
+                mark = 0.0
+            if mark <= 0:
+                continue
+            move = (mark / entry - 1.0) * (1.0 if pos.side == "LONG" else -1.0)
+            r_now = move / sl_frac
+            lev = max(1.0, float(pos.leverage or 1))
+            risk_usd = float(pos.margin_usdt or 0.0) * sl_frac * lev
+            live_unreal += move * float(pos.margin_usdt or 0.0) * lev
+            if eq > 0 and risk_usd > 0:
+                open_rs.append((risk_usd / eq, r_now))
+
+        lines = [f"🧪 <b>Simulation</b> — Trial {TRIAL_LABEL}", "━━━━━━━━━━━━━━━"]
+        if not rows and not open_rs:
+            lines.append("No convex trades yet this trial — nothing to simulate.")
+            lines.append("<i>Resets automatically when the next trial opens.</i>")
+            return "\n".join(lines)
+
+        net_r = sum(float(r.get("r_multiple") or 0.0) for r in rows)
+        realised = sum(float(r.get("pnl_usdt") or 0.0) for r in rows)
+        lines.append(f"{len(rows)} closed · netR <b>{net_r:+.2f}</b> · "
+                     f"realised <b>${realised:+.2f}</b>"
+                     + (f" · open <b>${live_unreal:+.2f}</b>" if open_rs else ""))
+        if eq > 0:
+            lines.append(f"Live account: <b>${eq:.2f}</b>")
+        lines.append("")
+        lines.append("<code>opening    equity      P&amp;L      return</code>")
+        for bal in SIM_BALANCES:
+            sim = simulate(rows, bal, open_rs)
+            lines.append(
+                f"<code>${bal:<9,.0f} ${sim['equity']:>9,.0f} "
+                f"{sim['realised'] + sim['unrealised']:>+9,.0f} "
+                f"{sim['return_pct']:>+7.2f}%</code>")
+
+        # The honest caveat, with numbers. Same % return at every balance is a
+        # RESULT of fractional sizing, not a modelling shortcut — but only while
+        # the fills stay free.
+        top = capacity_notional(rows, SIM_BALANCES[-1])
+        if top["n"]:
+            lines.append("")
+            lines.append(
+                f"⚠️ At ${SIM_BALANCES[-1]:,.0f} the median position would be "
+                f"<b>${top['median']:,.0f}</b> notional (max ${top['max']:,.0f}). "
+                f"Measured median top-10 book depth in this band is ~$20k, and the "
+                f"thin tail holds a few hundred. Returns above ~$5k are optimistic: "
+                f"they assume fills stay free, and they do not.")
+        lines.append("<i>Same % at every balance is what fractional sizing implies, "
+                     "not an approximation. Scoped to this trial; resets at the next.</i>")
+        return "\n".join(lines)
+
     def _build_pnl_message(self, *, price: float | None = None) -> str:
         current_price = price if price and price > 0 else self._get_reference_price()
         snapshot = self._account_snapshot(current_price)
@@ -3369,7 +3457,7 @@ class FuturesRuntime:
         self._save_state()
 
     def _commands_hint(self) -> str:
-        return "/status /why /pnl /logs /reconcile /pause /resume /close [SYMBOL|all] /help"
+        return "/status /why /pnl /simulation /logs /reconcile /pause /resume /close [SYMBOL|all] /help"
 
     def _build_help_message(self) -> str:
         return (
@@ -3538,6 +3626,9 @@ class FuturesRuntime:
                     elif command == "/pnl":
                         self._notify(self._build_pnl_message())
                         self._record_activity("Telegram: /pnl")
+                    elif command in {"/simulation", "/sim"}:
+                        self._notify(self._build_simulation_message())
+                        self._record_activity("Telegram: /simulation")
                     elif command in {"/logs", "/log"}:
                         self._notify(self._build_logs_message())
                         self._record_activity("Telegram: /logs")
