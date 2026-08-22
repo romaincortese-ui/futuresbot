@@ -18,6 +18,34 @@ Everything else matches the live sleeve: shipped detector, convex exits, the
 
 Read-only. Places nothing.
 
+RESULT, 2026-08-22 -- run at two window lengths, both on the live exit stack.
+DIRECTIONALLY "REMOVE IT", BUT NOT AT A SIGNIFICANCE WORTH ACTING ON MID-TRIAL.
+
+    span    windows   THROTTLED      FLAT   FLAT-THROTTLED   t    FLAT better in
+     56d          8     +101.60   +113.25          +11.65  0.58        5/8  (63%)
+    190d         27     +205.74   +223.67          +17.93  0.92      17/27  (63%)
+
+Removing the throttle is worth about +$2.8/month on the longer window, the sign
+is the same at both lengths, and the proportion of windows favouring FLAT is
+identical (63%). But t=0.92 is not significance, and this repo has been burned
+repeatedly by acting on results of exactly this size.
+
+THE STRUCTURAL ARGUMENT IS STRONGER THAN THE STATISTICAL ONE, and it is the same
+one that condemned the regime scaler's haircut: every throttle multiplier is
+<= 1.0, so it can only ever SHRINK a positive-expectancy book. It pays if and
+only if losses CLUSTER — that is its entire premise — and the measurement finds
+no clustering to exploit. Unlike the regime scaler, which at least carries a real
+predictive tilt (efficiency buckets +0.019R at the bottom against +0.401R at the
+top), the throttle has no measured signal underneath it at all.
+
+NOT CHANGED, for a reason that is about method rather than the number: trial 16
+is testing renormalised sizing. Changing a second size rule inside it would
+confound exactly the thing the trial exists to measure. This is a candidate for
+the START of trial 17, where it can be the change under test rather than noise
+in someone else's.
+
+Read-only. Places nothing.
+
 Env: AB_SPAN_D (56) AB_WINDOW_D (7) AB_SLOTS (2) AB_MAX_SYMS (120)
      AB_STREAK_N (2) AB_STREAK_FLOOR (0.25)
 """
