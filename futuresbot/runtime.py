@@ -4181,6 +4181,15 @@ class FuturesRuntime:
                 contract_size = float(self.client.get_contract_detail(sym).get("contractSize", 0.0001) or 0.0001)
             except Exception:
                 contract_size = 0.0001
+            # Read the position's REAL resting stop instead of minting zeros.
+            # /reconcile has always done this; this path never did, and the zeros
+            # it wrote were what _pmt_hard_exit then read as "target reached".
+            # Zeros here also left the position with no exit management at all.
+            position_id = str(latest.get("positionId") or "")
+            sl_price, tp_price = self._resting_stop_for(sym, position_id)
+            if sl_price <= 0.0 and tp_price <= 0.0:
+                log.warning(
+                    "Recovered %s has NO resting stop on the exchange — adopted unmanaged", sym)
             recovered = FuturesPosition(
                 symbol=sym,
                 side="LONG" if int(latest.get("positionType", 1) or 1) == 1 else "SHORT",
@@ -4189,9 +4198,9 @@ class FuturesRuntime:
                 contract_size=contract_size,
                 leverage=int(float(latest.get("leverage") or 1)),
                 margin_usdt=float(latest.get("im") or latest.get("oim") or 0.0),
-                tp_price=0.0,
-                sl_price=0.0,
-                position_id=str(latest.get("positionId") or ""),
+                tp_price=tp_price,
+                sl_price=sl_price,
+                position_id=position_id,
                 order_id="",
                 opened_at=datetime.now(timezone.utc),
                 score=0.0,
@@ -4893,15 +4902,34 @@ class FuturesRuntime:
         return self._close_position_for_exit(position, current_price=current_price, reason="HOURLY_TAKE_PROFIT")
 
     def _pmt_hard_exit(self, position: FuturesPosition, *, current_price: float) -> bool:
+        """Close on a breach of the position's OWN tp/sl.
+
+        AN UNSET LEVEL IS NOT A BREACHED ONE. `_refresh_live_positions` mints
+        recovered positions with tp_price=0.0/sl_price=0.0, and this compared
+        against those zeros unconditionally: for a LONG `price >= 0.0` is always
+        true, so it force-closed as TAKE_PROFIT — at `position.tp_price`, i.e.
+        price 0.0 — on the very next tick. For a SHORT `price >= sl_price` fires
+        first and force-closes as STOP_LOSS. Both sides, deterministically, and
+        ETH/SOL are inside the six PMT symbols, so every convex position on a
+        major was exposed the moment its local tracking was lost (a restart
+        before the state save is enough).
+
+        Each level is now gated independently, so a position that has a real
+        stop but no target is still stopped out properly.
+        """
+        has_sl = position.sl_price > 0.0
+        has_tp = position.tp_price > 0.0
+        if not has_sl and not has_tp:
+            return False
         if position.side == "LONG":
-            if current_price <= position.sl_price:
+            if has_sl and current_price <= position.sl_price:
                 return self._close_position_for_exit(position, current_price=position.sl_price, reason="STOP_LOSS")
-            if current_price >= position.tp_price:
+            if has_tp and current_price >= position.tp_price:
                 return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
             return False
-        if current_price >= position.sl_price:
+        if has_sl and current_price >= position.sl_price:
             return self._close_position_for_exit(position, current_price=position.sl_price, reason="STOP_LOSS")
-        if current_price <= position.tp_price:
+        if has_tp and current_price <= position.tp_price:
             return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
         return False
 
