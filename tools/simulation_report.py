@@ -18,10 +18,19 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Load simulation.py BY PATH rather than importing the package: futuresbot/
+# __init__.py pulls in config -> dotenv, which the container's system python does
+# not have. simulation.py is deliberately stdlib-only so this works anywhere.
+import importlib.util
 
-from futuresbot.simulation import (SIM_BALANCES, capacity_notional,
-                                   risk_fraction, simulate)
+_sim_path = Path(__file__).resolve().parents[1] / "futuresbot" / "simulation.py"
+_spec = importlib.util.spec_from_file_location("_fb_simulation", _sim_path)
+_sim = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_sim)
+SIM_BALANCES = _sim.SIM_BALANCES
+capacity_notional = _sim.capacity_notional
+risk_fraction = _sim.risk_fraction
+simulate = _sim.simulate
 
 CONVEX = {"WILDCARD", "SQUEEZE", "TREND"}
 
