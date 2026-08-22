@@ -59,18 +59,34 @@ def test_overlapping_trades_are_sized_at_entry_not_at_close():
     at the same time were each sized off an equity that did NOT yet contain the
     others' P&L. Compounding them in close order sizes the second off gains that
     had not landed — on trial 15 that read +20.94% against a real +18.33%."""
-    # both open at t=0, close at t=100 and t=200
-    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)
-    b = _row(1.0, ts=200.0, hold_hours=200.0 / 3600.0)
+    # both open at t=0, close at t=100 and t=200; margin_used=0 isolates the
+    # entry-time effect from the committed-margin one tested below
+    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0, margin_used=0.0)
+    b = _row(1.0, ts=200.0, hold_hours=200.0 / 3600.0, margin_used=0.0)
     out = simulate([a, b], 1000.0)
     # both staked 2% of 1000 = 20 at entry, both +1R -> +40 flat, NOT 40.40
     assert out["equity"] == pytest.approx(1040.00)
 
 
-def test_capital_freed_by_a_close_is_available_to_a_later_entry():
-    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)   # opens 0, closes 100
-    b = _row(1.0, ts=300.0, hold_hours=100.0 / 3600.0)   # opens 200
+def test_committed_margin_reduces_what_a_concurrent_entry_can_stake():
+    """The sizing path stamps equity_at_entry from AVAILABLE balance — equity
+    minus margin already committed. Treating that as a fraction of total equity
+    over-sizes every entry made while the book was busy, and read trial 15 at
+    +20.32% against a real +18.33%."""
+    # margin_used 10 of an available 100 -> each position ties up 10% of free
+    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)
+    b = _row(1.0, ts=200.0, hold_hours=200.0 / 3600.0)
     out = simulate([a, b], 1000.0)
+    # a stakes 2% of 1000 = 20 and ties up 100; b sees 900 free, stakes 18
+    assert out["realised"] == pytest.approx(38.0)
+    assert out["equity"] == pytest.approx(1038.0)
+
+
+def test_margin_is_released_when_the_position_closes():
+    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)   # closes at 100
+    b = _row(1.0, ts=300.0, hold_hours=100.0 / 3600.0)   # opens at 200
+    out = simulate([a, b], 1000.0)
+    # a's margin is freed before b opens, so b sizes off the full 1020
     assert out["equity"] == pytest.approx(1040.40)
 
 

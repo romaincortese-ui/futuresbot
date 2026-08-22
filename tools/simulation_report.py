@@ -66,12 +66,22 @@ def main() -> int:
         return 0
     net_r = sum(float(r.get("r_multiple") or 0) for r in rows)
     real = sum(float(r.get("pnl_usdt") or 0) for r in rows)
-    eq0 = float(rows[0].get("equity_at_entry") or rows[0].get("equity_at_open_usdt") or 0)
     eq1 = float(rows[-1].get("equity_at_close_usdt") or 0)
+    eq_start = eq1 - real
     print(f"{len(rows)} closed convex trades | netR {net_r:+.3f} | realised ${real:+.2f}")
-    if eq0 and eq1:
-        print(f"live account ${eq0:.2f} -> ${eq1:.2f} ({(eq1/eq0-1)*100:+.2f}%)")
-    print(f"mean risk/trade {sum(risk_fraction(r) for r in rows)/len(rows)*100:.2f}% of equity")
+    print(f"mean risk/trade {sum(risk_fraction(r) for r in rows)/len(rows)*100:.2f}% of available")
+
+    # SELF-CHECK. Re-running the simulation at the account's OWN starting equity
+    # must reproduce the account's own result. Any gap is a modelling error, and
+    # this caught two of them: compounding overlapping trades in close order, and
+    # treating a fraction-of-available as a fraction-of-equity.
+    if eq_start > 0:
+        chk = simulate(rows, eq_start)
+        err = chk["realised"] - real
+        tag = "OK" if abs(err) <= max(0.25, abs(real) * 0.03) else "** MODEL ERROR **"
+        print(f"self-check: at the real ${eq_start:.2f} opening the model says "
+              f"${chk['realised']:+.2f} vs ${real:+.2f} actual "
+              f"({err:+.2f}, {err/abs(real)*100 if real else 0:+.1f}%)  {tag}")
 
     print()
     print(f"{'opening':>10} {'equity':>12} {'P&L':>11} {'return':>9}")

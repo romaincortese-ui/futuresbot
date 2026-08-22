@@ -84,7 +84,13 @@ def simulate(rows: Sequence[Mapping[str, Any]], opening: float,
     # when it opened, and on trial 15 that read +20.94% against a real +18.33%.
     # Each row carries hold_hours, so the entry time is recoverable and the real
     # ordering can be reproduced.
-    events: list[tuple[float, int, int, float, float]] = []   # ts, kind, id, frac, r
+    # AND THE FRACTION IS OF AVAILABLE, NOT EQUITY. The sizing path stamps
+    # `equity_at_entry` from `available_balance` — equity MINUS the margin already
+    # committed to open positions. Treating it as a fraction of total equity
+    # over-sizes every entry made while the book was busy, which read trial 15 at
+    # +20.32% against a real +18.33%. So the walk tracks committed margin too and
+    # sizes off what was actually free.
+    events: list[tuple[float, int, int, float, float, float]] = []
     for seq, row in enumerate(rows):
         frac = risk_fraction(row)
         if frac <= 0:
@@ -93,22 +99,32 @@ def simulate(rows: Sequence[Mapping[str, Any]], opening: float,
             r = float(row.get("r_multiple") or 0.0)
             close_ts = float(row.get("ts") or 0.0)
             hold_s = float(row.get("hold_hours") or 0.0) * 3600.0
+            margin = float(row.get("margin_used") or 0.0)
+            avail = float(row.get("equity_at_entry") or row.get("equity_at_open_usdt") or 0.0)
         except (TypeError, ValueError):
             continue
-        events.append((close_ts - hold_s, 0, seq, frac, r))   # 0 = open
-        events.append((close_ts, 1, seq, frac, r))            # 1 = close
+        m_frac = (margin / avail) if (margin > 0 and avail > 0) else 0.0
+        events.append((close_ts - hold_s, 0, seq, frac, r, m_frac))   # 0 = open
+        events.append((close_ts, 1, seq, frac, r, m_frac))            # 1 = close
     # Closes settle before opens at the same instant, so freed capital is
     # available to the next entry exactly as it is live.
     events.sort(key=lambda e: (e[0], -e[1]))
 
     balance = float(opening)
     realised = 0.0
-    staked: dict[int, float] = {}
-    for _ts, kind, sid, frac, r in events:
+    committed = 0.0
+    staked: dict[int, tuple[float, float]] = {}
+    for _ts, kind, sid, frac, r, m_frac in events:
         if kind == 0:
-            staked[sid] = balance * frac           # risk $ fixed at ENTRY
+            free = max(0.0, balance - committed)
+            stake = free * frac
+            margin = free * m_frac
+            committed += margin
+            staked[sid] = (stake, margin)
         else:
-            pnl = staked.pop(sid, balance * frac) * r
+            stake, margin = staked.pop(sid, (max(0.0, balance - committed) * frac, 0.0))
+            committed = max(0.0, committed - margin)
+            pnl = stake * r
             balance += pnl
             realised += pnl
     unrealised = sum(balance * frac * r for frac, r in open_positions if frac > 0)
