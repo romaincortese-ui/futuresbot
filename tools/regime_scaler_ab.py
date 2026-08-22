@@ -78,6 +78,54 @@ designed 1.87% mean risk (realised mean risk today is 0.777 x 1.87% = 1.45%),
 rather than raising it. Per-trade risk at full multiplier becomes 2.41%, still
 far under FUTURES_MAX_TRADE_RISK_PCT=5.
 
+SHARPER TILTS, ADDED 2026-08-22 WHEN "aggressive" WAS PUT TO THE COUNCIL.
+
+    setting                   mean mult    vs off      tilt  spread  risk range
+    LIVE 0.20/0.45/0.25           0.776   -167.99    +86.74    4.0x  0.60-2.41%
+    aggressive 0.30/0.50/0.10     0.604   -298.57   +195.01   10.0x  0.31-3.10%
+    sharp-aligned 0.20/0.60/0.10  0.600   -319.99   +167.60   10.0x  0.31-3.12%
+    sharp-aligned 0.20/0.70/0.10  0.523   -397.87   +197.44   10.0x  0.36-3.57%
+    sharp-aligned 0.20/0.60/0.25  0.667   -266.66   +125.71    4.0x  0.70-2.80%
+
+    half-split on the tilt        older     recent
+    LIVE 0.20/0.45/0.25          +11.41     +74.11   87% recent
+    aggressive 0.30/0.50/0.10     +5.70    +185.05   97% recent
+    sharp-aligned 0.20/0.60/0.10 +22.50    +141.58   86% recent
+    sharp-aligned 0.20/0.70/0.10 +39.27    +155.68   80% recent
+
+"AGGRESSIVE" PUTS ITS THRESHOLD IN THE WRONG PLACE. lo=0.30 floors everything
+below efficiency 0.30 — including the 0.20-0.30 bucket, which measured +0.280R,
+the SECOND BEST of the six. The data's break is at 0.20 (below it R is ~0, above
+it R >= 0.15). Keeping lo=0.20 and steepening the TOP instead gives the same
+tilt from a far more stable base: 0.20/0.70/0.10 earns +197.44 vs +195.01 with
+SEVEN TIMES the older-half tilt (+39.27 vs +5.70). If a sharp tilt is wanted,
+that is the one to want — "aggressive" is strictly dominated.
+
+THE 10x RISK SPREAD IS THE REAL OBJECTION TO EVERY floor-0.10 VARIANT. Renormalised
+they run 0.31%-3.57% per trade. Risk-targeted sizing was built precisely to squash
+dispersion (p95/p5 1.88x -> 1.17x); a 0.10 floor hands back a spread five times
+worse than the one that was fixed. The defence is that THIS dispersion tracks
+measured edge (top bucket +0.401R vs bottom +0.019R, ~20x) where the original
+tracked integer-leverage rounding, i.e. noise — Kelly says size with edge. The
+answer to the defence is that it is Kelly on an ESTIMATED edge that is 80-97%
+recent-half, and that three concurrent slots in one clean-trend regime would put
+~9-10% of equity at risk at once. The scaler is per-trade; nothing nets the
+correlation across slots.
+
+THE LAST 72 HOURS SETTLE IT FOR NOW. Renormalised so every variant deploys the
+same average capital, sharper is WORSE on the real trades:
+
+    narrow 0.15/0.30/0.25   +35.08   (+9.50)
+    LIVE renormalised       +32.96   (+7.38)
+    floor 0.50              +30.80   (+5.22)
+    OFF                     +27.48   (+1.90)
+    aggressive renormalised +26.47   (+0.89)
+    sharp 0.20/0.70/0.10    +25.56   (-0.02)
+
+Because the window's winners sat mid-efficiency — ZEC 0.33, GALA 0.36, XRP 0.38 —
+exactly the band a sharp tilt starves. LIVE sizes them 0.65-0.80; "aggressive"
+floors them at 0.10.
+
 TWO HONEST CAVEATS.
 - The tilt is RECENT-WEIGHTED in every variant (+13.60 older vs +71.48 recent on
   the live params). Efficiency has been more predictive in this trending market
@@ -162,6 +210,13 @@ GRID = [
     ("narrow 0.15/0.30/0.25", (0.15, 0.30, 0.25)),
     ("wide 0.25/0.60/0.25", (0.25, 0.60, 0.25)),
     ("aggressive 0.30/0.50/0.10", (0.30, 0.50, 0.10)),
+    # "Aggressive" floors everything below eff 0.30 — including the 0.20-0.30
+    # bucket, which measured +0.280R, the SECOND BEST of the six. The data's
+    # actual break is at 0.20 (below it R is ~0, above it R >= 0.15), so a sharp
+    # tilt that respects the buckets keeps lo=0.20 and steepens the TOP instead.
+    ("sharp-aligned 0.20/0.60/0.10", (0.20, 0.60, 0.10)),
+    ("sharp-aligned 0.20/0.70/0.10", (0.20, 0.70, 0.10)),
+    ("sharp-aligned 0.20/0.60/0.25", (0.20, 0.60, 0.25)),
 ]
 
 
@@ -329,9 +384,17 @@ def main() -> int:
         mm = sum(ms) / len(ms)
         rawr = sum(t["r"] * m for t, m in zip(trades, ms))
         norm = rawr / mm if mm > 0 else 0.0
+        # Renormalising means dividing every multiplier by its own mean, so the
+        # per-trade RISK spread is floor/mean .. 1/mean. Report it: the whole
+        # point of risk-targeted sizing was to squash dispersion (p95/p5 1.88x
+        # -> 1.17x), and a deep floor quietly hands it back.
+        spread = (max(ms) / min(ms)) if ms and min(ms) > 0 else float("inf")
+        risk_lo = 0.0187 / mm * min(ms) * 100 if mm > 0 else 0.0
+        risk_hi = 0.0187 / mm * max(ms) * 100 if mm > 0 else 0.0
         print(f"{label:<24} {mm:10.3f} {rawr*one_r:+10.2f} "
               f"{(rawr-base_r)*one_r:+9.2f} {norm*one_r:+13.2f} "
-              f"{(norm-base_r)*one_r:+8.2f}")
+              f"{(norm-base_r)*one_r:+8.2f} {spread:7.1f}x "
+              f"{risk_lo:5.2f}-{risk_hi:.2f}%")
 
     print()
     print("=== 2b. HALF-SPLIT ON THE TILT (equal-size allocation effect) ===")
