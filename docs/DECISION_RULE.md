@@ -1615,3 +1615,36 @@ Fail -> shut down or go paper-only. No extending the window to chase a verdict.
 - Drawdown must be computed flow-adjusted (or from the cumulative R curve).
   Net R / ex-best R are scale-invariant and unaffected; the conditional-
   expectancy engine compares conditions in R for the same reason.
+
+## Pre-registered candidate (2026-08-22): trend shorts behind a deep drawdown gate
+
+Registered BEFORE the fact so that a real correction becomes an out-of-sample
+test rather than an improvised change made mid-drawdown.
+
+**Trigger.** BTC's trailing 7-day return <= **-12%** at the moment of a trend
+signal. Above that threshold, nothing changes.
+
+**Change if triggered.** Allow `SHORT` in the TREND sleeve
+(`FUTURES_TREND_LONG_ONLY=0`) *only* while the trigger holds; revert when it
+lifts. Wildcard shorts are unaffected — they are already on and already measured.
+
+**Why it is not shipped now.** `tools/trend_short_regime_ab.py`, 360 days, 51
+weekly windows:
+
+- Unconditional trend shorts: **-$61.51**, -$108.64 ex-best, 180 of 343 signals
+  firing in flat weeks at -0.921 each with a negative edge vs a random short.
+- Gated on trailing BTC (no lookahead): **-$73.83** at -2%, **-$47.51** at -5%,
+  **-$6.26** at -8%, **+$37.60** at -12%. The intuitive "shorts on when the
+  market looks weak" version LOSES; only the deepest gate is positive.
+- At -12% the recent half is +25.78 and ex-best is +11.82, i.e. roughly ONE
+  profitable episode per half. Two episodes is not evidence, and -12% was the
+  most extreme threshold tested, chosen after seeing the sweep.
+
+**Pass criteria if it ever runs.** >= 10 trend-short closes while triggered, net
+R > 0 AND net R ex-best > 0, scored against the sleeve's own random-short
+baseline (-0.173/trade over this window). Fail -> revert and do not retry.
+
+**What needs no change either way.** The trend sleeve is already safe in a crash
+long-only: it returned +$6.53 through the two CRASH weeks because its entry
+requires a new 24h closing HIGH, which a crash does not produce. It goes quiet
+rather than losing. Downside EARNING is the wildcard short arm's job.
