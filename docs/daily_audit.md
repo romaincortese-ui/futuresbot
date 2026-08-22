@@ -1,3 +1,192 @@
+# Daily Audit — 2026-08-22
+
+---
+
+## Automated Assessment (UTC 16:20)
+
+Window 2026-08-21 16:15 -> 2026-08-22 16:20 UTC. Equity **$166.00**
+($137.48 free), **2 open convex positions**, unrealised **+$0.64**.
+**7 closed trades**, net **+$10.46 / +5.14R**, 5 wins (71.4%). `pytest -q`
+**975 passed**. Feature store **84 rows** (77 + 7, exactly reconciled against
+the exchange ledger). Shadow ledger **122 rows**.
+
+Two consecutive positive days, +$26.33 realised across them.
+
+### Closed trades
+
+| sym | side | sleeve | lev | R | $ | hold | exit | peak R | size_eff |
+|---|---|---|---|---|---|---|---|---|---|
+| GPS_USDT | LONG | WILDCARD | x3 | **-1.05** | -2.71 | 1.1h | stop | 0.63 | 1.00 |
+| ETH_USDT | LONG | TREND | x9 | +0.28 | +0.56 | 2.6h | retention trail | 1.27 | 0.93 |
+| ZEC_USDT | LONG | TREND | x4 | **+2.98** | +5.72 | 6.5h | `TP` (3R) | 2.99 | 0.83 |
+| ZEC_USDT | LONG | TREND | x3 | +0.25 | +0.56 | 2.0h | retention trail | 1.22 | 0.93 |
+| XRP_USDT | LONG | TREND | x3 | **+2.98** | +5.84 | 3.8h | `TP` (3R) | 2.91 | 0.84 |
+| GALA_USDT | LONG | WILDCARD | x2 | +0.72 | +2.02 | 19.4h | retention trail | 2.51 | 1.00 |
+| ZAMA_USDT | LONG | WILDCARD | x1 | **-1.02** | -1.52 | 0.7h | stop | 0.13 | **0.49** |
+
+Every exit is a legal convex exit (-1R stop, TP, retention trail). No PMT
+vocabulary fired on a convex position. Two more 3R take-profits completed,
+taking the all-time convex TP count from 2 to 4.
+
+ETH and ZEC sit inside `FUTURES_TREND_SYMBOLS` **and** inside the six PMT
+pairs, so all three of those trades were exposed to the recovered-position
+defect. None was hijacked — see below, the defect is closed.
+
+### THE DEFECT FROM 08-21 IS CLOSED
+
+`692eae2 exits: an unset tp/sl is not a breached one` shipped this morning and
+**is running in the container** (verified by reading `_pmt_hard_exit` inside the
+live service, not just in git). `_refresh_live_positions` no longer force-closes
+an adopted position by comparing the live price against `tp_price=0.0`. The
+$7-per-occurrence ledger-censoring hole is shut. Nothing further owed here.
+
+### Open positions
+
+| sym | side | lev | held | R now | peak R | giveback | to TP | to SL | margin (intended) |
+|---|---|---|---|---|---|---|---|---|---|
+| TUT_USDT | LONG | x2 | 3.4h | +0.31 | +0.68 | -0.36 | +37.1% | -9.5% | $22.30 ($24.35, regime 0.93) |
+| FARTCOIN_USDT | SHORT | x1 | 10.6h | -0.62 | +0.04 | -0.66 | -53.8% | +4.9% | **$5.54 ($23.17, regime 0.25)** |
+
+Both carry live server-side TPSL orders on the exchange, verified by ID against
+the position ID. FARTCOIN is 4.9% of price from its stop.
+
+**FARTCOIN is the extreme case of the trimmed-hard cohort.** The regime scaler
+cut it to 0.25x, so it is risking **$0.75 against a designed $3.12** — 0.45% of
+equity where the design says 1.87%. It entered at 05:43, before trial 16 opened,
+so it carries the old 1.87% base. This is the scaler doing exactly what
+`regime_trimmed_hard` says it does: correctly flagging a bad setup and then
+taking it anyway at a quarter size.
+
+### Trial 16 — the sizing check, n=1
+
+Trial 16 opened today at 10:44 UTC on renormalised sizing
+(`FUTURES_WILDCARD_RISK_PCT` 0.0187 -> 0.0241). Its pre-registered void
+condition is that realised risk per trade must land near 1.87%, not 1.45%.
+
+**One entry has been taken since:** TUT at 12:59 UTC, `risk_pct_intended 2.41`,
+regime multiplier 0.9328, **`risk_pct_actual 1.9635`**. That is the design level,
+against a pre-renormalisation realised mean of 1.45%. The mechanism is doing what
+it claims. n=1 — this is a sign of life, not a verdict.
+
+**Trial 16: 0/30 convex closes.**
+
+### Trial 15 — final
+
+Closed at **14/30: netR +12.17, net R ex-best +7.21**. Both pass criteria were
+positive at the point it was closed, and it was closed on a config change rather
+than on results — the same pattern as the eleven before it. Reset count 12.
+
+### Sleeve split — the observation of the day
+
+All-time, from the feature store:
+
+| sleeve | n | netR | ex-best | avg R | win | net $ |
+|---|---|---|---|---|---|---|
+| TREND | 7 | **+10.27** | +7.29 | +1.467 | **100%** | **+19.42** |
+| WILDCARD | 59 | +11.81 | +6.72 | +0.200 | 37% | +15.39 |
+| PMT (dead) | 15 | -5.42 | -7.11 | -0.387 | 43% | -4.61 |
+| SNIPER (dead) | 3 | +1.99 | +0.27 | +0.663 | 67% | +0.03 |
+
+In two days TREND has out-earned wildcard's entire 59-trade life in dollars.
+Splitting wildcard by side is equally uncomfortable:
+
+| wildcard arm | n | netR | ex-best | avg R | net $ |
+|---|---|---|---|---|---|
+| LONG | 44 | +2.11 | **-2.98** | +0.048 | +3.06 |
+| SHORT | 15 | +9.70 | +4.64 | +0.647 | +12.33 |
+
+**The wildcard long arm, minus its single best trade, is a net loser over 44
+trades** — and it is chasing the same "buy strength" thesis that TREND is
+executing better on majors. The short arm is the half that pays, which is the
+opposite of the 90-day all-sleeve drift-controlled study and is a reason not to
+touch `FUTURES_WILDCARD_LONG_ONLY` in either direction.
+
+**No proposal is attached to any of this.** TREND's record is 7 trades taken
+over two days in one directional regime, on a universe (ETH/XRP/ZEC) that was
+selected on 08-22 *after* the 08-19 majors event — textbook selection bias. It
+needs to be scored, not acted on. Wildcard is net-positive on both R and $, so
+the disable criterion is not met either.
+
+### Learning loop
+
+Corpus n=84, overall **+$30.23, meanR +0.225, win 45.2%**.
+
+OOS-consistent verdicts with n>=10 both sides:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold >= 120min | FAVOR | +2.077 | 52 / +1.151 / 61.5% | 32 / -0.926 / 18.8% |
+| roc >= 12% | FAVOR | +1.706 | 18 / +1.700 / 72.2% | 66 / -0.006 / 37.9% |
+| hold <= 30min | AVOID | -0.629 | 11 / -0.187 | 73 / +0.442 |
+| regime_trimmed_hard (<0.5x) | AVOID | -0.745 | 20 / -0.208 / 40.0% | 64 / +0.537 / 46.9% |
+| fee_heavy >= 30% | AVOID | -0.399 | 12 / +0.018 | 72 / +0.417 |
+
+`regime_trimmed_hard` strengthened again (gap -0.626 -> -0.745) and today added
+two more members, ZAMA (-1.02R at 0.49x) and FARTCOIN (0.25x, currently -0.62R),
+both losers. The finding is now three audits old and OOS-consistent. **It is
+still not worth acting on:** ~11 trimmed trades/month x $0.208 = **$2.3/month**,
+under the standing objective's $10/month floor. Dropped again, deliberately.
+
+`side=LONG AVOID / side=SHORT FAVOR` remains at e=+-0.219 — noise. Ignored.
+
+### Shadow ledger
+
+- **slot_occupied: 28 resolved, net +30.47R (avg +1.09R)** — but this is heavily
+  double-counted. Five XRP rows from 08-21 19:00-20:00 resolve +3.0 each; the bot
+  then **took XRP anyway** at 01:15 and banked the +2.98R TP. Those are not five
+  missed trades, they are one captured trade. Four BTC rows from 08-19 are
+  likewise one event. Deduplicated to **19 unique events the net is +12.86R
+  (avg +0.68R)** — still positive, and the operator has already acted (wildcard 3
+  slots, TREND 2). Not a proposal.
+- **veto:*: 26 resolved, net -9.13R.** Vetoes continue to SAVE money;
+  `ref_not_listed` is 22 of 26. Protective, leave alone.
+- **min_vol_skip: 12 resolved, net +8.99R** — looks like a costly filter, but 8
+  of 12 rows are dead-SNIPER-sleeve counterfactuals from 08-06/08-09 scored on
+  their own tp_r=2.0, and the reason means "size below the exchange contract
+  minimum", not a tunable gate. Nothing to propose.
+- Gate-cost file: 5 daily rows, 4 negative. Agrees with the veto split.
+
+### Scan telemetry
+
+Wildcard: 91 movers in band, 90 scanned, **0 candidates**, histogram
+`{'roc_below_min': 90}` — a clean sweep, 45/48 deflated. TREND: 3 symbols
+scanned, 0 candidates, `roc_below_min` x2 + `no_new_extreme` x1. Squeeze is
+**off** (`FUTURES_SQUEEZE_ENABLED=0`), so no squeeze summary is emitted.
+
+Correct dormancy — the 08-19/08-21 impulse has decayed and nothing clears an 8%
+3h floor. No `[SIZE_TRIM]` lines. No `5003`/`2015` order rejects. No Traceback
+or ERROR in the log window. Two wildcard slots of three are filled.
+
+### Decision rule
+
+**Trial 16: 0/30 convex closes.** Sizing check passing at n=1 (1.96% realised vs
+2.41% design vs 1.45% pre-renormalisation baseline). Equity $166.00 against a
+peak of $169.66 — **2.2% drawdown from peak**, far inside the 20% line.
+`USE_DRAWDOWN_KILL=1`.
+
+Exits, convex only (n=41 with `exit_kind`): **TP 4 (9.8%) | stop 17 | other 20**.
+The old "TP completion <10% -> propose TP3R" watch item stays superseded: TREND
+already runs TP 3R and 3 of the 4 all-time TPs landed in the last 36 hours.
+Re-evaluate at n>=50.
+
+### Lever & deploy
+
+**Lever: no change, and the reason is the reset count.**
+
+Trial 16 is **5.6 hours old with zero closes** and carries a pre-registered void
+condition that only accumulating entries can test. The board has three items that
+each look like a lever — the TREND/wildcard divergence, the wildcard long arm,
+the 0.25x trim on FARTCOIN — and every one of them would be reset #13 against a
+record of twelve resets in three months and zero scored verdicts. The
+highest-dollar action available today is to let the trial run, because a scored
+verdict is worth $450/month at $1,000 of equity and none of these tweaks is worth
+$10/month at $166.
+
+Nothing deployed. Shadow stale (still on the 2026-06-14 PMT build, paper equity
+$100, 6 PMT symbols, no convex sleeves), comparison suppressed pending resync.
+
+---
+
 # Daily Audit — 2026-08-21
 
 ---
