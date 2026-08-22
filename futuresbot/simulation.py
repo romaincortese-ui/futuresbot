@@ -77,19 +77,40 @@ def simulate(rows: Sequence[Mapping[str, Any]], opening: float,
     Realised and unrealised are reported separately because only the first is
     banked.
     """
-    balance = float(opening)
-    realised = 0.0
-    for row in rows:
+    # SIZE AT ENTRY, CREDIT AT EXIT. Compounding the rows in close order looked
+    # right and was not: this book runs up to five slots at once, so overlapping
+    # trades were each sized off an equity that did NOT yet contain the others'
+    # P&L. Sequential compounding sizes trade N off gains that had not landed
+    # when it opened, and on trial 15 that read +20.94% against a real +18.33%.
+    # Each row carries hold_hours, so the entry time is recoverable and the real
+    # ordering can be reproduced.
+    events: list[tuple[float, int, int, float, float]] = []   # ts, kind, id, frac, r
+    for seq, row in enumerate(rows):
         frac = risk_fraction(row)
-        try:
-            r = float(row.get("r_multiple") or 0.0)
-        except (TypeError, ValueError):
-            r = 0.0
         if frac <= 0:
             continue
-        pnl = balance * frac * r
-        balance += pnl
-        realised += pnl
+        try:
+            r = float(row.get("r_multiple") or 0.0)
+            close_ts = float(row.get("ts") or 0.0)
+            hold_s = float(row.get("hold_hours") or 0.0) * 3600.0
+        except (TypeError, ValueError):
+            continue
+        events.append((close_ts - hold_s, 0, seq, frac, r))   # 0 = open
+        events.append((close_ts, 1, seq, frac, r))            # 1 = close
+    # Closes settle before opens at the same instant, so freed capital is
+    # available to the next entry exactly as it is live.
+    events.sort(key=lambda e: (e[0], -e[1]))
+
+    balance = float(opening)
+    realised = 0.0
+    staked: dict[int, float] = {}
+    for _ts, kind, sid, frac, r in events:
+        if kind == 0:
+            staked[sid] = balance * frac           # risk $ fixed at ENTRY
+        else:
+            pnl = staked.pop(sid, balance * frac) * r
+            balance += pnl
+            realised += pnl
     unrealised = sum(balance * frac * r for frac, r in open_positions if frac > 0)
     return {
         "opening": float(opening),

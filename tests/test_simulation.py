@@ -15,7 +15,7 @@ from futuresbot.simulation import (SIM_BALANCES, capacity_notional,
 def _row(r, risk_pct=2.0, **kw):
     row = {"r_multiple": r, "risk_pct_actual": risk_pct, "kind": "WILDCARD",
            "equity_at_entry": 100.0, "margin_used": 10.0, "leverage": 3,
-           "sl_margin_pct": 20.0}
+           "sl_margin_pct": 20.0, "ts": 0.0, "hold_hours": 0.0}
     row.update(kw)
     return row
 
@@ -46,10 +46,31 @@ def test_single_trade_is_balance_times_risk_times_r():
     assert out["equity"] == pytest.approx(1040.0)
 
 
-def test_it_compounds_rather_than_summing():
-    """The second trade is sized off the balance the first one produced."""
-    out = simulate([_row(1.0), _row(1.0)], 1000.0)     # 2% risk, +1R each
-    # 1000 -> 1020 -> 1040.40, NOT 1040
+def test_it_compounds_when_trades_do_not_overlap():
+    """Sequential trades: the second is sized off what the first produced."""
+    a = _row(1.0, ts=1000.0, hold_hours=0.1)
+    b = _row(1.0, ts=2000.0, hold_hours=0.1)
+    out = simulate([a, b], 1000.0)                     # 2% risk, +1R each
+    assert out["equity"] == pytest.approx(1040.40)     # 1000 -> 1020 -> 1040.40
+
+
+def test_overlapping_trades_are_sized_at_entry_not_at_close():
+    """THE correction. This book runs up to five slots, so trades that were open
+    at the same time were each sized off an equity that did NOT yet contain the
+    others' P&L. Compounding them in close order sizes the second off gains that
+    had not landed — on trial 15 that read +20.94% against a real +18.33%."""
+    # both open at t=0, close at t=100 and t=200
+    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)
+    b = _row(1.0, ts=200.0, hold_hours=200.0 / 3600.0)
+    out = simulate([a, b], 1000.0)
+    # both staked 2% of 1000 = 20 at entry, both +1R -> +40 flat, NOT 40.40
+    assert out["equity"] == pytest.approx(1040.00)
+
+
+def test_capital_freed_by_a_close_is_available_to_a_later_entry():
+    a = _row(1.0, ts=100.0, hold_hours=100.0 / 3600.0)   # opens 0, closes 100
+    b = _row(1.0, ts=300.0, hold_hours=100.0 / 3600.0)   # opens 200
+    out = simulate([a, b], 1000.0)
     assert out["equity"] == pytest.approx(1040.40)
 
 
