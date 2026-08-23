@@ -355,6 +355,47 @@ def net_usd(row: dict[str, Any], equity_usdt: float,
     return net_r(row, funding_r) * one_r_usd(row, equity_usdt, balance_fraction)
 
 
+def dedupe_by_occupancy(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop counterfactuals the bot could not have taken because it would still
+    have been holding the previous one on that symbol.
+
+    A blocked mover keeps re-signalling every scan while it runs, and each fire
+    was being scored as an independent missed trade. Over 7 days to 2026-08-22
+    the slot_occupied bucket held ELEVEN rows that were THREE moves: four BTC
+    fires in 92 minutes, two ETH, and five XRP inside 70 minutes — each credited
+    a full +3.0R, as though five separate XRP longs could have run at once. It
+    read -$71.04 against roughly -$16 of real opportunity, a 4x overstatement,
+    and it is the entire reason /why reported "gates cost $53.30" when the gates
+    themselves SAVED $17.74.
+
+    The live book allows one position per symbol, so the honest rule is the same
+    one: within a reason class, a row only counts if the previous counted row on
+    that symbol had already resolved. Rows without a resolved_ts are kept, which
+    errs toward the old behaviour rather than silently discarding evidence.
+
+    Reporting only. No order path reads this.
+    """
+    def _num(v: Any) -> float:
+        try:
+            return float(v or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    kept: list[dict[str, Any]] = []
+    busy_until: dict[tuple[str, str], float] = {}
+    for row in sorted(rows, key=lambda r: _num(r.get("ts"))):
+        sym = str(row.get("symbol") or "?")
+        key = (str(row.get("reject_reason") or "?").split(":", 1)[0].split("(", 1)[0].strip(), sym)
+        ts = _num(row.get("ts"))
+        if ts and ts < busy_until.get(key, 0.0):
+            continue
+        kept.append(row)
+        done = _num(row.get("resolved_ts"))
+        if done and done > ts:
+            busy_until[key] = done
+    return kept
+
+
 def gate_cost_usd(rows: list[dict[str, Any]], equity_usdt: float, *,
                   since_ts: float = 0.0, balance_fraction: float | None = None,
                   funding_r_of: Any = None) -> dict[str, tuple[int, float]]:
@@ -365,7 +406,7 @@ def gate_cost_usd(rows: list[dict[str, Any]], equity_usdt: float, *,
     rate. A POSITIVE total is money the gate cost; a NEGATIVE total is money it
     saved."""
     out: dict[str, list[Any]] = {}
-    for row in rows:
+    for row in dedupe_by_occupancy(rows):
         try:
             if float(row.get("ts") or 0.0) < since_ts:
                 continue
