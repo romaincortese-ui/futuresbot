@@ -2056,7 +2056,11 @@ def test_build_pnl_message_includes_realized_and_open_pnl(tmp_path):
 
     assert "💰 <b>Futures P&L</b>" in message
     assert "Today: <b>$+24.50</b> | Closed trades: <b>1</b>" in message
-    assert "Session: <b>$+24.50</b> | 1W 0L" in message
+    # NOT "Session": trade_history keeps only the last 200 closes, so the line
+    # is a rolling window and was read as lifetime. It showed -$90.61 against a
+    # true lifetime -$188.20 on 2026-08-23.
+    assert "Last 1 trades: <b>$+24.50</b> | 1W 0L" in message
+    assert "NOT lifetime" in message
     assert "Open P&L: <b>$+15.00</b>" in message
 
 

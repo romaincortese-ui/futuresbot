@@ -3368,9 +3368,11 @@ class FuturesRuntime:
             f"💰 <b>Futures P&L</b> [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
             f"Today: <b>${today_realized:+.2f}</b> | Closed trades: <b>{len(today_trades)}</b>",
-            f"Session: <b>${total_realized:+.2f}</b> | {wins}W {losses}L",
+            f"Last {len(closed_trades)} trades: <b>${total_realized:+.2f}</b> | {wins}W {losses}L",
             f"Open P&L: <b>${unrealized:+.2f}</b> | Equity: <b>${snapshot['equity_usdt']:.2f}</b>",
             f"Open positions: <b>{len(self.open_positions)}</b>/{self.config.max_concurrent_positions}",
+            "<i>trade_history keeps the last 200 closes, so the line above is "
+            "NOT lifetime — use /report for the all-time figure.</i>",
         ]
         if self.open_positions:
             price_map = self._symbol_current_prices(tuple(self.open_positions.keys()))

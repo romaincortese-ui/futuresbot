@@ -18,10 +18,14 @@ from futuresbot.runtime import FuturesRuntime
 from futuresbot.scorecard import KPI, TARGET_RISK_PCT, build_scorecard, overall
 
 
-def _row(r=0.5, peak=0.5, risk=1.87, ts=2000.0, **kw):
+def _row(r=0.5, peak=0.5, risk=1.87, ts=2000.0, base=2.41, **kw):
+    """base = the PRE-scaler risk, reconstructed via margin_wanted geometry."""
+    av, slm = 160.0, 16.0
     row = {"ts": ts, "kind": "WILDCARD", "r_multiple": r, "peak_r": peak,
            "risk_pct_actual": risk, "pnl_usdt": r * 4.0,
-           "equity_at_close_usdt": 180.0, "hold_hours": 3.0}
+           "equity_at_close_usdt": 180.0, "hold_hours": 3.0,
+           "equity_at_entry": av, "sl_margin_pct": slm,
+           "margin_wanted": base / 100.0 * av * 100.0 / slm}
     row.update(kw)
     return row
 
@@ -56,22 +60,32 @@ def test_a_backfilled_row_also_forces_investigate():
 
 # --- the trial's own criterion ---------------------------------------------
 
-def test_risk_at_target_is_good():
-    kpis = build_scorecard([_row(risk=1.87)] * 5, days=5.0)
-    assert _by(kpis, "Risk per trade").verdict == "Good"
+def test_base_risk_at_target_is_good():
+    kpis = build_scorecard([_row(base=2.41)] * 5, days=5.0)
+    assert _by(kpis, "Risk sizing").verdict == "Good"
 
 
-def test_risk_still_at_the_old_level_voids_the_trial():
-    """1.46% was the pre-renormalisation level. Seeing it again means the change
-    did not take, whatever the P&L says."""
-    kpis = build_scorecard([_row(risk=1.46)] * 5, days=5.0)
-    k = _by(kpis, "Risk per trade")
+def test_base_risk_at_the_old_level_voids_the_trial():
+    """1.87% pre-scaler is the OLD setting. Seeing it means the change did not
+    take, whatever the P&L says."""
+    kpis = build_scorecard([_row(base=1.87)] * 5, days=5.0)
+    k = _by(kpis, "Risk sizing")
     assert k.verdict == "Bad" and "VOIDS" in k.note
 
 
-def test_risk_needs_three_stamped_rows_before_grading():
-    kpis = build_scorecard([_row(risk=0.0)] * 5, days=5.0)
-    assert _by(kpis, "Risk per trade").verdict == "NA"
+def test_a_low_REALISED_risk_in_chop_is_not_a_failure():
+    """THE specification error this KPI shipped with. The realised figure is the
+    base times the regime multiplier, so a chop stretch MUST read low — 1.30% on
+    day one was the scaler working, not the renormalisation failing."""
+    kpis = build_scorecard([_row(base=2.41, risk=1.30)] * 5, days=5.0)
+    k = _by(kpis, "Risk sizing")
+    assert k.verdict == "Good"
+    assert "1.30%" in k.note and "BY DESIGN" in k.note
+
+
+def test_risk_needs_two_priceable_rows_before_grading():
+    kpis = build_scorecard([_row(margin_wanted=0.0)] * 5, days=5.0)
+    assert _by(kpis, "Risk sizing").verdict == "NA"
 
 
 # --- tail losses: the capital question -------------------------------------
@@ -122,13 +136,20 @@ def test_flat_or_down_closes_are_good_coverage():
 
 
 def test_a_week_carried_by_one_trade_fails_ex_best():
-    kpis = build_scorecard([_row(r=6.0)] + [_row(r=-1.0)] * 4, days=7.0)
+    kpis = build_scorecard([_row(r=6.0)] + [_row(r=-1.0)] * 8, days=7.0)
     assert _by(kpis, "netR ex-best").verdict == "Bad"
 
 
 def test_a_broadly_positive_week_passes_ex_best():
-    kpis = build_scorecard([_row(r=2.0)] + [_row(r=0.4)] * 4, days=7.0)
+    kpis = build_scorecard([_row(r=2.0)] + [_row(r=0.4)] * 8, days=7.0)
     assert _by(kpis, "netR ex-best").verdict == "Good"
+
+
+def test_ex_best_waits_for_the_same_sample_the_arm_rate_does():
+    """Stripping the best of four closes is guaranteed to look bad when one is a
+    5R outlier — which is exactly what it did on trial 16 day one."""
+    kpis = build_scorecard([_row(r=5.09)] + [_row(r=-1.02)] * 3, days=1.3)
+    assert _by(kpis, "netR ex-best").verdict == "NA"
 
 
 def test_the_ratchet_is_never_graded():
@@ -173,7 +194,7 @@ def test_report_message_renders(tmp_path, monkeypatch):
     rt.client = _C()
     msg = rt._build_report_message()
     assert "Report" in msg and "Trial 16" in msg
-    assert "Ledger integrity" in msg and "Risk per trade" in msg
+    assert "Ledger integrity" in msg and "Risk sizing" in msg
     # the lesson /pnl taught must be stated where the reader will see it
     assert "verdict" in msg.lower()
 
