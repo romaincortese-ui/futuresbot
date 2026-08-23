@@ -3165,6 +3165,105 @@ class FuturesRuntime:
         lines.append(f"<i>{self._commands_hint()}</i>")
         return "\n".join(lines)
 
+    def _build_report_message(self) -> str:
+        """/report — the pre-registered scorecard, plus the context to read it in.
+
+        Written BEFORE the week it grades (2026-08-23). Thresholds picked after
+        seeing a number are not thresholds, and this project has twelve trials and
+        zero scored verdicts largely because "was that a good week?" was always
+        answered afterwards.
+
+        Carries the LIFETIME figure too, because /pnl does not: its "Session" line
+        sums self.trade_history, which _save_state truncates to the last 200 rows,
+        so it is neither a session nor all-time. On 2026-08-23 it read -$90.61
+        against a true lifetime -$188.20.
+        """
+        from futuresbot import shadow_ledger as shadow
+        from futuresbot.learning_digest import TRIAL_LABEL, TRIAL_START
+        from futuresbot.scorecard import build_scorecard, overall
+
+        now_t = time.time()
+        days = max(0.01, (now_t - TRIAL_START) / 86400.0)
+        rows = [r for r in self._feature_rows_cached()
+                if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
+                and float(r.get("ts") or 0.0) >= TRIAL_START]
+
+        # Exchange truth for the integrity check, and the lifetime figure.
+        ex_n = None
+        life_n = life_usd = 0
+        life_from = ""
+        try:
+            hist, page = [], 1
+            while page <= 60:
+                payload = self.client.private_get(
+                    "/api/v1/private/position/list/history_positions",
+                    {"page_num": page, "page_size": 100})
+                data = payload.get("data", {}) if isinstance(payload, dict) else {}
+                batch = data if isinstance(data, list) else (data.get("resultList") or [])
+                if not batch:
+                    break
+                hist.extend(batch)
+                page += 1
+            if hist:
+                hist.sort(key=lambda r: float(r.get("updateTime") or 0))
+                life_n = len(hist)
+                life_usd = sum(float(r.get("realised") or 0.0) for r in hist)
+                life_from = datetime.fromtimestamp(
+                    float(hist[0].get("updateTime") or 0) / 1000.0,
+                    tz=timezone.utc).strftime("%Y-%m-%d")
+                ex_n = sum(1 for r in hist
+                           if float(r.get("updateTime") or 0) / 1000.0 >= TRIAL_START)
+        except Exception as exc:
+            log.debug("report: exchange history unavailable: %s", exc)
+
+        btc_of = None
+        try:
+            end = int(now_t)
+            frame = self.client.get_klines("BTC_USDT", interval="Min15",
+                                           start=end - 2000 * 900, end=end)
+            bt = [float(x.timestamp()) for x in frame.index]
+            bc = [float(x) for x in frame["close"]]
+
+            def btc_of(ts):                                    # noqa: F811
+                k = min(range(len(bt)), key=lambda i: abs(bt[i] - ts))
+                j = max(0, k - 672)
+                return (bc[k] / bc[j] - 1.0) if bc[j] > 0 else 0.0
+        except Exception as exc:
+            log.debug("report: BTC frame unavailable: %s", exc)
+
+        eq = float(self._last_known_equity() or 0.0)
+        peak = max([eq] + [float(r.get("equity_at_close_usdt") or 0.0) for r in rows])
+        kpis = build_scorecard(rows, days=days, exchange_closes=ex_n,
+                               btc_move_of=btc_of, equity_now=eq, peak_equity=peak)
+
+        lines = [f"📋 <b>Report</b> — Trial {TRIAL_LABEL}, day {days:.1f}",
+                 "━━━━━━━━━━━━━━━",
+                 "<i>Pre-registered 2026-08-23. Thresholds come from the 63 live "
+                 "convex closes before this trial, not from this week.</i>",
+                 ""]
+        lines.append("<code>KPI                  value          verdict</code>")
+        for k in kpis:
+            icon = {"Good": "✅", "Bad": "❌", "NA": "⚪"}.get(k.verdict, "⚪")
+            lines.append(f"<code>{k.name[:20]:<20} {k.value[:14]:<14}</code> {icon} {k.verdict}")
+            lines.append(f"   <i>{html.escape(k.note)}</i>")
+        lines.append("")
+        lines.append(f"<b>{html.escape(overall(kpis))}</b>")
+
+        if life_n:
+            lines.append("")
+            lines.append("━━━━━━━━━━━━━━━")
+            lines.append(f"<b>Lifetime</b> since {life_from}: <b>{life_n}</b> closes, "
+                         f"realised <b>${life_usd:+.2f}</b> | equity <b>${eq:.2f}</b>")
+            lines.append("<i>This is the whole account, every sleeve, including the "
+                         "high-leverage PMT era that lost $234 before June ended. "
+                         "/pnl shows a smaller number because it only keeps the last "
+                         "200 trades.</i>")
+        lines.append("")
+        lines.append("<i>A week is 7-8 closes; a verdict needs 30. A red week with "
+                     "clean closes beats a green one — the regimes we have never "
+                     "traded are the ones worth learning.</i>")
+        return (chr(10)).join(lines)
+
     def _build_simulation_message(self) -> str:
         """/simulation — this trial's result on a bigger opening balance.
 
@@ -3499,7 +3598,7 @@ class FuturesRuntime:
         self._save_state()
 
     def _commands_hint(self) -> str:
-        return "/status /why /pnl /simulation /logs /reconcile /pause /resume /close [SYMBOL|all] /help"
+        return "/status /why /pnl /report /simulation /logs /reconcile /pause /resume /close [SYMBOL|all] /help"
 
     def _build_help_message(self) -> str:
         return (
@@ -3668,6 +3767,9 @@ class FuturesRuntime:
                     elif command == "/pnl":
                         self._notify(self._build_pnl_message())
                         self._record_activity("Telegram: /pnl")
+                    elif command == "/report":
+                        self._notify(self._build_report_message())
+                        self._record_activity("Telegram: /report")
                     elif command in {"/simulation", "/sim"}:
                         self._notify(self._build_simulation_message())
                         self._record_activity("Telegram: /simulation")
