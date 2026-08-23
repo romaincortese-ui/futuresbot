@@ -111,7 +111,7 @@ Exits since 07-13: **TP 5 (17%) | stop 14 (48%) | other 10 (34%)**. TP completio
 at 17% is above the 10% floor of the trial-4 watch item, and today's 5R fill is
 direct evidence the wide-stop target is reachable. No proposal to scale TP down.
 
-### Slot cost — the wildcard's second slot has done its job
+### Slot cost — capacity is not the binding constraint
 
 Raw `slot_occupied` reads 28 resolved rows at **+30.47R**, which is the same
 re-signal inflation `4ce7a18` was written to kill: a blocked mover re-fires every
@@ -121,16 +121,18 @@ once (same symbol/side/sleeve inside 12h):
 | sleeve | n | net R | avg R | reading |
 |---|---|---|---|---|
 | WILDCARD | 11 | +7.72 | +0.70 | almost entirely **pre-07-31** |
-| SQUEEZE | 6 | +3.15 | +0.52 | below the 10-row evidence bar |
+| SQUEEZE | 6 | +3.15 | +0.52 | sleeve is **disabled** (`FUTURES_SQUEEZE_ENABLED=0`) |
 | TREND | 3 | **-0.40** | -0.13 | slot lock protective/neutral |
 | **total** | **20** | **+10.47** | +0.52 | |
 
 **The operator's recurring "am I missing out?" question now has a clean answer:
-no.** Since the second wildcard slot shipped on 07-31, exactly **one** wildcard
-candidate has been blocked by slot contention (HEI, 08-05, +5R). The +7.72R
-figure is the evidence that *justified* the second slot, not a case for a third —
-the capacity constraint is no longer binding. Squeeze remains at 6 deduped rows,
-short of the 10 the panel requires. No slot proposal.
+no.** Live config is `FUTURES_WILDCARD_MAX_POSITIONS=3`,
+`FUTURES_TREND_MAX_POSITIONS=2`, `FUTURES_SQUEEZE_ENABLED=0`. Since 07-31 exactly
+**one** wildcard candidate has been blocked by slot contention (HEI, 08-05, +5R).
+The +7.72R figure is the evidence that *justified* widening wildcard capacity in
+the first place, not a case for widening it again — at three slots the constraint
+is not binding at all. The squeeze rows are moot while that sleeve is off. No
+slot proposal.
 
 Note the `/data/futures_gate_cost.jsonl` row written 08-22 21:40 (+$47.33 on
 n=5 slot_occupied) predates the dedupe fix; `dedupe_by_occupancy` is confirmed
