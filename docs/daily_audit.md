@@ -1,3 +1,193 @@
+# Daily Audit — 2026-08-23
+
+---
+
+## Automated Assessment (UTC 16:15)
+
+Window 2026-08-22 16:20 -> 2026-08-23 16:15 UTC. Equity **$175.30**
+($136.74 free), **2 open convex positions**, unrealised **-$2.16**.
+**4 closed trades**, net **+$12.19 / +1.99R**, 1 win (25%). `pytest -q`
+**1015 passed**. Feature store **88 rows** (84 + 4, exactly reconciled against
+the exchange ledger). Shadow ledger **130 rows**.
+
+Third consecutive positive day, **+$38.52 realised across the three**.
+
+### THE HEADLINE: the first +5R take-profit the wildcard sleeve has ever completed
+
+`TUT_USDT` LONG x2 ran **+80.5% on margin in 7.5 hours** and closed on the
+resting server-side TP at **+5.09R / +$17.94**. Peak was +5.56R, so the TP order
+filled near the top rather than after a giveback. Every prior convex TP was a
+TREND 3R completion; this is the 5R target proving it is reachable, not
+decorative. One trade paid for the other three losses 3.3x over.
+
+The entry was `entry_lateness=1.00` — at the extreme, no pullback — with a 3h
+ROC of **+14.7%** and `ref_listed=1` (cross-listed, not a MEXC-only pump). This
+is the sleeve doing exactly what it was designed to do.
+
+### Closed trades
+
+| sym | side | sleeve | lev | R | $ | hold | exit | peak R | size_eff |
+|---|---|---|---|---|---|---|---|---|---|
+| FARTCOIN_USDT | SHORT | WILDCARD | x1 | -1.02 | -0.76 | 10.9h | stop | 0.04 | **0.24** |
+| TUT_USDT | LONG | WILDCARD | x2 | **+5.09** | **+17.94** | 7.5h | **`TP` (5R)** | 5.56 | 0.92 |
+| ZEC_USDT | LONG | TREND | x5 | -1.02 | -1.32 | 2.6h | stop | 0.61 | 0.38 |
+| ZEN_USDT | LONG | WILDCARD | x4 | -1.06 | -3.67 | 0.5h | stop | 0.03 | 1.00 |
+
+All four exits are legal convex exits (-1R stop or TP). No PMT vocabulary fired
+on a convex position. No order rejects (5003/2015), no `Traceback`, no
+`[SIZE_TRIM]` lines in the window. All four were `ref_listed=1`.
+
+`ZEN` reversed within 32 minutes of entry off a +10.0% 3h ROC and never printed
+above +0.03R — a clean stop, not a mismanaged trade. The -1.06R (vs -1.00R
+design) is fee and slippage on a x4 entry; within tolerance.
+
+### The trimmed-hard cohort keeps paying for itself in R and not in dollars
+
+`FARTCOIN` closed exactly as flagged yesterday: the regime scaler cut it to
+**0.25x**, it risked $0.75 against a designed $3.12, and it lost. That is now
+the pattern, not an anecdote:
+
+| cohort | n | net R | avg R | net $ | win% |
+|---|---|---|---|---|---|
+| `regime_size_mult < 0.5` | 21 | **-10.41** | **-0.496** | -4.91 | 38% |
+| everything else | 66 | +31.05 | +0.470 | +47.25 | 45% |
+
+A **0.97R per-trade separation** on n=21, OOS-consistent in the conditional
+expectancy report (`regime_trimmed_hard(<0.5)  AVOID  e=-1.22 l=-0.605 OK`).
+The scaler is an excellent *classifier* of bad setups that is wired as a *size
+dial* instead of a veto — it correctly identifies the trade and then takes it
+anyway at a quarter size.
+
+**And that is precisely why it is not today's lever.** Because those trades are
+small by construction, vetoing all 21 would have saved **$4.91 over eight
+weeks — about $2.50/month**, which is below the $10/month floor
+`docs/DECISION_RULE.md` sets for a change being worth proposing at all. The R
+number is dramatic; the dollar number is noise. Under trial 16's renormalised
+sizing the dollar cost will grow, so this becomes worth revisiting — but not on
+today's evidence, and not with the trial one close from a verdict.
+
+### Open positions
+
+| sym | side | sleeve | lev | held | R now | peak R | giveback | to TP | to SL | margin (intended) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| STX_USDT | LONG | WILDCARD | x3 | 2.8h | -0.37 | +0.08 | -0.45 | +35.7% (5R) | -4.3% | $22.35 ($22.35, regime 0.93) |
+| ZEC_USDT | LONG | TREND | x5 | 2.4h | -0.20 | +0.81 | **-1.01** | +11.4% (3R) | -2.9% | $21.89 ($21.89, regime 1.00) |
+
+Neither is undersized — actual margin equals intended margin on both. ZEC gave
+back its full +0.81R peak and sits 2.9% of price from its stop; it was re-entered
+by TREND at 13:44, **84 minutes after the sleeve was stopped out of the same
+name**. The convex sleeves carry no post-stop cooldown by design, and this is the
+first time that has visibly mattered. Not a defect — but if the re-entry also
+stops, that is a cooldown question worth measuring rather than assuming.
+
+### Trial progress — 29/30, and currently passing
+
+Convex closes since 2026-07-13 (`docs/DECISION_RULE.md` pass criteria):
+
+| | value | criterion | status |
+|---|---|---|---|
+| closes | **29 / 30** | 30 | one close from a verdict |
+| net R | **+8.98** | > 0 | **PASS** |
+| net R ex-best | **+3.89** | > 0 | **PASS** |
+| equity DD from peak | -4.8% | flag > 20% | clear |
+| max R drawdown | -6.17R | — | — |
+
+| sleeve | n | win% | net R | net $ |
+|---|---|---|---|---|
+| WILDCARD | 21 | 28.6% | -0.27 | **+16.00** |
+| TREND | 8 | 87.5% | +9.25 | +18.10 |
+
+The wildcard is the awkward one: **21 trades, net R essentially zero (-0.27), net
+dollars clearly positive (+$16.00)**. That is not a contradiction — TUT's +5.09R
+landed on a full-size entry while the losers were scaler-trimmed small. Under the
+standing $-P&L directive the sleeve is earning, so no disable proposal; under R
+it has not yet demonstrated an edge. Both statements are true and neither should
+be dropped.
+
+Kill conditions: no TREND loss worse than -1.5R (worst is -1.02R); TREND net R
++9.25 over 8 closes, nowhere near the -3.0 kill; short arm disabled by config.
+
+Exits since 07-13: **TP 5 (17%) | stop 14 (48%) | other 10 (34%)**. TP completion
+at 17% is above the 10% floor of the trial-4 watch item, and today's 5R fill is
+direct evidence the wide-stop target is reachable. No proposal to scale TP down.
+
+### Slot cost — the wildcard's second slot has done its job
+
+Raw `slot_occupied` reads 28 resolved rows at **+30.47R**, which is the same
+re-signal inflation `4ce7a18` was written to kill: a blocked mover re-fires every
+scan, and XRP alone contributed five rows on one move. Counting each missed move
+once (same symbol/side/sleeve inside 12h):
+
+| sleeve | n | net R | avg R | reading |
+|---|---|---|---|---|
+| WILDCARD | 11 | +7.72 | +0.70 | almost entirely **pre-07-31** |
+| SQUEEZE | 6 | +3.15 | +0.52 | below the 10-row evidence bar |
+| TREND | 3 | **-0.40** | -0.13 | slot lock protective/neutral |
+| **total** | **20** | **+10.47** | +0.52 | |
+
+**The operator's recurring "am I missing out?" question now has a clean answer:
+no.** Since the second wildcard slot shipped on 07-31, exactly **one** wildcard
+candidate has been blocked by slot contention (HEI, 08-05, +5R). The +7.72R
+figure is the evidence that *justified* the second slot, not a case for a third —
+the capacity constraint is no longer binding. Squeeze remains at 6 deduped rows,
+short of the 10 the panel requires. No slot proposal.
+
+Note the `/data/futures_gate_cost.jsonl` row written 08-22 21:40 (+$47.33 on
+n=5 slot_occupied) predates the dedupe fix; `dedupe_by_occupancy` is confirmed
+running in the container, so subsequent rows will be honest.
+
+### Learning loop — conditions with a verdict and n>=10 per group
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| `roc>=12pct` | **FAVOR** | +2.430 | 20 / +$2.361 / 70.0% | 68 / -$0.069 / 36.8% |
+| `hold>=120min` | **FAVOR** | +2.384 | 55 / +$1.377 / 60.0% | 33 / -$1.007 / 18.2% |
+| `late_entry>=0.8` | **FAVOR** | +0.890 | 33 / +$1.039 / 45.5% | 55 / +$0.149 / 43.6% |
+| `leverage<=4` | **FAVOR** | +0.781 | 42 / +$0.891 / 45.2% | 46 / +$0.110 / 43.5% |
+| `regime_trimmed_hard(<0.5)` | **AVOID** | -0.942 | 21 / -$0.234 / 38.1% | 67 / +$0.708 / 46.3% |
+| `hold<=30min` | **AVOID** | -0.766 | 11 / -$0.187 / 27.3% | 77 / +$0.579 / 46.8% |
+| `fee_heavy>=30pct` | **AVOID** | -0.538 | 12 / +$0.018 / 50.0% | 76 / +$0.556 / 43.4% |
+
+Corpus 88 trades, 06-27..08-23, overall +$42.51 / mean +$0.483 / meanR +0.237.
+`roc>=12pct` FAVOR is worth naming: TUT entered on +14.7% and ZEN on +10.0%.
+Propose-only, nothing self-applied.
+
+### Scan telemetry
+
+Wildcard scans healthy at ~63 movers/cycle, dominant rejection `roc_below_min`
+(61/63) with `no_pullback_resume` 1-3 — a quiet tape after the morning's run,
+correct dormancy, no gate loosening warranted. Trend scans 3 symbols, blocked on
+`roc_below_min` and `symbol_open`. Squeeze produced no summary lines in the
+window. Recurring `[CALIBRATION_SEED_FALLBACK]` (6 live trades < 15 required) is
+the known PMT-era calibration path and is inert while PMT is decommissioned.
+
+### Shadow
+
+Stale, comparison suppressed pending resync.
+
+### Lever for the next 24h: NONE
+
+The trial is at 29 of 30 closes and currently passes both criteria. Changing
+sizing, entry or exit now would contaminate the only pre-registered verdict this
+project has reached in sixteen trials. The `regime_trimmed_hard` -> veto
+candidate is documented above with its numbers and its $2.50/month objection,
+staged for the shadow rig *after* the 30th close, not before it.
+
+**No deploy.** Local `main` is **12 commits ahead of `origin/main`** — the
+deployed container is running code that exists only on the operator's laptop.
+That is the one thing worth acting on today.
+
+### Action items for the operator
+
+1. **Push `main` to origin** (12 unpushed commits, including the `4ce7a18` gate
+   dedupe that is already live in the container). No recovery path until then.
+2. Resync `Futures-shadow` to champion HEAD (`railway up --service
+   Futures-shadow`, paper, env-only, zero live risk) — still outstanding.
+3. After the 30th convex close: stage `regime_trimmed_hard` as a veto rather
+   than a 0.25x size cut, through `tools/replay_exits.py` + `tools/mc_ledger.py`.
+
+---
+
 # Daily Audit — 2026-08-22
 
 ---
@@ -5803,3 +5993,4 @@ The modified run had 5 more trades, but net P&L was $70 worse. Most of the new e
 - Bot status: healthy, running, equity $113.05
 
 **Outstanding structural issue:** Live calibration has only 5 trades vs 15 required minimum. Bot needs ~10 more live trades before calibration can self-update. This requires the market to offer sufficient PMT entries — the existing MEGA entry window (12h between 1.8-2.4%) is narrow but working correctly when conditions arise.
+
