@@ -70,6 +70,9 @@ def _env(name, default):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     cfg = FuturesConfig.from_env()
     client = MexcFuturesClient(cfg)
     rt = FuturesRuntime(cfg, client)

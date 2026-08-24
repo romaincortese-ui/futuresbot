@@ -119,6 +119,9 @@ def _env(n, d):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)
@@ -278,7 +281,7 @@ def main() -> int:
     base, base_n, base_pos = book(None)
     b_rec = book(None, 0, mid)[0]
     b_old = book(None, mid, n_win)[0]
-    print(f"{'none (LIVE)':<18} {base:+10.2f} {0.0:+9.2f} {base_n:8d} "
+    print(f"{'no gate (live cfg)':<18} {base:+10.2f} {0.0:+9.2f} {base_n:8d} "
           f"{base_pos:4d}/{n_win:<3d} {0.0:+9.2f} {0.0:+9.2f}  (null)")
     for gate in (0.99, 0.95, 0.90, 0.85, 0.75):
         tot, n, pos = book(gate)

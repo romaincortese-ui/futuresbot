@@ -114,6 +114,9 @@ def _env(n, d):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)
     rt = FuturesRuntime(cfg, cl)
@@ -245,7 +248,7 @@ def main() -> int:
         old = sim(f_usd, mid, n_win)[0]
         if f_usd == 3e6:
             base = (tot, rec, old)
-        star = "  <-LIVE" if f_usd == 3e6 else ""
+        star = "  <-live cfg" if f_usd == 3e6 else ""
         print(f"{f_usd/1e6:7.1f}M {elig:9d} {tot:+10.2f} {n:7d} {pos:4d}/{n_win:<3d} "
               f"{rec:+10.2f} {old:+10.2f}{star}")
     if base:

@@ -104,6 +104,9 @@ def _env(n, d):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)
@@ -248,7 +251,7 @@ def main() -> int:
           f"{'margin-blocked':>15}")
     for wc, tr in ((2, 1), (2, 2), (3, 1), (3, 2), (3, 3), (4, 2), (5, 2), (4, 3), (6, 3)):
         net, trades, pos, nw, bm = simulate(base, wc, tr)
-        star = "  <-LIVE" if (wc, tr) == (3, 2) else ""
+        star = "  <-live cfg" if (wc, tr) == (3, 2) else ""
         print(f"{wc:3d} {tr:3d} {wc+tr:4d} {net:+9.2f} {trades:7d} {pos:4d}/{nw:<3d} "
               f"{bm:15d}{star}")
 
@@ -259,7 +262,7 @@ def main() -> int:
         for tr_roc in (0.03, 0.04, 0.05):
             cands = build(wc_roc, tr_roc)
             net, trades, pos, nw, _bm = simulate(cands, 3, 2)
-            star = "  <-LIVE" if (wc_roc, tr_roc) == (0.08, 0.04) else ""
+            star = "  <-live cfg" if (wc_roc, tr_roc) == (0.08, 0.04) else ""
             print(f"{wc_roc*100:6.0f}% {tr_roc*100:6.0f}% {net:+9.2f} {trades:7d} "
                   f"{pos:4d}/{nw:<3d}{star}")
     os.environ["FUTURES_WILDCARD_MIN_ROC"] = "0.08"

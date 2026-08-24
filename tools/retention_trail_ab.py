@@ -207,6 +207,9 @@ def make_floor(kind, retain, arm):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)
@@ -350,7 +353,7 @@ def main() -> int:
         n = sum(len(v) for v in res.values())
         label = ('%s %.2f/arm%.1f' % (kind, retain, arm)) if kind == 'flat' else kind
         if kind == 'flat' and retain == 0.30 and arm == 1.0:
-            label += ' <-LIVE'
+            label += ' <-live cfg'
             base = tot
         print('%-22s %+9.2f %4d %4d %5d %6d %6d %6.1f' % (
             label, tot, n, kinds['tp'], kinds['stop'], kinds['trail'],

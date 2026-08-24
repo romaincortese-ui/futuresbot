@@ -93,6 +93,9 @@ def _env(n, d):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)
@@ -230,7 +233,7 @@ def main() -> int:
     print(f"{'book':<22} {'net $':>10} {'pos wk':>8}  fills by sleeve")
     off, t_off, p_off = sim(False)
     on, t_on, p_on = sim(True)
-    for label, tot, tk_, pw in (("wildcard+trend (LIVE)", off, t_off, p_off),
+    for label, tot, tk_, pw in (("wildcard+trend (live cfg)", off, t_off, p_off),
                                 ("+ squeeze", on, t_on, p_on)):
         mix = "  ".join(f"{k} {v}" for k, v in sorted(tk_.items()))
         print(f"{label:<22} {tot:+10.2f} {pw:4d}/{n_win:<3d}  {mix}")

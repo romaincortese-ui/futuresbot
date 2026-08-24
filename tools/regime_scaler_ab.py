@@ -204,7 +204,7 @@ LIVE = (0.20, 0.45, 0.25)
 # consistency check on the arithmetic.
 GRID = [
     ("OFF (no scaler)", None),
-    ("LIVE 0.20/0.45/0.25", (0.20, 0.45, 0.25)),
+    ("0.20/0.45/0.25 (live cfg)", (0.20, 0.45, 0.25)),
     ("floor 0.50", (0.20, 0.45, 0.50)),
     ("floor 0.75", (0.20, 0.45, 0.75)),
     ("narrow 0.15/0.30/0.25", (0.15, 0.30, 0.25)),
@@ -235,6 +235,9 @@ def mult_of(eff, params):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)

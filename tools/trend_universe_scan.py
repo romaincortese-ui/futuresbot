@@ -120,6 +120,9 @@ class Sig:
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)
@@ -241,7 +244,7 @@ def main() -> int:
     print(f"\n{'sym':<8} {'n':>4} {'net $':>9} {'$/trade':>8} {'random':>8} "
           f"{'EDGE':>8} {'edge tot':>9} {'win%':>6} {'drift':>8}  status")
     for sym, n_, net, per, base, edge, tot, drift, win in rows:
-        tag = "LIVE" if sym in LIVE else ("DROPPED" if sym in DROPPED else "")
+        tag = "live cfg" if sym in LIVE else ("DROPPED" if sym in DROPPED else "")
         print(f"{sym.replace('_USDT',''):<8} {n_:4d} {net:+9.2f} {per:+8.3f} "
               f"{base:+8.3f} {edge:+8.3f} {tot:+9.2f} {win:5.1f}% {drift:+7.1f}%  {tag}")
     good = [r for r in rows if r[5] > 0 and r[1] >= 15]

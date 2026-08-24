@@ -104,8 +104,8 @@ TREND_SYMS = ("ETH_USDT", "XRP_USDT", "ZEC_USDT")
 BASE_RISK = 0.0187
 
 GRID = [
-    ("OFF (flat 1.87%)", None),
-    ("LIVE 0.20/0.45/0.25", (0.20, 0.45, 0.25)),
+    ("no scaler (null)", None),
+    ("0.20/0.45/0.25 (live cfg)", (0.20, 0.45, 0.25)),
     ("floor 0.50", (0.20, 0.45, 0.50)),
     ("sharp 0.20/0.60/0.25", (0.20, 0.60, 0.25)),
     ("sharp 0.20/0.60/0.10", (0.20, 0.60, 0.10)),
@@ -129,6 +129,9 @@ def mult_of(eff, params):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)

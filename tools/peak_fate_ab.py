@@ -131,6 +131,9 @@ def _env(n, d):
 
 
 def main() -> int:
+    print("*** SIMULATED REPLAY - model dollars over the window, NOT account P&L.")
+    print("    Arms marked 'live cfg' are the live SETTINGS, not live results.")
+    print("    The real account is DOWN lifetime; /report has the true figure. ***")
     os.environ.setdefault("FUTURES_TREND_ENABLED", "1")
     cfg = FuturesConfig.from_env()
     cl = MexcFuturesClient(cfg)
@@ -320,7 +323,7 @@ def main() -> int:
     base_old = book(LIVE_FLOOR, mid, n_win)[0]
     print(f"{'rule':<28} {'net $':>10} {'vs live':>9} {'pos wk':>8} "
           f"{'recent':>9} {'older':>9}  both halves?")
-    print(f"{'LIVE flat 0.30':<28} {base_all:+10.2f} {0.0:+9.2f} "
+    print(f"{'flat 0.30 (live cfg)':<28} {base_all:+10.2f} {0.0:+9.2f} "
           f"{base_pos:4d}/{n_win:<3d} {base_rec:+9.2f} {base_old:+9.2f}  (null)")
     for trig, hi in ((2.0, 0.60), (2.0, 0.75), (2.5, 0.60), (2.5, 0.75),
                      (3.0, 0.60), (3.0, 0.75), (3.0, 0.90), (4.0, 0.75)):
