@@ -36,7 +36,22 @@ guard, not a proof. Same discipline as the ROC sweep.
 
 READ-ONLY. Never places or modifies an order.
 
-RESULTS 2026-08-25 (208d, 152 symbols, 2017 candidates).
+*** THE 2026-08-25 RUN BELOW CARRIED A DEFECT IN THE HIGH-TP CELLS. ***
+The nominal tp_r was handed to the resolver even when the SHORT clamp had cut
+the TP price back to MAX_SHORT_TP_DIST, so clamped shorts were paid at the
+nominal R instead of the reachable one. Cells inflate in proportion to how many
+clamped shorts they hold, which is worst at TP 5R and negligible at 1.5R (a
+short needs sl_frac >= 0.33 to clamp at 1.5R). Consequences:
+  - The "(5.0,1.0,0.30) beats live by +82.16" row is VOID. Tested properly in
+    tools/pit_trend_tp.py, raising TREND_TP_R 3->5 is worth +0.72 and fails the
+    half-split. KEEP 3R.
+  - The BANKABLE conclusion stands: the baseline used implied tp_r (correct)
+    and the 1.5R cells are unaffected by the clamp, so the 1.5R-vs-live
+    comparison is sound. If anything the -174.00 cost is OVERSTATED, because the
+    high-TP cells it was measured against were inflated.
+Fixed in resolve_all (tr_eff). Re-run before quoting any high-TP row.
+
+RESULTS 2026-08-25 (208d, 152 symbols, 2017 candidates), PRE-FIX.
 BASELINE live config: +449.39 / 821 trades / 18-29 wk / win 56.2% /
 top5% = 119% of P&L / ex-top5% -87.37.
 
@@ -228,8 +243,16 @@ def main() -> int:
             if sig.side == "SHORT" and dist >= MAX_SHORT_TP_DIST:
                 dist = MAX_SHORT_TP_DIST
             tp = entry * (1 + dist) if sig.side == "LONG" else entry * (1 - dist)
+            # DEFECT FIXED 2026-08-25: the nominal tr was passed to resolve even
+            # when the SHORT clamp had cut the TP price back to 0.50. That paid
+            # a clamped short's TP hit as +5R while its reachable target was
+            # worth far less, inflating every high-TP cell and manufacturing the
+            # phantom +82.16 "raise TREND_TP_R" finding (refuted by
+            # tools/pit_trend_tp.py: the real number is +0.72). Credit the
+            # target the price can actually reach.
+            tr_eff = (dist / slf) if slf > 0 else tr
             row = {"entry": entry, "sl": sl, "tp": tp, "side": sig.side}
-            g = resolve(x["bars"], x["i"], entry, sl, tp, tr, sig.side,
+            g = resolve(x["bars"], x["i"], entry, sl, tp, tr_eff, sig.side,
                         shadow.CONVEX_HORIZON_S, shadow.cost_r(row), trail,
                         float(getattr(sig, "atr_pct", 0.0) or 0.0), now)
             if g is not None:
