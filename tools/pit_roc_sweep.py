@@ -106,6 +106,37 @@ CAVEAT ON THE TERCILES: 6h/12% MIDDLE meanR (+0.062) breaks monotonicity at
 n=289 -- do not read the meanR column as a clean gradient. The FWD24h column is
 the robust one. Both are medians/means, not tail measurements.
 
+TAIL CHECK (PJ_TAIL=1, 2026-08-25). Wildcard-only booking (TREND is fixed
+across cells and books separately), live slot + per-symbol occupancy.
+
+                        n     total   mean R   <=-1R   top5% share   EX-TOP-5%
+  LIVE 3h/8%          676   +216.78   +0.112   41.7%          202%     -220.40
+  6h/12%              574   +251.26   +0.139   39.9%          133%      -82.90
+
+  6h/12% minus live:  full book +34.47 | ex-top-5% +137.50 | ex-top-10% +164.19
+
+THE EDGE IS IN THE BODY, NOT THE TAIL. Stripping the top 5% of trades from both
+cells does not erase 6h/12%'s advantage -- it QUADRUPLES it. The live trigger is
+the more tail-dependent of the two, so the +62 is not one lucky runner. This is
+the single strongest piece of evidence the candidate has.
+
+BUT READ THE ABSOLUTE COLUMN. Top 5% of trades = 202% of total P&L for live and
+133% for 6h/12%, and BOTH books are NET NEGATIVE ex-top-5% (-220.40, -82.90).
+The strategy is: bleed on ~95% of trades and make it all back on the top 5%.
+That is the true risk profile of this sleeve, and it is not visible in any
+headline net figure. 6h/12% is materially less fragile on this axis but is not
+a different kind of animal.
+
+THE REPLAY CANNOT SEE THE LEFT TAIL. Both cells report min -1.05R and 0.0% of
+trades below -1.1R. The LIVE record has 13% of trades beyond -1.1R and a worst
+of -3.79R. The replay fills every stop AT the stop price -- no slippage, no gap,
+no cascade. So the downside here is fiction for BOTH cells, and the comparison
+between them holds only if slippage hits them equally. It may NOT: 6h/12%
+selects more extended symbols (prior24h 51% in its top tercile), which is
+plausibly MORE gap-prone, not less. Unverified and material.
+[[futures-bot-trial8-state]] records tail losses as still-unstudied; this run
+does not change that -- it confirms the instrument cannot answer it.
+
 DO NOT DEPLOY OFF THIS RUN:
   - 15 cells. Best-of-15 finds winners by chance; the half-split is a guard,
     not a proof, at this width.
@@ -229,6 +260,121 @@ def main() -> int:
                         [float(x) for x in df["high"]],
                         [float(x) for x in df["low"]], c))
         PRE[s] = (df, c, roll, bars)
+
+    if os.environ.get("PJ_TAIL"):
+        # Does 6h/12%'s edge live in the BODY or the TAIL? A convex book earns
+        # from its right tail, so a mean/median gain can be one lucky runner.
+        # The decisive test is ex-tail: strip the top 5% of trades from BOTH
+        # cells and see whether the advantage survives. If it vanishes, the
+        # +$62.16 is one or two trades and the cell is fragile.
+        # Analysed on the trades ACTUALLY BOOKED (slot + per-symbol occupancy),
+        # wildcard-only -- TREND is fixed across cells and books separately.
+        import statistics as st
+        win_s = 7 * 86400
+        n_win = max(1, int(span // 7))
+
+        def resolve_all(C):
+            out = {}
+            for idx, x in enumerate(C):
+                sg = x["sig"]
+                row = {"entry": float(sg.entry_price), "sl": float(sg.sl_price),
+                       "tp": float(sg.tp_price), "side": sg.side}
+                g = resolve(x["bars"], x["i"], row["entry"], row["sl"], row["tp"],
+                            shadow.signal_tp_r(sg), sg.side, shadow.CONVEX_HORIZON_S,
+                            shadow.cost_r(row), LIVE_TRAIL,
+                            float(getattr(sg, "atr_pct", 0.0) or 0.0), now)
+                if g is not None:
+                    out[idx] = g
+            return out
+
+        def pct(xs, q):
+            if not xs:
+                return float("nan")
+            ys = sorted(xs)
+            return ys[min(len(ys) - 1, max(0, int(q * len(ys))))]
+
+        stats = {}
+        for w, thr in ((12, 0.08), (24, 0.12)):
+            W.ROC_BARS = w
+            os.environ["FUTURES_WILDCARD_MIN_ROC"] = str(thr)
+            WC = []
+            for s in cand_syms:
+                if s not in PRE:
+                    continue
+                df, c, roll, bars = PRE[s]
+                ts = [b[0] for b in bars]
+                for i in range(250, len(c)):
+                    if i <= w or roll[i] < floor:
+                        continue
+                    if abs(c[i] / c[i - w] - 1.0) < thr:
+                        continue
+                    sig = W.detect_wildcard_signal(df.iloc[max(0, i - TAIL):i + 1], s)
+                    if sig is not None:
+                        WC.append({"ts": ts[i], "sym": s, "sig": sig, "i": i,
+                                   "bars": bars, "kind": "WILDCARD"})
+            WC.sort(key=lambda x: x["ts"])
+            res = resolve_all(WC)
+            # book with live occupancy, collecting per-trade R and dollars
+            trades = []
+            for k in range(n_win):
+                hi_t = now - k * win_s
+                lo_t = hi_t - win_s
+                wcl, per = [], {}
+                for idx, x in enumerate(WC):
+                    if not (lo_t <= x["ts"] < hi_t) or idx not in res:
+                        continue
+                    wcl[:] = [q for q in wcl if q > x["ts"]]
+                    per[x["sym"]] = [q for q in per.get(x["sym"], []) if q > x["ts"]]
+                    if per[x["sym"]] or len(wcl) >= 3:
+                        continue
+                    g = res[idx]
+                    wcl.append(g[1])
+                    per[x["sym"]].append(g[1])
+                    trades.append((float(g[0]),
+                                   g[0] * eq0 * 0.12 * float(x["sig"].sl_margin_pct) / 100.0))
+            stats[(w, thr)] = trades
+
+        print("")
+        for (w, thr), tr in stats.items():
+            tag = "LIVE 3h/8%" if w == 12 else "6h/12%"
+            rs = [t[0] for t in tr]
+            ds = [t[1] for t in tr]
+            tot = sum(ds)
+            n = len(rs)
+            print("=== %s : n=%d  total %+.2f ===" % (tag, n, tot))
+            print("  R percentiles  p5 %+.2f  p25 %+.2f  p50 %+.2f  p75 %+.2f  "
+                  "p90 %+.2f  p95 %+.2f  p99 %+.2f  max %+.2f"
+                  % (pct(rs, .05), pct(rs, .25), pct(rs, .50), pct(rs, .75),
+                     pct(rs, .90), pct(rs, .95), pct(rs, .99), max(rs) if rs else 0))
+            for lvl in (1.0, 2.0, 3.0, 5.0):
+                print("  reached %+.0fR: %5.1f%%" % (lvl, 100.0 * sum(1 for r in rs if r >= lvl) / max(n, 1)))
+            print("  LEFT TAIL  min %+.2f   <=-1.0R %5.1f%%   <=-1.1R %5.1f%%   mean %+.3f"
+                  % (min(rs) if rs else 0,
+                     100.0 * sum(1 for r in rs if r <= -1.0) / max(n, 1),
+                     100.0 * sum(1 for r in rs if r <= -1.1) / max(n, 1),
+                     st.mean(rs) if rs else 0))
+            srt = sorted(ds, reverse=True)
+            k5 = max(1, n // 20)
+            k10 = max(1, n // 10)
+            print("  top 5%% of trades = %+.2f (%.0f%% of total) | top 10%% = %+.2f (%.0f%%)"
+                  % (sum(srt[:k5]), 100.0 * sum(srt[:k5]) / tot if tot else 0,
+                     sum(srt[:k10]), 100.0 * sum(srt[:k10]) / tot if tot else 0))
+            print("  EX-TOP-5%%: %+.2f   EX-BEST-TRADE: %+.2f"
+                  % (tot - sum(srt[:k5]), tot - srt[0] if srt else 0))
+            print("")
+        a = stats[(12, 0.08)]
+        b = stats[(24, 0.12)]
+
+        def ex(tr, frac):
+            ds = sorted([t[1] for t in tr], reverse=True)
+            return sum(ds) - sum(ds[:max(1, len(ds) * frac // 100)])
+        print("VERDICT")
+        print("  full book   6h/12%% - live = %+.2f" % (sum(t[1] for t in b) - sum(t[1] for t in a)))
+        print("  ex-top-5%%   6h/12%% - live = %+.2f" % (ex(b, 5) - ex(a, 5)))
+        print("  ex-top-10%%  6h/12%% - live = %+.2f" % (ex(b, 10) - ex(a, 10)))
+        print("  If the advantage survives ex-top-5%, it is a BODY improvement.")
+        print("  If it collapses, +62.16 was one or two runners and is FRAGILE.")
+        return 0
 
     if os.environ.get("PJ_EARLY"):
         # "Is there a way to catch the move EARLIER?"
