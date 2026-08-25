@@ -1613,7 +1613,12 @@ Fail -> shut down or go paper-only. No extending the window to chase a verdict.
   ALREADY `FUTURES_WILDCARD_SL_ATR_MULT=3.0` (code default 1.5), i.e. wider than
   the 2.0/2.5x retracted here; the re-test covers the multiplier AND the 20%
   `MAX_SL_MARGIN_PCT` cap, which trims LEVERAGE first to preserve stop distance.
-  Do NOT open it on anecdote, and identify the TAC/STX exit reasons first.
+  Do NOT open it on anecdote. **Exit reasons identified 2026-08-25: all three
+  recent losers (TAC/STX/SPK) stopped out at 19-20% of margin, i.e. AT the 20%
+  cap. TAC ran leverage x1 with a 19%-wide stop -- the cap had already trimmed
+  leverage to the floor, so that stop CANNOT be widened. The multiplier is the
+  wrong dial; only `MAX_SL_MARGIN_PCT` itself is testable, and the anecdote does
+  not support changing it.**
 - No MIN_ROC raise, no lateness VETO, no ratchet/trail (+1R ratchet costs -12.3R
   across the 7 trades reaching +2R), no funding-hold policy.
 
