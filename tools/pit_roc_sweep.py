@@ -66,6 +66,46 @@ looser gate, it is a gate tuned to PERSISTENCE instead of VELOCITY -- which is
 what a grinding advance is. The operator's diagnosis was right; the proposed
 remedy pointed the wrong way.
 
+EARLINESS, MEASURED DIRECTLY (PJ_EARLY=1, 2026-08-25). "Can we catch the move
+earlier -- 2h/3%?" Lowering the threshold changes earliness AND selectivity at
+once, so its -$150.35 cannot be blamed on earliness alone. Isolating it: hold
+the trigger FIXED and split its own candidates into terciles by prior 24h move.
+
+  LIVE 3h/8%, n=1034      prior24h    FWD24h     meanR    win%
+    FRESH (early)            -1.2%     12.7%    +0.083   53.2%
+    MIDDLE                   21.3%     12.4%    +0.098   56.4%
+    EXTENDED (late)          45.6%     22.7%    +0.118   51.7%
+
+  6h/12%, n=869           prior24h    FWD24h     meanR    win%
+    FRESH (early)             7.4%     13.6%    +0.163   57.1%
+    MIDDLE                   26.4%     15.5%    +0.062   55.7%
+    EXTENDED (late)          51.2%     24.2%    +0.232   55.3%
+
+EARLIER IS WORSE, on both triggers. The more a symbol has already moved over
+24h, the MORE it moves over the next 24h -- forward room nearly DOUBLES from the
+fresh tercile to the extended one (12.7 -> 22.7, 13.6 -> 24.2). Realised meanR is
+highest in the EXTENDED tercile both times. Win rates are flat (51-57%), so the
+edge is in MAGNITUDE, not hit rate.
+
+Note the live cell's FRESH tercile sits at prior24h of -1.2%: a symbol flat or
+down on the day that spiked 8% in 3h. That is the "spike from nowhere" case --
+worst forward room of any bucket. It is what the live trigger buys that 6h/12%
+declines.
+
+FOUR INDEPENDENT MEASUREMENTS NOW AGREE that later + more selective beats
+earlier + looser: this sweep, the PJ_COMPARE population split, these terciles,
+and the twice-rejected lateness gate (skipping late entries costs $195-260).
+Treat "enter earlier" as a settled-negative direction absent new evidence.
+
+The genuine early-entry mechanism is the SQUEEZE sleeve (volatility ignition,
+enters BEFORE the move rather than looser-after). It is OFF, and its rejection
+was re-confirmed on this same corrected pool at -$30.22. The early-entry idea
+already has a dedicated implementation and it does not pay.
+
+CAVEAT ON THE TERCILES: 6h/12% MIDDLE meanR (+0.062) breaks monotonicity at
+n=289 -- do not read the meanR column as a clean gradient. The FWD24h column is
+the robust one. Both are medians/means, not tail measurements.
+
 DO NOT DEPLOY OFF THIS RUN:
   - 15 cells. Best-of-15 finds winners by chance; the half-split is a guard,
     not a proof, at this width.
@@ -189,6 +229,121 @@ def main() -> int:
                         [float(x) for x in df["high"]],
                         [float(x) for x in df["low"]], c))
         PRE[s] = (df, c, roll, bars)
+
+    if os.environ.get("PJ_EARLY"):
+        # "Is there a way to catch the move EARLIER?"
+        # Lowering the threshold (2h/3%) changes earliness AND selectivity at
+        # once -- it fires on far more bars, so its -$150 cannot be attributed
+        # to earliness alone. This isolates earliness: hold the trigger FIXED,
+        # then split its own candidates into terciles by how much the symbol had
+        # already moved over the prior 24h. If catching moves early paid, the
+        # FRESH tercile would show the best forward room and the best realised R.
+        import statistics as st
+        for w, thr in ((12, 0.08), (24, 0.12)):
+            W.ROC_BARS = w
+            os.environ["FUTURES_WILDCARD_MIN_ROC"] = str(thr)
+            rows = []
+            for s in cand_syms:
+                if s not in PRE:
+                    continue
+                df, c, roll, bars = PRE[s]
+                hi_s = [b[1] for b in bars]
+                lo_s = [b[2] for b in bars]
+                for i in range(250, len(c) - 96):
+                    if i <= w or roll[i] < floor:
+                        continue
+                    if abs(c[i] / c[i - w] - 1.0) < thr:
+                        continue
+                    sig = W.detect_wildcard_signal(df.iloc[max(0, i - TAIL):i + 1], s)
+                    if sig is None:
+                        continue
+                    d = 1.0 if sig.side == "LONG" else -1.0
+                    prior = d * (c[i] / c[i - 96] - 1.0) * 100
+                    nxt = range(i + 1, min(i + 97, len(c)))
+                    ex = (max(hi_s[j] for j in nxt) if d > 0 else min(lo_s[j] for j in nxt))
+                    fwd = d * (ex / c[i] - 1.0) * 100
+                    row = {"entry": float(sig.entry_price), "sl": float(sig.sl_price),
+                           "tp": float(sig.tp_price), "side": sig.side}
+                    g = resolve(bars, i, row["entry"], row["sl"], row["tp"],
+                                shadow.signal_tp_r(sig), sig.side, shadow.CONVEX_HORIZON_S,
+                                shadow.cost_r(row), LIVE_TRAIL,
+                                float(getattr(sig, "atr_pct", 0.0) or 0.0), now)
+                    if g is None:
+                        continue
+                    rows.append((prior, fwd, float(g[0])))
+            rows.sort(key=lambda r: r[0])
+            n = len(rows)
+            k = max(1, n // 3)
+            print("")
+            print("=== %s : does entering EARLY (small prior 24h move) pay? n=%d ==="
+                  % ("LIVE 3h/8%" if w == 12 else "6h/12%", n))
+            print("%-16s %6s %10s %10s %9s %8s" %
+                  ("tercile", "n", "prior24h", "FWD24h", "meanR", "win%"))
+            for lab, part in (("FRESH (early)", rows[:k]),
+                              ("MIDDLE", rows[k:2 * k]),
+                              ("EXTENDED (late)", rows[2 * k:])):
+                if not part:
+                    continue
+                pr = st.median([x[0] for x in part])
+                fw = st.median([x[1] for x in part])
+                mr = sum(x[2] for x in part) / len(part)
+                wr = 100.0 * sum(1 for x in part if x[2] > 0) / len(part)
+                print("%-16s %6d %9.1f%% %9.1f%% %+9.3f %7.1f%%"
+                      % (lab, len(part), pr, fw, mr, wr))
+        print("")
+        print("meanR is the realised convex outcome, not the excursion.")
+        return 0
+
+    if os.environ.get("PJ_COMPARE"):
+        # "Doesn't 6h/12% just enter LATER? What is left to move after a symbol
+        # has already run 12% in 6 hours?" -- measure it instead of arguing.
+        # Both populations are scored on the SAME yardsticks (prior move over a
+        # common 24h window, position in the 24h range, and FORWARD max
+        # favourable excursion over the next 24h), so the comparison is fair.
+        import statistics as st
+
+        def med(xs):
+            return st.median(xs) if xs else float("nan")
+
+        print("%-12s %6s %9s %9s %9s %9s %9s"
+              % ("cell", "n", "prior3h", "prior6h", "prior24h", "late24h", "FWD24h"))
+        for w, thr in ((12, 0.08), (24, 0.12)):
+            W.ROC_BARS = w
+            os.environ["FUTURES_WILDCARD_MIN_ROC"] = str(thr)
+            p3, p6, p24, late, fwd = [], [], [], [], []
+            for s in cand_syms:
+                if s not in PRE:
+                    continue
+                df, c, roll, bars = PRE[s]
+                hi_s = [b[1] for b in bars]
+                lo_s = [b[2] for b in bars]
+                for i in range(250, len(c) - 96):
+                    if i <= w or roll[i] < floor:
+                        continue
+                    if abs(c[i] / c[i - w] - 1.0) < thr:
+                        continue
+                    sig = W.detect_wildcard_signal(df.iloc[max(0, i - TAIL):i + 1], s)
+                    if sig is None:
+                        continue
+                    d = 1.0 if sig.side == "LONG" else -1.0
+                    p3.append(d * (c[i] / c[i - 12] - 1.0) * 100)
+                    p6.append(d * (c[i] / c[i - 24] - 1.0) * 100)
+                    p24.append(d * (c[i] / c[i - 96] - 1.0) * 100)
+                    wl, wh = min(lo_s[i - 96:i + 1]), max(hi_s[i - 96:i + 1])
+                    if wh > wl:
+                        late.append((c[i] - wl) / (wh - wl) if d > 0 else (wh - c[i]) / (wh - wl))
+                    nxt = range(i + 1, min(i + 97, len(c)))
+                    if nxt:
+                        ex = (max(hi_s[j] for j in nxt) if d > 0 else min(lo_s[j] for j in nxt))
+                        fwd.append(d * (ex / c[i] - 1.0) * 100)
+            tag = "LIVE 3h/8%" if w == 12 else "6h/12%"
+            print("%-12s %6d %8.1f%% %8.1f%% %8.1f%% %9.2f %8.1f%%"
+                  % (tag, len(p3), med(p3), med(p6), med(p24), med(late), med(fwd)))
+        print("")
+        print("prior*  = move already made at entry, signed toward the trade")
+        print("late24h = position in the trailing 24h range (1.00 = at the extreme)")
+        print("FWD24h  = max favourable excursion over the NEXT 24h = what was left")
+        return 0
 
     if os.environ.get("PJ_TAILCHECK"):
         # Is the trailing-slice optimisation EXACT? Compare it against the full
