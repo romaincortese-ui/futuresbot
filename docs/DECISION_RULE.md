@@ -1607,6 +1607,13 @@ Fail -> shut down or go paper-only. No extending the window to chase a verdict.
   independently of the listing test.
 - **Wider ATR stops (1.5 -> 2.0/2.5x): RETRACTED**, pending out-of-regime and
   contracts-space validation (adversarial panel, 07-21).
+  **QUEUED FOR TRIAL 17 (2026-08-25).** The corrected point-in-time pool is the
+  NEW EVIDENCE this entry demands — the same correction reversed three prior
+  acceptances, so it can manufacture false negatives too. Note the live stop is
+  ALREADY `FUTURES_WILDCARD_SL_ATR_MULT=3.0` (code default 1.5), i.e. wider than
+  the 2.0/2.5x retracted here; the re-test covers the multiplier AND the 20%
+  `MAX_SL_MARGIN_PCT` cap, which trims LEVERAGE first to preserve stop distance.
+  Do NOT open it on anecdote, and identify the TAC/STX exit reasons first.
 - No MIN_ROC raise, no lateness VETO, no ratchet/trail (+1R ratchet costs -12.3R
   across the 7 trades reaching +2R), no funding-hold policy.
 
