@@ -1,3 +1,233 @@
+# Daily Audit — 2026-08-25
+
+---
+
+## Automated Assessment (UTC 21:11)
+
+Equity **$169.12** (all cash), **0 open positions**, unrealised $0.00.
+`pytest -q` **1039 passed**. Feature store **95 rows** (88 + 7, exactly
+reconciled against the exchange ledger). Shadow ledger **140 rows**.
+No `Traceback`, no order rejects (5003/2015), no `[SIZE_TRIM]` lines.
+
+**No 08-24 audit ran**, so this entry covers the full 48h since 08-23 16:15 and
+calls out the trailing-24h subset separately.
+
+### THE HEADLINE: trial 16's pre-registered sizing check has failed at n=11
+
+The trial exists to test one thing — `FUTURES_WILDCARD_RISK_PCT` 0.0187 ->
+**0.0241**, renormalising the regime scaler's mean 0.777 haircut back to design.
+Its void condition, written before the trial opened: *"realised mean risk per
+trade should land near 1.87%, not 1.45%. If it does not, the renormalisation is
+not doing what it claims and the trial is void regardless of P&L."*
+
+| | realised mean risk/trade | mean size_efficiency |
+|---|---|---|
+| pre-trial 16 (n=19) | **1.392%** | 0.700 |
+| trial 16 (n=11) | **1.211%** | 0.563 |
+| target | ~1.87% | — |
+
+**The renormalisation moved realised risk the wrong way.** Median trial-16 risk
+is 0.938%, less than half the design level.
+
+**Why.** The A/B compensated for ONE shrink dial and the live book runs TWO. The
+cold-streak throttle (`FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=1`, x0.5) fired on
+**4 of the 11** trial-16 entries, and it fires *by construction* during losing
+runs — precisely when the regime scaler is also cutting. Mean regime multiplier
+0.744 x mean streak multiplier 0.818 = the 0.563 observed efficiency. The 20%
+`MAX_SL_MARGIN_PCT` cap is the third: TAC and STORJ both ran leverage x1 with the
+cap already binding, realising 1.10% and 0.60% risk.
+
+**This matters more than it looks, because R cannot detect it.** `DECISION_RULE`
+states the change is R-neutral by construction — sizing moves the dollar
+multiplier and cannot move R. So the trial's PASS criteria (netR > 0, netR
+ex-best > 0) are *literally insensitive to the thing under test*. The sizing
+check was the only criterion that measures trial 16, and it is the one failing.
+Left as-is, the trial runs 19 more closes and produces a verdict about something
+else.
+
+Propose-only, operator's call, two coherent options:
+
+- **(a) Close trial 16 now on its own sizing check** and open trial 17 with
+  `FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=0` as the change under test — the
+  candidate `b413989` already queued for exactly this slot. Env-only, no deploy.
+- **(b) Keep it running and amend `DECISION_RULE`** to say trial 16 is scored on
+  R alone, dropping the sizing check as a void condition rather than leaving a
+  failed criterion on the page.
+
+Not recommended: raising `RISK_PCT` again to chase the target. `35a0dfb` already
+showed renormalised sizing fails on the corrected point-in-time pool, and
+stacking a bigger nominal on top of two unmodelled shrink dials is not a fix.
+
+**The trial-17 queue already anticipates this.** Item 3 — *regime scaler OFF,
+`FUTURES_WILDCARD_RISK_PCT` -> 0.0187, ~7pp less drawdown at no measured growth
+cost* — is written as the change that "supersedes the renormalisation under test
+in trial 16 if trial 16 fails". It has now failed, on its own pre-registered
+check. Item 3 is the stronger successor to the throttle candidate above, because
+it removes the dial with the larger measured haircut (mean 0.744 vs 0.818) and
+is already priced on the corrected pool. Either is env-only; both should not be
+changed at once.
+
+### Closed trades
+
+Trailing 24h (2 closes, **0 wins, -2.08R / -$3.02**):
+
+| sym | side | sleeve | lev | R | $ | hold | exit | peak R | eff |
+|---|---|---|---|---|---|---|---|---|---|
+| TAC_USDT | LONG | WILDCARD | x1 | -1.05 | -1.97 | 2.2h | stop | 0.48 | 0.45 |
+| STORJ_USDT | LONG | WILDCARD | x1 | -1.03 | -1.05 | 6.9h | stop | 0.45 | **0.25** |
+
+Gap-fill, 08-23 16:15 -> 08-24 21:11 (5 closes never audited):
+
+| sym | side | sleeve | lev | R | $ | hold | exit | peak R | eff |
+|---|---|---|---|---|---|---|---|---|---|
+| ZEC_USDT | LONG | TREND | x5 | +0.28 | +1.00 | 5.8h | retention trail | 1.16 | 0.93 |
+| STX_USDT | LONG | WILDCARD | x3 | -1.05 | -4.12 | 11.4h | stop | 0.10 | 0.90 |
+| SPK_USDT | LONG | WILDCARD | x2 | -1.06 | -1.76 | 6.8h | stop | 0.70 | **0.50** |
+| ETH_USDT | LONG | TREND | x8 | -1.11 | -1.28 | 2.5h | stop | 0.16 | **0.29** |
+| VIRTUAL_USDT | LONG | WILDCARD | x4 | +0.51 | +0.70 | 6.7h | retention trail | **2.02** | **0.33** |
+
+**48h total: 7 closes, 2 wins (29%), -4.51R / -$8.46.**
+
+All seven exits are legal convex exits (stop / retention trail). No PMT
+vocabulary fired on a convex position. All `ref_listed=1`. TAC/STX/SPK were
+already worked by the operator this morning (`b3b279b`): all three stopped at
+19-20% of margin, i.e. **at** the `MAX_SL_MARGIN_PCT` cap, and TAC was at
+leverage x1 — the ATR multiplier is not the dial. Nothing to add.
+
+**The scaler and the throttle both trimmed a winner.** VIRTUAL was the better of
+the two wins — peak **+2.02R** — and ran at 33% of design size (regime 0.809 x
+streak 0.50). It closed at +0.51R on the 0.30-of-peak retention floor, which is
+the floor behaving as specified, but the dollars were a third of what the R
+earned. This is the flag the audit spec asks for and it is the same mechanism as
+the headline.
+
+### Open positions
+
+**None.** Flat since 14:58 UTC. Nothing to report on giveback, TP/SL distance or
+undersizing.
+
+### Trial 16 progress — 11/30
+
+Scoreboard scoped to the live `FUTURES_TRIAL_START_TS` (2026-08-22 10:44 UTC),
+which is the canonical counter. **The 08-23 entry's "29/30, netR +8.98" was
+computed on the retired since-07-13 window and does not match the live
+scoreboard; the numbers below supersede it.**
+
+| | value | criterion | status |
+|---|---|---|---|
+| closes | **11 / 30** | 30 | ~1/3 |
+| net R | **-2.52** | > 0 | failing |
+| net R ex-best | **-7.61** | > 0 | failing |
+| net $ | **+3.81** | — | positive on TUT alone |
+| realised risk/trade | **1.211%** | ~1.87% | **VOID CONDITION MET** |
+| equity DD from peak | **-7.4%** ($182.59 -> $169.12) | flag > 20% | clear |
+| max R drawdown | -6.59R | — | — |
+
+| sleeve | n | win% | net R | net $ |
+|---|---|---|---|---|
+| WILDCARD | 8 | 25% | -0.67 | +5.40 |
+| TREND | 3 | 33% | -1.85 | -1.60 |
+
+Kill conditions: worst TREND loss -1.11R (limit -1.5R, clear); TREND netR -1.85
+over 3 closes, the -3.0 kill is scored at 10 closes; short arm disabled.
+
+Exits: **TP 1 (9%) | stop 8 | other 2**. Below the 10% trial-4 floor, but that
+watch item is scored at n>=15 — no TP proposal.
+
+### Slot cost — zero, not merely small
+
+**`slot_occupied` rows inside trial 16: 0.** Since the 3-wildcard/2-trend config
+went live, not one candidate has been blocked by slot contention. The all-time
+deduped figure (20 missed moves, +4.66R) is entirely pre-31-July history at
+1-2 slots and is the evidence that *justified* the widening, not a case for more.
+Capacity is not the binding constraint and no slot proposal follows.
+
+### External gate — the listing veto is paying, and by a lot
+
+Deduped resolved counterfactuals by veto family:
+
+| veto | n | net R | reading |
+|---|---|---|---|
+| `veto:ref_not_listed` | 25 | **-12.69** | strongly **protective** |
+| `veto:crowded_shorts` | 4 | +1.55 | costing, n too small |
+| `veto:crowded_longs` | 2 | -0.39 | protective, n too small |
+| `veto:move_not_corroborated` | 1 | +0.86 | n=1 |
+
+The cross-listing veto has now cleared the >=10-resolved bar with an unambiguous
+sign: 25 MEXC-only movers blocked, and had they been taken they would have lost
+**12.7R** — roughly **-$32** at the realised 1R. Nothing to tune; this is the
+single best-evidenced component in the book. Every other veto family is under 5
+resolved rows and stays unproposed.
+
+### Learning loop — verdicts with n>=10 per group
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| `roc>=12pct` | **FAVOR** | +2.537 | 20 / +$2.361 / 70.0% | 75 / -$0.176 / 36.0% |
+| `hold>=120min` | **FAVOR** | +2.092 | 62 / +$1.085 / 56.5% | 33 / -$1.007 / 18.2% |
+| `at_extreme(lat>=0.99)` | **FAVOR** | +0.767 | 33 / +$0.859 / 45.5% | 62 / +$0.092 / 41.9% |
+| `late_entry>=0.8` | **FAVOR** | +0.602 | 39 / +$0.713 / 43.6% | 56 / +$0.111 / 42.9% |
+| `leverage<=4` | **FAVOR** | +0.522 | 47 / +$0.622 / 42.6% | 48 / +$0.100 / 43.8% |
+| `regime_trimmed_hard(<0.5)` | **AVOID** | -0.928 | 23 / -$0.345 / 34.8% | 72 / +$0.583 / 45.8% |
+| `exit=stop` | **AVOID** | -0.854 | 17 / -$0.343 / 47.1% | 78 / +$0.511 / 42.3% |
+| `hold<=30min` | **AVOID** | -0.617 | 11 / -$0.187 / 27.3% | 84 / +$0.430 / 45.2% |
+| `fee_heavy>=30pct` | **AVOID** | -0.390 | 12 / +$0.018 / 50.0% | 83 / +$0.408 / 42.2% |
+
+Corpus 95 trades, 06-27..08-25, +$34.04 / mean +$0.358 / meanR +0.172.
+`side=LONG` AVOID and `side=SHORT` FAVOR both carry a gap of $0.033 — that is
+noise, not a finding, and should not be read as a short tilt.
+
+`regime_trimmed_hard` is now n=23 at **-0.543R avg vs +0.397R** for everything
+else — a 0.94R separation that has held for three weeks. TAC (0.452) and STORJ
+(0.250) are the two newest members and both lost. **The $2.50/month objection
+still stands**: vetoing all 23 saves **$7.93 over 59 days**, still under the
+$10/month floor `DECISION_RULE` sets. Staged for the shadow rig, not proposed.
+
+### Streak throttle — backtest and live disagree, keep it on
+
+`b413989` measured removal at +$11.65/56d and +$17.93/190d (~$2.8/month, t=0.58
+and 0.92). The live record says the opposite: the 7 throttled trades net
+**-4.16R / -$4.21**, so removing the throttle would have *doubled* that loss.
+n=7 either way. No proposal; it stays queued as trial 17's candidate change,
+which is now also the cleanest way to fix trial 16's measurement problem.
+
+### Scan telemetry
+
+Wildcard scans healthy: 47-52 movers per cycle, deflator active on 17-18 of 48,
+dominant rejection `roc_below_min` (46-50 per cycle) with `no_pullback_resume`
+1-2 and `low_volume_z` 0-1. Zero candidates for the last ~6h — correct dormancy
+in a quiet tape, no gate loosening warranted, and no execution blockage (no
+5003/2015, no `Traceback`). Trend scans 3 symbols, blocked on `roc_below_min` and
+`no_new_extreme`, shorts blocked 0-2 by the long-only flag as designed.
+
+### Shadow
+
+Stale, comparison suppressed pending resync.
+
+### Lever for the next 24h: NONE deployed
+
+The only actionable finding is a measurement failure, and fixing it is a trial
+boundary — an operator decision, not a self-applied param move. Nothing was
+changed, staged or deployed.
+
+**No deploy.** Local `main` is now **33 commits ahead of `origin/main`**; the
+container is running code that exists only on the operator's laptop.
+
+### Action items for the operator
+
+1. **Rule on trial 16** — close it on its failed sizing check and open trial 17
+   with the streak throttle off (option a), or amend `DECISION_RULE` to score it
+   on R alone (option b). As it stands the trial cannot produce a verdict about
+   the thing it is testing.
+2. **Push `main` to origin** — 33 unpushed commits, up from 12 two days ago. No
+   recovery path until then. This is the second consecutive audit raising it.
+3. Resync `Futures-shadow` to champion HEAD (`railway up --service
+   Futures-shadow`, paper, env-only, zero live risk) — still outstanding.
+4. The daily audit did not run on 08-24; five closes went unreviewed for two
+   days. Worth checking the scheduler.
+
+---
+
 # Daily Audit — 2026-08-23
 
 ---
