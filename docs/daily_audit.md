@@ -1,3 +1,199 @@
+# Daily Audit — 2026-08-26
+
+---
+
+## Automated Assessment (UTC 19:05)
+
+Equity **$169.1186** (all cash), **0 open positions**, unrealised $0.00 —
+unchanged to the cent from the 08-25 21:11 reading. `pytest -q` **1039 passed**.
+Feature store **95 rows** (unchanged; reconciles exactly with 0 closes). Shadow
+ledger **140 -> 159** (+19). No `Traceback`, no order rejects (5003/2015), no
+`[SIZE_TRIM]` lines. `USE_DRAWDOWN_KILL=1` — the override flagged on 07-17 is
+resolved.
+
+### Closed trades: none
+
+**0 closes in the last 24h.** The most recent close is STORJ_USDT at 08-25
+14:58 UTC — 28h ago, already audited on 08-25. The book has been flat since.
+
+### Open positions: none
+
+Nothing to report on giveback, TP/SL distance or undersizing.
+
+### THE HEADLINE: both shrink dials are net-POSITIVE in dollars — the trial-16 remedy queue is pointed the wrong way
+
+Trial 16's void condition is that realised risk should land near 1.87% and it
+lands at **1.211%** (median 0.938%), because two dials shrink the book: the
+regime scaler and the cold-streak throttle. The 08-25 entry proposed removing
+one of them (trial-17 item 3, scaler OFF; or throttle OFF). **Measured on the
+live convex corpus, both removals lose money.**
+
+Linear-rescale counterfactual — each closed convex trade's realised dollars
+divided by the multiplier that actually fired:
+
+| pool | actual net $ | scaler removed | throttle removed | both removed |
+|---|---|---|---|---|
+| convex corpus (n=36) | **+25.64** | +17.01 (**-8.63**) | +20.32 (**-5.32**) | +10.84 (**-14.80**) |
+| trial 16 (n=11) | **+3.81** | -3.67 (**-7.47**) | +0.16 (**-3.65**) | **-7.96** (-11.77) |
+
+Robustness: the scaler fired on 21 of 36 trades and removing it is -$8.63; drop
+its single largest contributor and it is still **-$5.48**. 13 of the 21 firings
+were on losers. The throttle fired 7 times, -$5.32 total, -$3.57 ex-largest;
+5 of 7 firings were on losses. The three biggest saves are STORJ (-$3.14 avoided
+at mult 0.25), TAC (-$2.39 at 0.45) and FARTCOIN (-$2.29 at 0.25). The three
+places it cost: SOL (+$1.52 forgone at 0.78), TUT (+$1.29 at 0.93), XRP (+$1.15
+at 0.84) — the dials cut hardest exactly where the losses were largest and
+barely at all on the biggest winner.
+
+The conditional-expectancy engine says the same thing from the other side:
+`regime_trimmed_hard(<0.5)` is an **AVOID** at n=23, OOS-consistent —
+-$0.345/trade with, +$0.583/trade without. That is not an argument for removing
+the scaler; it is the scaler correctly identifying the bad habitat.
+
+**Honest limits.** This is a linear rescale, not a replay: it holds entries and
+R constant and only re-multiplies size. Two effects would shrink the true
+magnitude — the 20% `MAX_SL_MARGIN_PCT` cap would rebind at larger size on the
+already-capped names (TAC, STORJ ran x1 with the cap binding), and leverage
+re-derivation would move some stops. Neither flips the sign, which would require
+the dials to have net-trimmed *winners*. They did not.
+
+**What this means for the trial.** The void condition measures conformance to a
+design target, not profitability, and hitting that target would have cost about
+$12 across the corpus. So of the two options tabled on 08-25:
+
+- **(b) amend `DECISION_RULE` — recommended.** Score trial 16 on R alone and
+  retire the 1.87% sizing check as a void condition, recording *why*: the
+  realised-risk shortfall is the two dials working, and closing it destroys
+  money. Doc-only, no env change, operator's call.
+- **(a) close trial 16 and open trial 17 with a dial off — now contra-indicated.**
+  Both candidate dials price negative on live fills. Trial-17 item 3 (scaler
+  OFF, `RISK_PCT` -> 0.0187) should be struck from the queue on this evidence,
+  not promoted.
+
+Propose-only. Nothing self-applied.
+
+### Why zero trades: genuine dormancy, plus a long-only book in a down market
+
+Observed window 08:04 -> 19:01 UTC (11h of retrievable logs; `railway logs`
+caps below a full 24h).
+
+| sleeve | scans | mean scanned | candidates | dominant rejections |
+|---|---|---|---|---|
+| WILDCARD | 83 | 42.9 | **0** | roc_below_min 3234 (91%), no_pullback_resume 250 (7%), low_volume_z 53 (1%), climax_wick 21 (1%) |
+| TREND | 43 | 3.0 | **0** | no_new_extreme 59 (50%), roc_below_min 58 (50%) |
+| SQUEEZE | 0 | — | — | `FUTURES_SQUEEZE_ENABLED=0` |
+
+Funnel, last cycle: 1032 USDT pairs -> 598 in-band -> 63 over the $2M turnover
+floor -> 41 with 24h range >=8% -> 41 scanned -> **0 candidates**. Nine in ten
+survivors fail |3h ROC| >= 8%. There are no extreme 3h movers in the small-cap
+band. This is the gates working, not a bug — **no loosening proposed** (spec
+1b(b)). Zero execution failures: no 5003/2015, no unsnapped-price rejects.
+
+The second reason is directional. Both convex sleeves are long-only in effect,
+and the market only offered shorts — see below.
+
+### Shadow ledger: the long-only gate is the biggest money-saver in the system
+
+All 159 rows, split by reject reason (`outcome_net`, cost-adjusted):
+
+| bucket | n | resolved | net R | avg R | win% |
+|---|---|---|---|---|---|
+| slot_occupied | 28 | 28 | +23.98 | +0.856 | 68 |
+| shadow_only | 46 | 46 | +13.70 | +0.298 | 52 |
+| min_vol_skip | 13 | 13 | +9.06 | +0.697 | 77 |
+| veto:crowded_shorts | 4 | 4 | +1.55 | +0.388 | 75 |
+| calm_shock | 8 | 8 | -2.93 | -0.366 | 50 |
+| **side_disabled** | 31 | 22 | **-11.63** | -0.529 | 32 |
+| **veto:ref_not_listed** | 26 | 26 | **-13.70** | -0.527 | 31 |
+
+Inside the trial-16 window the short story is sharper: **27 `side_disabled`
+signals, 18 resolved, -13.79R at a 22% win rate.** Every one is a TREND SHORT on
+ZEC or XRP, generated continuously through the downtrend and refused by
+`FUTURES_TREND_LONG_ONLY=1`. At n=18 this clears the >=10 bar: the long-only
+gate has saved roughly 14R of counterfactual losses in four days. It also
+independently re-confirms the 90-day drift-controlled finding that the edge is
+in the longs. **No proposal to enable the short arm.**
+
+`veto:ref_not_listed` is the other confirmed saver — 26 resolved, -13.70R, 31%
+win. Protective at n>=10; leave it.
+
+`calm_shock` is trending protective (-2.93R over 8) but is still under the n=10
+bar. No proposal.
+
+### Slot cost: still exactly zero
+
+**`slot_occupied` rows inside trial 16: 0.** All 28 such rows predate the
+3-wildcard/2-trend config. With 0 open positions for the last 28h the slot count
+is not the binding constraint by any margin — the scanner is finding nothing to
+put in the slots it already has. Answering the recurring question directly: **you
+are not missing out on slots.** Adding a fourth would have changed nothing.
+
+### Trial 16 progress — 11/30 (unchanged)
+
+| | value | criterion | status |
+|---|---|---|---|
+| closes | **11 / 30** | 30 | ~1/3 |
+| net R | **-2.52** | > 0 | failing |
+| net R ex-best | **-7.61** | > 0 | failing |
+| net $ | **+3.81** | — | positive |
+| realised risk/trade | **1.211%** | ~1.87% | void condition met — but see headline |
+| equity DD from peak | **-7.4%** ($182.59 -> $169.12) | flag > 20% | clear |
+
+Close rate 2.53/day over 4.35 elapsed days (3/2/4/2 on 08-22..08-25, **0** on
+08-26) — nominal ETA to 30 closes ~7.5 days, but today's zero says the rate is
+regime-dependent and that estimate is soft.
+
+Exits: **TP 1 (9%) | stop 8 | other 2**. Unchanged; the trial-4 TP watch item is
+scored at n>=15, so no TP proposal.
+
+Kill conditions: worst TREND loss -1.11R (limit -1.5R, clear); TREND netR -1.85
+over 3 closes, the -3.0 kill is scored at 10; short arm disabled and, per the
+shadow ledger above, correctly so.
+
+### Learning loop — conditional expectancy (corpus 95, unchanged)
+
+Verdicts at n>=10 per group, OOS-consistent:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| roc>=12pct | FAVOR | +2.54 | 20 / +$2.361 / 70% | 75 / -$0.176 / 36% |
+| hold>=120min | FAVOR | +2.09 | 62 / +$1.085 / 57% | 33 / -$1.007 / 18% |
+| regime_trimmed_hard(<0.5) | AVOID | -0.93 | 23 / -$0.345 / 35% | 72 / +$0.583 / 46% |
+| hold<=30min | AVOID | -0.62 | 11 / -$0.187 / 27% | 84 / +$0.430 / 45% |
+| fee_heavy>=30pct | AVOID | -0.39 | 12 / +$0.018 / 50% | 83 / +$0.408 / 42% |
+| leverage<=4 | FAVOR | +0.52 | 47 / +$0.622 / 43% | 48 / +$0.100 / 44% |
+
+Corpus overall: +$0.358/trade, +$34.04, 43.2% win, meanR +0.172. No corpus
+change since 08-25, so these are carried forward, not re-derived.
+
+### Shadow service
+
+Still on the 2026-06-14 build — its logs show PMT gate scanning and no
+`TREND_SCAN_SUMMARY` / `WILDCARD_FUNNEL` telemetry. **Shadow comparison
+suppressed pending resync.** The standing action item (`railway up --service
+Futures-shadow`, paper, zero live risk, operator-gated) is unchanged.
+
+### Lever & deploy
+
+**Lever:** re-price the two size-shrink dials in dollars before any trial-17
+change touches them — done above; the answer is *keep both*.
+
+**Deploy: none.** 0 closes, 0 open positions, nothing to validate on new fills,
+and the only tabled changes now price negative. `pytest` green, service healthy,
+gates behaving. Correct outcome for the day.
+
+### 7-day verdict on recent changes
+
+| change | live since | verdict |
+|---|---|---|
+| `FUTURES_WILDCARD_RISK_PCT` 0.0187 -> 0.0241 (trial 16) | 08-22 | **not earning its keep** — the renormalisation it was meant to deliver is absorbed by two dials that are themselves profitable; see headline |
+| 3 wildcard / 2 trend slots | 07-31 / 08-20 | neutral-to-positive; slot contention is now zero, so the slots cost nothing and block nothing |
+| `FUTURES_TREND_LONG_ONLY=1` | 08-20 | **strongly earning its keep** — +13.79R of avoided losses over 18 resolved counterfactuals in the trial window alone |
+| retention trail (0.30 of peak) | 08-14 | working as specified; VIRTUAL and ZEC both exited on it. Dollar size, not the floor, was the 08-25 complaint |
+
+
+---
+
 # Daily Audit — 2026-08-25
 
 ---
