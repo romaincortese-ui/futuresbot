@@ -25,6 +25,79 @@ increase wearing one's clothes.
 
 ---
 
+# Pre-registered decision rule — CONVEX TRIAL 17 (from 2026-08-27)
+
+## Trial 16 CLOSED 2026-08-27: VOID by its own sizing check.
+
+14 closes | net -$0.80 | netR -5.22 | win 3/14 | ex-best -$18.75 (TUT_USDT
+LONG +$17.94 paid for nearly the whole tape). But the trial is not scored on
+that: its pre-registration says realised mean risk per trade must land near
+1.87% or "the renormalisation is not doing what it claims and the trial is
+void regardless of P&L". Realised: **1.141%** at n=14 — below the 1.392%
+measured BEFORE the trial opened, i.e. the change moved the number the wrong
+way. Cause (08-25 audit): the renormalisation compensated for the regime
+scaler alone, while the cold-streak throttle — which fires on losing runs, by
+construction the same periods the scaler is cutting — fired on 4 of the first
+11 entries and cancelled it. Because netR is scale-invariant, no P&L criterion
+could ever have caught this; the sizing check was the only instrument, and it
+worked. Sizing is R-neutral, so trial 16's R record remains valid evidence.
+Owner closed it 2026-08-27 ("I saw enough").
+
+## TRIAL 17: THE COLD-STREAK THROTTLE, OFF.
+
+`FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=0` (env only, no deploy; rollback is
+setting it back to 1). Everything else carries over from trial 16 unchanged:
+`FUTURES_WILDCARD_RISK_PCT=0.0241`, scaler shape 0.20/0.45/0.25, trail
+ratchet 3.0/0.75, TREND ETH/XRP/ZEC 2 slots long-only, WILDCARD 3 slots both
+sides, turnover floor $2M, scan cap 90, squeeze off.
+
+### Why the throttle and not something else
+
+Three independent lines, all pointing the same way:
+
+1. **Operational (the audit):** it is the identified confounder that voided
+   trial 16. Until it is out of the loop, the sizing design cannot even be
+   MEASURED — every other question queues behind this one.
+2. **Mechanism (`tools/pit_tut_class.py`, n=888 point-in-time candidates):**
+   a losing streak predicts nothing. Next-trade mean after 0/1/2/3/4+
+   consecutive losses: +0.137/+0.110/+0.066/-0.171/+0.123R; P(win) flat at
+   50-57% throughout; P(TUT-class) after 4+ losses is 21.4%, the HIGHEST
+   cell in the table. The throttle sizes down on an information-free signal
+   — and the trades it shrinks are drawn from the same distribution as TUT.
+3. **Direct A/B (`tools/streak_throttle_ab.py`, 2026-08-22):** FLAT beats
+   THROTTLED +$17.93 over 190d, 17/27 weekly windows, t=0.92. Recorded then
+   as "directionally remove it, but not at a significance worth acting on
+   mid-trial" — the correct call at the time. This trial is the act.
+
+t=0.92 alone would not clear the bar this repo holds; the reason to move is
+(1), with (2) and (3) as agreeing sign from two independent methods. If the
+throttle really does protect against loss-clustering, the pass criteria below
+will show it: that is what a trial is for.
+
+### Pass criteria (30 convex closes)
+
+- **PRIMARY — the check trial 16 failed:** realised mean risk per trade in
+  [1.6%, 2.2%] of equity-at-entry. This is now the headline criterion; P&L
+  criteria are secondary because sizing cannot move R.
+- netR > 0 AND netR ex-best > 0 (unchanged from trials 15/16).
+
+### Kill conditions
+
+- Realised mean risk still < 1.5% at n=10 → a THIRD shrinker exists; halt
+  the trial and audit the sizing path end to end before anything else.
+- Any single entry risking > 3.0% of equity → the throttle was also a brake;
+  verify nothing depended on it, restore `=1`, close the trial.
+- Max drawdown of the trial book exceeding 20% of equity at any point →
+  restore `=1` (the A/B says the throttle costs money on average; this bounds
+  the tail scenario where it was earning it).
+- Rollback is one env var. No deploy in either direction.
+
+**THE RESET COUNT IS NOW 13** (trials 5..17 in ~3.5 months, zero scored
+verdicts). Mitigation, unchanged from trial 16's note: this reset is void-and-
+rerun of the SAME question, not a new question; trial 16's R record stays.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 15 (from 2026-08-20)
 
 ## Trial 14 closed at 3 closes: netR -1.01, net $-1.75.
@@ -1697,7 +1770,7 @@ The edge-vs-random discipline has NOT been applied to these live fills.
 PMT-recovery hijack (`692eae2`), the trial scoreboard counting one sleeve instead
 of the convex book (`7d96ffd`), and the non-crypto universe filter (`dfc2515`).
 
-## TRIAL 16 — OPEN 2026-08-22 10:44 UTC
+## TRIAL 16 — CLOSED 2026-08-27, VOID (sizing check failed; see trial 17 head)
 
 **Under test: renormalised position sizing.** `FUTURES_WILDCARD_RISK_PCT`
 0.0187 -> **0.0241**, regime-scaler shape unchanged at 0.20/0.45/0.25.
