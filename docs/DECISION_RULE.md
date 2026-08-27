@@ -74,6 +74,16 @@ t=0.92 alone would not clear the bar this repo holds; the reason to move is
 throttle really does protect against loss-clustering, the pass criteria below
 will show it: that is what a trial is for.
 
+### Boundary annotation (written at open)
+
+`ETH_USDT` TREND LONG opened 2026-08-27 09:29 UTC — three minutes BEFORE the
+trial-17 start ts (09:32) — at 0.25x size, throttled by the very mechanism
+this trial removes (`[STREAK_THROTTLE] TREND losing streak=5 -> size x0.25`,
+margin 25.63 -> 6.41). Its close will land inside the trial window.
+**Excluded from the trial-17 tally and from the sizing check** — it is a
+trial-16-conditions trade and would contaminate the realised-risk mean in
+exactly the direction the trial exists to measure.
+
 ### Pass criteria (30 convex closes)
 
 - **PRIMARY — the check trial 16 failed:** realised mean risk per trade in
