@@ -1823,3 +1823,51 @@ def test_two_slots_cannot_deploy_more_than_half_the_account(rt, monkeypatch):
         sl_margin_pct = 1.0
 
     assert rt._entry_margin(_S(), 140.0, kind="WILDCARD", symbol="X") * 2 <= 140.0 * 0.5
+
+
+def test_trial_label_drift_is_detected_and_self_clears(rt):
+    """A trial reset means moving FUTURES_TRIAL_START_TS *and*
+    FUTURES_TRIAL_LABEL. Nothing enforced that: on 2026-08-27 the start ts was
+    bumped to open trial 17 while the label stayed "16", so every /status,
+    /report and /simulation header named the wrong trial while the scoreboard
+    beneath it counted the right window. Both come from the environment, so the
+    only defence is detecting the specific inconsistency."""
+    import futuresbot.learning_digest as ld
+
+    # a proper reset that was recorded: label 16 opened at t=1000
+    rt._stored_trial_marker = {"label": "16", "start_ts": 1000.0}
+
+    # window moved to trial 17's start, label never followed -> the live bug
+    ld.TRIAL_START, ld.TRIAL_LABEL = 2000.0, "16"
+    msg = rt._trial_label_drift()
+    assert msg is not None and "FUTURES_TRIAL_LABEL" in msg
+    assert "16" in msg
+
+    # operator sets the label -> consistent reset, warning clears by itself
+    ld.TRIAL_LABEL = "17"
+    assert rt._trial_label_drift() is None
+
+    # label bumped with no window move is not this bug (relabelling is allowed)
+    rt._stored_trial_marker = {"label": "16", "start_ts": 2000.0}
+    assert rt._trial_label_drift() is None
+
+    # nothing stored yet (first boot after the change ships) must not warn
+    rt._stored_trial_marker = None
+    ld.TRIAL_LABEL = "16"
+    assert rt._trial_label_drift() is None
+
+
+def test_trial_marker_round_trips_through_saved_state(rt, monkeypatch):
+    """The guard is only as good as its persistence: the marker has to survive
+    the restart that a trial change requires."""
+    import json
+
+    import futuresbot.learning_digest as ld
+    ld.TRIAL_START, ld.TRIAL_LABEL = 4242.0, "17"
+    rt._save_state()
+    saved = json.loads(open(rt._state_path, encoding="utf-8").read())
+    assert saved["trial_marker"] == {"label": "17", "start_ts": 4242.0}
+
+    rt._stored_trial_marker = None
+    rt._load_state()
+    assert rt._stored_trial_marker == {"label": "17", "start_ts": 4242.0}

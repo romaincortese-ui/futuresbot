@@ -2966,6 +2966,35 @@ class FuturesRuntime:
                 f"{float(r.get('roc_pct') or 0) * 100:+.1f}%/3h, {age} ago — "
                 f"<b>{html.escape(self._reject_label(r.get('reject_reason')))}</b>")
 
+    @staticmethod
+    def _trial_marker() -> dict[str, Any]:
+        from futuresbot.learning_digest import TRIAL_LABEL, TRIAL_START
+        return {"label": str(TRIAL_LABEL), "start_ts": float(TRIAL_START)}
+
+    def _trial_label_drift(self) -> str | None:
+        """A trial reset means moving FUTURES_TRIAL_START_TS *and*
+        FUTURES_TRIAL_LABEL. Nothing enforced that, and on 2026-08-27 the start
+        ts was bumped to open trial 17 while the label stayed "16" — so every
+        /status, /report and /simulation header announced the wrong trial while
+        the scoreboard underneath counted the right window. Both are read from
+        the environment, so no code change can prevent it; this detects it.
+
+        Fires only on the specific inconsistency: the window moved and the name
+        did not. A proper reset changes both, which updates the stored marker
+        and clears the warning on its own."""
+        cur = self._trial_marker()
+        old = getattr(self, "_stored_trial_marker", None)
+        if not isinstance(old, dict):
+            return None
+        try:
+            moved = abs(float(old.get("start_ts") or 0.0) - cur["start_ts"]) > 1.0
+        except (TypeError, ValueError):
+            return None
+        if moved and str(old.get("label") or "") == cur["label"]:
+            return (f"⚠️ trial window moved but label is still <b>{cur['label']}</b>"
+                    f" — set FUTURES_TRIAL_LABEL")
+        return None
+
     def _trial_progress_line(self) -> str:
         """The scoreboard the decision rule is actually evaluated on.
 
@@ -2989,6 +3018,9 @@ class FuturesRuntime:
         net_usd = sum(float(r.get("pnl_usdt") or 0.0) for r in rows)
         line = (f"Trial {TRIAL_LABEL}: <b>{len(rows)}</b>/{TRIAL_TARGET_TRADES} convex closes"
                 f" | netR <b>{net_r:+.2f}</b> | net <b>${net_usd:+.2f}</b>")
+        drift = self._trial_label_drift()
+        if drift:
+            line += chr(10) + "  " + drift
         # Per-sleeve, because a pooled figure hides which sleeve is carrying the
         # trial — and here they point in opposite directions.
         for sleeve in sorted({str(r.get("kind") or "").upper() for r in rows}):
@@ -3238,8 +3270,9 @@ class FuturesRuntime:
 
         lines = [f"📋 <b>Report</b> — Trial {TRIAL_LABEL}, day {days:.1f}",
                  "━━━━━━━━━━━━━━━",
-                 "<i>Pre-registered 2026-08-23. Thresholds come from the 63 live "
-                 "convex closes before this trial, not from this week.</i>",
+                 "<i>Thresholds pre-registered 2026-08-23 from the 63 live convex "
+                 "closes to that date — deliberately frozen across trials, so a "
+                 "verdict cannot be re-tuned after seeing the week.</i>",
                  ""]
         lines.append("<code>KPI                  value          verdict</code>")
         for k in kpis:
@@ -4130,6 +4163,8 @@ class FuturesRuntime:
             self._last_telegram_update = 0
         try:
             self._last_heartbeat_at = float(payload.get("last_heartbeat_at", self._last_heartbeat_at) or self._last_heartbeat_at)
+            m = payload.get("trial_marker")
+            self._stored_trial_marker = dict(m) if isinstance(m, dict) else None
         except (TypeError, ValueError):
             pass
         log.info("Loaded futures runtime state from %s", self._state_path)
@@ -4152,6 +4187,7 @@ class FuturesRuntime:
                             if time.time() - t < 86400],
             "last_telegram_update": self._last_telegram_update,
             "last_heartbeat_at": self._last_heartbeat_at,
+            "trial_marker": self._trial_marker(),
         }
         # Atomic write. This file is the authoritative open_positions map and is
         # rewritten every cycle; a bare write_text truncates it if the container
