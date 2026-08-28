@@ -96,7 +96,7 @@ def main() -> int:
                      if str(t.get("symbol") or "").endswith("_USDT")
                      and rt._is_tradeable_crypto(str(t.get("symbol") or ""))), reverse=True)
     cand = [s for a, s in crypto if a >= _env("PJ_MIN_TODAY", 3e5)][:pool_n]
-    syms = sorted(set(cand) | {"BTC_USDT"})
+    syms = sorted(set(cand) | {"BTC_USDT", "ETH_USDT", "SOL_USDT"})
     sizes = {str(d.get("symbol") or ""): float(d.get("contractSize") or 0.0)
              for d in (cl.get_all_contract_details() or [])}
     nch = int(days * 86400 // (CHUNK * BAR)) + 1
@@ -121,6 +121,18 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=6) as p:
         frames = {s: f for s, f in p.map(fetch, syms) if f is not None and len(f) >= 300}
     print("frames: %d" % len(frames))
+
+    MRET = {h: {} for h in (48, 96, 288)}
+    for m in ("BTC_USDT", "ETH_USDT", "SOL_USDT"):
+        dfm = frames.get(m)
+        if dfm is None:
+            continue
+        cm = [float(x) for x in dfm["close"]]
+        tm = [float(x.timestamp()) for x in dfm.index]
+        for h in (48, 96, 288):
+            for i in range(h, len(cm)):
+                if cm[i - h] > 0:
+                    MRET[h].setdefault(tm[i], {})[m] = abs(cm[i] / cm[i - h] - 1.0)
 
     btc = frames.get("BTC_USDT")
     bc = [float(x) for x in btc["close"]]
@@ -174,8 +186,13 @@ def main() -> int:
             if g is None:
                 continue
             eff = trend_efficiency(c[:i + 1], int(_env("FUTURES_REGIME_EFF_WINDOW", 24)))
+            sc = 0.0
+            for hh, thr in ((48, 0.02), (96, 0.05), (288, 0.10)):
+                mv = MRET.get(hh, {}).get(bars[i][0])
+                if mv:
+                    sc = max(sc, max(mv.values()) / thr)
             C.append({"ts": bars[i][0], "sym": s, "net": float(g[0]),
-                      "exit_ts": float(g[1]),
+                      "exit_ts": float(g[1]), "score": sc,
                       "mult": regime_size_multiplier(eff, lo=lo, hi=hi, floor_mult=fl),
                       "b72": B72.get(bars[i][0])})
     C.sort(key=lambda x: x["ts"])
@@ -213,34 +230,49 @@ def main() -> int:
                 r += d
         return tot, o, r, eq
 
+    # ---- the close calls, re-priced under the LIVE sizing model ----
+    from pit_size import compare, price
+
     ALL = fills(lambda x: True)
     GATE = fills(lambda x: x["b72"] is None or x["b72"] >= 0.10)
-    print("\nfills: no gate %d | BTC72>=10%% gate %d (keeps %.0f%%)\n"
-          % (len(ALL), len(GATE), 100.0 * len(GATE) / max(1, len(ALL))))
-    print("%-22s %-16s %9s %8s %6s | %9s %9s"
-          % ("sizing model", "arm", "net $", "fills", "win%", "older", "recent"))
-    for mode, lbl in (("flat", "1. FLAT 1R (prior studies)"),
-                      ("scaler", "2. + regime scaler (live)"),
-                      ("compound", "3. + compounding")):
-        for arm, taken in (("no gate", ALL), ("BTC72>=10% gate", GATE)):
-            t, o, r, eqf = score(taken, mode)
-            w = sum(1 for x in taken if x["net"] > 0)
-            print("%-22s %-16s %+9.2f %8d %5.0f%% | %+9.2f %+9.2f%s"
-                  % (lbl if arm == "no gate" else "", arm, t, len(taken),
-                     100.0 * w / max(1, len(taken)), o, r,
-                     ("   eq $%.0f" % eqf) if mode == "compound" else ""))
-        print()
-    print("MEAN REGIME MULTIPLIER, by whether the gate was open:")
-    for lbl, g in (("BTC72 >= 10%", [x for x in ALL if x["b72"] is not None and x["b72"] >= 0.10]),
-                   ("BTC72 <  10%", [x for x in ALL if x["b72"] is not None and x["b72"] < 0.10])):
-        if not g:
-            continue
-        print("  %-14s n=%4d  mean scaler %.3f  mean net %+0.4f R  win %.0f%%"
-              % (lbl, len(g), sum(x["mult"] for x in g) / len(g),
-                 sum(x["net"] for x in g) / len(g),
-                 100.0 * sum(1 for x in g if x["net"] > 0) / len(g)))
-    print("\nIf the scaler is ALREADY larger when the gate is open, the gate and the")
-    print("scaler are capturing the same thing and gating pays twice for one effect.")
+    QUIET = fills(lambda x: x["b72"] is None or x["b72"] < 0.10)
+    print("")
+    print("fills: all %d | BTC72>=10%% %d | BTC72<10%% %d"
+          % (len(ALL), len(GATE), len(QUIET)))
+    print("")
+    print(compare({"no gate": ALL, "BTC72>=10%": GATE, "majors quiet": QUIET},
+                  risk_pct=risk_pct, equity0=eq0))
+
+    print("")
+    print("SIZE TILTS - flat vs live scaler, both size-neutral")
+    print("%-30s %11s %11s   %s" % ("tilt", "FLAT", "SCALER", "verdict moves?"))
+    base_flat = price(ALL, risk_pct=risk_pct, equity0=eq0, model="flat")["net"]
+    base_scal = price(ALL, risk_pct=risk_pct, equity0=eq0, model="scaler")["net"]
+
+    def calm_tilt(lo, hi):
+        def f(x):
+            s = x.get("score") or 0.0
+            return hi if s <= 1.0 else (lo if s >= 2.0 else 1.0)
+        return f
+
+    def b72_tilt(lo, hi):
+        def f(x):
+            v = x.get("b72")
+            if v is None:
+                return 1.0
+            return hi if v >= 0.10 else lo
+        return f
+
+    for lbl, fn in (("calm 1.5 / moving 0.5", calm_tilt(0.5, 1.5)),
+                    ("calm 1.25 / moving 0.75", calm_tilt(0.75, 1.25)),
+                    ("BTC72 tilt 1.5 / 0.5", b72_tilt(0.5, 1.5)),
+                    ("BTC72 tilt 1.25 / 0.75", b72_tilt(0.75, 1.25))):
+        a = price(ALL, risk_pct=risk_pct, equity0=eq0, model="flat",
+                  tilt=fn, normalise=True)["net"] - base_flat
+        b = price(ALL, risk_pct=risk_pct, equity0=eq0, model="scaler",
+                  tilt=fn, normalise=True)["net"] - base_scal
+        moves = "YES - sign flips" if (a > 0) != (b > 0) else "no"
+        print("%-30s %+11.2f %+11.2f   %s" % (lbl, a, b, moves))
     return 0
 
 
