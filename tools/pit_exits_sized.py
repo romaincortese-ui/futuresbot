@@ -188,9 +188,25 @@ def main() -> int:
             taken.append(z)
         return taken
 
-    print("%-30s %9s %9s %9s %7s %6s %9s"
-          % ("exit config", "FLAT $", "LIVE $", "compound", "maxDD", "win%", "ex-top5"))
+    BASE_TAKEN = run(5.0, 0.30, 1.0, 3.0, 0.75)
+    t0 = SIG[0]["ts"]
+    t1 = SIG[-1]["ts"]
+
+    def halves(taken, frac=0.5):
+        """Live-sized net in the older / recent portions, split at `frac` of the
+        window. Reported at several boundaries because a single midpoint is an
+        arbitrary anchor - sweeping it is what exposed the retracted stop-width
+        finding, where the headline was the luckiest phase of one boundary."""
+        cut = t0 + (t1 - t0) * frac
+        o = sum(x["net"] * risk_pct * eq0 * x["mult"] for x in taken if x["ts"] < cut)
+        r = sum(x["net"] * risk_pct * eq0 * x["mult"] for x in taken if x["ts"] >= cut)
+        return o, r
+
+    print("%-30s %9s %9s %7s %9s | %9s %9s %6s"
+          % ("exit config", "LIVE $", "vs live", "maxDD", "ex-top5",
+             "older", "recent", "both?"))
     base_live = None
+    base_halves = None
     for lbl, tp_r, retain, arm, rt_, rh in (
             ("LIVE 5R / 0.30 / ratchet 3.0", 5.0, 0.30, 1.0, 3.0, 0.75),
             ("5R / 0.30 / no ratchet", 5.0, 0.30, 1.0, None, None),
@@ -209,12 +225,24 @@ def main() -> int:
         vals = sorted((t["net"] * risk_pct * eq0 * t["mult"] for t in taken), reverse=True)
         k5 = max(1, len(vals) // 20)
         ex5 = sum(vals[k5:])
+        o, r = halves(taken)
         if base_live is None:
-            base_live = s["net"]
-        print("%-30s %+9.2f %+9.2f %+9.2f %6.1f%% %5.0f%% %+9.2f%s"
-              % (lbl, f["net"], s["net"], c2["net"], 100 * c2["max_dd"],
-                 s["win_pct"], ex5,
-                 "" if base_live == s["net"] else "  (%+.2f vs live)" % (s["net"] - base_live)))
+            base_live, base_halves = s["net"], (o, r)
+            both = "base"
+        else:
+            do, dr = o - base_halves[0], r - base_halves[1]
+            # a candidate must beat live in BOTH halves at the midpoint AND
+            # keep the same sign at every boundary from 35% to 65%
+            signs = []
+            for fr in (0.35, 0.425, 0.5, 0.575, 0.65):
+                bo, br = halves(taken, fr)
+                zo, zr = halves(BASE_TAKEN, fr)
+                signs.append((bo - zo > 0) and (br - zr > 0))
+            both = "YES" if all(signs) else ("mid" if (do > 0 and dr > 0) else "no")
+        print("%-30s %+9.2f %+9.2f %6.1f%% %+9.2f | %+9.2f %+9.2f %6s"
+              % (lbl, s["net"],
+                 0.0 if base_live == s["net"] else s["net"] - base_live,
+                 100 * c2["max_dd"], ex5, o, r, both))
     print("\nex-top5 = net $ with the best 5%% of trades REMOVED - the book that")
     print("survives withdrawing the winners. Positive = bankable.")
     return 0
