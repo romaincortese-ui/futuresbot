@@ -1,3 +1,212 @@
+# Daily Audit — 2026-08-28
+
+---
+
+## Automated Assessment (UTC 16:57)
+
+Equity **$171.22** (available $111.48, open margin $46.61, unrealised **+$13.05**),
+**3 open positions**. `pytest -q` **1043 passed**. Feature store **99 -> 103 rows**
+— reconciles exactly with 4 closes, and every row matches the exchange to the
+cent (yesterday's $0.28 ONG gap did **not** repeat). Shadow ledger 160 -> 161.
+No `Traceback`, no order rejects (5003/2015), no `[SIZE_TRIM]` lines. Trial 17
+running since 08-27 09:32 (`FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=0` verified
+live); `streak_mult` is 1.0 on all seven entries since.
+
+### Closed trades: 4 — three stops, one trail
+
+Window 2026-08-27 19:16 -> 2026-08-28 16:57 UTC. Realised **-$5.63** (exchange),
+**-2.89R**, win 1/4.
+
+| close (UTC) | sym | sleeve | side | lev | entry -> exit | R | peak R | exit | hold | risk% | reg x strk | $ |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 02:03 | ZEC_USDT | TREND | LONG | x5 | 827.43 -> 798.45 | **-1.06** | +0.24 | STOP | 8.7h | 2.063 | 0.98 x 1.0 | -3.64 |
+| 02:31 | XRP_USDT | TREND | LONG | x9 | 1.4586 -> 1.4265 | **-1.09** | +0.45 | STOP | 12.0h | 0.603 | 0.25 x 1.0 | -1.07 |
+| 02:55 | MOVR_USDT | WILDCARD | LONG | x1 | 0.9919 -> 1.0337 | **+0.35** | +1.25 | **RETENTION_TRAIL** | 11.5h | 0.562 | 0.25 x 1.0 | +0.32 |
+| 08:30 | HEMI_USDT | WILDCARD | LONG | x1 | 0.012285 -> 0.010921 | **-1.09** | +0.12 | STOP | 1.1h | 0.746 | 0.44 x 1.0 | -1.24 |
+
+All four are clean against convex intent. Three took the resting -1R server-side
+stop; the fourth took the **retention trail** — a shipped exit path (08-14), not
+an unhandled `OTHER`. Entries were mid-path (lateness 0.95-1.00, 3h ROC 6.3% /
+5.6% / 11.1% / 18.9%), all cross-listed, none a MEXC-only micro-pump.
+
+**The retention trail earned its first live verdict, and it is positive.** MOVR
+peaked at +1.25R, gave back to +0.35R, and the trail exited at 1.0337. Min15
+replay of the tape *after* that exit: the price ran to 1.0939, then fell to
+**0.8630** — through the -1R stop at ~0.8758, and it sits at 0.8827 now. The
+trail converted a **-1.0R stop into +0.35R: +1.35R saved (~+$1.0 at this
+position's size, which was itself floored to a quarter — see below)**. One
+trade is one trade, but it is the first fire and it fired correctly.
+
+### Open positions: 3, all WILDCARD, all inside the trial-17 window
+
+| sym | side | lev | opened | held | cur R | peak R | giveback | TP away | SL away | margin | risk % eq | unreal |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| MAGMA_USDT | LONG | x2 | 07:12 | 9.8h | **+3.89** | +4.10 | -0.21 | **+5.4%** | -26.6% | $17.64 | 1.53% | +$9.5 |
+| TAC_USDT | SHORT | x1 | 04:07 | 12.8h | **+1.29** | +1.67 | -0.38 | -40.4% | +33.9% | $24.67 | 1.92% | +$4.0 |
+| BLESS_USDT | LONG | x3 | 15:57 | 1.0h | -0.59 | +0.03 | — | +30.8% | -2.4% | $4.35 | **0.44%** | -$0.4 |
+
+MAGMA is **5.4% of price away from the +5R TP** — the best live evidence yet
+that the 3.0xATR/+5R geometry completes rather than merely being wide. TAC is
+the sleeve's short arm working (`FUTURES_WILDCARD_LONG_ONLY=0`). BLESS entered
+at the regime-scaler **floor** (0.25): intended margin $17.31, actual $4.35.
+All three wildcard slots are full; **both TREND slots are free** — trend scans
+reject on `roc_below_min`, not on `symbol_open` as yesterday.
+
+### THE LEVER: trial 18's draft change is measured net-NEGATIVE before it opens
+
+Yesterday established that trial 17 cannot reach its 1.6-2.2% realised-risk
+criterion because the regime scaler floors at 0.25. The obvious remedy — and
+the current **draft trial 18** in `DECISION_RULE.md` — is `FUTURES_REGIME_FLOOR_MULT`
+0.25 -> 0.50. Scored today on the 103-trade live corpus (R is unchanged by
+sizing; only dollars scale, so this counterfactual is first-order exact):
+
+| measure | value |
+|---|---|
+| trades with `regime_size_mult` < 0.5 | **26** |
+| **P&L delta of floor 0.25 -> 0.50** | **-$5.10** |
+| same, ex-largest-single-effect (BICO +$1.33) | **-$6.43** |
+| split: 9 winners / 17 losers | +$2.98 / **-$8.09** |
+| trades sitting exactly at the 0.25 floor | n=17, net **-$4.47**, meanR **-0.593** |
+
+The bucket the floor shrinks loses at -0.59R mean. Doubling it doubles that
+loss. This agrees independently with the expectancy engine, where
+`regime_trimmed_hard(<0.5)` is an **AVOID at n=26, OOS-consistent** (-$0.382
+with vs +$0.426 without). Against the standing objective (a -$11..+$22/month
+envelope at 21 trades), **-$5.10 over 103 trades is real money in the wrong
+direction and is the largest single measured effect available today.**
+
+Which closes yesterday's loop: the *only* two dials that can lift realised risk
+into [1.6%, 2.2%] are the throttle (already off, worth about a third of the
+shortfall) and the floor (**measured -$5.10**). The criterion demands a change
+that costs money. **The instrument is wrong, not the dial.**
+
+**PROPOSALS (doc-only, propose-only, operator's call, nothing self-applied):**
+1. Amend trial 17's primary criterion to **scaler-neutral** realised risk
+   (`risk_pct_actual / regime_size_mult`) in [1.6%, 2.2%] — unchanged from
+   yesterday, and today's four counted closes read **2.118%**, a PASS.
+2. **Replace draft trial 18.** Do not test the floor at 0.50; it is pre-scored
+   at -$5.10 on live fills. If the floor is to be tested at all, test it
+   DOWNWARD (0.25 -> 0.20), where the same table implies a small positive.
+
+### Trial 17 progress — 4/30 counted closes
+
+| | value | criterion | status |
+|---|---|---|---|
+| counted closes | **4 / 30** | 30 | ETH 08-27 10:25 excluded per pre-registration |
+| netR | **-2.89** | > 0 | failing early |
+| netR ex-best | **-3.24** | > 0 | failing early |
+| realised mean risk (as traded) | **0.994%** | 1.6-2.2% | fails as written |
+| realised mean risk (scaler-neutral) | **2.118%** | 1.6-2.2% | **PASS** under proposal 1 |
+| max single-entry risk | 2.063% | flag > 3.0% | clear |
+| equity DD from peak | **-6.2%** ($182.59 -> $171.22) | flag > 20% | clear, improving |
+
+The open book (+$13.05 unrealised) is not counted — it is where the trial's R
+currently lives.
+
+### Scan diagnostics & wildcard dormancy
+
+Retrievable log window **49 minutes** (16:08 -> 16:57 UTC; `railway logs` capped
+as hard as yesterday).
+
+| sleeve | scans | mean scanned | candidates | dominant rejections |
+|---|---|---|---|---|
+| WILDCARD | 6 | 53.5 | 0 (3/3 slots full) | roc_below_min ~96%, no_pullback_resume ~3%, climax_wick ~1% |
+| TREND | 3 | 3.0 | 0 | roc_below_min 2, no_new_extreme 1 |
+| SQUEEZE | — | — | — | `FUTURES_SQUEEZE_ENABLED=0` |
+
+Three entries fired inside the day (TAC 04:07, MAGMA 07:12, BLESS 15:57), so the
+sleeve is not dormant — it is full. Zero execution failures, zero 5003/2015.
+**No gate loosening proposed** (spec 1b(b)).
+
+### Slot cost: still exactly zero
+
+**`slot_occupied` rows since trial 17 opened: 0.** All 28 rows in that bucket
+predate the 3-wildcard/2-trend config (+23.98R historically). All three wildcard
+slots have been full for hours and no candidate was turned away for want of one
+— the binding constraint remains the scanner, not the slot count. **You are not
+missing out on slots.**
+
+### Shadow ledger (161 rows) — one new row
+
+Only one new row since yesterday: `XRP_USDT SHORT TREND side_disabled` at 16:22,
+unresolved. Bucket standings:
+
+| bucket | n | resolved | net R | avg R | win% |
+|---|---|---|---|---|---|
+| slot_occupied | 28 | 28 | +23.98 | +0.856 | 71 |
+| shadow_only | 46 | 46 | +13.70 | +0.298 | 54 |
+| min_vol_skip | 13 | 13 | +9.06 | +0.697 | 77 |
+| calm_shock (all) | 9 | 9 | -1.53 | -0.170 | 56 |
+| veto:crowded_* | 5 | 5 | +0.34 | +0.069 | 60 |
+| **veto:ref_not_listed** | 26 | 26 | **-13.70** | -0.527 | 31 |
+| **side_disabled** | 32 | 31 | **-19.38** | -0.625 | 26 |
+
+`FUTURES_TREND_LONG_ONLY=1` has now avoided **-19.38R** of counterfactual losses
+across 31 resolved rows at a 26% win rate. Fifth independent confirmation; no
+proposal to enable the trend short arm. `veto:ref_not_listed` remains protective.
+`calm_shock` reached n=9 resolved at -1.53R — under the n=10 bar, and note MOVR
+(rejected `calm_shock(2.23)`, then legitimately entered later) resolved **+0.35R**
+in the ledger, matching its live close exactly.
+
+### Exits — TP completions slipped to 8%
+
+Convex corpus with `exit_kind` (n=62): **TP 5 (8%) | stop 34 (55%) | other 23
+(37%)**. Last 20: stop 16, other 3, TP 1. TP is now below the 10% trial-4
+trigger, **but the trigger is conjunctive and STOP — not OTHER — dominates, so
+it is not met.** No TP proposal, and per spec never a proposal to revert the
+3.0xATR stop. MAGMA sitting 5.4% from its +5R TP is the direct live test; a
+TP3R rule would have banked it at ~$7.3 against a live-possible ~$12.2.
+
+### Learning loop — conditional expectancy (corpus 103)
+
+Overall **+$0.222/trade, +$22.91, 40.8% win, meanR +0.087**. Verdicts at n>=10,
+OOS-consistent:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| roc>=12pct | FAVOR | +2.15 | 23 / +$1.891 / 61% | 80 / -$0.257 / 35% |
+| hold>=120min | FAVOR | +1.87 | 68 / +$0.857 / 53% | 35 / -$1.010 / 17% |
+| at_extreme(lat>=0.99) | FAVOR | +0.61 | 37 / +$0.613 / 41% | 66 / +$0.004 / 41% |
+| leverage<=4 | FAVOR | +0.56 | 51 / +$0.506 / 41% | 52 / -$0.056 / 40% |
+| regime_trimmed_hard(<0.5) | AVOID | -0.81 | 26 / -$0.382 / 35% | 77 / +$0.426 / 43% |
+| hold<=30min | AVOID | -0.46 | 11 / -$0.187 / 27% | 92 / +$0.271 / 42% |
+| fee_heavy>=30pct | AVOID | -0.23 | 12 / +$0.018 / 50% | 91 / +$0.249 / 40% |
+| side=LONG | AVOID | -0.15 | 75 / +$0.181 / 40% | 28 / +$0.335 / 43% |
+
+Two notes. `side=LONG` flipped to a (weak) AVOID — shorts now score better in
+the corpus, **contradicting the 08-14 drift-controlled study that put the whole
+edge in the longs**. The gap is -$0.15/trade on n=28 short; that is noise, not a
+finding, and the trend short arm's own counterfactual (-19.38R) points the other
+way. **No proposal either way** — but it is the first sign disagreement, so it
+goes on the watch list. `roc>=12pct` strengthened again (n=23, +$1.89/trade);
+HEMI entered at 18.9% and still stopped, so four fills do not move it.
+
+### Shadow service
+
+**Shadow: stale, comparison suppressed pending resync.** Standing action item
+unchanged (`railway up --service Futures-shadow`, paper, env-only, zero live
+risk, operator-gated).
+
+### Deploy
+
+**Deploy: none.** `pytest` green, no execution faults, every exit took a correct
+path, three positions open (two materially in profit) — and the one substantive
+finding is a pre-registration matter only the operator may amend. No code or env
+change is warranted.
+
+### 7-day verdict on recent changes
+
+| change | live since | verdict |
+|---|---|---|
+| retention trail (0.30 of peak) | 08-14 | **first fire, positive** — MOVR +0.35R banked where the raw stop would have paid -1.0R (post-exit low 0.8630 vs stop ~0.8758). +1.35R |
+| `FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=0` (trial 17) | 08-27 09:32 | doing what it says (`streak_mult` 1.0 on all 7 entries); does not and cannot lift realised risk into the criterion band on its own |
+| `FUTURES_WILDCARD_RISK_PCT` 0.0241 | 08-22 | **correctly calibrated** — scaler-neutral realised risk 2.118% over the trial's four closes, 2.081% over all seven entries |
+| regime scaler floor 0.25 | standing | **earning its keep** — raising it to 0.50 costs -$5.10 on 103 fills; the floored bucket runs -0.59R mean |
+| 3 wildcard / 2 trend slots | 07-31 / 08-20 | neutral; 0 `slot_occupied` rows in the window; wildcard 3/3 full, trend 0/2 |
+| `FUTURES_TREND_LONG_ONLY=1` | 08-20 | **strongly earning its keep** — -19.38R avoided over 31 resolved rows |
+
+---
+
 # Daily Audit — 2026-08-27
 
 ---
