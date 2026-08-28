@@ -1871,3 +1871,41 @@ def test_trial_marker_round_trips_through_saved_state(rt, monkeypatch):
     rt._stored_trial_marker = None
     rt._load_state()
     assert rt._stored_trial_marker == {"label": "17", "start_ts": 4242.0}
+
+
+def test_majors_state_is_recorded_and_cached(rt, monkeypatch):
+    """Regime telemetry for the BTC72 question the fortnight review raised.
+    Decision-free: nothing reads it to size or gate. It exists so the live
+    fills can eventually settle what one three-day episode cannot."""
+    import pandas as pd
+
+    calls = {"n": 0}
+
+    def _kl(symbol, interval="Min15", **k):
+        calls["n"] += 1
+        # 340 bars; BTC ends +20% over 72h (288 bars back), flat before that
+        n = 340
+        base = [100.0] * n
+        for i in range(n - 288, n):
+            base[i] = 120.0
+        return pd.DataFrame({"close": base})
+
+    rt.client = MagicMock()
+    rt.client.get_klines = _kl
+    rt._majors_cache = None
+    st = rt._majors_state()
+    assert st["btc_72h"] == pytest.approx(0.20, abs=1e-6)
+    assert st["calm_score"] == pytest.approx(2.0, abs=1e-3), st  # 0.20 / 0.10
+    assert calls["n"] == 3, "one kline call per major"
+
+    calls["n"] = 0
+    again = rt._majors_state()
+    assert again == st and calls["n"] == 0, "must serve from the 10-minute cache"
+
+
+def test_majors_state_fails_soft_when_a_major_is_unavailable(rt):
+    """Telemetry must never block an entry. A broken major is simply absent."""
+    rt.client = MagicMock()
+    rt.client.get_klines = MagicMock(side_effect=RuntimeError("exchange down"))
+    rt._majors_cache = None
+    assert rt._majors_state() == {}

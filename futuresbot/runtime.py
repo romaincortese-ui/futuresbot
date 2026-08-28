@@ -1068,6 +1068,72 @@ class FuturesRuntime:
         self._btc_trend_cache["24h"] = cached_24h if change_24h is None else change_24h
         return self._btc_trend_cache["1h"], self._btc_trend_cache["24h"]
 
+    # (sampled_at, {(symbol, hours): return}) - see _majors_state.
+    _MAJORS_TTL_S = 600.0
+
+    def _majors_state(self) -> dict[str, float]:
+        """BTC/ETH/SOL returns at 12h/24h/72h, plus the derived calm score.
+
+        MEASUREMENT ONLY - nothing reads this to make a decision. It is stamped
+        on every convex entry so the regime question can eventually be answered
+        from LIVE fills instead of replays.
+
+        Why it exists (2026-08-28): the owner's fortnight review found the 36
+        real fills since 08-14 split hard on BTC's 72-HOUR move at entry --
+        >=10% gave $+44.29 over 17 trades at a 71% win rate, <10% gave $-24.93
+        over 19 at 21%. The 24h move does NOT separate them: TUT_USDT, the best
+        trade of the fortnight at +$17.94, entered with BTC24 at +0.1% and
+        BTC72 at +19.2%. But that was ONE three-day episode, so it is n=1 for
+        the regime question and inseparable from the date, and the 190-day
+        replay finds the same condition worth +$0.23 across 32 trades. Two
+        small samples disagreeing is exactly the situation that needs live
+        accumulation rather than another backtest.
+
+        calm_score = max over {BTC,ETH,SOL} x {12h/2%, 24h/5%, 72h/10%} of
+        |return| / threshold. <=1.0 means every major sits inside every
+        threshold. It is recorded because tools/pit_calm_tilt.py measured a
+        +$41 size-neutral edge for sizing UP when it is low, and
+        tools/live_fortnight_regime.py then found that same tilt INVERTED on
+        live fills (it would have turned +$19.36 into -$0.86). Recording both
+        the score and BTC72 is what lets that contradiction be settled by data.
+
+        Cached for 10 minutes: three symbols x one kline call, and the wildcard
+        scan runs every 450s, so an uncached version would triple its API load
+        for a field nothing acts on. Fails soft - a missing major is simply
+        absent from the result, and callers stamp what they get.
+        """
+        now_ts = time.time()
+        hit = getattr(self, "_majors_cache", None)
+        if hit is not None and now_ts - hit[0] < self._MAJORS_TTL_S:
+            return hit[1]
+        out: dict[str, float] = {}
+        score = 0.0
+        for sym, tag in (("BTC_USDT", "btc"), ("ETH_USDT", "eth"), ("SOL_USDT", "sol")):
+            try:
+                # 72h needs 288 bars; fetch 340 for headroom on gaps.
+                frame = self.client.get_klines(sym, interval="Min15",
+                                               start=int(now_ts) - 900 * 340,
+                                               end=int(now_ts))
+                if frame is None or frame.empty:
+                    continue
+                close = frame["close"].astype(float)
+                last = float(close.iloc[-1])
+                for hours, bars, thr in ((12, 48, 0.02), (24, 96, 0.05), (72, 288, 0.10)):
+                    if len(close) <= bars:
+                        continue
+                    prev = float(close.iloc[-(bars + 1)])
+                    if prev <= 0:
+                        continue
+                    ret = last / prev - 1.0
+                    out["%s_%dh" % (tag, hours)] = round(ret, 5)
+                    score = max(score, abs(ret) / thr)
+            except Exception as exc:  # pragma: no cover - telemetry never blocks
+                log.debug("majors state fetch failed for %s: %s", sym, exc)
+        if out:
+            out["calm_score"] = round(score, 3)
+        self._majors_cache = (now_ts, out)
+        return out
+
     def _btc_trend_line(self) -> str:
         change_1h, change_24h = self._btc_trend_changes()
         icon_1h = "▲" if change_1h >= 0 else "▼"
@@ -4779,6 +4845,15 @@ class FuturesRuntime:
                 "hold_min": hold_min,
                 "is_wildcard": bool(md.get("wildcard")),
                 "entry_3h_roc_pct": round(abs(roc) * 100.0, 1) if roc is not None else None,
+                # Majors regime at entry, carried through from position metadata
+                # so the conditional-expectancy engine can slice on it. The
+                # sizing fields below were written to metadata but never copied
+                # here, which is exactly how the undersizing question went
+                # unmeasurable for weeks - do not repeat that for these.
+                **{k: mf(k) for k in ("btc_12h", "btc_24h", "btc_72h",
+                                      "eth_12h", "eth_24h", "eth_72h",
+                                      "sol_12h", "sol_24h", "sol_72h",
+                                      "calm_score") if mf(k) is not None},
                 "regime_size_mult": mf("regime_size_multiplier") or 1.0,
                 # Sizing telemetry: these were written to position metadata but
                 # never copied here, so the undersizing question could not be
@@ -7056,6 +7131,8 @@ class FuturesRuntime:
             "roc_z": getattr(sig, "roc_z", None),
             "sl_frac_designed": getattr(sig, "sl_frac_designed", None),
             "equity_at_open_usdt": self._last_known_equity(),
+            # Regime telemetry. Decision-free; see _majors_state.
+            **self._majors_state(),
         }
         if kind == "TREND":
             # Marker checked BEFORE wildcard in _sleeve_kind, so a trend

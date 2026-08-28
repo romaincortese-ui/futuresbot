@@ -25,6 +25,66 @@ increase wearing one's clothes.
 
 ---
 
+# DRAFT — CONVEX TRIAL 18 (not open; opens when trial 17 closes)
+
+**Under test: the regime scaler's 0.25 FLOOR.** `FUTURES_REGIME_FLOOR_MULT`
+0.25 -> 0.50, scaler shape otherwise unchanged.
+
+## Why this and not the BTC72 regime idea
+
+Trial 17 is answering its question early and the answer is not about the
+throttle. With the throttle OFF (`streak_mult 1.0` on every entry since
+08-27 09:32), realised risk per trade is still **1.018% at n=4** against a
+1.6-2.2% target band. The mechanism is arithmetic, not statistical: the regime
+scaler floors at 0.25 and `0.0241 x 0.25 = 0.60%`, a hard lower bound well
+under the band. Observed entries: 2.122% (scaler ~0.98), 0.620% and 0.577%
+(both floored), 0.752% (scaler ~0.31). Trial 16 renormalised `RISK_PCT` for
+the scaler's MEAN multiplier of 0.777; that cannot fix a floor, which is why
+trial 16's realised risk moved AWAY from target.
+
+So the sizing chain has been audited one link at a time — throttle (17),
+now floor (18) — and the floor is the last untested link.
+
+**The BTC72 regime hypothesis is NOT trial 18.** `tools/live_fortnight_regime.py`
+found the 36 live fills since 08-14 split hard on BTC's 72h move at entry
+(>=10%: n=17, $+44.29, win 71%; <10%: n=19, $-24.93, win 21%), and TUT entered
+with BTC24 at +0.1% but BTC72 at +19.2%. That is the most interesting live
+finding in weeks AND it is n=1 EPISODE — one three-day stretch, inseparable
+from the date. The 190-day replay scores the same condition at +$0.23 surplus
+over 32 trades. Two small samples disagree, so the answer is to ACCUMULATE:
+`_majors_state()` now stamps btc/eth/sol 12h/24h/72h returns and the calm
+score on every convex entry (measurement only, no behaviour change, does not
+reset a trial). Revisit when 4-5 independent episodes exist.
+
+## Pass criteria (30 convex closes)
+
+- **PRIMARY:** realised mean risk per trade in [1.6%, 2.2%]. Same criterion as
+  trial 17, because it is still the thing that has never been achieved.
+- netR > 0 AND netR ex-best > 0.
+
+## Kill conditions
+
+- Realised mean risk still < 1.5% at n=10 -> a fourth shrinker exists; halt and
+  audit the whole sizing path rather than opening trial 19 on a guess.
+- Any single entry risking > 3.0% of equity -> the floor was load-bearing;
+  restore 0.25 and close.
+- Trial drawdown > 20% of equity -> restore 0.25.
+- Rollback is one env var **plus a redeploy** — Railway marks variable-only
+  changes SKIPPED and the running process keeps the old environment.
+
+## Opening checklist (both vars, then redeploy)
+
+```
+railway variables --service Futures-bot   --set "FUTURES_TRIAL_START_TS=$(date +%s)" --set "FUTURES_TRIAL_LABEL=18"
+railway redeploy --service Futures-bot --yes
+```
+
+Missing the label is not hypothetical: it happened opening trial 17, and
+`_trial_label_drift()` now warns in /status when the window moves and the
+label does not.
+
+---
+
 # Pre-registered decision rule — CONVEX TRIAL 17 (from 2026-08-27)
 
 ## Trial 16 CLOSED 2026-08-27: VOID by its own sizing check.
