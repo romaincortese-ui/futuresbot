@@ -7,3 +7,5 @@ futures_runtime_status.json
 __pycache__/
 futuresbot/__pycache__/
 tests/__pycache__/
+# adversarial-audit working copies (agent scratch, not repo artifacts)
+tools/_audit_*.py
