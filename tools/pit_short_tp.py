@@ -73,7 +73,6 @@ from __future__ import annotations
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -86,6 +85,7 @@ from futuresbot import wildcard as W
 from futuresbot.config import FuturesConfig
 from futuresbot.marketdata import MexcFuturesClient
 from futuresbot.runtime import FuturesRuntime
+from pit_fetch import fetch_frames  # noqa: E402
 from pit_ratchet import ratchet
 from retention_trail_ab import resolve
 
@@ -128,27 +128,10 @@ def main() -> int:
 
     sizes = {str(d.get("symbol") or ""): float(d.get("contractSize") or 0.0)
              for d in (cl.get_all_contract_details() or [])}
-    nch = int(days * 86400 // (CHUNK * BAR)) + 1
 
-    def fetch(s):
-        parts, end = [], now
-        for _ in range(nch):
-            try:
-                d = cl.get_klines(s, interval="Min15", start=end - CHUNK * BAR, end=end)
-            except Exception:
-                break
-            if d is None or not len(d):
-                break
-            parts.append(d)
-            end = int(d.index[0].timestamp()) - BAR
-        if not parts:
-            return s, None
-        o = pd.concat(parts[::-1])
-        return s, o[~o.index.duplicated(keep="first")].sort_index()
-
-    print("fetching...")
-    with ThreadPoolExecutor(max_workers=6) as p:
-        frames = {s: f for s, f in p.map(fetch, cand_syms) if f is not None and len(f) >= 300}
+    frames, _rep = fetch_frames(cl, cand_syms, days=days, workers=6,
+                                min_bars=300, now_ts=now)
+    print(_rep)
     span = len(next(iter(frames.values()))) * BAR / 86400
     print("frames: %d symbols, %.0fd" % (len(frames), span))
 

@@ -71,7 +71,6 @@ from __future__ import annotations
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -84,6 +83,7 @@ from futuresbot import wildcard as W  # noqa: E402
 from futuresbot.config import FuturesConfig  # noqa: E402
 from futuresbot.marketdata import MexcFuturesClient  # noqa: E402
 from futuresbot.runtime import FuturesRuntime  # noqa: E402
+from pit_fetch import fetch_frames  # noqa: E402
 from pit_pool import day_key, daily_turnover, describe, pit_majors  # noqa: E402
 from pit_ratchet import ratchet  # noqa: E402
 from retention_trail_ab import resolve  # noqa: E402
@@ -128,28 +128,10 @@ def main() -> int:
     syms = sorted(set(cand) | {"BTC_USDT"})
     sizes = {str(d.get("symbol") or ""): float(d.get("contractSize") or 0.0)
              for d in (cl.get_all_contract_details() or [])}
-    nch = int(days * 86400 // (CHUNK * BAR)) + 1
 
-    def fetch(s):
-        parts, end = [], now
-        for _ in range(nch):
-            try:
-                d = cl.get_klines(s, interval="Min15", start=end - CHUNK * BAR, end=end)
-            except Exception:
-                break
-            if d is None or not len(d):
-                break
-            parts.append(d)
-            end = int(d.index[0].timestamp()) - BAR
-        if not parts:
-            return s, None
-        o = pd.concat(parts[::-1])
-        return s, o[~o.index.duplicated(keep="first")].sort_index()
-
-    print("fetching %d symbols..." % len(syms))
-    with ThreadPoolExecutor(max_workers=6) as p:
-        frames = {s: f for s, f in p.map(fetch, syms) if f is not None and len(f) >= 300}
-    print("frames: %d" % len(frames))
+    frames, _rep = fetch_frames(cl, syms, days=days, workers=6,
+                                min_bars=300, now_ts=now)
+    print(_rep)
 
     btc = frames.get("BTC_USDT")
     if btc is None:
