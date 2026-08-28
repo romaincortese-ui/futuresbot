@@ -38,6 +38,47 @@ withdrawable profit -- top-5% concentration and ex-top-5% net, the two numbers
 tools/pit_tp_trail_sweep.py established as deciding whether a book survives
 having its best trades taken out of it. Half-split on every cell.
 
+RESULT 2026-08-28: THE +$41 WAS AN ARTIFACT OF THIS TOOL. DO NOT USE THE
+NUMBERS BELOW WITHOUT FIXING THE THREE DEFECTS LISTED HERE.
+
+A four-lens adversarial audit refuted the finding. The defect is in run_cell():
+the 3-slot book is re-initialised inside `for k in range(n_win)` WEEKLY
+windows, so all three slots are freed every 7 days at a boundary anchored to
+the wall-clock moment the tool happens to run. The live bot never does this --
+its slots run continuously. The reset structurally favours the long-hold arm
+(candidate median hold 11.8h vs live 5.0h; timeouts 86 -> 163), and the
+reported +$41 is the single luckiest phase of that arbitrary anchor. Sweeping
+the boundary 1-6 days on IDENTICAL data: +27.75, -14.63, -28.86, -50.87,
+-50.49, -42.29, -45.65 (mean -$29.29). A continuous slot book -- the faithful
+model -- gives -$8.85, negative at all 7 phases.
+
+The decisive evidence is the PAIRED test, which removes the slot lottery
+entirely: on identical (symbol,bar) entries, widening is worth -$68.50, and an
+auditor reproduced -$68.60 on an independent pool. Phase-averaged, live 3.0/20
+ranks 2nd of 14 cells; 4.0/30 ranks 9th. There is no "wider pays" gradient.
+
+Two further corrections to the original write-up. (1) The "cap binds on 29.9%
+of fills" mechanism is wrong: leverage is stored for reporting and never enters
+the P&L, so the cap can only move money via sl_price in the x1-leverage branch;
+68% of that dial's apparent benefit was the cap-30 book not taking 27 losing
+trades because changed exit times reshuffled slot occupancy. (2) White's
+Reality Check on the 10-cell search puts a +$41 gap at p=0.275 -- about half of
+it is the arithmetic premium of taking the max of 10 correlated cells.
+
+What DID survive the audit, and is worth keeping: the detector genuinely
+re-reads both env dials per call (5 distinct geometries from 5 settings); the
+resolver is applied identically across cells (0 divergent outcomes on
+identical-geometry pairs); the clamped-short tp_r bug that faked +82 in
+pit_trend_tp is structurally absent here (tp_r is derived from the clamped
+PRICE, so clamped shorts credit 2.50-4.96R, never a nominal 5R); and the
+"1R in dollars is invariant to stop width" claim is exactly true (min = median
+= max = $3.889 in every cell), so cross-cell dollar comparisons are legitimate.
+
+BEFORE RERUNNING, FIX: (1) run the slot book continuously rather than per
+weekly window; (2) average over week-boundary phases and report the spread;
+(3) report the PAIRED same-signal effect as the headline, with the slot book
+as a secondary realism check rather than the primary estimator.
+
 METHOD. Point-in-time pool and live exit stack as tools/pit_rerun.py. Frames
 are fetched ONCE; each cell re-runs the real detector under its own env so the
 leverage trim, the cap and the TP geometry are all rebuilt exactly as live.
