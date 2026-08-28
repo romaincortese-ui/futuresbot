@@ -9,8 +9,8 @@ The arithmetic that governs it, at the time of writing:
 
 | | |
 |---|---|
-| 1R | **$2.66** — `risk_pct x equity` = 1.87% x $142. The risk dial makes this identical on EVERY symbol, so "that market is too small to be worth trading" is not a valid objection in this design |
-| entries | ~0.7/day now; slot-capped at 2/day by 2 slots x the 24h clock |
+| 1R | **$4.09** (2026-08-29: `risk_pct x equity` = 2.41% x $169.6; $11.30 at the gated $469 funded size). Was $2.66 at 1.87% x $142. The risk dial makes this identical on EVERY symbol, so "that market is too small to be worth trading" is not a valid objection in this design |
+| entries | ~2.6/day in replay at 3 slots; live slower. Slot-capped by `FUTURES_WILDCARD_MAX_POSITIONS=3` x the 24h clock |
 | monthly envelope | **-$11 to +$22** at 21 trades; **-$32 to +$64** at 60, for edges of -0.2R to +0.4R |
 
 **The uncomfortable consequence:** at this account size no change moves
@@ -25,41 +25,79 @@ increase wearing one's clothes.
 
 ---
 
-# DRAFT — CONVEX TRIAL 18 (not open; opens when trial 17 closes)
+# PRE-REGISTERED DECISION RULE — CONVEX TRIAL 18 (opened 2026-08-29)
 
 **Under test: the regime scaler's 0.25 FLOOR.** `FUTURES_REGIME_FLOOR_MULT`
 0.25 -> 0.50, scaler shape otherwise unchanged.
 
-## Why this and not the BTC72 regime idea
+**Shipped in the same reset, NOT under test:** `FUTURES_CONVEX_TRAIL_RETAIN_FRAC`
+0.30 -> 0.50.
 
-Trial 17 is answering its question early and the answer is not about the
-throttle. With the throttle OFF (`streak_mult 1.0` on every entry since
-08-27 09:32), realised risk per trade is still **1.018% at n=4** against a
-1.6-2.2% target band. The mechanism is arithmetic, not statistical: the regime
-scaler floors at 0.25 and `0.0241 x 0.25 = 0.60%`, a hard lower bound well
-under the band. Observed entries: 2.122% (scaler ~0.98), 0.620% and 0.577%
-(both floored), 0.752% (scaler ~0.31). Trial 16 renormalised `RISK_PCT` for
-the scaler's MEAN multiplier of 0.777; that cannot fix a floor, which is why
-trial 16's realised risk moved AWAY from target.
+## Trial 17 CLOSED 2026-08-29 at n=4 — EARLY, and the reason is arithmetic
 
-So the sizing chain has been audited one link at a time — throttle (17),
-now floor (18) — and the floor is the last untested link.
+Trial 17 asked whether the cold-streak throttle was suppressing size. With the
+throttle OFF (`streak_mult 1.0`) on every entry since 08-27 09:32, realised risk
+per trade was still **1.018%** against the 1.6-2.2% target. The throttle was not
+the shrinker.
 
-**The BTC72 regime hypothesis is NOT trial 18.** `tools/live_fortnight_regime.py`
-found the 36 live fills since 08-14 split hard on BTC's 72h move at entry
-(>=10%: n=17, $+44.29, win 71%; <10%: n=19, $-24.93, win 21%), and TUT entered
-with BTC24 at +0.1% but BTC72 at +19.2%. That is the most interesting live
-finding in weeks AND it is n=1 EPISODE — one three-day stretch, inseparable
-from the date. The 190-day replay scores the same condition at +$0.23 surplus
-over 32 trades. Two small samples disagree, so the answer is to ACCUMULATE:
-`_majors_state()` now stamps btc/eth/sol 12h/24h/72h returns and the calm
-score on every convex entry (measurement only, no behaviour change, does not
-reset a trial). Revisit when 4-5 independent episodes exist.
+This is an EARLY close against a pre-registration that said 30 closes, and that
+is recorded as such rather than dressed up. The justification is that the PRIMARY
+criterion is a mean of a *bounded* quantity: the floor imposes a hard lower bound
+of `0.0241 x 0.25 = 0.60%` per entry and roughly half of observed entries sit on
+it (2.122% at scaler ~0.98, then 0.620% and 0.577% both floored, 0.752% at scaler
+~0.31). No additional sample can lift a mean above a band when half the draws are
+pinned below it by construction. Trial 17's P&L question is left UNANSWERED and
+stays that way; it was never the primary criterion.
+
+## Why retention 0.50 ships in the same reset
+
+Normally one change per trial. The exception is justified because the two changes
+are read by **different instruments**, so neither can contaminate the other's
+verdict:
+
+- Trial 18's PRIMARY and all three kill conditions are *sizing* measurements
+  (realised risk %, single-entry risk %, trial drawdown). An exit-timing change
+  cannot move realised risk at entry — the size is fixed before the trail exists.
+- Retention 0.50's evidence is a *replay* result, not something this trial is
+  powered to test. At the ~20 closes trial 18 will reach by Friday, the P&L
+  verdict was never going to be readable for either change.
+
+The evidence for 0.50, replicated across two independent full-coverage runs on
+2026-08-28 (`tools/pit_exits_sized.py`):
+
+| | live 0.30 | retain 0.50 |
+|---|---|---|
+| net $ (220d, live sizing) | +208.85 | **+251.24** (+42.39) |
+| fills | 533 | 559 |
+| **$ per fill** | 0.392 | **0.449 (+14.6%)** |
+| max drawdown | 41.9% | **39.1%** |
+| ex-top-5% | -134.87 | **-65.84** |
+| both halves, every boundary 35-65% | base | **YES** |
+
+It improves on all four axes and on a per-fill basis, so the gain is not merely
+extra turnover. Contrast retain 0.70, which shows +$16.72 net but **$0.385/fill
+against live's $0.392** — its entire gain is 53 extra trades at slightly worse
+quality, which is exactly why it fails the half-split. That distinction only
+became visible when the per-arm fill count was added to the table on 2026-08-29;
+before that, 0.70 looked like a candidate.
+
+## Why the turnover band does NOT ship
+
+`FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER` 24 -> 12 is the largest dollar number on
+the board (+$81.43 at the live floor, beats live at all four floors in both runs,
+passes the half-split at all four). It is held back deliberately:
+
+- Its gain is **tail-concentrated**: ex-top-5% moves the WRONG way, -227.64 ->
+  -255.35. More gross, not more bankable.
+- It raises turnover 22% (619 -> 755 fills). Adding exposure immediately before a
+  possible 3x funding is the wrong order of operations.
+
+Revisit after the funded window closes, on its own trial.
 
 ## Pass criteria (30 convex closes)
 
 - **PRIMARY:** realised mean risk per trade in [1.6%, 2.2%]. Same criterion as
-  trial 17, because it is still the thing that has never been achieved.
+  trials 16 and 17, because it is still the thing that has never been achieved.
 - netR > 0 AND netR ex-best > 0.
 
 ## Kill conditions
@@ -72,16 +110,94 @@ reset a trial). Revisit when 4-5 independent episodes exist.
 - Rollback is one env var **plus a redeploy** — Railway marks variable-only
   changes SKIPPED and the running process keeps the old environment.
 
-## Opening checklist (both vars, then redeploy)
+---
+
+# PRE-REGISTERED FUNDING GATE — Friday 2026-09-04
+
+The owner intends to deposit, run ~7 days, then withdraw back to the base
+account. This gate is written BEFORE the data arrives so the decision is made
+against a rule rather than against a week's mood.
+
+## The gate is a SIZING check, not a P&L check
+
+By Friday trial 18 will hold roughly 15-20 closes. That is ample to verify
+realised risk % (a bounded quantity, converges fast) and nowhere near enough to
+verify P&L (standard error at 17 trades is ~0.24R, which cannot separate the
+replay's +0.13R from live's -0.16R). So:
+
+- **Realised mean risk in [1.6%, 2.2%] at n>=10 -> FUND.**
+- **Still < 1.5% at n>=10 -> DO NOT FUND.** That is trial 18's own kill
+  condition; a fourth shrinker exists and the sizing path needs auditing before
+  any money is scaled onto it.
+- Any single entry > 3.0% of equity -> DO NOT FUND, restore the floor first.
+
+Explicitly NOT a gate: whether trial 18 made money this week. It is not powered
+to answer that, and treating a profitable week as permission is how a 39%-loss-
+probability process gets mistaken for an edge.
+
+## Deposit size
+
+The worst 7-day window in 228 tested (`tools/plan_funding.py`, 2026-08-29) is
+**-15.3% of equity**. The deposit returns whole in every case; what absorbs the
+entire week's P&L is the BASE account. Sizing follows from that:
+
+| deposit | equity | 1R | worst-week $ | base account after |
+|---|---|---|---|---|
+| $900 | $1,069 | $25.78 | -$164 | **$5** |
+| $500 | $669 | $16.12 | -$102 | $67 |
+| **$300** | **$469** | **$11.30** | **-$72** | **$97** |
+
+**Ruling: $300.** A 2.8x scale-up earns materially if the edge is real while the
+worst week on record still leaves the base account intact. "Worst in 228 windows"
+is not "worst possible", so the margin is deliberate.
+
+## What a funded week is expected to do
+
+| source | 7-day P&L at $1,069 | at $469 |
+|---|---|---|
+| replay, median | +$22 | +$10 |
+| replay, P10 / P90 | -$85 / +$190 | -$37 / +$83 |
+| live record (-0.16R x 17 fills) | -$70 | -$31 |
+
+The replay and the live record sit ~1.7 standard errors apart: suggestive that
+the replay overstates, short of proof. 57% of 7-day windows contain a top-5%
+trade and have a median of +$71.71; the 43% that do not have a median of
+**-$18.80**. A single funded week is mostly a bet on whether one tail winner
+lands in it.
+
+## Operational preconditions
+
+1. **Drawdown brake ON before the deposit.** `USE_DRAWDOWN_KILL=1` is already
+   set; the convex sleeves have never been wired to it. `FUTURES_CONVEX_DRAWDOWN
+   _BRAKE=1` is the missing flag. Live thresholds are `DRAWDOWN_HALT_PCT=0.25`
+   and `DRAWDOWN_SOFT_PCT` defaulting to 0.08, both over 30 days. Note the halt
+   at 25% sits ABOVE the worst observed week (15.3%), so the halt is a backstop
+   for something never yet seen; the 8% soft brake is what will actually
+   modulate size.
+2. **Withdraw only when FLAT.** Margin on open positions cannot be withdrawn. If
+   the bot holds positions on day 7, either wait for them to resolve or accept
+   that the calendar, not the strategy, is choosing the exit price.
+3. **The deposit does not distort drawdown.** `_build_equity_curve` reconstructs
+   from closed-trade P&L anchored to exchange equity, so external cash flows do
+   not register as gains or losses. Verified 2026-08-29.
+4. **A deposit is a sizing change and therefore RESETS the trial.** Bump
+   `FUTURES_TRIAL_START_TS` and `FUTURES_TRIAL_LABEL` on funding day, or trial
+   18's sizing statistics will mix two equity regimes.
+
+## Opening checklist (all vars, then redeploy)
 
 ```
-railway variables --service Futures-bot   --set "FUTURES_TRIAL_START_TS=$(date +%s)" --set "FUTURES_TRIAL_LABEL=18"
+railway variables --service Futures-bot \
+  --set "FUTURES_REGIME_FLOOR_MULT=0.50" \
+  --set "FUTURES_CONVEX_TRAIL_RETAIN_FRAC=0.50" \
+  --set "FUTURES_TRIAL_START_TS=$(date +%s)" \
+  --set "FUTURES_TRIAL_LABEL=18"
 railway redeploy --service Futures-bot --yes
 ```
 
 Missing the label is not hypothetical: it happened opening trial 17, and
-`_trial_label_drift()` now warns in /status when the window moves and the
-label does not.
+`_trial_label_drift()` now warns in /status when the window moves and the label
+does not.
 
 ---
 

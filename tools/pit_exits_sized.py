@@ -184,8 +184,8 @@ def main() -> int:
         r = sum(x["net"] * risk_pct * eq0 * x["mult"] for x in taken if x["ts"] >= cut)
         return o, r
 
-    print("%-30s %9s %9s %7s %9s | %9s %9s %6s"
-          % ("exit config", "LIVE $", "vs live", "maxDD", "ex-top5",
+    print("%-30s %5s %9s %9s %7s %9s | %9s %9s %6s"
+          % ("exit config", "fills", "LIVE $", "vs live", "maxDD", "ex-top5",
              "older", "recent", "both?"))
     base_live = None
     base_halves = None
@@ -221,8 +221,8 @@ def main() -> int:
                 zo, zr = halves(BASE_TAKEN, fr)
                 signs.append((bo - zo > 0) and (br - zr > 0))
             both = "YES" if all(signs) else ("mid" if (do > 0 and dr > 0) else "no")
-        print("%-30s %+9.2f %+9.2f %6.1f%% %+9.2f | %+9.2f %+9.2f %6s"
-              % (lbl, s["net"],
+        print("%-30s %5d %+9.2f %+9.2f %6.1f%% %+9.2f | %+9.2f %+9.2f %6s"
+              % (lbl, len(taken), s["net"],
                  0.0 if base_live == s["net"] else s["net"] - base_live,
                  100 * c2["max_dd"], ex5, o, r, both))
     print("\nex-top5 = net $ with the best 5%% of trades REMOVED - the book that")
