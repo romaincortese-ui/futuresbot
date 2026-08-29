@@ -1,3 +1,182 @@
+# Daily Audit — 2026-08-29
+
+---
+
+## Automated Assessment (UTC 16:20)
+
+Equity **$172.47**, available $172.47, **0 open positions** — the book is
+completely flat for the first time in days. `pytest -q` **1043 passed** (after
+the fix below; it was 1042 passed / **1 failed** on arrival). Feature store
+**103 -> 107 rows**, reconciling exactly with 4 closes. Shadow ledger 161 -> 166.
+No order rejects (5003/2015), no `[SIZE_TRIM]`, no `Traceback`. Trial 18 live
+since 00:37Z (`FUTURES_REGIME_FLOOR_MULT=0.50`, `FUTURES_CONVEX_TRAIL_RETAIN_FRAC=0.50`
+both verified on the running service).
+
+### Closed trades: 4 — four winners, and three of them are the new trail
+
+Window 2026-08-28 17:00 -> 2026-08-29 16:20 UTC. Realised **+$14.26**, **+5.67R**,
+win **4/4**. All WILDCARD.
+
+| close (UTC) | sym | side | lev | R | peak R | exit | hold | risk % eq | scaler | $ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 08-28 19:03 | MAGMA_USDT | LONG | x2 | **+2.98** | +4.42 | RETENTION_TRAIL | 11.9h | 1.531 | 0.80 | +7.14 |
+| 04:07 | TAC_USDT | SHORT | x1 | **+1.35** | +1.67 | **CONVEX_TIME_STOP (24h)** | 24.0h | 1.923 | 0.79 | +4.11 |
+| 05:01 | BLESS_USDT | LONG | x3 | **+0.73** | +1.46 | RETENTION_TRAIL | 13.1h | 0.438 | **0.25** | +0.51 |
+| 11:28 | HNT_USDT | LONG | x1 | **+0.61** | +1.32 | RETENTION_TRAIL | 1.3h | 2.396 | 1.00 | +2.51 |
+
+Every exit is a shipped convex path — nothing unhandled. Entries were mid-path
+(lateness 0.99-1.00, 3h ROC 11.7 / 9.6 / 12.0 / 26.4%), all cross-listed.
+Reconciliation: yesterday's $171.22 carried $13.05 unrealised, so realised base
+$158.17 + $14.26 = **$172.43 vs $172.47 measured**.
+
+**The retention trail is now the dominant exit and it is paying.** Three of the
+four closes are trail exits, +$10.16 of the +$14.26. Two fired under the new 0.50
+retention (BLESS retained 50.1% of peak, HNT 46%); MAGMA fired under 0.30 the
+evening before, retaining 67% (the peak-conditioned ratchet, not the base
+fraction). Second live day for the mechanism, second positive verdict.
+
+**TAC exited on the 24h clock, not the stop or the TP.** `FUTURES_CONVEX_TIME_STOP_HOURS`
+defaults to 24.0 (`runtime.py:1839`) and has since 2026-06. It is a shipped path,
+so it is not the "any other exit_reason is a BUG" case — but the standing
+description of convex as "-1R stop OR +5R TP, no time limit" is now wrong in two
+places (trail and clock) and should stop being quoted that way.
+
+### Open positions: none
+
+### Trial 18 — n=1 by entry time
+
+| | |
+|---|---|
+| closes opened inside trial 18 | **1/30** (HNT) |
+| netR / net $ | **+0.61 / +$2.51** |
+| carryover excluded (trial-17 sizing) | TAC, BLESS |
+| realised risk, trial-18 entries | 2.396% (n=1) |
+| trial drawdown | equity peak $182.59 -> $172.47 = **-5.5%** (kill at 20%) |
+
+No kill condition is near: the single entry risked 2.40% against a 3.0% kill.
+Note it is *above* the [1.6%, 2.2%] pass band rather than below it — at scaler
+1.0 the design risk is ~2.4%, so the band needs the scaler landing in 0.66-0.91.
+n=1 says nothing yet.
+
+### THE LEVER: a leverage-setup cache that silently skips the exchange call
+
+`_ensure_live_position_setup` read the per-symbol leverage cache with a **0.0
+default** and compared it against `time.monotonic()`, which on both Linux and
+Windows is **host uptime**, not process age:
+
+```
+cached_at = self._live_leverage_setup_cache.get(setup_key, 0.0)
+leverage_cached = cache_enabled and now - cached_at < cache_seconds
+```
+
+On a host booted less than `FUTURES_LIVE_SETUP_CACHE_SECONDS` ago (21600s / 6h),
+`now - 0.0 < 21600` is TRUE for a key that was **never cached**, so
+`change_leverage` is never sent. MEXC then opens the position at whatever
+leverage that symbol was last set to — wrong notional *and* a stop distance that
+no longer corresponds to the intended 1R. The sibling position-mode cache
+directly above it already guards with `is not None`; only leverage carried the
+sentinel.
+
+Measured rather than argued:
+
+| | `time.monotonic()` | exposed? |
+|---|---|---|
+| live container | **8,777,252s** (~101 days) | no |
+| this workstation | **17,789s** (~4.9h) | **yes** |
+
+Which is exactly why it surfaced as a test that passes on most days and failed
+today. `test_live_enter_trade_enforces_production_leverage_bounds` asserts the
+`change_leverage` call happened; its *functional* assertions (order x20, position
+x20) pass either way, so **the defect is invisible in the `[ENTRY]` log** — the
+bot logs the leverage it intended, never the one the exchange holds. Production
+is not currently exposed, but a Railway reschedule onto a fresh host would expose
+it, and the funded window opens Friday.
+
+Fixed with the absent-sentinel (`.get(setup_key)` + `is not None`). No sizing,
+entry or exit logic touched; on the live host the patch is provably a no-op
+(uptime 101 days), and where it is not a no-op it prevents a sizing error — so
+it protects trial 18's measurement rather than contaminating it.
+
+### Learning loop (107 rows, 2026-06-27 .. 2026-08-29)
+
+Overall n=107, mean **$+0.347**, sum **$+37.18**, win 43.0%, meanR +0.137.
+Verdicts at n>=10, OOS-consistent:
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| `roc>=12pct` | **FAVOR** | +1.974 | 25 / +1.860 / 64.0% | 82 / -0.114 / 36.6% |
+| `hold>=120min` | **FAVOR** | +1.899 | 71 / +0.986 / 54.9% | 36 / -0.913 / 19.4% |
+| `at_extreme(lat>=0.99)` | FAVOR | +0.897 | 41 / +0.901 | 66 / +0.004 |
+| `leverage<=4` | FAVOR | +0.785 | 55 / +0.729 | 52 / -0.056 |
+| `regime_trimmed_hard(<0.5)` | **AVOID** | -0.931 | 27 / -0.349 / 37.0% | 80 / +0.582 / 45.0% |
+| `fee_heavy>=30pct` | AVOID | -0.371 | 12 / +0.018 | 95 / +0.389 |
+| `hold<=30min` | AVOID | -0.596 | 11 / -0.187 | 96 / +0.409 |
+
+**The tension worth stating plainly:** `regime_trimmed_hard(<0.5)` is still an
+AVOID at n=27, and trial 18 *raises size in exactly that bucket*. Yesterday's
+replay priced the floor lift at **-$5.10** over the 103-trade corpus. Trial 18's
+criterion is a sizing criterion, not a P&L one, so it can pass while costing
+money. The alternative reading of the same evidence — that hard-trimmed setups
+should be **vetoed rather than resized** — is the natural trial 19 and is
+recorded here as propose-only, not acted on.
+
+### Shadow ledger (166 rows, all splits resolved)
+
+| split | n | resolved | net R | reading |
+|---|---|---|---|---|
+| `slot_occupied` | 28 | 28 | **+23.98** | blocked candidates would have *won* |
+| `veto:*` | 34 | 34 | **-12.69** | vetoes are SAVING money |
+| `side_disabled` | 36 | 31 | -19.38 | protective |
+| `calm_shock` | 9 | 9 | -2.58 | protective |
+
+Slot cost stays clearly positive, but the sleeve is **already at 3 wildcard
+slots** — the evidence that bought the third has not been re-earned for a
+fourth, and 15 of the 28 rows carry `entry_lateness=0.0` (unstamped), so the
+deep-pullback split is unreadable. Counterfactuals are directional paper, never
+backtest-grade. No proposal.
+
+### Wildcard diagnostics — dormant, and correctly so
+
+28-34 movers per scan, **0 candidates**, every cycle. Rejection histogram is
+overwhelmingly `roc_below_min` (23-32 of each scan), with 1-4 `no_pullback_resume`
+and 1-2 `low_volume_z`. No entry failures: zero 5003/2015 rejects. All three
+wildcard slots and the squeeze slot are free; TREND rejects on `roc_below_min`
+and `no_new_extreme`. This is a quiet tape, not a broken scanner — no gate is
+loosened.
+
+### Exits ledger
+
+Over the 54 convex closes carrying an `exit_kind`: **TP 5 (9%) | STOP 27 (50%) |
+OTHER 22 (41%)**. Last 20: STOP 13, OTHER 7, TP 0. The TRIAL-4 watch item asks
+for a TP3R proposal when TP <10% *and* OTHER dominates. TP is at 9%, but OTHER
+does **not** dominate, and OTHER is now overwhelmingly the **retention trail** —
+a deliberate exit that banked +$10.16 today. The watch item was written when
+OTHER meant leakage; it no longer does. No TP3R proposal, and the stop width is
+not touched.
+
+### Shadow service
+
+Stale, comparison suppressed pending resync (action item unchanged).
+
+### Deploy
+
+`d68092a` — leverage-cache sentinel fix. Pushed, `railway up --service Futures-bot`,
+container restarted 16:17:13Z, `[BOOT] mode=LIVE`, `[ACCOUNT] equity=172.47
+positions=0`, no Traceback. Deployed **flat** (no open position at any point).
+
+### Verdict on changes deployed in the last 7 days
+
+- **retention trail 0.30 (08-14) / 0.50 (08-29)** — earning its keep. 4 live
+  fires, all positive; today it converted three peaks into +$10.16.
+- **streak throttle OFF (08-27, trial 17)** — verdict never reachable; trial 17
+  closed early at n=4 on arithmetic. Left off.
+- **regime floor 0.25 -> 0.50 (08-29, trial 18)** — n=1, no verdict. Held against
+  a measured -$5.10 replay; watch the AVOID bucket above.
+- **`/status` trial-by-entry-time (08-29)** — display-only, working (reads 1/30,
+  not 3/30).
+
+---
+
 # Daily Audit — 2026-08-28
 
 ---
