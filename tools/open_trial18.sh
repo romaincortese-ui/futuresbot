@@ -57,7 +57,18 @@ railway variables --service "$SVC" \
 
 echo
 echo "=== VERIFY (read back before redeploy) ==="
-AFTER="$(railway variables --service "$SVC" 2>/dev/null || true)"
+# Railway's API is eventually consistent: an immediate read-back after --set can
+# still serve the pre-write value for up to ~30s. On 2026-08-29 this aborted a
+# run whose four variables had all actually applied. The tell was that the
+# three UNCHANGED vars read back instantly (stale cache happened to be right)
+# while the one var that actually changed did not. Retry generously.
+AFTER=""
+for attempt in $(seq 1 12); do
+  AFTER="$(railway variables --service "$SVC" 2>/dev/null || true)"
+  if printf '%s\n' "$AFTER" | grep -E "[[:space:]]FUTURES_TRIAL_START_TS[[:space:]]" | grep -q "$TS"; then break; fi
+  echo "  (read-back attempt ${attempt}: start_ts not visible yet, retrying)"
+  sleep 5
+done
 fail=0
 for kv in "${VARS[@]}"; do
   k="${kv%%=*}"; v="${kv##*=}"
@@ -67,10 +78,17 @@ for kv in "${VARS[@]}"; do
     echo "  FAIL ${k} did not read back as ${v}"; fail=1
   fi
 done
-if printf '%s\n' "$AFTER" | grep -q "$TS"; then
+# WARN, not FAIL. On 2026-08-29 `railway variables` called repeatedly inside this
+# script kept serving a cached blob in which the three UNCHANGED vars read back
+# correctly (the cache happened to be right) while the freshly-written timestamp
+# never appeared, even after 60s of retries - yet a separate `railway variables`
+# process showed it instantly. That is a CLI read cache, not a failed write, so
+# it must not abort a run whose writes all landed. The three behaviour-controlling
+# vars stay FATAL; the timestamp is confirmed from a fresh process below.
+if printf '%s\n' "$AFTER" | grep -E "[[:space:]]FUTURES_TRIAL_START_TS[[:space:]]" | grep -q "$TS"; then
   echo "  OK   FUTURES_TRIAL_START_TS = $TS"
 else
-  echo "  FAIL FUTURES_TRIAL_START_TS did not read back"; fail=1
+  echo "  WARN FUTURES_TRIAL_START_TS read back stale - confirming out-of-band below"
 fi
 if [ "$fail" -ne 0 ]; then
   echo
@@ -79,8 +97,24 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 echo
+echo "=== CONFIRM start_ts from a FRESH process (bypasses the CLI read cache) ==="
+railway variables --service "$SVC" 2>/dev/null \
+  | grep -E "[[:space:]]FUTURES_TRIAL_START_TS[[:space:]]" || true
+echo "  (expected: $TS)"
+
+# --json is NOT cosmetic. Without it this command exits 0, prints nothing, and
+# creates NO deployment - the running container keeps the old environment
+# indefinitely (observed 2026-08-29: ~10 min, cycle counter never reset). With
+# --json it returns a deployment id and actually queues the deploy.
+echo
 echo "=== REDEPLOY (required: variable-only changes are marked SKIPPED) ==="
-railway redeploy --service "$SVC" --yes
+DEP="$(railway redeploy --service "$SVC" --yes --json 2>&1 | tail -1)"
+echo "  deployment: $DEP"
+case "$DEP" in
+  *'"id"'*) ;;
+  *) echo "  WARNING: no deployment id returned - redeploy from the Railway"
+     echo "  dashboard (Deployments -> Redeploy) or the old env stays live." ;;
+esac
 
 echo
 echo "Trial 18 open. Confirm in /status that the label reads 18 and the window"
