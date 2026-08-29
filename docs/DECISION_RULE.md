@@ -112,6 +112,62 @@ Revisit after the funded window closes, on its own trial.
 
 ---
 
+## CARRYOVER: the first two closes of trial 18 are NOT trial 18 trades
+
+Trial 18's environment was written at 2026-08-28 23:46:18Z but the container did
+not restart until 00:37Z on 08-29 (`railway redeploy` returns exit 0, prints
+nothing and creates no deployment unless `--json` is passed; even then the swap
+lagged ~50 minutes). Two WILDCARD positions were open across that boundary. They
+were SIZED under trial 17's `FUTURES_REGIME_FLOOR_MULT=0.25`.
+
+Re-stamping `FUTURES_TRIAL_START_TS` does NOT exclude them. The scoreboard filters
+on EXIT time, not entry time -- `learning_digest.py:83` selects rows with
+`ts >= trial_start`, and `runtime.py:4736` sets that `ts` from `trade["exit_time"]`.
+Both positions exit in the future, so any start timestamp short of a future one
+still admits them.
+
+**Therefore: exclude the first two WILDCARD closes of trial 18 from the realised
+mean-risk statistic, and say so when quoting n.** They are trial 17 trades that
+happen to settle inside trial 18's window.
+
+Why this is not pedantry. The Friday funding gate reads mean realised risk against
+a [1.6%, 2.2%] band at n>=10. Two trial-17-sized trades in that ten drag the mean
+toward the kill condition: eight new trades averaging 1.9% with two carryovers at
+0.6% reads 1.64%, which passes by 0.04pp; at 1.0% carryover it reads 1.72%. The
+contamination is survivable but it eats most of the margin, and trial 16 was
+already voided once by a sizing-measurement failure.
+
+The two carryover positions, measured live at 00:45Z:
+
+| symbol | realised risk %% of equity |
+|---|---|
+| TAC_USDT | 1.923 (in band) |
+| BLESS_USDT | **0.438** |
+
+BLESS is the more interesting number. Trial 17's floor made 0.0241 x 0.25 = 0.603%
+the ARITHMETIC minimum, and this trade realised 27% BELOW it. The floor cannot
+explain that; contract truncation can. `tools/plan_capacity.py` measured lot maths
+at 4% of the book on average (12% at the chop floor, P10 size 86%), which read as
+negligible in aggregate -- but on an INDIVIDUAL trade wanting ~1.4 contracts and
+getting 1, the loss is 27%.
+
+**Consequence for trial 18.** Raising the floor to 0.50 lifts the arithmetic
+minimum to 1.205%, but a truncated trade can still land near 0.9%. If trial 18's
+mean risk comes in under the band, truncation is the prime suspect for the
+"fourth shrinker" its kill condition anticipates -- look there before touching the
+scaler again.
+
+The live watch (`scratchpad/trial18_watch.sh`, monitor bojolig1e) filters on entry
+time and therefore excludes both carryovers; it also alerts if any trial-18 entry
+realises below 1.15%, which would prove the new floor never took effect.
+
+Note the exits themselves are ALSO mixed: `FUTURES_CONVEX_TRAIL_RETAIN_FRAC` is
+read at exit-check time (`runtime.py:1932`), so these two positions will trail at
+0.50 despite having been opened under 0.30. That affects their P&L, not their
+realised risk, so it does not touch the PRIMARY criterion.
+
+---
+
 # PRE-REGISTERED FUNDING GATE — Friday 2026-09-04
 
 The owner intends to deposit, run ~7 days, then withdraw back to the base
