@@ -7941,8 +7941,17 @@ class FuturesRuntime:
                 pass
         position_type = 1 if side_name == "LONG" else 2
         setup_key = (symbol.upper(), int(position_type), int(leverage), int(self.config.open_type))
-        cached_at = self._live_leverage_setup_cache.get(setup_key, 0.0)
-        leverage_cached = cache_enabled and now - cached_at < cache_seconds
+        # The sentinel must be "absent", not 0.0: time.monotonic() is host
+        # uptime, so on a host booted less than FUTURES_LIVE_SETUP_CACHE_SECONDS
+        # ago (6h by default) `now - 0.0 < cache_seconds` reads TRUE for a key
+        # that was never cached, and change_leverage is skipped entirely. The
+        # exchange then opens the position at whatever leverage that symbol was
+        # last set to, which silently breaks both the size and the stop
+        # distance. Caught 2026-08-29 by a test that fails only on a machine
+        # rebooted within the last 6 hours.
+        cached_at = self._live_leverage_setup_cache.get(setup_key)
+        leverage_cached = (cache_enabled and cached_at is not None
+                           and now - cached_at < cache_seconds)
         if leverage_cached:
             return
         self.client.change_leverage(
