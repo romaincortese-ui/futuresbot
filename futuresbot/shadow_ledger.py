@@ -35,12 +35,59 @@ RESOLVE_HORIZON_S = 48 * 3600
 TP_R = 5.0
 
 # Live convex exit (runtime._convex_runner_trail_exit / _convex_time_stop_exit).
-# Mirrored here so the replay scores the policy that is actually running; keep
-# the defaults in step with FUTURES_CONVEX_* or the counterfactual drifts again.
+#
+# These used to be hardcoded, with a comment asking whoever changed the live
+# trail to keep them in step by hand. That failed exactly as the comment feared:
+# trial 18 moved FUTURES_CONVEX_TRAIL_RETAIN_FRAC 0.30 -> 0.50 on 2026-08-29 and
+# the ledger kept scoring every counterfactual at 0.30, so the "what would the
+# live policy have done" column was answering about a policy that had stopped
+# running that morning. The ratchet (FUTURES_CONVEX_TRAIL_RATCHET_R/_RETAIN, live
+# since trial 7) was never mirrored here at all.
+#
+# So they now READ THE SAME ENVIRONMENT THE LIVE TRAIL READS. The module-level
+# names remain, because ~15 tools import them, but they are defaults rather than
+# the source of truth: use the accessors below on any live scoring path.
 CONVEX_ARM_R = 1.0
 CONVEX_RETAIN = 0.30
 CONVEX_COST_FLOOR_MULT = 1.5
 CONVEX_HORIZON_S = 24 * 3600
+
+
+def _cenv(name: str, default: float) -> float:
+    try:
+        raw = os.environ.get(name)
+        return float(raw) if raw not in (None, "") else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def convex_arm_r() -> float:
+    """Peak R at which the retention trail arms. Live: FUTURES_CONVEX_TRAIL_ARM_R."""
+    return _cenv("FUTURES_CONVEX_TRAIL_ARM_R", CONVEX_ARM_R)
+
+
+def convex_retain(peak_r: float) -> float:
+    """Retention fraction for a given peak, mirroring runtime._trail_retain_for.
+
+    Ratchet-only by construction: the fraction is a step that only rises with
+    peak, and peak itself only rises, so the floor can never fall. The guard
+    ``high <= base`` matches live - raising RETAIN_FRAC above RATCHET_RETAIN
+    silently disables the ratchet rather than lowering the floor."""
+    base = _cenv("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", CONVEX_RETAIN)
+    trigger = _cenv("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0)
+    high = _cenv("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN", 0.75)
+    if trigger <= 0 or high <= base:
+        return base
+    return high if peak_r >= trigger else base
+
+
+def convex_cost_floor_mult() -> float:
+    return _cenv("FUTURES_CONVEX_COST_FLOOR_MULT", CONVEX_COST_FLOOR_MULT)
+
+
+def convex_horizon_s() -> float:
+    """Convex time stop in seconds. Live: FUTURES_CONVEX_TIME_STOP_HOURS."""
+    return _cenv("FUTURES_CONVEX_TIME_STOP_HOURS", CONVEX_HORIZON_S / 3600.0) * 3600.0
 # Sleeves the convex stack applies to. SNIPER is deliberately absent: it is
 # excluded from the convex exits in the runtime too, so the bracket is right.
 CONVEX_SLEEVES = frozenset({"WILDCARD", "SQUEEZE", "TREND"})
@@ -177,10 +224,23 @@ def _resolved(row: dict[str, Any], outcome: float, kind: str, ts: float,
     the defect this whole change fixes. Rows written before 2026-08-09 carry no
     tag and must be read as "legacy"."""
     c = cost_r(row)
-    return {**row, "outcome": round(float(outcome), 3), "outcome_kind": kind,
-            "resolved_ts": round(ts), "cost_r": round(c, 3),
-            "outcome_net": round(float(outcome) - c, 3),
-            "exit_policy": "convex_v7" if convex else "bracket"}
+    out = {**row, "outcome": round(float(outcome), 3), "outcome_kind": kind,
+           "resolved_ts": round(ts), "cost_r": round(c, 3),
+           "outcome_net": round(float(outcome) - c, 3),
+           "exit_policy": "convex_v7" if convex else "bracket"}
+    if convex:
+        # Stamp the trail settings this row was actually scored under. The 0.30
+        # vs 0.50 drift went unnoticed for a day because "convex_v7" claimed the
+        # policy matched while the number behind it had moved; a tag that cannot
+        # change when the policy changes is not a policy tag. With these on the
+        # row, a scorecard can detect the mix instead of an audit having to.
+        out["trail_retain"] = round(_cenv("FUTURES_CONVEX_TRAIL_RETAIN_FRAC",
+                                          CONVEX_RETAIN), 3)
+        out["trail_arm_r"] = round(convex_arm_r(), 3)
+        out["trail_ratchet_r"] = round(_cenv("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0), 3)
+        out["trail_ratchet_retain"] = round(_cenv("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN",
+                                                  0.75), 3)
+    return out
 
 
 def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], now_ts: float,
@@ -206,7 +266,8 @@ def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], n
     one_r = abs(entry - sl)
     if one_r <= 0:
         return _resolved(row, 0.0, "degenerate", now_ts, convex=convex)
-    floor_min = CONVEX_COST_FLOOR_MULT * cost_r(row)
+    floor_min = convex_cost_floor_mult() * cost_r(row)
+    arm_r = convex_arm_r()
     seen = False
     last_mark = entry
     peak_r = 0.0
@@ -223,8 +284,8 @@ def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], n
         if ts - float(row["ts"]) > horizon_s:
             break
         seen = True
-        armed = convex and peak_r >= CONVEX_ARM_R
-        level = max(CONVEX_RETAIN * peak_r, floor_min) if armed else 0.0
+        armed = convex and peak_r >= arm_r
+        level = max(convex_retain(peak_r) * peak_r, floor_min) if armed else 0.0
         # An armed position's retention floor sits ABOVE its hard stop, so on a
         # bar spanning both, the floor is what price reaches first — live polls
         # the mark every ~1s and cannot pass the floor without triggering it.
@@ -496,7 +557,7 @@ def funding_cost_r(row: dict[str, Any], settlements: list[tuple[float, float]] |
     # charging fifteen days of settlements against its 0.054% stop produced a
     # 2.29R funding bill on a row whose whole counterfactual is -0.74R.
     if horizon_s is None:
-        horizon_s = CONVEX_HORIZON_S if str(row.get("sleeve") or "") in CONVEX_SLEEVES \
+        horizon_s = convex_horizon_s() if str(row.get("sleeve") or "") in CONVEX_SLEEVES \
             else RESOLVE_HORIZON_S
     if horizon_s and horizon_s > 0:
         ts1 = min(ts1, ts0 + float(horizon_s))
