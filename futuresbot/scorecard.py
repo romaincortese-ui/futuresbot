@@ -66,6 +66,35 @@ def _f(v: Any, d: float = 0.0) -> float:
         return d
 
 
+def _flow_invariant_drawdown(rows: Sequence[Mapping[str, Any]]) -> float | None:
+    """Peak-to-trough of the TRADING curve, immune to deposits and withdrawals.
+
+    Each close contributes ``pnl_usdt / equity_at_close_usdt`` - its return
+    against the equity it actually closed against - and those are compounded.
+    An external cash flow moves both sides of that ratio for every subsequent
+    trade, so it cancels; only trading moves the curve.
+
+    Returns None when no row carries a usable equity stamp, so the caller can
+    fall back explicitly rather than grade a silent zero.
+    """
+    ordered = sorted(rows, key=lambda r: _f(r.get("ts")))
+    v, peak, dd, used = 1.0, 1.0, 0.0, 0
+    for r in ordered:
+        eq = _f(r.get("equity_at_close_usdt"))
+        if eq <= 0:
+            continue
+        # pnl is realised against the equity BEFORE this close, which is what
+        # equity_at_close already reflects; the small self-reference is well
+        # under the rounding of the percentage this feeds.
+        v *= 1.0 + (_f(r.get("pnl_usdt")) / eq)
+        used += 1
+        if v > peak:
+            peak = v
+        if peak > 0:
+            dd = max(dd, (peak - v) / peak)
+    return dd if used else None
+
+
 def _median(xs: Sequence[float]) -> float:
     s = sorted(xs)
     if not s:
@@ -203,12 +232,35 @@ def build_scorecard(rows: Sequence[Mapping[str, Any]], *, days: float,
                    f"30 needed for a verdict"))
 
     # 8. Drawdown shape.
-    if peak_equity <= 0 or equity_now <= 0:
-        out.append(KPI("Drawdown", "unknown", "NA", "no equity history"))
+    #
+    # Measured on a FLOW-INVARIANT curve, not on absolute equity. The old form
+    # graded (peak_equity - equity_now)/peak_equity where peak came from the
+    # trial's own equity_at_close stamps, so an external cash flow read as
+    # performance: withdrawing $900 from a $1,074 account on the last day of the
+    # funded week scores 83.8% -- "Bad" -- and drags overall() to MIXED on a week
+    # that may have been entirely profitable. The single readout the funded
+    # experiment exists to produce was degraded by the act of taking the money
+    # out.
+    #
+    # Each trade's return is taken against the equity it actually closed
+    # against, then compounded. A deposit or withdrawal moves the denominator
+    # and the numerator together and cancels; only trading moves the curve.
+    dd = _flow_invariant_drawdown(rows)
+    if dd is None:
+        # No usable per-trade equity stamps; fall back to the absolute form and
+        # say so, rather than silently grading a number of unknown provenance.
+        if peak_equity <= 0 or equity_now <= 0:
+            out.append(KPI("Drawdown", "unknown", "NA", "no equity history"))
+        else:
+            dd_abs = max(0.0, (peak_equity - equity_now) / peak_equity)
+            out.append(KPI("Drawdown", f"{dd_abs*100:.1f}% off peak",
+                           "Good" if dd_abs < 0.10 else ("NA" if dd_abs < 0.15 else "Bad"),
+                           "absolute equity basis - distorted by any deposit or "
+                           "withdrawal in the window"))
     else:
-        dd = max(0.0, (peak_equity - equity_now) / peak_equity)
         out.append(KPI("Drawdown", f"{dd*100:.1f}% off peak",
                        "Good" if dd < 0.10 else ("NA" if dd < 0.15 else "Bad"),
+                       "trading-only basis, deposits and withdrawals excluded; "
                        "the year-long replay shows 48% peak-to-trough is in range"))
 
     # 9. Ratchet -- informational, too rare to grade on a week.

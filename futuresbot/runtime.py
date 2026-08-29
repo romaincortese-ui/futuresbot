@@ -1180,7 +1180,8 @@ class FuturesRuntime:
 
     @staticmethod
     def _stamp_realised_risk(metadata: dict[str, Any], *, contracts: float,
-                             contract_size: float, entry: float, sl_price: float) -> None:
+                             contract_size: float, entry: float, sl_price: float,
+                             leverage: float | None = None) -> None:
         """Re-stamp risk_usdt/risk_pct_actual from the size ACTUALLY taken.
 
         _entry_margin writes these into _last_entry_sizing from the margin it
@@ -1201,6 +1202,18 @@ class FuturesRuntime:
         The intended figure is kept as risk_usdt_intended so the gap between what
         sizing asked for and what it got stays measurable — that gap IS the
         regime scaler's effect, and it is the thing worth watching.
+
+        `margin_used` gets the same treatment, and was left behind by the fix
+        above. It is written inside _entry_margin BEFORE the scaler, throttle,
+        brake, contract truncation and balance guard, so it was a duplicate of
+        intended_margin_usdt under a name that claims the opposite. On
+        BLESS_USDT it read 17.305 against a deployed 4.34 — a factor of 3.99,
+        which is the regime scaler at its 0.25 floor, not a coincidence. The one
+        live consumer is simulation.capacity_notional, which multiplied it by
+        leverage and so overstated carried notional by up to 4x on floored
+        trades. That direction is conservative, so no dollars were lost, but it
+        is the wrong input to a capacity question — and capacity is exactly what
+        a larger deposit asks about.
         """
         qty = abs(float(contracts) * float(contract_size))
         risk = qty * abs(float(entry) - float(sl_price))
@@ -1211,6 +1224,11 @@ class FuturesRuntime:
         metadata["risk_usdt"] = round(risk, 6)
         equity = float(metadata.get("equity_at_open_usdt") or 0.0)
         metadata["risk_pct_actual"] = round(risk / equity * 100.0, 4) if equity > 0 else 0.0
+        lev = float(leverage or 0.0)
+        if lev > 0 and entry:
+            if metadata.get("margin_used") is not None:
+                metadata["margin_intended_usdt"] = metadata["margin_used"]
+            metadata["margin_used"] = round(qty * abs(float(entry)) / lev, 6)
 
     def _position_stop_risk_pct_of_margin(self, position: FuturesPosition | None) -> float | None:
         stop_risk = self._position_stop_risk_usdt(position)
@@ -5970,6 +5988,16 @@ class FuturesRuntime:
         if now_t - self._last_trend_scan_at < trend_scan_interval_seconds():
             return
         self._last_trend_scan_at = now_t
+        # Clear the wildcard's leftover, as squeeze and sniper already do. This
+        # scan runs AFTER _maybe_scan_wildcard in the same cycle and never set
+        # the field, so every TREND position and every TREND shadow row was
+        # stamped with a lateness computed from a DIFFERENT symbol's 3h path.
+        # It is not merely noisy: TREND enters at the 24h extreme by
+        # construction, so its true lateness is ~1.0, and the
+        # conditional-expectancy engine and lateness_gate_ab.py both bucket on
+        # this column - a gate proposal could reach the live config off another
+        # symbol's data.
+        self._pending_entry_lateness = None  # trend enters AT the 24h extreme
         # Scan even with the slot full, so the untaken candidate is shadow-logged
         # and resolved as a counterfactual (same reason the wildcard does).
         slot_blocked = self._convex_open_count("TREND") >= trend_max_positions()
@@ -7205,7 +7233,8 @@ class FuturesRuntime:
         if self.config.paper_trade:
             self._stamp_realised_risk(metadata, contracts=contracts,
                                       contract_size=contract_size,
-                                      entry=sig.entry_price, sl_price=sig.sl_price)
+                                      entry=sig.entry_price, sl_price=sig.sl_price,
+                                      leverage=sig.leverage)
             position = FuturesPosition(
                 symbol=symbol, side=side_name, entry_price=sig.entry_price, contracts=contracts,
                 contract_size=contract_size, leverage=sig.leverage,
@@ -7270,7 +7299,8 @@ class FuturesRuntime:
         # differ from the quoted entry — both change the real risk.
         self._stamp_realised_risk(metadata, contracts=contracts,
                                   contract_size=contract_size,
-                                  entry=fill, sl_price=sig.sl_price)
+                                  entry=fill, sl_price=sig.sl_price,
+                                  leverage=sig.leverage)
         position = FuturesPosition(
             symbol=symbol, side=side_name, entry_price=fill, contracts=contracts,
             contract_size=contract_size, leverage=sig.leverage,

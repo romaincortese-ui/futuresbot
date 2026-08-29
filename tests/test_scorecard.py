@@ -223,3 +223,58 @@ def test_report_survives_a_total_exchange_outage(tmp_path, monkeypatch):
             raise RuntimeError("down")
     rt.client = _Dead()
     assert "Report" in rt._build_report_message()
+
+
+def _week(pnls, start=1074.0):
+    rows, eq = [], start
+    for i, p in enumerate(pnls):
+        eq += p
+        rows.append({"ts": 1000 + i, "pnl_usdt": p, "equity_at_close_usdt": eq})
+    return rows, eq
+
+
+def test_withdrawal_is_not_graded_as_drawdown():
+    """The funded-week shape: deposit, trade profitably, withdraw the deposit.
+
+    The old KPI took peak from the trial's own equity_at_close stamps and
+    graded (peak - equity_now)/peak, so taking the money out at the end of the
+    week scored ~79% off peak and dragged the verdict to Bad on a week that
+    made money. The readout the experiment exists to produce must not be
+    destroyed by the act of collecting the proceeds.
+    """
+    from futuresbot.scorecard import _flow_invariant_drawdown, build_scorecard
+
+    rows, _eq = _week([+20.0, -10.0, +35.0, -8.0, +25.0])
+    assert sum(r["pnl_usdt"] for r in rows) > 0
+
+    # withdraw $900: equity_now falls far below every stamped close
+    equity_now = 236.0
+    peak = max([equity_now] + [r["equity_at_close_usdt"] for r in rows])
+    assert (peak - equity_now) / peak > 0.7          # what the old form saw
+
+    assert _flow_invariant_drawdown(rows) < 0.02
+    k = {x.name: x for x in build_scorecard(rows, days=7.0,
+                                            equity_now=equity_now, peak_equity=peak)}
+    assert k["Drawdown"].verdict == "Good", k["Drawdown"]
+
+
+def test_real_trading_drawdown_still_caught():
+    """The flow-invariant form must not simply suppress drawdown."""
+    from futuresbot.scorecard import _flow_invariant_drawdown, build_scorecard
+
+    rows, eq = _week([+30.0, -60.0, -55.0, -50.0, -40.0])
+    assert _flow_invariant_drawdown(rows) > 0.15
+    k = {x.name: x for x in build_scorecard(rows, days=7.0,
+                                            equity_now=eq, peak_equity=1104.0)}
+    assert k["Drawdown"].verdict == "Bad", k["Drawdown"]
+
+
+def test_missing_equity_stamps_fall_back_explicitly():
+    """No usable stamps must fall back and SAY so, not grade a silent zero."""
+    from futuresbot.scorecard import _flow_invariant_drawdown, build_scorecard
+
+    rows = [{"ts": 1, "pnl_usdt": 5.0}]
+    assert _flow_invariant_drawdown(rows) is None
+    k = {x.name: x for x in build_scorecard(rows, days=7.0,
+                                            equity_now=100.0, peak_equity=200.0)}
+    assert "absolute equity basis" in k["Drawdown"].note

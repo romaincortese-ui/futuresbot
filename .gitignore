@@ -9,3 +9,9 @@ futuresbot/__pycache__/
 tests/__pycache__/
 # adversarial-audit working copies (agent scratch, not repo artifacts)
 tools/_audit_*.py
+aud_*.pkl
+aud_*.log
+tools/_zmx_*.py
+tools/_zR_*.py
+tools/_aud_*.py
+tools/_zz*.py
