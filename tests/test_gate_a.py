@@ -749,7 +749,12 @@ def _runtime_stub() -> FuturesRuntime:
     return r
 
 
-def test_boot_manifest_emits_structured_line(caplog):
+def test_boot_manifest_emits_structured_line(caplog, monkeypatch):
+    # Live-representative exit-stack flags. Without them the boot manifest
+    # correctly warns that the legacy exit stack is armed, which is not what
+    # these tests are about. See tests/test_exit_stack_guards.py.
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
     r = _runtime_stub()
     with caplog.at_level("INFO", logger="futuresbot.runtime"):
         r._log_boot_manifest()
@@ -781,7 +786,12 @@ def test_boot_manifest_warns_when_funding_gate_off_in_live(caplog, monkeypatch):
     assert len(warnings) == 1
 
 
-def test_boot_manifest_silent_when_funding_gate_off_in_paper(caplog):
+def test_boot_manifest_silent_when_funding_gate_off_in_paper(caplog, monkeypatch):
+    # Live-representative exit-stack flags. Without them the boot manifest
+    # correctly warns that the legacy exit stack is armed, which is not what
+    # these tests are about. See tests/test_exit_stack_guards.py.
+    monkeypatch.setenv("FUTURES_STRATEGY_MODE", "pmt_threshold")
+    monkeypatch.setenv("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", "1")
     r = _runtime_stub()
     r.config.funding_rate_abs_max = 0.0
     r.config.paper_trade = True

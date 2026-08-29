@@ -144,8 +144,14 @@ on. The variable list reads like a 3% gate; the live gate is **8%**.
 
 ## 6. Landmines — one flag from harm
 
+Both of the first two are now announced at boot with a loud `[BOOT] WARNING`, and
+pinned by `tests/test_exit_stack_guards.py`. Before 2026-08-29 nothing in the suite
+failed when either was cleared -- the suite's own default posture was the dangerous
+configuration, so 1046 tests stayed green while live trades would have been cut.
+
 | variable | why it matters |
 |---|---|
+| **`FUTURES_WILDCARD_CONVEX_EXIT_ENABLED=1`** | **Code default is FALSE.** Gates the retention trail (runtime.py:1933), the 24h time stop (1855) AND `_skips_discretionary_locks` (1496). Clearing it removes two of the four live exits and re-arms the margin-percent profit-lock and micro-lock stack, on WILDCARD, SQUEEZE **and TREND** despite the name. Same blast radius as `FUTURES_STRATEGY_MODE`, and it was undocumented until 2026-08-29. |
 | **`FUTURES_STRATEGY_MODE=pmt_threshold`** | Looks like leftover PMT config. It is **the only thing keeping the legacy exit stack off the wildcard**. Clear it and a 1.5%/30-minute no-progress exit starts cutting convex trades at ~−0.1R. Most dangerous tidy-up target in the file. |
 | `FUTURES_ENTRY_MIN_SCORE=1000` | The only thing disabling PMT entries. Code default is 0.0 = fully enabled. |
 | `FUTURES_MIN_RISK_PCT / MAX_RISK_PCT = 0.10 / 0.20` | 10–20% risk per trade — the ruin zone this project already measured. Held off only by the PMT gate above. |

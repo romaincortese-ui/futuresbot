@@ -10890,6 +10890,39 @@ class FuturesRuntime:
         """Gate A A6 (memo 1 §7): single ``[BOOT]`` log line with all live-config state."""
         import os as _os
 
+        # EXIT-STACK GUARDS. Two environment variables decide which exit stack
+        # the live convex sleeves run, and BOTH have code defaults that select
+        # the OTHER one. They read like stale trial-era config, neither was
+        # documented until 2026-08-29, and nothing in the test suite fails when
+        # they are cleared — so the failure mode is silent and total.
+        #
+        #   FUTURES_STRATEGY_MODE != pmt_threshold
+        #     -> arms six unguarded legacy exits on convex positions, including
+        #        a 1.5%/30min no-progress cut (~-0.1R) and an early fixed take
+        #        profit, the opposite of the convex thesis.
+        #   FUTURES_WILDCARD_CONVEX_EXIT_ENABLED != 1   (code default False!)
+        #     -> kills the retention trail AND the 24h time stop, and re-arms
+        #        the margin-percent profit-lock / micro-lock stack. Positions
+        #        would run to hard SL/TP only, with early banking that this
+        #        project has already measured as harmful. Its name reads as
+        #        wildcard-era config; it governs TREND too.
+        #
+        # Logged loudly rather than enforced: refusing to boot would turn a
+        # config slip into an outage, and an outage on a funded week is worse
+        # than a warned-about degradation. Deploy 2026-08-29.
+        if str(_os.environ.get("FUTURES_STRATEGY_MODE", "")).strip().lower() != "pmt_threshold":
+            log.warning(
+                "[BOOT] ⚠️ FUTURES_STRATEGY_MODE=%r is NOT 'pmt_threshold' — the legacy "
+                "exit stack is ARMED on live convex positions (no-progress cut, fixed TP, "
+                "stagnation, trailing tick). This is almost certainly not intended.",
+                _os.environ.get("FUTURES_STRATEGY_MODE"))
+        if not self._flag("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", default=False):
+            log.warning(
+                "[BOOT] ⚠️ FUTURES_WILDCARD_CONVEX_EXIT_ENABLED is OFF — the convex "
+                "retention trail and the 24h time stop are DISABLED and the discretionary "
+                "profit-lock stack is armed, on WILDCARD, SQUEEZE and TREND. Two of the "
+                "four live exits are gone. Set it to 1 unless this is deliberate.")
+
         cfg = self.config
         # Per-symbol effective config snapshot — surfaces any symbol that is
         # running an override so the operator can see it without env diffing.
@@ -10944,6 +10977,7 @@ class FuturesRuntime:
         if str(_os.environ.get("FUTURES_STRATEGY_MODE", "")).strip().lower() == "pmt_threshold":
             sprint_flags.append("FUTURES_STRATEGY_MODE=pmt_threshold")
         universe_label = self._universe_label(cfg.symbols)
+
 
         log.info(
             "[BOOT] mode=%s paper=%s universe=%s symbols=%s leverage=x%d-x%d hard_loss_cap=%.2f "
