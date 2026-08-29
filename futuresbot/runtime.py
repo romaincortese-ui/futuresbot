@@ -3077,9 +3077,27 @@ class FuturesRuntime:
         # already been widened to WILDCARD+TREND, so the two disagreed on the same
         # "n/30" — the exact failure its own comment warns about. Sourced from
         # CONVEX_SLEEVES so a future sleeve cannot silently fall out again.
-        rows = [r for r in self._feature_rows_cached()
-                if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
-                and float(r.get("ts") or 0.0) >= TRIAL_START]
+        # A trial is the set of trades taken UNDER its config, so membership is
+        # decided by when a trade was OPENED. The row's `ts` is exit time
+        # (set from trade["exit_time"] where the row is written), so filtering on
+        # it alone admits trades opened under the PREVIOUS trial that merely
+        # settle inside this window. That is not hypothetical: trial 18 opened
+        # 2026-08-29 00:37Z with two positions live, and /status read
+        # "3/30 | netR +2.69 | $+7.12" when the trial's own trades were
+        # 1/30 | netR +0.61 | $+2.51 — the other two were trial 17, sized under
+        # the old 0.25 scaler floor. Friday's funding gate reads this line.
+        # Entry time is recoverable: exit minus hold. A row missing hold_hours
+        # counts as in-window rather than being dropped — silently deleting
+        # trades is the worse failure and this project has already had one.
+        def _opened_at(r: dict) -> float:
+            return (float(r.get("ts") or 0.0)
+                    - float(r.get("hold_hours") or 0.0) * 3600.0)
+
+        settled = [r for r in self._feature_rows_cached()
+                   if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
+                   and float(r.get("ts") or 0.0) >= TRIAL_START]
+        rows = [r for r in settled if _opened_at(r) >= TRIAL_START]
+        carried = [r for r in settled if _opened_at(r) < TRIAL_START]
         net_r = sum(float(r.get("r_multiple") or 0.0) for r in rows)
         net_usd = sum(float(r.get("pnl_usdt") or 0.0) for r in rows)
         line = (f"Trial {TRIAL_LABEL}: <b>{len(rows)}</b>/{TRIAL_TARGET_TRADES} convex closes"
@@ -3087,22 +3105,46 @@ class FuturesRuntime:
         drift = self._trial_label_drift()
         if drift:
             line += chr(10) + "  " + drift
-        # Per-sleeve, because a pooled figure hides which sleeve is carrying the
-        # trial — and here they point in opposite directions.
-        for sleeve in sorted({str(r.get("kind") or "").upper() for r in rows}):
-            arm = [r for r in rows if str(r.get("kind") or "").upper() == sleeve]
-            line += ("\n" + f"  {sleeve} {len(arm)}: netR "
-                     f"<b>{sum(float(r.get('r_multiple') or 0) for r in arm):+.2f}</b>"
-                     f" | <b>${sum(float(r.get('pnl_usdt') or 0) for r in arm):+.2f}</b>")
+        # The two breakdowns below are different PARTITIONS of the same trades,
+        # not additive categories. Unlabelled, they read as though they sum:
+        # "WILDCARD 3 / LONG 2 / SHORT 1" invites 3+2+1=6 against a total of 3.
+        # Each partition sums to the total on its own; say so.
+        sleeves = sorted({str(r.get("kind") or "").upper() for r in rows})
+        if sleeves:
+            parts = []
+            for sleeve in sleeves:
+                arm = [r for r in rows if str(r.get("kind") or "").upper() == sleeve]
+                parts.append(
+                    f"{sleeve} {len(arm)}: netR "
+                    f"<b>{sum(float(r.get('r_multiple') or 0) for r in arm):+.2f}</b>"
+                    f" | <b>${sum(float(r.get('pnl_usdt') or 0) for r in arm):+.2f}</b>")
+            line += chr(10) + "  by sleeve — " + " · ".join(parts)
         # Split by side while both arms are live: the short arm carries a
         # different payoff ceiling and a different prior, and pooling them
         # would make the trial unreadable in either direction.
         if not wildcard_long_only():
+            parts = []
             for side in ("LONG", "SHORT"):
                 arm = [r for r in rows if str(r.get("side") or "").upper() == side]
                 if arm:
-                    line += (f"\n  {side} {len(arm)}: netR "
-                             f"<b>{sum(float(r.get('r_multiple') or 0) for r in arm):+.2f}</b>")
+                    parts.append(
+                        f"{side} {len(arm)}: netR "
+                        f"<b>{sum(float(r.get('r_multiple') or 0) for r in arm):+.2f}</b>")
+            # A row whose side is neither LONG nor SHORT would sit in the total
+            # and in a sleeve but in no side bucket, breaking the partition
+            # silently. Surface it rather than letting the arithmetic not close.
+            odd = [r for r in rows
+                   if str(r.get("side") or "").upper() not in ("LONG", "SHORT")]
+            if odd:
+                parts.append(f"unclassified {len(odd)}")
+            if parts:
+                line += chr(10) + "  by side — " + " · ".join(parts)
+        if carried:
+            c_r = sum(float(r.get("r_multiple") or 0.0) for r in carried)
+            c_d = sum(float(r.get("pnl_usdt") or 0.0) for r in carried)
+            line += (chr(10) + f"  + {len(carried)} carried in from the previous trial"
+                     f" (netR <b>{c_r:+.2f}</b> | <b>${c_d:+.2f}</b>) — excluded above,"
+                     f" sized under the old config")
         return line
 
     def _sniper_shadow_status_lines(self) -> list[str]:
