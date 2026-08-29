@@ -144,18 +144,49 @@ The two carryover positions, measured live at 00:45Z:
 | TAC_USDT | 1.923 (in band) |
 | BLESS_USDT | **0.438** |
 
-BLESS is the more interesting number. Trial 17's floor made 0.0241 x 0.25 = 0.603%
-the ARITHMETIC minimum, and this trade realised 27% BELOW it. The floor cannot
-explain that; contract truncation can. `tools/plan_capacity.py` measured lot maths
-at 4% of the book on average (12% at the chop floor, P10 size 86%), which read as
-negligible in aggregate -- but on an INDIVIDUAL trade wanting ~1.4 contracts and
-getting 1, the loss is 27%.
+BLESS looked alarming and I called it wrong. On 2026-08-29 I attributed its 0.438%
+to contract truncation. Measured against the feature store, its truncation factor
+(`size_efficiency / (regime_size_mult x streak_multiplier)`) is **1.004** -- no
+truncation at all. Its size came from the regime scaler sitting on its 0.25 floor,
+which is exactly the thing trial 18 changes.
 
-**Consequence for trial 18.** Raising the floor to 0.50 lifts the arithmetic
-minimum to 1.205%, but a truncated trade can still land near 0.9%. If trial 18's
-mean risk comes in under the band, truncation is the prime suspect for the
-"fourth shrinker" its kill condition anticipates -- look there before touching the
-scaler again.
+TRUNCATION, MEASURED LIVE over 35 wildcard closes rather than modelled:
+
+| | |
+|---|---|
+| truncation factor | mean **0.941**, median **0.994**, p10 0.801, min 0.528 |
+| trades losing >10% | 6 of 35 |
+
+So `tools/plan_capacity.py`'s replay estimate of ~4% was approximately right (live
+says ~6%), and the alarm was not. The dominant shrinker is the SCALER, visible in
+the regime column running 0.25 / 0.25 / 0.44 / 0.45 / 0.51 / 0.75 / 0.79 / 0.93.
+Trial 18 is aimed at the right link.
+
+`risk_pct_actual` over 28 wildcard closes: mean **1.319%**, median 1.429%, against
+the 1.6-2.2% target.
+
+CAPACITY AND SLIPPAGE, measured 2026-08-29 -- the last open objection to funding:
+
+| | |
+|---|---|
+| median notional | $29.25 (max $92.22) |
+| at 6.3x funding | median $184, max $581 |
+| max notional vs the $2M/day floor | **0.029% of one day's volume** |
+| stop exits (n=3) | mean -1.060R; excess -0.060R, roughly half of it fees |
+| implied slippage | ~0.03R, about 0.15% of price |
+
+Notional is an order of magnitude below what `plan_funding.py` printed, because
+that tool assumed the configured leverage of 5 while live leverage is DERIVED down
+to 1-4 to keep the loss inside `MAX_SL_MARGIN_PCT`. Capacity does not constrain
+this account at any deposit size under discussion. The slippage figure rests on
+THREE stop exits and should be re-measured once trial 18 has more; it is thin
+evidence for a comfortable conclusion, which is the combination worth distrusting.
+
+OPEN DISCREPANCY, not yet explained: the feature store's `margin_used` and
+trade_history's `margin_usdt` disagree for the same trade (BLESS: 17.305 vs 4.34,
+a factor of ~4). One of the two is not what its name says. This does not affect the
+truncation ratio above (which uses feature-store fields throughout) but it does
+affect anything that reads margin across the two sources.
 
 The live watch (`scratchpad/trial18_watch.sh`, monitor bojolig1e) filters on entry
 time and therefore excludes both carryovers; it also alerts if any trial-18 entry
