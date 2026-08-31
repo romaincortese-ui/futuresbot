@@ -205,6 +205,46 @@ The owner intends to deposit, run ~7 days, then withdraw back to the base
 account. This gate is written BEFORE the data arrives so the decision is made
 against a rule rather than against a week's mood.
 
+## VERDICT 2026-08-31T19:01Z: **GATE PASSES** at n=10
+
+Recorded at the moment it was answered, not reconstructed later.
+
+| condition | result |
+|---|---|
+| n >= 10 | **10** |
+| mean realised risk in [1.6, 2.2] | **1.713%** |
+| kill: <1.5% at n>=10 | not tripped |
+| kill: any single entry >3.0% | max 2.461% |
+
+Confirmed independently by the live watch (`scratchpad/trial18_watch.sh`) and by
+a hand computation over the same rows; both read 1.713%.
+
+Trial 18's dial worked. The scaler floor 0.25 -> 0.50 lifted mean realised risk
+from trial 17's 1.018% into band, with mean regime multiplier 0.760 against the
+0.670 the arithmetic required.
+
+**HONEST CAVEATS, recorded with the pass rather than after it.**
+
+ - sd 0.538 over 10 closes gives se 0.170, so the 95% interval is [1.38, 2.05].
+   The point estimate is mid-band; the lower bound is BELOW the kill line. Ten
+   trades cannot distinguish 1.71% from 1.5%.
+ - Six symbols only: ZEC x3, HNT x2, ZORA x2, and one each of SKR, HEMI, 4.
+ - netR -0.48, net -$3.25, expectancy -0.047R. The gate does not read P&L by
+   design, and at n=10 the standard error on R is ~0.25 - this is not evidence
+   of anything either way. It is recorded so nobody later claims the gate passed
+   on a profitable trial.
+
+**THE SHAPE FINDING.** All six retention-trail exits landed between +0.48R and
++0.63R; no trade in the trial has exceeded +0.63R. The trail arms at 1R, these
+trades peak just above it and fade, so it banks ~0.5R while losers run the full
+-1R: mean win +0.565R, mean loss -0.965R at a 60% win rate. The 5R target and
+the 3R ratchet have never been reached. This is NOT an argument against
+retention 0.50 - at 0.30 those same exits would have banked 0.30-0.36R and the
+book would be worse - it is evidence that the fat tail this design depends on
+did not appear in this trial.
+
+---
+
 ## The gate is a SIZING check, not a P&L check
 
 By Friday trial 18 will hold roughly 15-20 closes. That is ample to verify
