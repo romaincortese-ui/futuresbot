@@ -56,7 +56,7 @@ from pit_fetch import fetch_frames  # noqa: E402
 from pit_pool import day_key, daily_turnover, pit_majors  # noqa: E402
 from pit_ratchet import ratchet  # noqa: E402
 from pit_size import price  # noqa: E402
-from retention_trail_ab import resolve  # noqa: E402
+from retention_trail_ab import make_floor, resolve  # noqa: E402
 
 BAR, CHUNK, TAIL = 900, 1900, 260
 MAX_SHORT_TP_DIST = 0.50
@@ -141,8 +141,19 @@ def main() -> int:
     print("entries: %d\n" % len(SIG))
 
     def run(tp_r, retain, arm, rat_trig, rat_hi):
-        fl_fn = (ratchet(rat_trig, rat_hi, base=retain, arm=arm) if rat_trig
-                 else ratchet(99.0, retain, base=retain, arm=arm))
+        # retain=None is NO TRAIL AT ALL - stop / target / 24h clock only.
+        # Added 2026-08-31: this study had only ever compared retention LEVELS
+        # (0.30 / 0.50 / 0.70 / ratchet variants). The trail shipped in trial 7
+        # on a design invariant - never give back >100% of built profit - and
+        # had never been measured against its own absence. A counterfactual on
+        # trial 18's ten real trades put no-trail at +9.63R against the live
+        # arm's -1.35R over the six comparable ones, because three trades the
+        # trail cut near +0.6R went on to hit full target.
+        if retain is None:
+            fl_fn = make_floor('none', 0.0, arm)
+        else:
+            fl_fn = (ratchet(rat_trig, rat_hi, base=retain, arm=arm) if rat_trig
+                     else ratchet(99.0, retain, base=retain, arm=arm))
         out = []
         for x in SIG:
             dist = tp_r * x["slf"]
@@ -190,9 +201,30 @@ def main() -> int:
     base_live = None
     base_halves = None
     for lbl, tp_r, retain, arm, rt_, rh in (
-            ("LIVE 5R / 0.30 / ratchet 3.0", 5.0, 0.30, 1.0, 3.0, 0.75),
+            # BASE = the LIVE config. Trial 18 shipped retention 0.50 on
+            # 2026-08-29 and this row still said 0.30 until 2026-08-31, so every
+            # "vs live" column in between was measured against the PREVIOUS
+            # config and understated the live arm by ~$17.
+            ("LIVE 5R / 0.50 / ratchet 3.0", 5.0, 0.50, 1.0, 3.0, 0.75),
+            ("prev 5R / 0.30 / ratchet 3.0", 5.0, 0.30, 1.0, 3.0, 0.75),
+            ("5R / NO TRAIL AT ALL", 5.0, None, 1.0, None, None),
+            ("7R / NO TRAIL AT ALL", 7.0, None, 1.0, None, None),
+            # ARM SWEEP (owner, 2026-08-31): "arm at 2R or 3R instead of 1R?"
+            # Every trail exit in trial 18 armed at 1R off a peak of 1.19-1.37R
+            # and banked ~0.5R. Arming later lets a trade run further before the
+            # floor engages, which should capture more of the tail while still
+            # protecting a genuinely large winner. Swept against BOTH the live
+            # arm and no-trail, at three retention levels, because arm and
+            # retention interact - a late arm with a low floor is nearly no trail.
+            ("5R / 0.50 / arm 1.5", 5.0, 0.50, 1.5, 3.0, 0.75),
+            ("5R / 0.50 / arm 2.0", 5.0, 0.50, 2.0, 3.0, 0.75),
+            ("5R / 0.50 / arm 2.5", 5.0, 0.50, 2.5, 3.0, 0.75),
+            ("5R / 0.50 / arm 3.0", 5.0, 0.50, 3.0, 3.0, 0.75),
+            ("5R / 0.30 / arm 2.0", 5.0, 0.30, 2.0, 3.0, 0.75),
+            ("5R / 0.70 / arm 2.0", 5.0, 0.70, 2.0, 3.0, 0.75),
+            ("5R / 0.70 / arm 1.5", 5.0, 0.70, 1.5, 3.0, 0.75),
+            ("7R / 0.50 / arm 2.0", 7.0, 0.50, 2.0, 3.0, 0.75),
             ("5R / 0.30 / no ratchet", 5.0, 0.30, 1.0, None, None),
-            ("5R / 0.50 / ratchet 3.0", 5.0, 0.50, 1.0, 3.0, 0.75),
             ("5R / 0.70 / ratchet 3.0", 5.0, 0.70, 1.0, 3.0, 0.75),
             ("3R / 0.30 / ratchet 3.0", 3.0, 0.30, 1.0, 3.0, 0.75),
             ("2R / 0.30 / ratchet 3.0", 2.0, 0.30, 1.0, 3.0, 0.75),
