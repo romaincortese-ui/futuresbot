@@ -166,11 +166,20 @@ configuration, so 1046 tests stayed green while live trades would have been cut.
 
 - **Shadow ledger scores counterfactuals at retain 0.30 while the live trail runs 0.50.**
   Every counterfactual produced since 2026-08-29 compares against the wrong arm.
-- **`FUTURES_TREND_SYMBOLS = ETH, XRP, ZEC`** — the sleeve was designed, sized and
-  measured on BTC/ETH/SOL. Two of three live symbols are off-spec and two measured ones
-  are absent.
-- **`FUTURES_TREND_MAX_POSITIONS=2`** while the sleeve's own docstring says 3 slots beat 2
-  on both return and drawdown.
+- ~~`FUTURES_TREND_SYMBOLS = ETH, XRP, ZEC` is off-spec~~ **RETRACTED 2026-08-31.**
+  I recorded this as a risk on the reasoning that the sleeve was designed on
+  BTC/ETH/SOL. `tools/pit_trend.py` replayed 220 days and the live set beats the
+  designed one **4x** (+$142.88 vs +$35.11, long, 3 slots). BTC clears a 4% 24h move
+  only 28 times in 220 days and loses when it does (-$7.16). ZEC, which looked like
+  the problem at -$5.13 over 9 live trades, is the **best name in the pool**:
+  +$87.48 over 121 fills, meanR +0.182. The genuinely bad names are AVAX (-$53.74)
+  and LINK (-$39.62), and neither is in the live set.
+- ~~`FUTURES_TREND_MAX_POSITIONS=2` contradicts the docstring's 3-slot table~~
+  **RETRACTED 2026-08-31.** On the universe actually traded, 2 slots (+$147.17) beats
+  1 (+$101.87) and 3 (+$142.88). The docstring's table was measured on the big-3,
+  where the slot axis is flat (+34.02 / +34.18 / +35.11). The live value is correct.
+- `FUTURES_TREND_LONG_ONLY=1` is **confirmed**: shorts on the live set score -$19.47
+  against +$142.88 long.
 - `accounts.py` carries a second, disagreeing source of truth for sleeve enablement and
   slot caps. Dead, but it disagrees with the live one.
 - Values captured from `railway variables` are **truncated by table width**. Anything
