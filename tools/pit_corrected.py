@@ -43,14 +43,30 @@ from retention_trail_ab import make_floor, resolve  # noqa: E402
 
 BAR, TAIL = 900, 260
 EXITS = [
-    ("LIVE 5R / 0.50 / ratchet", 5.0, 0.50, 3.0, 0.75),
-    ("5R / 0.30 / ratchet", 5.0, 0.30, 3.0, 0.75),
-    ("5R / 0.70 / ratchet", 5.0, 0.70, 3.0, 0.75),
-    ("7R / 0.50 / ratchet **", 7.0, 0.50, 3.0, 0.75),
-    ("7R / 0.30 / ratchet", 7.0, 0.30, 3.0, 0.75),
-    ("9R / 0.50 / ratchet", 9.0, 0.50, 3.0, 0.75),
-    ("5R / NO TRAIL", 5.0, None, None, None),
+    ("LIVE 5R cap", 5.0, 0.50, 3.0, 0.75, None),
+    ("7R cap", 7.0, 0.50, 3.0, 0.75, None),
+    ("9R cap", 9.0, 0.50, 3.0, 0.75, None),
+    ("no cap, plain trail", 99.0, 0.50, 3.0, 0.75, None),
+    ("SECURE 4R, no cap", 99.0, 0.50, 3.0, 0.75, 4.0),
+    ("SECURE 5R, no cap", 99.0, 0.50, 3.0, 0.75, 5.0),
+    ("SECURE 6R, no cap", 99.0, 0.50, 3.0, 0.75, 6.0),
+    ("SECURE 5R, 9R cap", 9.0, 0.50, 3.0, 0.75, 5.0),
+    ("5R / NO TRAIL", 5.0, None, None, None, None),
 ]
+
+
+def secured(secure_at, base, rat_r, rat_hi, arm=1.0):
+    """Ratchet floor that LATCHES at secure_at. Once peak reaches S the trade
+    can never bank less than S, while a trade still climbing stays trailed at
+    the ratchet fraction. This removes the losing half of a TP-cap raise: the
+    census found 16 of 798 signals reach 5R, 11 of which stall below 6.67R and
+    bank 0.75 x peak instead of a clean 5R. A latch pays them the full 5R."""
+    def f(peak, atr, slf):
+        if peak < arm:
+            return None
+        lvl = (rat_hi if (rat_r > 0 and peak >= rat_r) else base) * peak
+        return max(lvl, secure_at) if peak >= secure_at else lvl
+    return f
 
 
 def _env(n, d):
@@ -133,9 +149,13 @@ def main() -> int:
     print("signals: %d  (of which %d would be refused by the calm filter the old "
           "harness ignored)\n" % (len(SIG), n_calm))
 
-    def resolved(tp_r, retain, rat_r, rat_hi):
-        fl = (make_floor("none", 0.0, 1.0) if retain is None
-              else ratchet(rat_r, rat_hi, base=retain, arm=1.0))
+    def resolved(tp_r, retain, rat_r, rat_hi, secure_at=None):
+        if retain is None:
+            fl = make_floor("none", 0.0, 1.0)
+        elif secure_at is not None:
+            fl = secured(secure_at, retain, rat_r, rat_hi)
+        else:
+            fl = ratchet(rat_r, rat_hi, base=retain, arm=1.0)
         out = []
         for x in SIG:
             dist = tp_r * x["slf"]
@@ -188,8 +208,8 @@ def main() -> int:
     print("  live actual, same period: 2.58 wildcard fills/day\n")
 
     print("=== 2. EXIT STACK on the corrected book, %d slots ===" % live_slots)
-    print("%-26s %6s %9s %9s %9s %6s" % ("cell", "fills", "net $", "vs live",
-                                         "ex-top5", "both?"))
+    print("%-26s %6s %9s %9s %9s %6s   %s" % ("cell", "fills", "net $", "vs live",
+                                              "ex-top5", "both?", "thirds / beats"))
     BASE = new_book(LIVE_ROWS, live_slots)
     bu = usd(BASE)
     t0, t1 = BASE[0]["ts"], BASE[-1]["ts"]
@@ -199,8 +219,8 @@ def main() -> int:
         return (sum(z["usd"] for z in f if z["ts"] < cut),
                 sum(z["usd"] for z in f if z["ts"] >= cut))
 
-    for label, tp_r, retain, rr, rh in EXITS:
-        f = new_book(resolved(tp_r, retain, rr, rh), live_slots)
+    for label, tp_r, retain, rr, rh, sec in EXITS:
+        f = new_book(resolved(tp_r, retain, rr, rh, sec), live_slots)
         if not f:
             continue
         u = usd(f)
@@ -209,10 +229,20 @@ def main() -> int:
         ok = all((lambda bo, br, zo, zr: bo - zo > 0 and br - zr > 0)(
                     *halves(f, fr), *halves(BASE, fr))
                  for fr in (0.35, 0.425, 0.5, 0.575, 0.65))
-        is_base = label.startswith("LIVE")
-        print("%-26s %6d %+9.2f %+9.2f %+9.2f %6s"
+        is_base = label == "LIVE 5R cap"
+        # per-third, and whether the cell beats LIVE in each - a cell that wins
+        # overall by winning one third is a slice, not an edge
+        th, bt, beat = [], [], 0
+        for k in range(3):
+            a = t0 + k * (t1 - t0) / 3.0
+            b = t0 + (k + 1) * (t1 - t0) / 3.0 + (1 if k == 2 else 0)
+            th.append(sum(z["usd"] for z in f if a <= z["ts"] < b))
+            bt.append(sum(z["usd"] for z in BASE if a <= z["ts"] < b))
+            if th[k] > bt[k]:
+                beat += 1
+        print("%-26s %6d %+9.2f %+9.2f %+9.2f %6s   %+6.1f %+6.1f %+6.1f  %d/3"
               % (label, len(f), u, u - bu, ex5,
-                 "base" if is_base else ("YES" if ok else "no")))
+                 "base" if is_base else ("YES" if ok else "no"), *th, beat))
     print("\nThe corrected book sizes off AVAILABLE margin, applies the calm filter,")
     print("and takes at most one entry per %ds scan window. The external gate is"
           % int(scan_s))
