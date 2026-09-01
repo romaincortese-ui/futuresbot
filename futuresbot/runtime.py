@@ -5764,7 +5764,20 @@ class FuturesRuntime:
             # pool 11 -> 20 symbols, zero dropped.
             range_prefilter = self._flag("FUTURES_WILDCARD_RANGE_PREFILTER", default=True)
             min_roc = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_ROC", 0.08))
-            min_move = (max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_RANGE", min_roc))
+            # SUB-TRIGGER SHADOW LOGGING (2026-09-01). The 220d replay found the
+            # 3h-ROC bands are bimodal around the trigger: 3-7% is negative in
+            # all four bands, 7-12% positive in all three, and the live gate sits
+            # at 8% - one point inside the good block. That region can NEVER
+            # accrue live evidence, because _shadow_log_untaken only fires on
+            # objects that reached the candidate list and the list is gated at
+            # min_roc. So the pool is widened to scan_roc for DETECTION ONLY and
+            # everything below min_roc is logged then dropped below, exactly as
+            # long-only and calm-shock are. Entry behaviour is unchanged: set
+            # FUTURES_WILDCARD_SHADOW_MIN_ROC=0 (the default) and scan_roc ==
+            # min_roc, so not one extra object survives to the candidate list.
+            shadow_roc = max(0.0, self._env_float("FUTURES_WILDCARD_SHADOW_MIN_ROC", 0.0))
+            scan_roc = shadow_roc if 0.0 < shadow_roc < min_roc else min_roc
+            min_move = (max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_RANGE", scan_roc))
                         if range_prefilter
                         else max(0.0, self._env_float("FUTURES_WILDCARD_MIN_24H_MOVE", 0.08)))
             # Band focus (backtested 60d+21d, outlier-robust): the wildcard's edge
@@ -5860,13 +5873,29 @@ class FuturesRuntime:
                     continue
                 scanned += 1
                 reasons: list[str] = []
-                sig = detect_wildcard_signal(df, sym, reasons)
+                sig = detect_wildcard_signal(df, sym, reasons, min_roc=scan_roc)
                 for r in reasons:
                     hist[r] = hist.get(r, 0) + 1
                 if sig is not None:
                     lat = self._entry_lateness(df, sig.side)
                     cands.append((self._wildcard_rank_key(sig, lat), sig, lat))
             cands.sort(key=lambda x: x[0], reverse=True)
+            # SUB-TRIGGER REFUSAL. Filtered HERE for the same reason long-only
+            # and calm-shock are, and FIRST so the reason recorded is the real
+            # one. When scan_roc == min_roc this loop cannot fire: the detector
+            # already rejected everything below min_roc as roc_below_min.
+            sub_trigger = 0
+            if scan_roc < min_roc:
+                kept = []
+                for key, sig, lat in cands:
+                    r = abs(float(getattr(sig, "roc_pct", 0.0) or 0.0))
+                    if r < min_roc:
+                        sub_trigger += 1
+                        self._pending_entry_lateness = lat
+                        self._shadow_log_untaken(sig, "WILDCARD", f"below_trigger({r:.3f})")
+                    else:
+                        kept.append((key, sig, lat))
+                cands = kept
             # LONG-ONLY (trial 6). Filtered HERE, after cands is built, and never
             # inside detect_wildcard_signal: _shadow_log_untaken only fires on
             # objects that reached this list, so rejecting the side in the
@@ -5922,9 +5951,9 @@ class FuturesRuntime:
                      "range24" if range_prefilter else "move24h",
                      min_move * 100, funnel["move_24h_ok"], scan_capped, scanned, len(cands))
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d shorts_blocked=%d "
-                     "shock_blocked=%d deflated=%d/%d histogram=%s signal=%s",
+                     "sub_trigger=%d shock_blocked=%d deflated=%d/%d histogram=%s signal=%s",
                      len(movers), scanned, len(cands), shorts_blocked,
-                     locals().get("shock_blocked", 0),
+                     locals().get("sub_trigger", 0), locals().get("shock_blocked", 0),
                      self._last_deflator_stats[0], self._last_deflator_stats[1],
                      hist or "{}", best.symbol if best else "none")
             if best is None:

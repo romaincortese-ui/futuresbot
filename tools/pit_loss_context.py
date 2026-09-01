@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -70,9 +71,13 @@ def main() -> int:
     cut = now - 28 * 86400
 
     state = json.load(open(STATE))
+    only = (os.environ.get("PLC_SLEEVE") or "").strip().upper()
+    kinds = ((only,) if only else ("WILDCARD", "TREND", "SQUEEZE"))
     trades = [t for t in (state.get("trade_history") or [])
-              if str(t.get("entry_signal") or "").startswith(("WILDCARD", "TREND", "SQUEEZE"))
+              if str(t.get("entry_signal") or "").startswith(kinds)
               and _ts(t, "exit_time") >= cut]
+    if only:
+        print("SLEEVE FILTER: %s only" % only)
     trades.sort(key=lambda t: _ts(t, "entry_time"))
 
     fs = {}

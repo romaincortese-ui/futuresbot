@@ -203,11 +203,15 @@ def _rej(reasons, tag):
     return None
 
 
-def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] | None = None) -> WildcardSignal | None:
+def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] | None = None,
+                           min_roc: float | None = None) -> WildcardSignal | None:
     """V1 pullback-resume + exhaustion guard. Returns a signal or None.
 
     Gates (all on completed bars, no look-ahead):
-      1. EXTREME move: |3h ROC| >= FUTURES_WILDCARD_MIN_ROC (0.08).
+      1. EXTREME move: |3h ROC| >= FUTURES_WILDCARD_MIN_ROC (0.08). Pass
+         `min_roc` to override, which the scan uses to detect BELOW the live
+         trigger for shadow-logging only. A signal produced under a lowered
+         floor is still refused by the caller; see runtime.py `below_trigger`.
       2. PULLBACK-RESUME: prior bar pulled back against the move, current bar
          resumes in the move direction (flag/pennant continuation entry).
       3. EXHAUSTION GUARD: RSI has room (long<max / short>min); the current bar
@@ -231,7 +235,8 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
         roc_z = float(np.log(cur / base)) / sigma
         if abs(roc_z) < _f("FUTURES_WILDCARD_MIN_ROC_Z", 4.0):
             return _rej(reasons, "roc_z_below_min")
-    elif abs(roc) < _f("FUTURES_WILDCARD_MIN_ROC", 0.08):
+    elif abs(roc) < (_f("FUTURES_WILDCARD_MIN_ROC", 0.08) if min_roc is None
+                     else float(min_roc)):
         return _rej(reasons, "roc_below_min")
     side = "LONG" if roc > 0 else "SHORT"
     s = 1 if side == "LONG" else -1

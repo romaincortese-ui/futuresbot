@@ -302,6 +302,114 @@ ratchet; 5R WILDCARD TP cap.
 
 ---
 
+## OPEN, not rejected: the WILDCARD trigger may sit one point too high
+
+The only item from 2026-09-01 that is NOT refuted. It is recorded as OPEN
+because the evidence is suggestive, internally inconsistent in one specific way,
+and — uniquely among everything tested this session — **cannot currently be
+corroborated from live data at any sample size**. The instrumentation to fix
+that is staged below.
+
+**How it was found.** The first WILDCARD band sweep sampled the trigger UPWARD
+only (8% -> 14%), which was a design hole rather than a reporting omission: the
+candidate pool was itself gated at 8%, so the region the bot never trades was
+never generated. The owner caught it. Re-running with the pool widened to a 3%
+floor gives a band structure that is **bimodal around the live gate**:
+
+| 3h ROC at entry | fills | $/fill | |
+|---|---|---|---|
+| 3 - 4% | 563 | -0.227 | negative |
+| 4 - 5% | 261 | -0.266 | negative |
+| 5 - 6% | 157 | -0.174 | negative |
+| 6 - 7% | 97 | -0.331 | negative |
+| **7 - 8%** | **77** | **+0.617** | **excluded by the live gate** |
+| 8 - 10% | 89 | +0.950 | positive |
+| 10 - 12% | 47 | +0.580 | positive |
+| 12 - 16% | 67 | -0.119 | scatter above here |
+| 16 - 24% | 36 | +0.153 | |
+| 24 - 40% | 26 | +1.635 | |
+| >= 40% | 8 | +0.747 | |
+| ALL | 475 | +0.449 | |
+
+Four consecutive negative bands then three consecutive positive ones is a
+structure, not scatter — and it is held to the same standard that dismissed the
+12-40% region as noise, which alternates sign band to band. **The sweet spot is
+7-12% and the trigger is set one point inside its lower edge.**
+
+**Why it does not ship on this evidence.** Four independent reasons:
+
+| | 8% (live) | 7% | 6% |
+|---|---|---|---|
+| net $ over 234d | +213.08 | +234.54 | +263.68 |
+| vs live | base | +21.46 | +50.59 |
+| **$/fill** | **0.449** | 0.401 | 0.372 |
+| marginal $/extra fill | — | +0.195 | +0.217 |
+| **ex-top-5%** | **-80.01** | -112.51 | -127.27 |
+| both halves, 35-65% | base | **no** | YES |
+| $/month at $170 equity | — | +2.75 | **+6.49** |
+
+1. **Under the bar.** +$6.49/month at the best cell, against $10 either way.
+2. **It is dilution, not edge.** $/fill falls 0.449 -> 0.372; the marginal fill
+   pays $0.217 against a base of $0.449. That is the pattern `pit_slots.py`
+   exists to catch — buying turnover at below-average quality.
+3. **Less bankable, not more.** ex-top-5% worsens monotonically as the trigger
+   drops: -$80 at 8%, -$127 at 6%, -$653 at 3%. It is already negative at base,
+   so the whole WILDCARD replay is outlier-borne; lowering the gate deepens that.
+4. **The two views contradict each other.** 6% passes the boundary-swept screen
+   and 7% fails it, while the BAND logic says 7% should be the better of the two
+   (it adds +$0.617/fill and skips -$0.331/fill). Both cannot be right. At this
+   resolution the sweep is schedule-noise dominated — the same reshuffling
+   effect proven to the cent on TREND — so its per-cell numbers should not be
+   read to one decimal.
+
+**The hypothesis, pre-registered, and it is 7% NOT 6%.** The band structure is
+the reliable object; the sweep cell is not. 7% captures the +$0.617/fill band
+and excludes the -$0.331/fill one. 6% scores better only in a column that
+reason 4 says is unreliable, and it is worse on the two columns that are not
+(`$/fill`, `ex-top-5%`). **Do not ship the cell that merely won the noisy
+screen.**
+
+**Why this could not be settled from live data, and the fix.** Every other test
+this session could be checked against live trades. This one cannot:
+`_shadow_log_untaken` only fires on objects that reached the candidate list, and
+that list is gated at `FUTURES_WILDCARD_MIN_ROC`. Sub-trigger signals have never
+been recorded — not as trades, not as counterfactuals — so the region was
+unanswerable IN PRINCIPLE rather than merely unmeasured.
+
+Staged 2026-09-01, **default OFF**:
+
+    FUTURES_WILDCARD_SHADOW_MIN_ROC=0.07     # unset/0 == today's behaviour
+
+The scan widens to `scan_roc` for DETECTION only. Everything below `min_roc` is
+shadow-logged as `below_trigger(0.074)` and dropped from the candidate list, in
+exactly the position and for exactly the reason long-only and calm-shock are
+filtered there. Entry behaviour is unchanged: with the flag unset,
+`scan_roc == min_roc` and the detector has already refused everything below it,
+so the refusal loop cannot fire and not one extra object survives.
+
+Guarded by `tests/test_sub_trigger_shadow.py` (7 tests, the safety property
+being that a sub-trigger signal never reaches the candidate list) and by
+`test_sub_trigger_logging_cannot_widen_entry` in `test_trial6.py`. The existing
+`test_prefilter_threshold_is_derived_from_the_trigger_not_set_apart` caught this
+change and was updated to assert BOTH links of the now two-hop chain, so the
+prefilter still cannot be given a threshold of its own.
+
+**What would make it ship.** After >= 3 weeks of sub-trigger logging, the
+7.0-8.0% shadow rows must resolve at a mean net R that is (a) positive, and
+(b) not below the taken 8-10% population by more than one standard error. That
+is a counterfactual-quality test, not a P&L test, because at ~1 sub-trigger
+signal every 3 days the sleeve will not book enough dollars to read P&L before
+the funded week is long over. If the shadow rows come back negative, the live
+8% gate is vindicated and this closes as REJECTED.
+
+**Cost of being wrong in each direction.** Enabling the logging risks nothing —
+it is a logging change with no trading effect and a one-variable rollback.
+Shipping the 7% trigger on today's evidence risks trading a band whose adjacent
+neighbour measures -$0.331/fill, on a sweep whose own cells disagree.
+
+
+---
+
 # PRE-REGISTERED FUNDING GATE — Friday 2026-09-04
 
 The owner intends to deposit, run ~7 days, then withdraw back to the base

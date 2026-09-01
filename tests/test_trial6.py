@@ -1055,12 +1055,31 @@ def test_range_is_zero_on_a_malformed_ticker(rt):
 
 def test_prefilter_threshold_is_derived_from_the_trigger_not_set_apart(rt):
     """The two drifted apart once and cost a day of signals; the default now
-    comes FROM the trigger so it cannot happen silently again."""
+    comes FROM the trigger so it cannot happen silently again.
+
+    2026-09-01: sub-trigger shadow logging put ONE hop in this chain — the
+    prefilter now derives from `scan_roc`, which derives from `min_roc`. Both
+    links are asserted, so the protection is unchanged in strength: the
+    prefilter still cannot be given a threshold of its own."""
     import inspect
 
     src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
-    assert 'FUTURES_WILDCARD_MIN_24H_RANGE", min_roc' in src
+    assert 'FUTURES_WILDCARD_MIN_24H_RANGE", scan_roc' in src, "prefilter set apart"
+    assert ("scan_roc = shadow_roc if 0.0 < shadow_roc < min_roc else min_roc"
+            in src), "scan_roc no longer derives from the trigger"
     assert "FUTURES_WILDCARD_RANGE_PREFILTER" in src, "no rollback path"
+
+
+def test_sub_trigger_logging_cannot_widen_entry(rt):
+    """The scan floor may be lowered for LOGGING, but the candidate list must
+    still be cut at the live trigger. Pins the refusal loop's presence and that
+    it is keyed on min_roc, not on scan_roc."""
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._maybe_scan_wildcard)
+    assert "below_trigger(" in src, "sub-trigger signals are not being logged"
+    assert "if r < min_roc:" in src, "the refusal must be cut at the LIVE trigger"
+    assert "FUTURES_WILDCARD_SHADOW_MIN_ROC" in src, "no way to disable it"
 
 
 def test_missed_check_names_the_reason_for_every_top_mover(rt, monkeypatch):
