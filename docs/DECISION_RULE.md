@@ -257,7 +257,25 @@ the exit side of the loss question and moves it entirely to entry selection.
   materially, since the effect is per-fill and the sleeve only books ~17 closes
   a month.
 
-- **TREND third slot: REJECTED. Live 2 is optimal on every axis.**
+- **TREND third slot: REJECTION WITHDRAWN 2026-09-01 (same day).** The sweep
+  below ran on COMPLETED 15m bars. Re-run on intra-bar detection
+  (`tools/pit_trend_intrabar.py`) the sign REVERSES: 3 slots books 98 fills for
+  **+$9.15 vs live**, `$/fill` 0.715 against base 0.717, ex-top-5% **+27.53 vs
+  +17.51**, and it is the ONLY cell in that run to clear the boundary-swept
+  screen. 4 slots is byte-identical to 3 (3-symbol universe, one position per
+  symbol). It STILL does not ship - +$9.15 over 234 days is **$1.17/month**
+  against a $10 bar - but "live 2 is optimal on every axis" is false and must not
+  be re-quoted. The completed-bar table is kept below only to show what moved.
+
+- **TREND factorial, the 5% / 3.0x / 48h / 3-slot cell: REFUTED 2026-09-01.**
+  It was the best of 16 at **+$31.12**, carrying a genuine +$10.97 three-way
+  interaction term. On intra-bar it is **-$16.98** and fails the screen. The
+  three-way term does not survive; neither does the "combinations rescue each
+  other" reading built on it. What DOES survive is the 4-5% ROC band being the
+  only negative band, at -$0.364/fill intra-bar against -$0.311 completed-bar -
+  the one TREND structure the fidelity fix left standing.
+
+- **superseded, completed-bar only:** Live 2 optimal on every axis.
   `tools/pit_trend_slots.py`, the first sweep this parameter has ever had.
 
   | slots | fills | net $ | $/fill | marginal | ex-top5 | thirds |
