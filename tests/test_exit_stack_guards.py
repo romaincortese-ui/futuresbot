@@ -186,3 +186,22 @@ def test_metadata_spread_keeps_scan_level_context():
     assert spread["turnover_24h_usdt"] == 4_200_000.0
     assert spread["range_24h"] == 0.11
     assert spread["legacy_major"] == 0.0        # bools survive the float() cast
+
+
+def test_entry_slippage_is_signed_against_the_trade():
+    """Positive must mean WORSE than the signal price, for BOTH sides. An
+    unsigned or wrongly-signed slippage column reads as a cost on longs and a
+    gain on shorts, which would invert every capacity conclusion drawn from it.
+    """
+    def bps(side, signal, fill):
+        sgn = 1.0 if side == "LONG" else -1.0
+        return round(sgn * (fill - signal) / signal * 10000.0, 3)
+
+    # long filled ABOVE the signal = paid up = a cost
+    assert bps("LONG", 100.0, 100.5) > 0
+    # short filled BELOW the signal = sold cheaper = also a cost
+    assert bps("SHORT", 100.0, 99.5) > 0
+    # and the favourable direction is negative on both sides
+    assert bps("LONG", 100.0, 99.5) < 0
+    assert bps("SHORT", 100.0, 100.5) < 0
+    assert bps("LONG", 100.0, 100.0) == 0.0

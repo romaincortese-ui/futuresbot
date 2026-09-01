@@ -5967,6 +5967,18 @@ class FuturesRuntime:
             # compared against rank-2/3 - and against the shadow rows of the
             # candidates that lost the ordering. Decision-free. 2026-09-01.
             _field = len(cands)
+            # Candidates that LOSE the ranking are shadow-logged before the
+            # slice drops them. Without this the ranking function can only
+            # ever be judged against candidates it already favoured - the
+            # exact selection bias the shadow ledger exists to remove. The
+            # resolver scores them like any other untaken row, so "did the
+            # ordering pick the right one" finally has a control group.
+            _keep = int(self._env_float("FUTURES_WILDCARD_MAX_CANDIDATES", 3))
+            for _drop_rank, (_k2, _sig2, _lat2) in enumerate(cands[_keep:], _keep + 1):
+                self._pending_entry_lateness = _lat2
+                self._pending_candidate_rank = float(_drop_rank)
+                self._pending_candidate_field = float(_field)
+                self._shadow_log_untaken(_sig2, "WILDCARD", "rank_dropped")
             for _rank, (_key, sig, lat) in enumerate(
                     cands[: int(self._env_float("FUTURES_WILDCARD_MAX_CANDIDATES", 3))], 1):
                 self._pending_candidate_rank = float(_rank)
@@ -7355,6 +7367,23 @@ class FuturesRuntime:
                                   contract_size=contract_size,
                                   entry=fill, sl_price=sig.sl_price,
                                   leverage=sig.leverage)
+        # ENTRY SLIPPAGE, per trade and joinable to the outcome. _record_fill
+        # above writes to a separate attribution store AND is a no-op unless
+        # USE_SLIPPAGE_ATTRIBUTION is set, which it is not - so no convex fill
+        # has ever been measured. Slippage is the one cost that scales with
+        # position size, which makes it the central unknown for a funded week;
+        # the only estimate this project has (~0.03R) comes from three stop
+        # exits. Two numbers already in hand, stamped where `fill` is final.
+        # Signed: positive means the fill was WORSE than the signal price.
+        try:
+            _q = float(sig.entry_price)
+            if _q > 0 and fill > 0:
+                _sgn = 1.0 if side_name == "LONG" else -1.0
+                metadata["signal_price"] = _q
+                metadata["entry_slippage_bps"] = round(
+                    _sgn * (float(fill) - _q) / _q * 10000.0, 3)
+        except (TypeError, ValueError, ZeroDivisionError):  # never blocks an entry
+            pass
         position = FuturesPosition(
             symbol=symbol, side=side_name, entry_price=fill, contracts=contracts,
             contract_size=contract_size, leverage=sig.leverage,
