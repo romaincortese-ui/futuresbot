@@ -229,7 +229,8 @@ class FuturesRuntime:
         # deflator has silently failed open to 1.000 everywhere" — is visible.
         self._last_deflator_stats: tuple[int, int] = (0, 0)
         # symbol -> which side of the pre-trial-8 gates it sat on, this scan.
-        self._wildcard_attribution: dict[str, dict[str, bool]] = {}
+        # values are bool or float; the metadata spread casts with float()
+        self._wildcard_attribution: dict[str, dict[str, float]] = {}
         # Last wildcard scan funnel, kept for /status. Previously the funnel and
         # the reject histogram existed only as Railway log lines: a 24.3% mover
         # could be found and vetoed 15 min before a /status that said
@@ -5814,6 +5815,15 @@ class FuturesRuntime:
                         "legacy_major": bool(sym in legacy_majors),
                         "legacy_prefilter_ok": bool(
                             abs(float(t.get("riseFallRate") or 0.0)) >= legacy_move),
+                        # The two SCAN-LEVEL gates, recorded at the value they
+                        # actually had. Both are pass/fail filters today
+                        # (turnover >= $2M, range >= 8%) and neither was ever
+                        # stored, so "did a 9% range behave differently from a
+                        # 12% one" was unanswerable in principle - the question
+                        # the owner asked on 2026-09-01. They are decision-free
+                        # here: recorded, not read. Added 2026-09-01.
+                        "turnover_24h_usdt": float(turn),
+                        "range_24h": float(chg),
                     }
             movers.sort(reverse=True)
             max_scan = int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))
@@ -7200,6 +7210,20 @@ class FuturesRuntime:
             # roc-in-sigma vs roc-in-percent from REAL fills instead of a backtest.
             "roc_z": getattr(sig, "roc_z", None),
             "sl_frac_designed": getattr(sig, "sl_frac_designed", None),
+            # The remaining decision-chain variables the detector computes and
+            # then threw away. atr_pct DEFINES the stop and therefore the
+            # leverage; calm_ratio is an active entry filter
+            # (FUTURES_WILDCARD_MAX_CALM_RATIO) whose own threshold has never
+            # been gradable because the value was not stored. Every one of
+            # these is decision-free: written, never read by any entry or exit
+            # path. Guarded to None rather than defaulted to 0.0 - a missing
+            # reading must not masquerade as a real one, which is the defect
+            # that made the tagger's regime column read 1.0 forever.
+            **{k: v for k, v in (
+                ("atr_pct", getattr(sig, "atr_pct", None)),
+                ("calm_ratio", getattr(sig, "calm_ratio", None)),
+                ("vol_z", getattr(sig, "vol_z", None)),
+            ) if v is not None},
             "equity_at_open_usdt": self._last_known_equity(),
             # Regime telemetry. Decision-free; see _majors_state.
             **self._majors_state(),

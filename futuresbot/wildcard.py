@@ -127,6 +127,7 @@ class WildcardSignal:
     roc_z: float | None = None          # trigger in the symbol's own sigma
     sl_frac_designed: float | None = None   # pre-margin-cap stop distance
     calm_ratio: float | None = None     # |3h move| / prior 21h range
+    vol_z: float | None = None          # entry bar volume in prior-20-bar sigma
 
 
 def calm_ratio(frame: pd.DataFrame) -> float | None:
@@ -262,12 +263,18 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
     if abs(cur / prev - 1.0) > _f("FUTURES_WILDCARD_VERTICAL_ATR_MULT", 2.0) * atr_pct:  # vertical blow-off
         return _rej(reasons, "vertical_blowoff")
 
-    # 4. volume expansion
+    # 4. volume expansion. The z-score is KEPT rather than discarded: it is an
+    # active entry gate whose own threshold has never been gradable, because the
+    # value it tests was computed inline and thrown away. Recorded, not read -
+    # the gate below is unchanged. Added 2026-09-01.
+    vol_z = None
     if "volume" in frame and len(frame) >= 22:
         v = frame["volume"].astype(float)
         b = v.iloc[-21:-1]; mu = float(b.mean()); sd = float(b.std())
-        if sd > 0 and (float(v.iloc[-1]) - mu) / sd < _f("FUTURES_WILDCARD_MIN_VOL_Z", 1.0):
-            return _rej(reasons, "low_volume_z")
+        if sd > 0:
+            vol_z = (float(v.iloc[-1]) - mu) / sd
+            if vol_z < _f("FUTURES_WILDCARD_MIN_VOL_Z", 1.0):
+                return _rej(reasons, "low_volume_z")
 
     leverage = int(min(10.0, max(5.0, _f("FUTURES_WILDCARD_LEVERAGE", 7.0))))
     sl_frac = _f("FUTURES_WILDCARD_SL_ATR_MULT", 1.5) * atr_pct
@@ -312,4 +319,5 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
         roc_z=(round(roc_z, 3) if roc_z is not None else None),
         sl_frac_designed=round(sl_frac_designed, 6),
         calm_ratio=(round(cr, 3) if (cr := calm_ratio(frame)) is not None else None),
+        vol_z=(round(vol_z, 3) if vol_z is not None else None),
     )

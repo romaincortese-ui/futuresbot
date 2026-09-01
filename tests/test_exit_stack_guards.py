@@ -116,3 +116,73 @@ def test_boot_is_quiet_when_both_flags_are_correct(rt, monkeypatch, caplog):  # 
     out = _boot_warnings(rt, caplog)
     assert "FUTURES_WILDCARD_CONVEX_EXIT_ENABLED is OFF" not in out
     assert "is NOT 'pmt_threshold'" not in out
+
+
+# --- entry instrumentation (2026-09-01) -----------------------------------
+
+def _impulse_frame(with_volume=True, n=300):
+    """A frame that genuinely clears the detector. The close sits near the bar
+    HIGH because the climax-wick gate rejects anything with the close mid-range
+    - a symmetric synthetic bar reads as a reversal candle and is refused."""
+    import numpy as np
+    import pandas as pd
+    from futuresbot.wildcard import ROC_BARS
+    rng = np.random.default_rng(3)
+    c = 100.0 + np.cumsum(rng.normal(0, 0.03, n))
+    start = c[-1 - ROC_BARS]
+    for k in range(ROC_BARS):
+        c[-ROC_BARS + k] = start * (1.0 + 0.11 * (k + 1) / ROC_BARS)
+    cols = {"open": c * 0.996, "high": c * 1.0002, "low": c * 0.995, "close": c}
+    if with_volume:
+        cols["volume"] = np.concatenate([rng.normal(100, 5, n - 1), [400.0]])
+    return pd.DataFrame(cols, index=pd.date_range("2026-01-01", periods=n,
+                                                  freq="15min", tz="UTC"))
+
+
+def _relax(monkeypatch):
+    """Relax the SHAPE gates only. These tests assert what the detector RECORDS,
+    not what it accepts, and a test that skips because a synthetic frame failed
+    an unrelated filter proves nothing."""
+    monkeypatch.setenv("FUTURES_WILDCARD_REQUIRE_PULLBACK", "0")
+    monkeypatch.setenv("FUTURES_WILDCARD_MIN_VOL_Z", "-99")
+    monkeypatch.setenv("FUTURES_WILDCARD_RSI_MAX", "500")
+
+
+def test_detector_records_the_gates_it_tests(monkeypatch):
+    """Every decision-chain variable must reach the signal, or an entry score
+    can never be built on it. atr_pct, calm_ratio and vol_z were computed and
+    discarded until 2026-09-01, which made "did a 9% range behave differently
+    from a 12% one" unanswerable IN PRINCIPLE rather than merely unanswered.
+    """
+    from futuresbot.wildcard import detect_wildcard_signal
+
+    _relax(monkeypatch)
+    sig = detect_wildcard_signal(_impulse_frame(), "TEST_USDT")
+    assert sig is not None, "the relaxed impulse frame should emit a signal"
+    assert sig.atr_pct is not None and sig.atr_pct > 0, "atr_pct defines the stop"
+    assert sig.vol_z is not None, "vol_z is tested by a live gate but not recorded"
+    assert sig.calm_ratio is not None, "calm_ratio is a live filter but not recorded"
+
+
+def test_vol_z_is_none_when_it_cannot_be_measured(monkeypatch):
+    """A missing reading must stay None, never default to a number. A 0.0 that
+    looks like a real measurement is the defect that made the regime column read
+    1.0 forever and left the scaler structurally unmeasurable."""
+    from futuresbot.wildcard import detect_wildcard_signal
+
+    _relax(monkeypatch)
+    sig = detect_wildcard_signal(_impulse_frame(with_volume=False), "TEST_USDT")
+    assert sig is not None, "a frame with no volume column should still emit"
+    assert sig.vol_z is None, "vol_z must be None when there is no volume to measure"
+
+
+def test_metadata_spread_keeps_scan_level_context():
+    """turnover and 24h range are scan-level, not detector-level: they ride the
+    _wildcard_attribution dict, which the entry-metadata builder spreads through
+    float(). Pin the contract so a later edit cannot silently drop them."""
+    attribution = {"legacy_major": False, "legacy_prefilter_ok": True,
+                   "turnover_24h_usdt": 4_200_000.0, "range_24h": 0.11}
+    spread = {k: float(v) for k, v in attribution.items()}
+    assert spread["turnover_24h_usdt"] == 4_200_000.0
+    assert spread["range_24h"] == 0.11
+    assert spread["legacy_major"] == 0.0        # bools survive the float() cast
