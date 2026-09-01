@@ -304,6 +304,55 @@ ratchet; 5R WILDCARD TP cap.
 
 ## OPEN, not rejected: the WILDCARD trigger may sit one point too high
 
+> **SUPERSEDED IN ITS REASONING, 2026-09-01 (same day). READ THIS FIRST.**
+>
+> Everything below the divider was measured on COMPLETED 15m bars. The live bot
+> evaluates a PARTIALLY FORMED candle every 450s, and re-running with intra-bar
+> detection (`tools/pit_intrabar.py`) **refutes the band argument entirely**:
+>
+> | 3h ROC | completed-bar $/fill | intra-bar $/fill |
+> |---|---|---|
+> | 3-4% | -0.227 | +0.079 |
+> | 4-5% | -0.266 | +0.243 |
+> | 5-6% | -0.174 | -0.399 |
+> | 6-7% | -0.331 | +0.126 |
+> | **7-8%** | **+0.617** | **-0.398** |
+> | 8-10% | +0.950 | +0.747 |
+>
+> The "bimodal, four negative bands then three positive, sweet spot 7-12%"
+> structure does not exist. **The 7-8% band the hypothesis proposed capturing
+> earns -$0.398/fill**, not +$0.617. Do not repeat the band rationale.
+>
+> THE CONCLUSION SURVIVES ON DIFFERENT EVIDENCE, and is now better supported
+> than it was. On the intra-bar book the 7% trigger is the ONLY cell of eight to
+> clear the boundary-swept screen:
+>
+> | trigger | fills | net $ | vs live | ex-top5 | $/fill | both? | thirds |
+> |---|---|---|---|---|---|---|---|
+> | 7% | 431 | +155.18 | **+43.23** | -86.06 | **0.360** | **YES** | +75.1 / +56.2 / +31.3 |
+> | 8% (live) | 379 | +111.95 | base | -85.80 | 0.295 | base | +58.7 / +32.2 / +21.0 |
+> | 6% | 481 | +92.66 | -19.30 | -127.45 | 0.193 | no | |
+>
+> It is no longer dilution - $/fill IMPROVES 0.295 -> 0.360 - and ex-top-5% is
+> unchanged rather than worse. Both objections in reason 2 and reason 3 below
+> are therefore withdrawn. It is +$5.54/month at $170 equity, so reason 1 (under
+> the $10 bar) still stands, and reason 4 is replaced by a different worry:
+>
+> **THE MECHANISM IS NOW UNEXPLAINED.** The band that the trigger admits loses
+> money, yet admitting it improves the book. That can only work through slot
+> RESCHEDULING, which is real (proven to the cent on TREND) but is not a reason
+> anyone can reason about forward. An effect with no mechanism beyond scheduling
+> is exactly what the shadow ledger should adjudicate, which is what
+> `FUTURES_WILDCARD_SHADOW_MIN_ROC` was staged for.
+>
+> One thing DID survive both methods: the calm_ratio gradient. 0.00-0.15 is the
+> best band under completed bars (+1.374/fill) and intra-bar (+0.962), and
+> 0.60-0.75 is negative under both (-0.226, -0.242). Of everything measured on
+> WILDCARD today, that is the only structure the fidelity fix did not overturn.
+
+---
+
+
 The only item from 2026-09-01 that is NOT refuted. It is recorded as OPEN
 because the evidence is suggestive, internally inconsistent in one specific way,
 and — uniquely among everything tested this session — **cannot currently be

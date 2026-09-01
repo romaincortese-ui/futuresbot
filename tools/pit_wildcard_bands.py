@@ -53,6 +53,7 @@ from futuresbot.risk_controls import regime_size_multiplier, trend_efficiency  #
 from futuresbot.runtime import FuturesRuntime  # noqa: E402
 from pit_book import take  # noqa: E402
 from pit_fetch import fetch_frames  # noqa: E402
+from pit_intrabar import fetch_grids  # noqa: E402
 from pit_pool import day_key, daily_turnover, pit_majors  # noqa: E402
 from pit_ratchet import ratchet  # noqa: E402
 from retention_trail_ab import resolve  # noqa: E402
@@ -125,63 +126,78 @@ def main() -> int:
     cand = [s for a, s in crypto if a >= _env("PJ_MIN_TODAY", 2e5)][:pool_n]
     sizes = {str(d.get("symbol") or ""): float(d.get("contractSize") or 0.0)
              for d in (cl.get_all_contract_details() or [])}
-    frames, rep = fetch_frames(cl, cand, days=days, workers=6, min_bars=300, now_ts=now)
+    # INTRA-BAR (2026-09-01, default ON). Live evaluates a PARTIALLY FORMED
+    # 15m candle every 450s, so completed-bar replays cannot fire where live
+    # fires. The ablation attributed 63% of the dollar error against the live
+    # book to this. PIT_INTRABAR=0 reproduces the old completed-bar numbers.
+    intrabar = (os.environ.get("PIT_INTRABAR") or "1") not in ("0", "false", "False")
+    if intrabar:
+        GRIDS, rep = fetch_grids(cl, cand, days=days, workers=6, min_bars=300,
+                                 now_ts=now)
+        print("INTRA-BAR: 3 phase grids,", [len(g) for g in GRIDS], "symbols each")
+    else:
+        _f, rep = fetch_frames(cl, cand, days=days, workers=6, min_bars=300,
+                               now_ts=now)
+        GRIDS = [_f]
+        print("COMPLETED-BAR (legacy path)")
     print(rep)
 
-    ROLLS, PREP = {}, {}
-    for s, df in frames.items():
-        cs = sizes.get(s, 0.0)
-        c = [float(x) for x in df["close"]]
-        v = [float(x) for x in df["volume"]]
-        raw = [c[k] * v[k] * cs for k in range(len(c))]
-        roll, acc = [0.0] * len(c), 0.0
-        for k, x in enumerate(raw):
-            acc += x
-            if k >= 96:
-                acc -= raw[k - 96]
-            roll[k] = acc
-        ts_all = [float(x.timestamp()) for x in df.index]
-        ROLLS[s] = [(ts_all[k], roll[k]) for k in range(96, len(c))]
-        PREP[s] = (df, list(zip(ts_all, [float(x) for x in df["high"]],
-                                [float(x) for x in df["low"]], c)), roll, c)
-    PIT = pit_majors(daily_turnover(ROLLS), n=band_n)
-
     C = []
-    for s, (df, bars, roll, c) in PREP.items():
-        for i in range(250, len(c)):
-            if i <= W.ROC_BARS or roll[i] < floor_to:
-                continue
-            roc = abs(c[i] / c[i - W.ROC_BARS] - 1.0)
-            if roc < ROC_FLOOR:
-                continue
-            # live prefilter that the band tool originally omitted:
-            # FUTURES_WILDCARD_MIN_24H_MOVE, immaterial at a 8% trigger but
-            # binding once the trigger drops toward it
-            if i >= 96:
-                w_hi, w_lo = max(c[i - 96:i + 1]), min(c[i - 96:i + 1])
-                if w_lo > 0 and (w_hi / w_lo - 1.0) < min_move:
+    for _frames in GRIDS:
+        frames = _frames
+        ROLLS, PREP = {}, {}
+        for s, df in frames.items():
+            cs = sizes.get(s, 0.0)
+            c = [float(x) for x in df["close"]]
+            v = [float(x) for x in df["volume"]]
+            raw = [c[k] * v[k] * cs for k in range(len(c))]
+            roll, acc = [0.0] * len(c), 0.0
+            for k, x in enumerate(raw):
+                acc += x
+                if k >= 96:
+                    acc -= raw[k - 96]
+                roll[k] = acc
+            ts_all = [float(x.timestamp()) for x in df.index]
+            ROLLS[s] = [(ts_all[k], roll[k]) for k in range(96, len(c))]
+            PREP[s] = (df, list(zip(ts_all, [float(x) for x in df["high"]],
+                                    [float(x) for x in df["low"]], c)), roll, c)
+        PIT = pit_majors(daily_turnover(ROLLS), n=band_n)
+
+        for s, (df, bars, roll, c) in PREP.items():
+            for i in range(250, len(c)):
+                if i <= W.ROC_BARS or roll[i] < floor_to:
                     continue
-            if band_n and s in PIT.get(day_key(bars[i][0]), ()):
-                continue
-            sig = W.detect_wildcard_signal(df.iloc[max(0, i - TAIL):i + 1], s)
-            if sig is None:
-                continue
-            e, sl = float(sig.entry_price), float(sig.sl_price)
-            if abs(e - sl) <= 0 or e <= 0:
-                continue
-            row = {"entry": e, "sl": sl, "tp": float(sig.tp_price), "side": sig.side}
-            g = resolve(bars, i, e, sl, float(sig.tp_price), tp_r, sig.side,
-                        shadow.CONVEX_HORIZON_S, shadow.cost_r(row), fn,
-                        float(getattr(sig, "atr_pct", 0.0) or 0.0), now)
-            if g is None:
-                continue
-            eff = trend_efficiency(c[:i + 1], int(_env("FUTURES_REGIME_EFF_WINDOW", 24)))
-            cr = getattr(sig, "calm_ratio", None)
-            C.append({"ts": bars[i][0], "sym": s, "net": float(g[0]),
-                      "exit_ts": float(g[1]), "roc": roc, "turn": roll[i],
-                      "calm_ratio": (float(cr) if cr is not None else None),
-                      "side": sig.side,
-                      "mult": regime_size_multiplier(eff, lo=lo_, hi=hi_, floor_mult=flm)})
+                roc = abs(c[i] / c[i - W.ROC_BARS] - 1.0)
+                if roc < ROC_FLOOR:
+                    continue
+                # live prefilter that the band tool originally omitted:
+                # FUTURES_WILDCARD_MIN_24H_MOVE, immaterial at a 8% trigger but
+                # binding once the trigger drops toward it
+                if i >= 96:
+                    w_hi, w_lo = max(c[i - 96:i + 1]), min(c[i - 96:i + 1])
+                    if w_lo > 0 and (w_hi / w_lo - 1.0) < min_move:
+                        continue
+                if band_n and s in PIT.get(day_key(bars[i][0]), ()):
+                    continue
+                sig = W.detect_wildcard_signal(df.iloc[max(0, i - TAIL):i + 1], s)
+                if sig is None:
+                    continue
+                e, sl = float(sig.entry_price), float(sig.sl_price)
+                if abs(e - sl) <= 0 or e <= 0:
+                    continue
+                row = {"entry": e, "sl": sl, "tp": float(sig.tp_price), "side": sig.side}
+                g = resolve(bars, i, e, sl, float(sig.tp_price), tp_r, sig.side,
+                            shadow.CONVEX_HORIZON_S, shadow.cost_r(row), fn,
+                            float(getattr(sig, "atr_pct", 0.0) or 0.0), now)
+                if g is None:
+                    continue
+                eff = trend_efficiency(c[:i + 1], int(_env("FUTURES_REGIME_EFF_WINDOW", 24)))
+                cr = getattr(sig, "calm_ratio", None)
+                C.append({"ts": bars[i][0], "sym": s, "net": float(g[0]),
+                          "exit_ts": float(g[1]), "roc": roc, "turn": roll[i],
+                          "calm_ratio": (float(cr) if cr is not None else None),
+                          "side": sig.side,
+                          "mult": regime_size_multiplier(eff, lo=lo_, hi=hi_, floor_mult=flm)})
     C.sort(key=lambda z: z["ts"])
     print("candidates past every gate except calm: %d\n" % len(C))
 
