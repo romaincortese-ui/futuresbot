@@ -199,6 +199,109 @@ realised risk, so it does not touch the PRIMARY criterion.
 
 ---
 
+## REJECTED during trial 18, measured 2026-09-01 on the CORRECTED book
+
+Everything below was measured through `pit_book.take()` — the first slot book in
+this repo that sizes off AVAILABLE margin, applies the calm filter where live
+applies it, and takes at most one entry per scan window. Results computed before
+those corrections are not comparable and are superseded where they conflict.
+
+**The investigation that produced these.** The 28 convex losses in the trailing
+28 days share ONE mechanical cause: every one peaked below 1.0R, so the retention
+trail never armed. The exit stack is not implicated in a single loss. That closes
+the exit side of the loss question and moves it entirely to entry selection.
+
+- **Entry price-context scoring: REJECTED.** `tools/pit_loss_context.py` built
+  13 features at entry (4h/8h/24h trend, the matching averages, extension above
+  each, position in the 24h range, realised vol, straightness, 3h ROC, calm,
+  regime mult) for 28 losers AGAINST 33 winners — a control group, because a
+  feature found only in losers is unfalsifiable. **Nothing separates at 2 SE.**
+  The strongest are 3h ROC (+1.60 SE), 15m vol (+1.51) and position in the 24h
+  range (+1.33), and on 13 features at n=61 you expect ~1 spurious 2-SE gap
+  anyway. Direction is nonetheless unanimous: 12 of 13 gaps say winners entered
+  MORE extended, closer to the 24h high, in wider-range and more volatile
+  symbols. Tepid moves lose. That is the convex sleeve working as designed, not
+  a filter. Retest only with a materially different feature class — order-book,
+  funding, or cross-exchange — not more price transforms.
+
+- **TREND trigger raise, 4% -> 5%: REJECTED, and the band effect is REAL.**
+  `tools/pit_trend_trigger.py`. The 4.0-5.0% ROC band IS the worst thing on the
+  sleeve and it replicates from n=5 live to n=85 replay: 85 fills, 39 wins,
+  **-$26.40, -$0.311/fill** — the only negative band of six, against +$1.458,
+  +$0.940, +$1.007 and +$1.772 per fill in the bands above it. **Raising the
+  trigger does not capture it: -$2.24 over 231 days.** A trigger does not excise
+  a band, it RESHUFFLES THE SCHEDULE. Section D decomposes and reconciles to the
+  cent: dropping the 85 band trades also displaces 29 trades at >=5% ROC worth
+  **+$61.27**, and admits 74 different ones worth +$35.03. No threshold from
+  3.0% to 8.0% clears the boundary-swept half-split against live.
+
+- **TREND trigger CUT to 3.0% / 48h clock: REJECTED — supersedes 2026-08-27.**
+  That cell was recommended (+$12.19/220d, "best joint cell") on the UNCORRECTED
+  book and was never re-run. On the corrected book 3.0% shows +$16.44 net but
+  **ex-top-5% -$12.59** against live's +$2.12 — the entire gain is outlier-borne
+  — and it fails the half-split. The two directions are now both refuted, so the
+  live 4.0% trigger stands with a measurement behind it for the first time. The
+  48h-clock half is separately moot for the observed losers: the five live 4-5%
+  trades held 2.6h, 4.1h, 8.7h, 5.3h and 4.2h and every one died on its STOP,
+  not the clock.
+
+- **TREND 4-5% band down-sizing: REJECTED on size, not on sign.** The lever that
+  does NOT reshuffle is sizing the band down rather than excluding it — the
+  trade still opens and still holds its slot, so the fill schedule is unchanged.
+  It clears the screen at every level, but is worth **+$1.72/month at 50%
+  sizing** and +$2.57/month at 25%, the most aggressive implementable setting
+  (0% is not implementable — you cannot open a zero-size position). Against the
+  $10/month bar. It is also NOT stable in time: by thirds the band runs
+  **-17.7 / +10.9 / -19.6**, negative in aggregate and in both halves at every
+  boundary but sign-flipped in the middle third. Retest if TREND volume rises
+  materially, since the effect is per-fill and the sleeve only books ~17 closes
+  a month.
+
+- **TREND third slot: REJECTED. Live 2 is optimal on every axis.**
+  `tools/pit_trend_slots.py`, the first sweep this parameter has ever had.
+
+  | slots | fills | net $ | $/fill | marginal | ex-top5 | thirds |
+  |---|---|---|---|---|---|---|
+  | 1 | 161 | +75.56 | 0.469 | — | -20.39 | +37.4 / +43.3 / **-5.2** |
+  | **2 (live)** | **210** | **+120.54** | **0.574** | **+0.918** | **+2.12** | **+52.0 / +29.3 / +39.2** |
+  | 3 | 234 | +102.89 | 0.440 | **-0.735** | -26.09 | +45.7 / +21.9 / +35.3 |
+
+  2 wins on net $, on $/fill, on the only positive ex-top-5%, and is the only
+  row with all three thirds positive. The third slot buys 24 extra fills at
+  **-$0.735 each** — turnover, not edge. Rows 4/5/6 are byte-identical to 3
+  because the universe is 3 symbols and one-position-per-symbol is already
+  enforced, so 3 is the structural ceiling. This also refutes the reading that
+  the +$61.27 displacement above meant unmet capacity: it was reshuffling.
+
+- **TP cap raise / SECURE latch / scale-out family: REJECTED.**
+  `tools/pit_corrected.py` + `tools/pit_secure_audit.py`. Measured 220d:
+  SECURE 5R +$5.01, no-cap plain trail +$18.42, **SECURE 6R +$32.97**, bank 25%
+  at 5R +$14.42, bank 50% +$9.60. SECURE 6R is the best exit cell this project
+  has found and is strictly better than plain no-cap *per trade* — identical
+  below a 6R peak and above an 8R peak, better in between. It still does not
+  ship: only 14 of 641 signals differ at all, **+$24.66 of the +$32.97 is one
+  trade** (BSB, peak 20.84R), and it fails the boundary-swept screen. Strip BSB
+  and the residual is **+3.24R over 220 days** (8 of the 9 winners gain exactly
+  +1.00R = +8.00R, against 5 losers at -4.76R; BSB alone is the other +11.31R)
+  = about $12.60, or $1.72/month. The general result is that **anything taking
+  money off the table early costs more than it saves**, because the payoff is tail-borne:
+  a floor at 5R exits runners on their first retrace through 5R, and a scale-out
+  at 5R sells the part of the runner that matters. Scale-outs score worse
+  monotonically as the banked fraction rises.
+
+**Retracted the same day, recorded so it is not re-found:** `calm_score`
+(`runtime.py:1095`, a max over BTC/ETH/SOL at 12h/2%, 24h/5%, 72h/10%) is NOT
+`calm_ratio` (`wildcard.py:133`, |3h move| / prior 21h range). Six WILDCARD
+closes carry `calm_score >= 0.75` and briefly looked like the entry gate
+leaking. It is a naming collision. The gate is intact.
+
+**Carried forward unchanged:** TREND 4.0% trigger, 2 TREND slots, 24h clock,
+long-only, 3R TP; WILDCARD 3 slots; retention trail 0.50 with the 3R -> 0.75
+ratchet; 5R WILDCARD TP cap.
+
+
+---
+
 # PRE-REGISTERED FUNDING GATE — Friday 2026-09-04
 
 The owner intends to deposit, run ~7 days, then withdraw back to the base
