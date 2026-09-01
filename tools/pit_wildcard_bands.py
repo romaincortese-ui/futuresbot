@@ -97,7 +97,17 @@ def main() -> int:
     floor_to = _env("FUTURES_WILDCARD_MIN_TURNOVER_USDT", 2e6)
     band_n = int(_env("FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER", 24))
     calm_max = _env("FUTURES_WILDCARD_MAX_CALM_RATIO", 0.75)
-    min_move = _env("FUTURES_WILDCARD_MIN_24H_MOVE", 0.03)
+    # DEFECT FIXED 2026-09-01. Live resolves this gate through the RANGE branch,
+    # not the MOVE branch: FUTURES_WILDCARD_RANGE_PREFILTER defaults TRUE, so
+    # min_move = FUTURES_WILDCARD_MIN_24H_RANGE, which is unset and therefore
+    # DEFAULTS TO min_roc = 0.08 (runtime.py:5765-5769). Reading
+    # FUTURES_WILDCARD_MIN_24H_MOVE=0.03 instead applied a 3% gate where the bot
+    # applies 8%, admitting a far wider universe - the live scan reports
+    # movers=39-42 while this replay was scanning ~170.
+    _pref = (os.environ.get("FUTURES_WILDCARD_RANGE_PREFILTER") or "1") not in ("0", "false", "False")
+    _roc_live = _env("FUTURES_WILDCARD_MIN_ROC_LIVE", 0.08)
+    min_move = (_env("FUTURES_WILDCARD_MIN_24H_RANGE", _roc_live) if _pref
+                else _env("FUTURES_WILDCARD_MIN_24H_MOVE", 0.08))
     fn = ratchet(_env("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0),
                  _env("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN", 0.75),
                  base=_env("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.50), arm=1.0)

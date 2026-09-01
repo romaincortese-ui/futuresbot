@@ -5853,6 +5853,18 @@ class FuturesRuntime:
                         "range_24h": float(chg),
                     }
             movers.sort(reverse=True)
+            # TICKER SNAPSHOT (2026-09-01). The replay could not reproduce the
+            # live book: over trials 17-18 it shared 4 trades out of ~38 with
+            # this bot. A four-lever ablation cleared two candidate causes
+            # outright (the 24h range gate is lossless; frame length is inert)
+            # and closed 63% of the DOLLAR gap with intra-bar detection, but
+            # trade agreement stalled at 6/16. The residual is the UNIVERSE:
+            # `movers` is built from exchange ticker snapshots - amount24, the
+            # exchange's own 24h high/low, and the 7d turnover deflator - none
+            # of which is recoverable from klines afterwards. Recording it is
+            # the only way a future replay can see the universe live saw.
+            # Cheap, bounded, and failure-isolated; it must never break a scan.
+            self._record_ticker_snapshot(movers)
             max_scan = int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))
             scan_capped = max(0, len(movers) - max_scan)   # silently dropped before
             cands: list = []
@@ -7142,6 +7154,54 @@ class FuturesRuntime:
         from futuresbot import shadow_ledger as shadow
 
         return shadow.ledger_path(str(self._feature_store_path.parent))
+
+    def _ticker_snapshot_path(self) -> str:
+        base = os.path.dirname(self._shadow_ledger_path() or "/data/x")
+        return os.path.join(base or "/data", "futures_ticker_snapshots.jsonl")
+
+
+    def _record_ticker_snapshot(self, movers: list) -> None:
+        """One compact line per wildcard scan: the universe as the bot saw it.
+
+        Stores the DERIVED movers list rather than the raw ticker dump - that is
+        what actually determines which symbols get scanned, and it is ~40 rows
+        instead of ~600. Rows are arrays, not objects, because the key names
+        would otherwise outweigh the values.
+
+        Never raises. A scan must not fail because a diagnostic could not be
+        written, so every path here is inside one try and logs at debug.
+        """
+        if not self._flag("FUTURES_TICKER_SNAPSHOT_ENABLED", default=True):
+            return
+        try:
+            path = self._ticker_snapshot_path()
+            attr = self._wildcard_attribution or {}
+            rows = []
+            for chg, sym in movers:
+                a = attr.get(sym) or {}
+                rows.append([sym, round(float(chg), 5),
+                             round(float(a.get("turnover_24h_usdt") or 0.0), 1),
+                             round(float(a.get("range_24h") or 0.0), 5)])
+            line = json.dumps({"ts": int(time.time()), "n": len(rows),
+                               "rows": rows}, separators=(",", ":"))
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+            # Bounded, and checked rarely so the stat() cost is negligible:
+            # once past the cap, keep the NEWEST half and drop the rest.
+            self._ticker_snap_writes = getattr(self, "_ticker_snap_writes", 0) + 1
+            if self._ticker_snap_writes % 200 == 0:
+                cap_mb = self._env_float("FUTURES_TICKER_SNAPSHOT_MAX_MB", 64.0)
+                if os.path.getsize(path) > cap_mb * 1024 * 1024:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        lines = fh.readlines()
+                    keep = lines[len(lines) // 2:]
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.writelines(keep)
+                    log.info("[TICKER_SNAPSHOT] trimmed %d -> %d lines",
+                             len(lines), len(keep))
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            log.debug("ticker snapshot failed: %s", exc)
+
 
     def _shadow_log_untaken(self, sig: Any, kind: str, reject_reason: str) -> None:
         """Record a signal that was produced but NOT taken (veto/sizing/slot) so

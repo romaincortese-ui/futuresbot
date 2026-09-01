@@ -41,10 +41,12 @@ from typing import Any, Callable
 def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: float,
          sl_margin_pct: float = 20.0, scan_s: float = 900.0,
          one_per_scan: bool = True, calm_max: float = 0.75,
+         cooldown_s: float = 0.0,
          exclude: Callable[[dict], bool] | None = None) -> list[dict[str, Any]]:
     """Walk time-ordered candidates through the live slot book and sizing.
 
     Each candidate needs: ts, sym, exit_ts, net (in R). Optional: calm_ratio.
+    cooldown_s freezes a symbol for that long after one of its trades exits.
     Returns the taken fills, each stamped with:
         risk_usdt  the dollar risk this fill ACTUALLY carried, off available margin
         usd        net R x risk_usdt, the fill's dollar result
@@ -52,6 +54,7 @@ def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: fl
     """
     occupied: list[tuple[float, float]] = []      # (exit_ts, margin_committed)
     per: dict[str, list[float]] = {}
+    frozen: dict[str, float] = {}                 # symbol -> cooldown expiry
     taken: list[dict[str, Any]] = []
     last_scan = -1.0
 
@@ -70,6 +73,9 @@ def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: fl
                 continue
         occupied[:] = [q for q in occupied if q[0] > ts]
         per[x["sym"]] = [q for q in per.get(x["sym"], []) if q > ts]
+        # per-symbol freeze after a prior exit, if one is configured
+        if cooldown_s > 0 and frozen.get(x["sym"], 0.0) > ts:
+            continue
         if per[x["sym"]] or len(occupied) >= slots:
             continue
         # GAP 1: size off AVAILABLE margin, not full equity
@@ -84,6 +90,8 @@ def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: fl
         per[x["sym"]].append(float(x["exit_ts"]))
         if one_per_scan and scan_s > 0:
             last_scan = ts // scan_s
+        if cooldown_s > 0:
+            frozen[x["sym"]] = float(x["exit_ts"]) + cooldown_s
         taken.append({**x, "risk_usdt": risk_usdt,
                       "usd": float(x["net"]) * risk_usdt * float(x.get("mult", 1.0)),
                       "avail_frac": avail / equity if equity else 0.0})
