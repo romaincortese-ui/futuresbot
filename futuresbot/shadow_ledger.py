@@ -88,6 +88,8 @@ def convex_cost_floor_mult() -> float:
 def convex_horizon_s() -> float:
     """Convex time stop in seconds. Live: FUTURES_CONVEX_TIME_STOP_HOURS."""
     return _cenv("FUTURES_CONVEX_TIME_STOP_HOURS", CONVEX_HORIZON_S / 3600.0) * 3600.0
+
+
 # Sleeves the convex stack applies to. SNIPER is deliberately absent: it is
 # excluded from the convex exits in the runtime too, so the bracket is right.
 CONVEX_SLEEVES = frozenset({"WILDCARD", "SQUEEZE", "TREND"})
@@ -147,6 +149,19 @@ def candidate_row(sig: Any, *, sleeve: str, reject_reason: str, lateness: float 
         "entry": float(sig.entry_price), "sl": float(sig.sl_price), "tp": float(sig.tp_price),
         "leverage": int(sig.leverage), "sl_margin_pct": float(sig.sl_margin_pct),
         "roc_pct": round(float(sig.roc_pct), 4), "rsi": float(sig.rsi),
+        # Feature PARITY with the taken-trade record. The shadow ledger is the
+        # bigger and faster-accruing sample - and the only source of evidence
+        # about signals that were never taken - so a feature missing here is
+        # missing from the half of the corpus that matters most for gating.
+        # Guarded to None rather than 0.0: a missing reading must not look like
+        # a real one. Added 2026-09-01 alongside the entry instrumentation.
+        **{k: v for k, v in (
+            ("atr_pct", getattr(sig, "atr_pct", None)),
+            ("calm_ratio", getattr(sig, "calm_ratio", None)),
+            ("vol_z", getattr(sig, "vol_z", None)),
+            ("roc_z", getattr(sig, "roc_z", None)),
+            ("sl_frac_designed", getattr(sig, "sl_frac_designed", None)),
+        ) if v is not None},
         "tp_r": signal_tp_r(sig),
         "entry_lateness": round(lateness, 3) if lateness is not None else None,
         "outcome": None,  # resolved later: -1.0 stop / +tp_r tp / timeout mark

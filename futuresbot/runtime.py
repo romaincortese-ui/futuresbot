@@ -252,6 +252,8 @@ class FuturesRuntime:
         self._last_entry_sizing: dict[str, float] = {}
         self._pending_entry_lateness: float | None = None
         self._pending_ref_listed: bool | None = None
+        self._pending_candidate_rank: float | None = None
+        self._pending_candidate_field: float | None = None
         self._last_shadow_resolve_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
@@ -1959,6 +1961,16 @@ class FuturesRuntime:
             self._save_state()
         elif "trail_mode" not in md:
             position.metadata["trail_mode"] = "retention"
+        # MAXIMUM ADVERSE EXCURSION, the mirror of the peak. The bot has always
+        # tracked the best excursion on a live position and never the worst -
+        # while computing mae_r for MISSED opportunities, i.e. for trades it
+        # declined but not for trades it took. Two trades closing at +0.5R are
+        # not the same trade if one went straight there and the other first sat
+        # at -0.9R: the second nearly stopped out, and nothing recorded it.
+        # Decision-free, written on the same poll as the peak. Added 2026-09-01.
+        trough_r = self._metadata_float(md, "convex_trough_r")
+        if trough_r is None or r_now < trough_r:
+            position.metadata["convex_trough_r"] = round(r_now, 4)
         if r_now > peak_r:
             position.metadata["convex_peak_r"] = round(r_now, 4)
             try:
@@ -4719,6 +4731,7 @@ class FuturesRuntime:
                 "roc_z": (position.metadata or {}).get("roc_z"),
                 "sl_frac_designed": (position.metadata or {}).get("sl_frac_designed"),
                 "peak_r": (position.metadata or {}).get("convex_peak_r"),
+                "mae_r": (position.metadata or {}).get("convex_trough_r"),
             }
         )
         # Fold in any +1R/+2R partial banks so the trade reflects TOTAL realized
@@ -4837,6 +4850,7 @@ class FuturesRuntime:
                 "risk_usdt": trade.get("risk_usdt"),
                 "sl_frac_designed": md.get("sl_frac_designed"),
                 "peak_r": md.get("convex_peak_r"),
+                "mae_r": md.get("convex_trough_r"),
                 "equity_at_open_usdt": md.get("equity_at_open_usdt"),
                 "equity_at_close_usdt": trade.get("equity_at_close_usdt"),
                 "hold_hours": trade.get("hold_hours"),
@@ -5944,7 +5958,19 @@ class FuturesRuntime:
             # Rank-ordered fallthrough: a vetoed top candidate no longer wastes the
             # whole scan — we log it (so the external gate finally gets measured on
             # REAL alts, not just synthetics) and try the next-best candidate.
-            for _key, sig, lat in cands[: int(self._env_float("FUTURES_WILDCARD_MAX_CANDIDATES", 3))]:
+            # RANK is recorded because _wildcard_rank_key is the ONLY quality
+            # judgement anywhere in the convex path, and it has never been
+            # validated. It orders candidates (deep-pullback first, then |roc|)
+            # and never accepts or rejects one, so "is our ordering any good"
+            # is currently unanswerable: nothing records which rank was taken.
+            # With rank and the field size stored, rank-1 outcomes can be
+            # compared against rank-2/3 - and against the shadow rows of the
+            # candidates that lost the ordering. Decision-free. 2026-09-01.
+            _field = len(cands)
+            for _rank, (_key, sig, lat) in enumerate(
+                    cands[: int(self._env_float("FUTURES_WILDCARD_MAX_CANDIDATES", 3))], 1):
+                self._pending_candidate_rank = float(_rank)
+                self._pending_candidate_field = float(_field)
                 self._pending_entry_lateness = lat
                 log.info("[WILDCARD_SCAN] candidate=%s side=%s roc=%.1f%% rsi=%.0f lev=x%d lateness=%s",
                          sig.symbol, sig.side, sig.roc_pct * 100, sig.rsi, sig.leverage,
@@ -7223,6 +7249,10 @@ class FuturesRuntime:
                 ("atr_pct", getattr(sig, "atr_pct", None)),
                 ("calm_ratio", getattr(sig, "calm_ratio", None)),
                 ("vol_z", getattr(sig, "vol_z", None)),
+            ) if v is not None},
+            **{k: v for k, v in (
+                ("candidate_rank", self._pending_candidate_rank),
+                ("candidate_field", self._pending_candidate_field),
             ) if v is not None},
             "equity_at_open_usdt": self._last_known_equity(),
             # Regime telemetry. Decision-free; see _majors_state.
