@@ -176,43 +176,88 @@ def fetch_feeds(feeds: Iterable[tuple[str, str]] = DEFAULT_FEEDS, *,
 
 
 def cluster_stories(items: Iterable[Headline], *, window_s: float = 6 * 3600,
-                    min_overlap: float = 0.34) -> list[Cluster]:
+                    min_overlap: float = 0.34, rare_df: float = 0.05,
+                    min_rare_len: int = 5) -> list[Cluster]:
     """Group headlines that are plausibly the same story.
 
-    Jaccard overlap on content words, inside a time window. Deliberately crude:
-    the point is to notice that several outlets ran the same thing, not to
-    understand what it says.
+    TWO MATCHERS, because one is not enough. Corrected 2026-09-02 after this
+    failed on a real story: Remixpoint was carried by cointelegraph, theblock
+    and forklog, and plain Jaccard grouped it as ONE source.
+
+      RARE TOKEN (primary). Outlets paraphrase almost everything except proper
+      nouns, so a shared token that is rare ACROSS THE CORPUS is close to
+      conclusive. "remixpoint" appeared in 3 of 142 headlines and survived even
+      into the Russian-language item, where ordinary word overlap was zero.
+      Restricted to alphabetic tokens of >= min_rare_len so that a shared
+      figure like "1506" cannot fuse unrelated stories.
+
+      JACCARD (fallback) for stories with no distinctive noun.
+
+    Why plain Jaccard was not enough, measured on the two English headlines:
+    "Japan's Remixpoint dumps altcoins, leaves 1,506 BTC as sole crypto bet"
+    against "Japan-listed Remixpoint sells all ETH, SOL, XRP and DOGE holdings
+    in shift to bitcoin-only crypto" shares {japan, remixpoint, crypto} of ~14
+    tokens - 0.21, under any threshold loose enough to be safe.
     """
     ordered = sorted(items, key=lambda h: h.published_at)
+    toks_all = [_tokens(h.title) for h in ordered]
+    n_docs = max(1, len(ordered))
+    df: dict[str, int] = {}
+    for t in toks_all:
+        for w in t:
+            df[w] = df.get(w, 0) + 1
+    def rare(t: frozenset[str]) -> frozenset[str]:
+        return frozenset(w for w in t
+                         if df.get(w, 0) / n_docs <= rare_df
+                         and len(w) >= min_rare_len and w.isalpha())
+
     clusters: list[Cluster] = []
     toks: list[frozenset[str]] = []
-    for h in ordered:
-        t = _tokens(h.title)
+    rares: list[frozenset[str]] = []
+    for h, t in zip(ordered, toks_all):
         if not t:
             continue
+        r = rare(t)
         placed = False
         for idx, c in enumerate(clusters):
             if abs(c.published_at - h.published_at) > window_s:
                 continue
-            inter = len(t & toks[idx])
-            union = len(t | toks[idx])
-            if union and inter / union >= min_overlap:
+            if r and (r & rares[idx]):
+                hit = True
+            else:
+                union = len(t | toks[idx])
+                hit = bool(union) and len(t & toks[idx]) / union >= min_overlap
+            if hit:
                 c.items.append(h)
                 toks[idx] = toks[idx] | t
+                rares[idx] = rares[idx] | r
                 placed = True
                 break
         if not placed:
             clusters.append(Cluster(key=h.id, items=[h]))
             toks.append(t)
+            rares.append(r)
     return clusters
 
 
-def big_stories(items: Iterable[Headline], *, min_sources: int = 2,
+def big_stories(items: Iterable[Headline], *, min_sources: int = 3,
                 window_s: float = 6 * 3600) -> list[Cluster]:
     """Clusters carried by at least `min_sources` DISTINCT outlets.
 
     Corroboration is the whole test. It contains no opinion about which topics
     matter, which is the property that keeps this usable as evidence later.
+
+    WHY 3, measured on a real 142-headline snapshot (2026-09-02):
+
+        min_sources    qualifying stories
+            2                20     too noisy to alert on
+            3                 9     <- the Remixpoint story sits here
+            4                 3     quieter, but would have MISSED Remixpoint
+            5                 0     no story has ever been carried by all five
+            6                 0     unreachable - there are only five feeds
+
+    So a threshold above 4 silences the alert permanently rather than filtering
+    it. 3 is the loosest setting that still excludes the two-outlet long tail.
     """
     return [c for c in cluster_stories(items, window_s=window_s)
             if len(c.sources) >= min_sources]

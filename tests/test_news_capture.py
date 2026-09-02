@@ -178,3 +178,86 @@ def test_the_scan_fires_capture_without_awaiting_it():
     starter = inspect.getsource(FuturesRuntime._maybe_capture_news)
     assert "daemon=True" in starter, "must not keep the process alive"
     assert "join" not in starter, "must not block the scan"
+
+
+# --- regression: the real story that broke the first matcher ------------------
+
+REMIXPOINT = (
+    ("cointelegraph",
+     "Japan\u2019s Remixpoint dumps altcoins, leaves 1,506 BTC as sole crypto bet"),
+    ("theblock",
+     "Japan-listed Remixpoint sells all ETH, SOL, XRP and DOGE holdings in "
+     "shift to bitcoin-only crypto treasury"),
+    ("forklog",
+     "DAT-\u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044f Remixpoint "
+     "\u0440\u0430\u0441\u043f\u0440\u043e\u0434\u0430\u043b\u0430 "
+     "\u0430\u043b\u044c\u0442\u043a\u043e\u0438\u043d\u044b"),
+)
+
+
+_VOCAB = ("staking custody rollup oracle validator bridge auction lending "
+          "settlement airdrop mining wallet exchange treasury futures options "
+          "liquidity governance protocol network testnet mainnet upgrade audit "
+          "consensus mempool sequencer collateral vault yield swap perpetual "
+          "clearing depositary brokerage escrow issuance redemption").split()
+
+
+def _noise(n):
+    """Filler that is genuinely UNLIKE itself.
+
+    An earlier version used one template with a changing number, so all 60
+    items clustered together across three sources and registered as a story -
+    the filler drowned the signal it was meant to isolate. Each item now draws
+    distinct vocabulary so nothing here corroborates anything else.
+    """
+    now = time.time()
+    out = []
+    for i in range(n):
+        w = [_VOCAB[(i * 7 + k * 13) % len(_VOCAB)] for k in range(5)]
+        out.append(Headline(id="n%d" % i, source=["a", "b", "c"][i % 3],
+                            title=" ".join(w), url="n%d" % i,
+                            published_at=now, fetched_at=now))
+    return out
+
+
+def test_remixpoint_clusters_across_three_outlets_including_russian():
+    """The story that exposed the bug. Plain Jaccard scored the two ENGLISH
+    headlines at 0.21 - they share only {japan, remixpoint, crypto} of ~14
+    tokens - and the Russian item shares no ordinary words at all. What ties
+    all three together is one rare proper noun."""
+    now = time.time()
+    items = _noise(60) + [
+        Headline(id="r%d" % i, source=src, title=title, url="r%d" % i,
+                 published_at=now, fetched_at=now)
+        for i, (src, title) in enumerate(REMIXPOINT)]
+    big = big_stories(items, min_sources=3)
+    assert len(big) == 1, "the three outlets must form one story"
+    assert set(big[0].sources) == {"cointelegraph", "theblock", "forklog"}
+
+
+def test_a_shared_NUMBER_does_not_fuse_unrelated_stories():
+    """1,506 appears in one Remixpoint headline. Rare-token matching is limited
+    to alphabetic tokens so a coincidental figure cannot merge two stories."""
+    now = time.time()
+    items = _noise(60) + [
+        Headline(id="x1", source="a", title="Some firm holds 1506 units of gold",
+                 url="x1", published_at=now, fetched_at=now),
+        Headline(id="x2", source="b", title="Unrelated venue reports 1506 outages",
+                 url="x2", published_at=now, fetched_at=now)]
+    # assert the SPECIFIC property, not "no clusters anywhere" - filler can
+    # legitimately group without saying anything about numeric fusion.
+    home = {}
+    for c in cluster_stories(items):
+        for h in c.items:
+            home[h.id] = id(c)
+    assert home["x1"] != home["x2"], "a shared figure must not fuse two stories"
+
+
+def test_default_threshold_is_three():
+    """5 is unreachable: only five feeds exist and no story has been carried by
+    all of them, so a higher threshold silences the alert rather than filtering."""
+    import inspect
+
+    from futuresbot.news import DEFAULT_FEEDS, big_stories as bs
+    assert len(DEFAULT_FEEDS) == 5
+    assert inspect.signature(bs).parameters["min_sources"].default == 3

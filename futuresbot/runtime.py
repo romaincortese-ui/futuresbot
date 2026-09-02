@@ -7226,7 +7226,7 @@ class FuturesRuntime:
             fresh_ids = {h.id for h in fresh}
             for c in newsmod.big_stories(
                     items,
-                    min_sources=int(self._env_float("FUTURES_NEWS_MIN_SOURCES", 2))):
+                    min_sources=int(self._env_float("FUTURES_NEWS_MIN_SOURCES", 3))):
                 if any(h.id in fresh_ids for h in c.items):
                     self._news_alert(c)
         except Exception as exc:  # pragma: no cover
