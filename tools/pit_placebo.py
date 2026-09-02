@@ -53,7 +53,32 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Sequence
 
-DEFAULT_SHIFTS_DAYS: tuple[float, ...] = (-14.0, -7.0, -3.0, 3.0, 7.0, 14.0)
+def _dense_shifts(min_days: float = 4.0, max_days: float = 30.0,
+                  step_hours: float = 6.0) -> tuple[float, ...]:
+    """A DENSE null distribution, not a handful of samples.
+
+    CORRECTED 2026-09-02, hours after this module was first committed. The first
+    version used six shifts, which meant the strongest possible verdict was
+    "beat all six" - an outcome a null gate reaches roughly one time in seven.
+    Pointed at ten KNOWN-NULL regime hypotheses it declared five of them
+    survivors. The control was not measuring anything; it was reporting which
+    gates happened to top a six-sample draw.
+
+    ~180 shifts make the rank a real percentile: topping them all is p < 0.6%.
+
+    min_days exists because a shift shorter than the signal's own lookback still
+    correlates with it. A 72h majors signal shifted by one day is largely the
+    same signal, so it is not a placebo - it is a slightly blurred copy, and
+    including it would make every gate look unbeatable.
+    """
+    out, d = [], min_days
+    while d <= max_days:
+        out.extend((-d, d))
+        d += step_hours / 24.0
+    return tuple(sorted(out))
+
+
+DEFAULT_SHIFTS_DAYS: tuple[float, ...] = _dense_shifts()
 
 
 class PlaceboResult:
@@ -77,9 +102,10 @@ class PlaceboResult:
     def rank(self) -> float | None:
         """Share of usable placebos scoring >= the real gate, as a percentage.
 
-        0% means the real gate beat every placebo. Anything above ~15% on a
-        handful of shifts means the real result is unremarkable among signals
-        that cannot work.
+        This is a PERCENTILE against a dense null, so it reads like a p-value:
+        1% means only one placebo in a hundred matched the real gate. With the
+        six-shift default this module shipped with for a few hours, the best
+        achievable value was 0% and it meant almost nothing.
         """
         u = self.usable
         if not u:
@@ -91,13 +117,14 @@ class PlaceboResult:
         r = self.rank
         if r is None:
             return "INCONCLUSIVE - no shift produced enough trades to compare"
-        if len(self.usable) < 3:
-            return "INCONCLUSIVE - fewer than 3 usable placebos"
-        if r == 0.0:
-            return "SURVIVES - the real gate beat every placebo"
-        if r <= 20.0:
-            return "WEAK - a placebo came close"
-        return "REFUTED - a signal that cannot work did as well or better"
+        if len(self.usable) < 30:
+            return ("INCONCLUSIVE - only %d usable placebos, need >= 30 for a "
+                    "percentile" % len(self.usable))
+        if r <= 1.0:
+            return "SURVIVES - beat %.0f%% of a dense null" % (100 - r)
+        if r <= 5.0:
+            return "WEAK - inside the top %.0f%% of the null" % r
+        return "REFUTED - %.0f%% of signals that cannot work did as well" % r
 
 
 def placebo_test(pool: Iterable[Any], gate_at: Callable[[float], bool], *,

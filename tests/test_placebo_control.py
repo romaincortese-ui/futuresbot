@@ -27,9 +27,12 @@ def _trades(pnl_by_day):
     return [{"t": d * DAY + 43200.0, "usd": v} for d, v in enumerate(pnl_by_day)]
 
 
-def _run(items, gate_at, shifts=(-7, -3, 3, 7)):
+def _run(items, gate_at, shifts=None):
+    """Uses the DENSE default unless a specific set is given. The control needs
+    >= 30 usable placebos to report a percentile at all."""
+    kw = {} if shifts is None else {"shifts_days": shifts}
     return placebo_test(items, gate_at, time_of=lambda x: x["t"],
-                        value_of=lambda x: x["usd"], shifts_days=shifts, min_n=1)
+                        value_of=lambda x: x["usd"], min_n=1, **kw)
 
 
 def test_a_calendar_reading_gate_is_REFUTED():
@@ -37,35 +40,42 @@ def test_a_calendar_reading_gate_is_REFUTED():
     week - and the gate opens on one good block. It looks excellent. But a
     signal shifted by a whole cycle lands on a DIFFERENT good block and scores
     exactly the same, because neither gate knows anything: both pick dates."""
-    items = _trades([5.0 if (d // 7) % 2 == 0 else -5.0 for d in range(56)])
-    # A BOUNDED window on one good block, placed mid-sample so that every shift
-    # still lands inside the data - an open-ended gate would empty itself under
-    # half the shifts and the control would report INCONCLUSIVE instead.
-    res = _run(items, lambda t: 28 * DAY <= t < 35 * DAY, shifts=(-14, -7, 7, 14))
+    # 200 days on a 14-day cycle, gate open on one good block mid-sample. Any
+    # shift landing a whole number of cycles away hits an equally good block.
+    items = _trades([5.0 if (d // 7) % 2 == 0 else -5.0 for d in range(200)])
+    res = _run(items, lambda t: 98 * DAY <= t < 105 * DAY)
     assert res.real > 0, "the gate should look profitable"
-    assert len(res.usable) == 4, "all four shifts must stay inside the data"
-    assert res.beaten_by, "a whole-cycle shift lands on an equally good block"
+    assert len(res.usable) >= 30, "the dense null must produce a percentile"
+    assert res.beaten_by, "whole-cycle shifts land on equally good blocks"
     assert res.verdict.startswith("REFUTED")
 
 
 def test_a_gate_that_really_reads_the_signal_SURVIVES():
-    """Alternating good and bad days, with the gate open exactly on the good
-    ones. No time shift can reproduce that, because the pattern is not a block -
-    shifting lands the gate on the losers."""
-    items = _trades([5.0 if d % 2 == 0 else -5.0 for d in range(28)])
-    res = _run(items, lambda t: int(t // DAY) % 2 == 0, shifts=(-7, -3, 3, 7))
+    """A NON-PERIODIC signal, with the gate open exactly on the good days.
+
+    Non-periodic matters: an alternating pattern would be reproduced by any
+    even-day shift, so the placebo would rightly refute it. Here nothing
+    repeats, so no shift can land on the winners and the control must pass it.
+    """
+    import random
+    rng = random.Random(7)
+    good = {d for d in range(200) if rng.random() < 0.4}
+    items = _trades([5.0 if d in good else -5.0 for d in range(200)])
+    res = _run(items, lambda t: int(t // DAY) in good)
     assert res.real > 0
+    assert len(res.usable) >= 30
     assert not res.beaten_by, "no shift should match a genuine per-day signal"
     assert res.verdict.startswith("SURVIVES")
 
 
-def test_an_odd_day_shift_would_defeat_the_alternating_gate():
-    """Honesty about the method's limits: a shift that happens to be in phase
-    with the signal IS a fair placebo and should win. The control is only as
-    good as the shifts chosen, which is why several are used."""
-    items = _trades([5.0 if d % 2 == 0 else -5.0 for d in range(28)])
-    res = _run(items, lambda t: int(t // DAY) % 2 == 0, shifts=(-3, 3))
-    assert res.beaten_by == [] or res.real >= max(v for _, v, _ in res.usable)
+def test_a_PERIODIC_signal_is_refuted_and_that_is_correct():
+    """Honesty about what the control can and cannot establish. If a signal
+    simply alternates, a shift in phase with it reproduces it exactly - so the
+    control refutes it. That is the RIGHT answer: a periodic pattern is
+    indistinguishable from a calendar rule, whatever generated it."""
+    items = _trades([5.0 if d % 2 == 0 else -5.0 for d in range(200)])
+    res = _run(items, lambda t: int(t // DAY) % 2 == 0)
+    assert res.beaten_by, "even-day shifts reproduce an alternating signal"
 
 
 def test_shifts_that_empty_the_book_are_excluded_not_counted_as_losses():
@@ -89,8 +99,19 @@ def test_too_few_usable_placebos_is_inconclusive_not_a_pass():
     items = _trades([1.0] * 10)
     res = placebo_test(items, lambda t: t < 5 * DAY, time_of=lambda x: x["t"],
                        value_of=lambda x: x["usd"], shifts_days=(-1, 1), min_n=1)
-    assert len(res.usable) < 3
+    assert len(res.usable) < 30
     assert res.verdict.startswith("INCONCLUSIVE")
+
+
+def test_the_default_null_is_dense_enough_to_mean_something():
+    """The first version shipped with six shifts, so the strongest possible
+    verdict was 'beat all six' - which a null gate reaches ~1 time in 7. Pointed
+    at ten known-null regime hypotheses it called five of them survivors."""
+    from pit_placebo import DEFAULT_SHIFTS_DAYS as D
+    assert len(D) >= 100, "a percentile needs a dense null"
+    assert 100.0 / len(D) <= 1.0, "best achievable rank must be under 1%"
+    assert min(abs(x) for x in D) >= 4.0, (
+        "shifts shorter than the signal lookback are blurred copies, not placebos")
 
 
 def test_it_decides_on_ENTRY_time():

@@ -236,6 +236,24 @@ traded in. Result on the gate that had passed:
 The real result sits inside a placebo spread of -$35.52 to +$17.07 and is beaten
 by a signal that cannot work. **Refuted.**
 
+**CORRECTED HOURS AFTER IT SHIPPED.** The first version used SIX shifts, so the
+strongest possible verdict was "beat all six" - which a null gate reaches about
+one time in seven. Pointed at ten KNOWN-NULL regime hypotheses
+(`tools/pit_regime_audit.py`) it called **five of them survivors**. The control
+was not measuring anything; it was reporting which gates topped a six-sample
+draw. It now uses ~210 shifts from +-4 to +-30 days at 6h steps, making the rank
+a real percentile (best achievable 0.48%). Re-run on the same known-null set the
+survivor count fell from **5 of 10 to 1 of 15**, and that one is a threshold
+chosen in-sample - see the limitation below. Shifts under 4 days are excluded:
+a 72h signal shifted by one day is a blurred copy of itself, not a placebo.
+
+**WHAT IT STILL CANNOT DO.** The placebo controls for TIME STRUCTURE, not for
+IN-SAMPLE SELECTION. A threshold picked after seeing the outcomes - "the bottom
+divergence quintile" - will pass, because the signal genuinely does separate
+these particular trades. Selection needs its own control: pre-registration, or
+a hold-out. Read a SURVIVES verdict as "not merely calendrical", never as
+"real".
+
 **The rule.** `tools/pit_placebo.py`, guarded by `tests/test_placebo_control.py`.
 Any study whose decision is a function of TIME rather than of the individual
 trade must report a placebo table before its result is quoted:
