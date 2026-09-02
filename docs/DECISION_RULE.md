@@ -199,6 +199,63 @@ realised risk, so it does not touch the PRIMARY criterion.
 
 ---
 
+## STANDING METHOD: the PLACEBO CONTROL is mandatory for regime studies
+
+Added 2026-09-02 after it caught a result that had already passed every other
+screen in this document.
+
+**What happened.** A majors-up gate - trade only while any of BTC/ETH/SOL is up
+>=1% over the trailing 72h - was applied to the REAL live trades (no replay).
+It turned trials 17+18 from -$4.32 into +$12.89, held up on the whole history,
+and a permutation test against random same-size subsets returned **p < 1%**. It
+was one step from being pre-registered as a trial.
+
+**Why the permutation test could not see the problem.** A permutation test asks
+whether a filter picked better trades than a RANDOM subset of the same size.
+That is the correct control for a filter selecting trades INDEPENDENTLY - score,
+calm_ratio, turnover, ROC band. A regime gate does not select independently: it
+selects by TIME, in contiguous stretches. This book is autocorrelated, with good
+weeks and bad weeks, so ANY time-correlated filter beats random subsets whether
+or not it knows anything about markets. The p<1% was measuring autocorrelation.
+
+**The control.** Run the identical gate on a TIME-SHIFTED signal. A gate driven
+by the majors from seven days earlier has the same clustering behaviour and the
+same duty cycle, and carries NO information about the market each trade actually
+traded in. Result on the gate that had passed:
+
+| majors signal | net $ |
+|---|---|
+| **REAL, no shift** | **+13.95** |
+| shifted -7 days | **+17.07** — the placebo WON |
+| shifted +3 days | +6.73 |
+| shifted -3 days | +4.82 |
+| shifted +14 days | +0.34 |
+| shifted -14 days | -22.37 |
+| shifted +7 days | -35.52 |
+
+The real result sits inside a placebo spread of -$35.52 to +$17.07 and is beaten
+by a signal that cannot work. **Refuted.**
+
+**The rule.** `tools/pit_placebo.py`, guarded by `tests/test_placebo_control.py`.
+Any study whose decision is a function of TIME rather than of the individual
+trade must report a placebo table before its result is quoted:
+
+    majors gates | majors tilts | divergence policies | direction filters
+    news-regime policies | cooldowns keyed on market state | seasonality
+
+Per-trade filters are exempt and keep the permutation test. Read the RANK, not
+the value: the question is never "did it make money", it is "did it beat signals
+that cannot possibly work". Fewer than three usable shifts is INCONCLUSIVE, not
+a pass - a shift that empties the book is excluded rather than scored as a
+placebo defeat, since counting it would flatter every gate.
+
+**Everything already refuted stays refuted**, since the control only makes the
+bar higher. Five distinct regime formulations have now failed: majors gates,
+majors tilts, divergence policies, BTC-up direction, and the stateful gate. The
+consistency of that is itself the finding.
+
+---
+
 ## REJECTED during trial 18, measured 2026-09-01 on the CORRECTED book
 
 Everything below was measured through `pit_book.take()` — the first slot book in
