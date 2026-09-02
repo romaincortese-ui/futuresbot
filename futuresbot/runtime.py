@@ -5865,6 +5865,7 @@ class FuturesRuntime:
             # the only way a future replay can see the universe live saw.
             # Cheap, bounded, and failure-isolated; it must never break a scan.
             self._record_ticker_snapshot(movers)
+            self._maybe_capture_news()
             max_scan = int(self._env_float("FUTURES_WILDCARD_MAX_SCAN", 25))
             scan_capped = max(0, len(movers) - max_scan)   # silently dropped before
             cands: list = []
@@ -7154,6 +7155,190 @@ class FuturesRuntime:
         from futuresbot import shadow_ledger as shadow
 
         return shadow.ledger_path(str(self._feature_store_path.parent))
+
+    # ---------------- news capture (2026-09-02) ----------------
+    # CAPTURE ONLY. Writes a file and emits an alert; it can never influence an
+    # entry, an exit or a size. It deliberately does NOT write
+    # `mexc:crypto_event_intelligence` - that key feeds the PMT-path overlay,
+    # which is enabled but unreachable, and populating it would silently
+    # activate dead code. Capture and consumption stay separate until there is
+    # evidence to justify wiring them.
+
+    def _news_path(self) -> str:
+        base = os.path.dirname(self._shadow_ledger_path() or "/data/x")
+        return os.path.join(base or "/data", "futures_news.jsonl")
+
+    def _maybe_capture_news(self) -> None:
+        """Kick off a news fetch in a DAEMON THREAD.
+
+        Unlike the ticker snapshot, this makes a third-party network call. A
+        hanging feed must never stall a scan, so nothing is awaited: the scan
+        fires this and moves on. One fetch in flight at a time.
+        """
+        if not self._flag("FUTURES_NEWS_CAPTURE_ENABLED", default=True):
+            return
+        try:
+            interval = self._env_float("FUTURES_NEWS_FETCH_INTERVAL_S", 600.0)
+            now_ts = time.time()
+            if now_ts - getattr(self, "_last_news_fetch_at", 0.0) < interval:
+                return
+            th = getattr(self, "_news_thread", None)
+            if th is not None and th.is_alive():
+                return
+            self._last_news_fetch_at = now_ts
+            import threading
+            self._news_thread = threading.Thread(target=self._news_worker,
+                                                 name="news-capture", daemon=True)
+            self._news_thread.start()
+        except Exception as exc:  # pragma: no cover - capture never breaks a scan
+            log.debug("news capture could not start: %s", exc)
+
+    def _news_worker(self) -> None:
+        try:
+            from futuresbot import news as newsmod
+            items = newsmod.fetch_feeds(
+                timeout=self._env_float("FUTURES_NEWS_TIMEOUT_S", 5.0))
+            if not items:
+                return
+            path = self._news_path()
+            seen = getattr(self, "_news_seen", None)
+            if seen is None:
+                seen = set()
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    seen.add(json.loads(line).get("id"))
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+                self._news_seen = seen
+            fresh = [h for h in items if h.id not in seen]
+            if fresh:
+                with open(path, "a", encoding="utf-8") as fh:
+                    for h in fresh:
+                        fh.write(json.dumps(h.as_row(), separators=(",", ":")) + "\n")
+                        seen.add(h.id)
+                self._news_trim(path)
+            fresh_ids = {h.id for h in fresh}
+            for c in newsmod.big_stories(
+                    items,
+                    min_sources=int(self._env_float("FUTURES_NEWS_MIN_SOURCES", 2))):
+                if any(h.id in fresh_ids for h in c.items):
+                    self._news_alert(c)
+        except Exception as exc:  # pragma: no cover
+            log.debug("news worker failed: %s", exc)
+
+    def _news_trim(self, path: str) -> None:
+        try:
+            self._news_writes = getattr(self, "_news_writes", 0) + 1
+            if self._news_writes % 50:
+                return
+            cap = self._env_float("FUTURES_NEWS_MAX_MB", 32.0)
+            if os.path.getsize(path) <= cap * 1024 * 1024:
+                return
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+            keep = lines[len(lines) // 2:]
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.writelines(keep)
+            log.info("[NEWS] trimmed %d -> %d lines", len(lines), len(keep))
+        except Exception as exc:  # pragma: no cover
+            log.debug("news trim failed: %s", exc)
+
+    def _news_alert(self, cluster: Any) -> None:
+        """Alert on a corroborated story.
+
+        EVERY NUMBER HERE IS MEASURED, NONE IS PREDICTED. The bot does not guess
+        what a headline means for price - a plausible-sounding forecast is the
+        least defensible thing it could send. It reports the market state the
+        story arrived into, and what that state has been worth historically,
+        with the sample size attached so the reader can discount it.
+        """
+        try:
+            maj = self._majors_state() or {}
+            btc, eth, sol = maj.get("btc_24h"), maj.get("eth_24h"), maj.get("sol_24h")
+            div = None
+            if None not in (btc, eth, sol):
+                div = btc - (eth + sol) / 2.0
+            lag_min = max(0.0, (cluster.fetched_at - cluster.published_at) / 60.0)
+            lines = ["📰 <b>Corroborated news</b> - %d sources" % len(cluster.sources),
+                     "<b>%s</b>" % cluster.title[:180],
+                     "<i>%s - published %s, seen +%.0f min</i>"
+                     % (", ".join(cluster.sources),
+                        datetime.fromtimestamp(cluster.published_at,
+                                               timezone.utc).strftime("%H:%MZ"), lag_min),
+                     "",
+                     "<b>Market state now</b> (measured)"]
+            if btc is not None:
+                lines.append("BTC 24h <code>%+.2f%%</code>  ETH <code>%+.2f%%</code>  "
+                             "SOL <code>%+.2f%%</code>"
+                             % (100 * btc, 100 * (eth or 0), 100 * (sol or 0)))
+            if div is not None:
+                lines.append("BTC-vs-alts divergence <code>%+.2f%%</code>%s"
+                             % (100 * div,
+                                "  (alts leading)" if div < 0 else "  (BTC leading)"))
+            if maj.get("calm_score") is not None:
+                lines.append("calm score <code>%.2f</code>" % maj["calm_score"])
+            hist = self._divergence_base_rate(div)
+            if hist:
+                lines += ["", "<b>What that band has been worth</b> - NOT a forecast",
+                          hist]
+            self._notify_once(
+                "news:%s" % cluster.key, "\n".join(lines),
+                cooldown_seconds=int(self._env_float("FUTURES_NEWS_ALERT_COOLDOWN_S",
+                                                     3600.0)))
+        except Exception as exc:  # pragma: no cover
+            log.debug("news alert failed: %s", exc)
+
+    def _divergence_base_rate(self, div: float | None) -> str | None:
+        """Historical outcome of trades entered at a similar BTC-vs-alts split.
+
+        Returns None-ish below n=20 rather than quoting a number nobody should
+        act on. The failure this guards against is a confident-looking statistic
+        computed from a dozen trades, which is how most of this week's retracted
+        findings began.
+        """
+        if div is None:
+            return None
+        try:
+            rows = []
+            with open(self._feature_store_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        continue
+                    b, e, s2 = r.get("btc_24h"), r.get("eth_24h"), r.get("sol_24h")
+                    if None in (b, e, s2):
+                        continue
+                    if not r.get("risk_usdt") or r.get("pnl_usdt") is None:
+                        continue
+                    rows.append((float(b) - (float(e) + float(s2)) / 2.0,
+                                 float(r["pnl_usdt"]) / float(r["risk_usdt"]),
+                                 float(r["pnl_usdt"])))
+            if len(rows) < 20:
+                return ("history: only %d closes carry majors data - too few to quote"
+                        % len(rows))
+            rows.sort()
+            lo = min(range(len(rows)), key=lambda i: abs(rows[i][0] - div))
+            half = max(5, len(rows) // 5)
+            band = rows[max(0, lo - half // 2): lo + half // 2 + 1]
+            rs = [x[1] for x in band]
+            return ("n=%d similar entries - mean <code>%+.3fR</code> - win "
+                    "<code>%.0f%%</code> - net <code>$%+.2f</code>"
+                    % (len(band), sum(rs) / len(rs),
+                       100 * sum(1 for x in rs if x > 0) / len(rs),
+                       sum(x[2] for x in band)))
+        except Exception as exc:  # pragma: no cover
+            log.debug("divergence base rate failed: %s", exc)
+            return None
 
     def _ticker_snapshot_path(self) -> str:
         base = os.path.dirname(self._shadow_ledger_path() or "/data/x")
