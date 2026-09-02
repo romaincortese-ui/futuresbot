@@ -1,3 +1,163 @@
+# Daily Audit — 2026-09-02
+
+---
+
+## Automated Assessment (UTC 17:20)
+
+Equity $165.72 (free $127.58, unrealized -$2.77). Deposit boundary 2026-07-21
+still applies — P&L below is realized $ / R only.
+
+### 1. Closed trades, last 24h — 2, both WILDCARD, both exiting correctly
+
+| close (UTC) | symbol | side | lev | hold | R | $ | peak R | exit | lat | risk% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 09-01 19:30 | USELESS_USDT | LONG | x2 | 7.8h | **+1.21** | +2.16 | +2.57 | CONVEX_RETENTION_TRAIL | 1.00 | 1.04 |
+| 09-02 14:39 | MAGMA_USDT | LONG | x2 | 5.6h | **-1.00** | -4.02 | +0.17 | STOP / EXCHANGE_CLOSE | 1.00 | 2.29 |
+
+Net 24h **-$1.86**, 1W/1L. Both exits are legal convex exits — no bug, no
+unhandled path. USELESS realised 0.47x its peak, which is `RETAIN_FRAC=0.50`
+minus costs, exactly as configured; it is the best trade of trial 18. MAGMA was
+a clean server-side -1R (MAE -0.994R, no adverse excursion beyond the stop) on
+an 8.5% entry ROC — barely over the 8% `MIN_ROC` floor, i.e. in the weak cohort
+flagged in section 5.
+
+**Exchange reconcile:** 17 exchange rows since the trial start vs 17 feature-store
+rows — in sync, no loss-censoring. ($ differ by fees: exchange `realised` is gross.)
+
+### 1-OPEN. Open positions — 2 of 3 wildcard slots, TREND 0/2
+
+**MARSCOIN_USDT SHORT x1** (WILDCARD, opened 09-02 13:10Z, held 4.1h)
+- now **-0.21R** (-$0.60); peak **+0.82R**, giveback **-1.03R**; trough -0.75R
+- SL 9.5% of price away, TP 51.2% away
+- scaler 1.0, streak 1.0, risk 1.673% vs 2.41% intended — the gap is **contract
+  truncation** (margin 23.27 of 28.44 wanted = 0.818), not a scaler trim
+
+**SKR_USDT LONG x2** (WILDCARD, opened 09-02 16:26Z, held 0.9h)
+- now **-0.65R** (-$2.17); peak +0.05R, trough -0.68R (sitting near its low)
+- SL 3.3% of price away, TP 57.1% away
+- scaler 1.0, risk 1.973% (in band), size efficiency 0.947
+
+Neither position has armed the retention trail (arm is 1.0R; peaks are 0.82R and
+0.05R), so both are still on the raw -1R stop.
+
+### 2. Trial 18 — 15/30 closes, primary criterion PASSING
+
+Excluding the two TAC/BLESS carryovers per the pre-registration.
+
+| | value | criterion |
+|---|---|---|
+| **mean realised risk / trade** | **1.690%** | **[1.6%, 2.2%] — PASS** (median 1.731) |
+| netR | +0.75 | > 0 — pass |
+| **netR ex-best** | **-0.46** | **> 0 — FAIL** |
+| net $ | -$2.04 | — |
+| win rate | 10/15 (67%) | — |
+| max single-entry risk | 2.420% | kill at >3.0% — clear |
+| trial drawdown | 4.3% | kill at >20% — clear |
+| by sleeve | WILDCARD 12: +2.48R / +$3.31 · TREND 3: -1.73R / -$5.35 | — |
+
+This is the **first of the three trials (16/17/18) whose sizing criterion is
+actually in band.** Raising `FUTURES_REGIME_FLOOR_MULT` to 0.50 did the thing it
+was opened to do. Only 4 of 15 individual entries land inside the band, but the
+criterion is on the mean and the mean passes.
+
+**Exits:** TP 0 (0%) | stop 4 | other 11 (9 retention trail, 1 preempted, 1 time
+stop). The stale "propose TP3R if TP<10%" watch item does **not** fire: since the
+retention trail shipped, the trail *is* the intended exit and TP-completion is no
+longer the health metric. The real observation is different — **9 of 9 trail exits
+realised 0.46–0.48x peak, and the mean peak was only 1.36R.** The 3.0R ratchet has
+never been reached in 15 closes. Recorded, not acted on.
+
+**Expectancy arithmetic:** mean win +0.57R at 67%, mean loss -1.00R at 33%
+= **+0.049R/trade ≈ $0.20/trade**. At ~11 closes/week that is +$9/month, inside
+the noise band of the standing objective. The high win rate is not producing
+dollars because the trail caps winners at half of a peak that clusters at 1.2–1.4R.
+
+### 3. Slot cost — the operator's "am I missing out?" answered: mostly NO
+
+Using `shadow_ledger.dedupe_by_occupancy` (a re-signalling mover is one missed
+trade, not five):
+
+| sleeve | dedup n | netR | ex-best |
+|---|---|---|---|
+| WILDCARD | 11 | **+7.42** | +2.43 |
+| TREND | 3 | -0.70 | -0.94 |
+| SQUEEZE | 6 | -2.05 | -2.59 |
+
+TREND and SQUEEZE slot locks are **protective**. The wildcard's +7.42R is real but
+**+9.96R of it is two +5R tails** (SNXX 07-30, HEI 08-05); ex-top-2 the remaining
+9 blocked candidates are **-2.55R**. Tail-concentrated, not bankable, and it does
+not meet the standard set for a 4th slot. **In trial 18 there are zero
+`slot_occupied` rows at all** — 3 wildcard slots have not bound once since 08-29,
+so the question is currently moot.
+
+Gate scorecard, all-time, deduped, in dollars (negative = the gate saved money):
+
+| gate | n | $ |
+|---|---|---|
+| veto (external) | 33 | **-26.67 SAVED** |
+| side_disabled (TREND shorts off) | 17 | **-16.52 SAVED** |
+| calm_shock | 14 | **-14.00 SAVED** |
+| slot_occupied | 20 | +16.90 cost |
+| shadow_only | 42 | +12.20 cost |
+| min_vol_skip | 13 | +6.72 cost |
+
+All three deliberate filters are earning their keep. Trial-18 window: calm_shock
+-$6.43, side_disabled -$1.20, veto -$0.52 — all saving.
+
+### 4. Wildcard scan health — active, not dormant
+
+Last four scans: 39–42 movers in band, all scanned, 0 candidates. Dominant
+rejection `roc_below_min` ~35, then `no_pullback_resume` 3–7, `climax_wick` 1–2.
+Turnover deflator live (32/48 deflated, not stuck at 1.000). **No 5003/2015 order
+rejects, no Traceback.** The sleeve took two entries today, so it is neither
+dormant nor execution-blocked. No `[SIZE_TRIM]` lines in the window.
+
+### 5. Learning loop (n=121 corpus, OOS-checked) — two signals worth naming
+
+- `roc>=12%` **FAVOR**, gap +$1.855: n=32 at +$1.634/68.8% win vs n=89 at
+  -$0.221/37.1%. OOS-consistent in both halves.
+- `regime_trimmed_hard(<0.5)` **AVOID**, gap -$0.796: n=27 at -$0.349/**37.0%**
+  win vs n=94 at +$0.447/**47.9%**. OOS-consistent.
+- Confirmations of known results: `leverage>=7` AVOID, `leverage<=4` FAVOR,
+  `at_extreme(lat>=0.99)` FAVOR (and `deep_pullback` is 0-for-2 — the old
+  deep-pullback preference stays refuted).
+
+**The second is a counter-indication to trial 18's own direction** and is logged as
+a watch item: the win-rate gap (37% vs 48%) is size-independent, so the regime
+scaler was carrying genuine *setup-quality* signal, not merely size. Raising the
+floor to 0.50 makes that weak cohort bigger. Trial 18's kill conditions are all
+sizing-based and none of them would catch this. **No action** — the primary
+criterion is passing and the trial runs to n=30; but if netR ex-best is still
+negative at 30, this is the first suspect.
+
+### 6. Change / deploy
+
+**None.** Trial 18 is mid-flight at 15/30 with its primary criterion passing and
+no kill condition near. Any entry-, sizing-, or exit-side change now would
+contaminate the only sizing measurement that has ever come in band.
+
+- pytest: **1073 passed** (8.4s), green.
+- Shadow: stale, comparison suppressed pending resync (open action item).
+
+**Queued for the post-trial-18 slot, in priority order:**
+1. `FUTURES_WILDCARD_MIN_ROC` 0.08 → 0.10 (~+$18/mo modelled on the section-5
+   split, at roughly a quarter of the current trade count). **Caveat: this is a
+   trigger-side change, and trigger-side changes are 5-for-5 rejected
+   historically.** Must be validated on `tools/pit_roc_sweep.py` over disjoint
+   windows before it is even proposed, never on the conditional-expectancy split
+   alone.
+2. Re-examine `FUTURES_REGIME_FLOOR_MULT` if trial 18 closes with netR ex-best
+   still negative (see section 5).
+
+### 7. Verdict
+
+The trial is doing its job, and the sizing question open since trial 16 is for the
+first time answering yes. The dollars are still flat (≈$0.20/trade) and the reason
+is now visible and specific: a trail that harvests half of a peak which almost
+never exceeds 1.4R. That is the question for after n=30, not today's.
+
+---
+
 # Daily Audit — 2026-09-01
 
 ---
