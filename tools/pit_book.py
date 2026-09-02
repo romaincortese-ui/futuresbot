@@ -41,12 +41,24 @@ from typing import Any, Callable
 def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: float,
          sl_margin_pct: float = 20.0, scan_s: float = 900.0,
          one_per_scan: bool = True, calm_max: float = 0.75,
-         cooldown_s: float = 0.0,
+         cooldown_s: float = 0.0, compound: bool = False,
          exclude: Callable[[dict], bool] | None = None) -> list[dict[str, Any]]:
     """Walk time-ordered candidates through the live slot book and sizing.
 
     Each candidate needs: ts, sym, exit_ts, net (in R). Optional: calm_ratio.
     cooldown_s freezes a symbol for that long after one of its trades exits.
+
+    compound=True COMPOUNDS realised P&L into the balance, which is what the
+    live bot does: it sizes off actual available margin, and that balance grows
+    and shrinks with results. compound=False (the default, and what every study
+    before 2026-09-02 used) sizes every fill off the SAME starting equity, minus
+    only the margin currently tied up.
+
+    Fixed equity is not simply wrong - it makes cells comparable by removing
+    path dependence, so a cell cannot win by getting lucky early and then
+    betting bigger. But it is not the live bot, and over a long window with a
+    trending equity curve the two diverge materially. Report which one a result
+    used.
     Returns the taken fills, each stamped with:
         risk_usdt  the dollar risk this fill ACTUALLY carried, off available margin
         usd        net R x risk_usdt, the fill's dollar result
@@ -55,6 +67,8 @@ def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: fl
     occupied: list[tuple[float, float]] = []      # (exit_ts, margin_committed)
     per: dict[str, list[float]] = {}
     frozen: dict[str, float] = {}                 # symbol -> cooldown expiry
+    pending: list[tuple[float, float]] = []       # (exit_ts, realised usd)
+    realised = 0.0
     taken: list[dict[str, Any]] = []
     last_scan = -1.0
 
@@ -73,6 +87,15 @@ def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: fl
                 continue
         occupied[:] = [q for q in occupied if q[0] > ts]
         per[x["sym"]] = [q for q in per.get(x["sym"], []) if q > ts]
+        if compound:
+            # bank every trade that has CLOSED by now, before sizing this one
+            still = []
+            for q_ts, q_usd in pending:
+                if q_ts <= ts:
+                    realised += q_usd
+                else:
+                    still.append((q_ts, q_usd))
+            pending = still
         # per-symbol freeze after a prior exit, if one is configured
         if cooldown_s > 0 and frozen.get(x["sym"], 0.0) > ts:
             continue
@@ -80,7 +103,7 @@ def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: fl
             continue
         # GAP 1: size off AVAILABLE margin, not full equity
         committed = sum(m for _, m in occupied)
-        avail = max(0.0, equity - committed)
+        avail = max(0.0, equity + (realised if compound else 0.0) - committed)
         if avail <= 0:
             continue
         risk_usdt = risk_pct * avail
@@ -92,8 +115,11 @@ def take(cands: list[dict[str, Any]], *, slots: int, equity: float, risk_pct: fl
             last_scan = ts // scan_s
         if cooldown_s > 0:
             frozen[x["sym"]] = float(x["exit_ts"]) + cooldown_s
-        taken.append({**x, "risk_usdt": risk_usdt,
-                      "usd": float(x["net"]) * risk_usdt * float(x.get("mult", 1.0)),
+        usd = float(x["net"]) * risk_usdt * float(x.get("mult", 1.0))
+        if compound:
+            pending.append((float(x["exit_ts"]), usd))
+        taken.append({**x, "risk_usdt": risk_usdt, "usd": usd,
+                      "equity_at_entry": equity + (realised if compound else 0.0),
                       "avail_frac": avail / equity if equity else 0.0})
     return taken
 
