@@ -199,6 +199,56 @@ realised risk, so it does not touch the PRIMARY criterion.
 
 ---
 
+## THE REGIME QUESTION IS CLOSED, 2026-09-02
+
+Seventeen formulations have now been tested and refuted. The last one closes it,
+because it measured the quantity itself rather than a proxy for it.
+
+**What we were trying to predict.** The 7-day post-mortem isolated the mechanism
+exactly. Comparing the last 7 days to the 7 before: entries unchanged (3h ROC
+12.9 -> 13.2), losses unchanged (-1.04R in BOTH weeks), win rate 54% -> 50% -
+but mean peak_r fell **1.487 -> 0.948** and take-profits went **5 -> 0**. The
+decomposition is 100% quality: count effect +$5.35, quality effect -$45.31. The
+moves stopped EXTENDING. Wins halved (+1.72R -> +0.79R) while losses held exactly.
+
+**Why the first sixteen attempts could not work.** Every one measured either
+BTC/ETH/SOL - a proxy for a universe the bot does not trade - or the bot's own
+~2.5 closes a day, far too few to detect a change before the drought is over.
+
+**The measurement that closes it** (`tools/pit_universe_followthrough.py`). Of
+every qualifying 8% three-hour move across the ~170-symbol universe, what
+fraction reaches 1R? 1194 signals over 220 days, aggregated into a daily series:
+
+    daily reach-1R:  mean 50%   sd 23%   min 0%   max 100%
+
+    autocorrelation  lag 1 day  -0.174   (n=112 days)
+                     lag 2 day  -0.145
+                     lag 3 day  +0.028
+
+**There is no positive persistence.** Lag-1 is negative (~-1.85 SE, so
+"mean-reverting" is not established either - the defensible claim is only that
+nothing persists). Gating the live book on lagged universe follow-through loses
+money at every threshold: -$16.14, -$11.78, -$8.38, all REFUTED by the placebo
+control.
+
+**The conclusion.** Tail-availability is measurable AFTER the fact and
+unforecastable BEFORE it. The sixteen earlier failures were not failures of
+imagination; they were attempts to time a quantity with no memory. n=112 days is
+the largest clean sample any regime test in this project has had.
+
+**What this leaves.** Not prediction. Sizing down scales wins and losses alike,
+so it moves variance rather than expectancy. Entry selectivity was refuted
+separately (13 price features across two sleeves, nothing at 2 SE). The
+remaining answer is the one the strategy was designed around: a convex sleeve
+buys optionality precisely BECAUSE the tail cannot be timed, and it has to sit
+through droughts.
+
+**Do not reopen without a genuinely new data class** - order book, funding,
+cross-exchange, or the news corpus now accruing. Another price-derived regime
+formulation is not new evidence.
+
+---
+
 ## STANDING METHOD: the PLACEBO CONTROL is mandatory for regime studies
 
 Added 2026-09-02 after it caught a result that had already passed every other
