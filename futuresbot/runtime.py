@@ -4745,6 +4745,15 @@ class FuturesRuntime:
                 "sl_frac_designed": (position.metadata or {}).get("sl_frac_designed"),
                 "peak_r": (position.metadata or {}).get("convex_peak_r"),
                 "mae_r": (position.metadata or {}).get("convex_trough_r"),
+                # ENTRY SLIPPAGE. Stamped on the position since 2026-09-01 and
+                # dropped here ever since, because this record is built field by
+                # field: 119 convex trades carry a measurement that reached no
+                # store. Slippage is the ONE cost that scales with position
+                # size, so it is the central unknown for a 6x funded week, and
+                # it cannot be reconstructed after the fact - the fill price is
+                # nowhere else. Positive = fill WORSE than the signal price.
+                "entry_slippage_bps": (position.metadata or {}).get("entry_slippage_bps"),
+                "signal_price": (position.metadata or {}).get("signal_price"),
             }
         )
         # Fold in any +1R/+2R partial banks so the trade reflects TOTAL realized
@@ -4824,6 +4833,16 @@ class FuturesRuntime:
             except Exception:
                 ts = time.time()
             md = position.metadata or {}
+            # getattr, not attribute access, and a BARE except: this whole
+            # method is wrapped in `except Exception`, so one AttributeError
+            # here would silently drop the ENTIRE feature row rather than just
+            # this field - turning a missing column into a missing corpus.
+            try:
+                _entry_notional = round(float(getattr(position, "contracts", 0) or 0)
+                                        * float(getattr(position, "contract_size", 0) or 0)
+                                        * float(getattr(position, "entry_price", 0) or 0), 6) or None
+            except Exception:  # pragma: no cover - a cost field never costs a row
+                _entry_notional = None
             row = {
                 # Attribution must exist BEFORE a second account does: commingled
                 # rows cannot be separated retroactively.
@@ -4867,6 +4886,19 @@ class FuturesRuntime:
                 "equity_at_open_usdt": md.get("equity_at_open_usdt"),
                 "equity_at_close_usdt": trade.get("equity_at_close_usdt"),
                 "hold_hours": trade.get("hold_hours"),
+                # Execution cost. Added here AND to the trade record together -
+                # the comment above this block records that trial-6 columns were
+                # added to the trade record alone and never reached the corpus
+                # Stage-2 reads. Same bug, third occurrence; fixed on both
+                # surfaces in one commit.
+                #
+                # entry_notional is what turns bps into DOLLARS, and it is
+                # computed from the position rather than back-solved from
+                # margin x leverage, which is None whenever the sizing audit
+                # fields did not populate.
+                "entry_slippage_bps": md.get("entry_slippage_bps"),
+                "signal_price": md.get("signal_price"),
+                "entry_notional_usdt": _entry_notional,
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
