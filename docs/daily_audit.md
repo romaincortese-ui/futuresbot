@@ -1,3 +1,156 @@
+# Daily Audit — 2026-09-03
+
+---
+
+## Automated Assessment (UTC 17:45)
+
+Equity $178.42 (free $147.18, unrealized +$0.23). Deposit boundary 2026-07-21
+still applies — P&L below is realized $ / R only.
+
+### 1. Closed trades, last 24h — 8, all convex, all exiting legally
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | exit | risk% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 09-02 17:46 | SKR_USDT | WILDCARD | LONG | x2 | 1.3h | -1.06 | -3.50 | +0.05 | STOP | 1.97 |
+| 09-02 20:07 | MARSCOIN_USDT | WILDCARD | SHORT | x1 | 6.9h | -1.04 | -2.99 | +0.82 | STOP | 1.67 |
+| 09-02 23:01 | EGLD_USDT | WILDCARD | LONG | x3 | 0.7h | +0.51 | +1.99 | +1.12 | RETENTION_TRAIL | 2.38 |
+| 09-03 08:03 | HEMI_USDT | WILDCARD | LONG | x1 | 1.9h | -1.05 | -3.83 | +0.34 | STOP | 2.23 |
+| 09-03 09:35 | EDGE_USDT | WILDCARD | LONG | x2 | 1.7h | -1.01 | -3.04 | +0.23 | STOP | 1.85 |
+| 09-03 14:55 | XRP_USDT | TREND | LONG | x10 | 2.0h | **+2.85** | +6.79 | +2.91 | TP (+3R) | 1.54 |
+| 09-03 14:59 | ZEC_USDT | TREND | LONG | x10 | 3.8h | **+2.84** | +4.88 | +2.84 | TP (+3R) | 1.11 |
+| 09-03 15:52 | ZEC_USDT | TREND | LONG | x7 | 0.6h | **+2.90** | +9.50 | +2.93 | TP (+3R) | 1.95 |
+
+Net 24h **+$9.80 / +4.94R**, 4W/4L. No illegal exit path: every close is a
+server-side -1R stop, a +3R TREND TP, or the shipped retention trail.
+
+**Concentration caveat, stated plainly:** the three TREND winners are not three
+independent results. They closed inside 57 minutes on one market up-leg
+(btc_24h +5.0%, eth +4.5%, sol +6.8%), and two of them are the same symbol
+re-entered. Today's +$21.16 of TREND P&L is one bet expressed three times. The
+five WILDCARD trades over the same 24h were -$11.37.
+
+**Exchange reconcile:** 19 exchange rows over 96h vs 19 feature-store rows,
+symbol-for-symbol identical. No loss-censoring.
+
+### 1-OPEN. Open positions — WILDCARD 1/3, TREND 1/2
+
+**MAGMA_USDT SHORT x1** (WILDCARD, opened 09-03 02:11Z, held 15.4h)
+- now **+0.21R**; peak +0.27R, giveback **-0.07R**; trough -0.62R
+- TP 47.6% of price away, SL 25.7% away
+- scaler 0.729, risk 1.461% vs 2.410% intended — the gap is the scaler plus
+  contract truncation (margin 11.73 of 19.77 wanted)
+
+**XRP_USDT LONG x8** (TREND, opened 09-03 15:01Z, held 2.6h)
+- now **0.00R** (flat at entry); peak +0.22R, giveback -0.22R; trough -0.52R
+- TP 7.3% of price away, SL 2.6% away
+- scaler 1.0, risk 2.367% — in band; entry RSI 90.9, re-entered six minutes
+  after the previous XRP TREND banked its +3R
+
+Neither has armed the retention trail (arm 1.0R), so both sit on the raw -1R stop.
+
+### 2. Trial 18 — 23/30 closes, ALL THREE pass criteria now green
+
+Excluding the two TAC/BLESS carryovers per the pre-registration.
+
+| | value | criterion |
+|---|---|---|
+| **mean realised risk / trade** | **1.741%** | **[1.6%, 2.2%] — PASS** (median 1.847) |
+| **netR** | **+5.69** | **> 0 — PASS** |
+| **netR ex-best** | **+2.79** | **> 0 — PASS** (was -0.46 yesterday) |
+| net $ | +$7.76 | — |
+| win rate | 14/23 (61%) | — |
+| max single-entry risk | 2.420% | kill at >3.0% — clear |
+| trial drawdown | 9.9% | kill at >20% — clear |
+| equity DD from corpus peak | 2.3% | flag at >20% — clear |
+| by sleeve | WILDCARD 17: **-1.17R / -$8.05** · TREND 6: **+6.86R / +$15.81** | — |
+
+Ex-best crossed zero today, so the criterion that failed yesterday now passes.
+It crossed on the back of the three correlated TREND wins above — the pass is
+real but it is one day old and one market move wide. Seven closes remain.
+
+**Exits:** TP 3 (13%) | stop 8 | other 12 (10 retention trail, 1 preempt, 1 time
+stop). The 10 trail exits realised **0.46x of a mean 1.34R peak** — identical to
+yesterday's reading, and the 3.0R ratchet has still never been reached in 23
+closes. All three TPs this trial are TREND +3R completions; no wildcard has
+reached its +5R TP.
+
+### 3. The finding that outranks the trial: the two sleeves pull opposite ways
+
+Full corpus, since the feature store opened 06-27:
+
+| sleeve | n | win% | meanR | netR | net $ |
+|---|---|---|---|---|---|
+| **TREND** | 20 | 60.0 | **+0.543** | **+10.87** | **+$25.94** |
+| WILDCARD | 50 | 42.0 | -0.058 | -2.91 | +$8.09 |
+| PMT (decommissioned) | 2 | 0.0 | -1.450 | -2.90 | -$3.62 |
+
+TREND is 29% of the convex trades and 76% of the dollars. WILDCARD is
+net-negative in R across 50 closes and negative in both R and $ inside trial 18.
+Recorded, **not acted on**: the wildcard's disable condition is net-negative in
+$ after >=10 trades, and it is +$8.09 in $ across the corpus, so it does not
+fire. Its all-time $ is carried by tails while its median trade bleeds.
+
+### 4. Slot cost — still zero demand
+
+Trial 18 has **zero slot_occupied rows**, same as yesterday. The binding
+constraint is candidate supply, not slot count: the wildcard held 1 of 3 slots
+and TREND 1 of 2 at the time of writing. All-time, deduped by occupancy:
+WILDCARD +7.42R over 11 (of which +9.96R is two +5R tails; ex-top-2 the other
+nine are -2.55R), TREND -0.70R over 3, SQUEEZE -2.05R over 6. No case for a
+fourth slot, and the TREND/SQUEEZE locks remain protective.
+
+**Gates:** ref_not_listed is SAVING (-9.94R over 27 deduped counterfactuals).
+crowded_shorts reads COSTING at +1.55R but n=4, below the 10-row bar — no
+proposal. TREND long-only is SAVING: 17 deduped blocked SHORT signals resolve
+to -5.17R.
+
+### 5. Learner — the one FAVOR verdict does not survive inspection
+
+roc>=12pct reads FAVOR at n=36, +$1.234/trade vs -$0.021, OOS-consistent. It is
+an artefact of one narrow band, not a threshold:
+
+| wildcard entry ROC | n | win% | net $ |
+|---|---|---|---|
+| 8-10% | 15 | 33.3 | -$0.47 |
+| 10-12% | 9 | 33.3 | -$2.15 |
+| **12-15%** | **9** | **77.8** | **+$20.70** |
+| 15%+ | 13 | 46.2 | -$4.32 |
+
+The relationship is non-monotone and the cut point is unstable (cut@11%
++$21.31, cut@13% +$9.85, cut@14% +$9.06). A MIN_ROC lift would be fitting a
+9-trade window. **The ROC-floor hypothesis is closed as unsupported**, not
+queued.
+
+regime_trimmed_hard(<0.5) still reads AVOID on the full corpus (n=27, 37.0%
+win, -13.59R) — yesterday's watch item. It **does not replicate inside trial
+18**, where the direction inverts: scaler<0.75 is +7.37R over 8 (87.5% win)
+against full-size -1.68R over 15. The six entries pinned at the new 0.50 floor
+— the cohort trial 18 created — are +0.398 meanR / +$4.41. Neither reading is
+powered at these n. The watch item stays open and stays unacted.
+
+### 6. Scans and execution — clean
+
+51 movers per wildcard cycle, dominant rejection roc_below_min (~40/51), then
+no_pullback_resume and low_volume_z. Not dormant: a BONER_USDT candidate was
+produced this cycle and vetoed on ref_not_listed. TREND scans its 3 symbols with
+no_new_extreme dominant and 1 symbol_open (XRP held). **Zero** order rejects
+(5003/2015), zero tracebacks, zero SIZE_TRIM lines in the log window.
+
+### 7. Change and deploy
+
+**No change. No deploy.** Trial 18 is at 23/30 with all three pass criteria
+green for the first time; any tunable moved now contaminates the only sizing
+measurement that has ever come in band, and the two candidate levers on the
+board both fail on their own evidence — the ROC lift is a 9-trade artefact, and
+the turnover band 24->12 remains held back as tail-concentrated. Shadow stays
+stale; comparison suppressed pending resync.
+
+**Queued for the trial-19 discussion, not proposed today:** the sleeve split in
+section 3. If WILDCARD is still net-negative in R at trial close, the honest
+next trial is a wildcard question, not another sizing dial.
+
+---
+
 # Daily Audit — 2026-09-02
 
 ---
