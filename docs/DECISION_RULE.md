@@ -25,6 +25,114 @@ increase wearing one's clothes.
 
 ---
 
+# PRE-REGISTERED DECISION RULE — CONVEX TRIAL 19
+
+**Opens AFTER the funded week closes and the withdrawal completes**, not before.
+Written 2026-09-03, while trial 18 is still running, so the rule exists before
+its data does.
+
+## The change: ONE env var
+
+    FUTURES_TREND_MAX_POSITIONS=2  ->  3
+
+Nothing else. Not the universe, not the trigger, not the clock, not the stop,
+and nothing on WILDCARD.
+
+## Why this and not something better
+
+Because after a week of measurement there is nothing better, and this is the
+only candidate that clears the screen without diluting per-fill quality.
+
+**Everything else was tested and refuted**, most of it this week:
+
+| refuted | measurement |
+|---|---|
+| TREND universe expansion | `$/fill` collapses 0.999 -> 0.215 adding 8 majors |
+| TREND trigger 4% -> 5% | -$2.24; the band effect is real but reshuffling eats it |
+| TREND trigger -> 3% / 48h | ex-top-5% -$12.59; supersedes the 2026-08-27 cell |
+| TREND stop width, 0.25x-2.0x | live 3.0x is the peak on all three axes |
+| lower trail arm 0.9R-0.4R | winners cut short outnumber losers rescued 2-3x |
+| 17 regime formulations | all fail the placebo control |
+| convex -> squeeze switch | squeeze marginal contribution -$1.15 |
+| entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
+| WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
+
+## The evidence, and its limits stated with it
+
+    slots  fills     net $  vs live  $/fill  marginal  both halves?
+    1         62   +$28.07  -68.87    0.453       -     no
+    2 LIVE    88   +$96.93   +0.00    1.102  +2.649   base
+    3        102  +$111.82  +14.89    1.096  +1.064    YES
+
+Three properties, and the second is the one that matters:
+
+1. **It clears the boundary-swept half-split** — the only cell to do so in any
+   study this week, and it has now done it on three separate runs (+$9.15
+   completed-bar, +$14.89 intra-bar twice).
+2. **`$/fill` is FLAT**, 1.102 -> 1.096. The third slot is not buying turnover at
+   worse quality; the marginal fill pays +$1.064 against an existing +$1.102.
+   Every symbol addition failed exactly this test.
+3. All three thirds improve: +47.1/-17.6/+67.5 -> +56.2/-20.3/+75.9.
+
+**IT IS UNDER THE BAR.** +$14.89 over 234 days is **$1.91/month** against the
+standing $10 threshold. It is being run because it is the only thing that
+survives scrutiny, NOT because it clears the economics. If the trial passes,
+that is not a reason to expect $10/month from it.
+
+**THE HARNESS ERROR IS 77% OF THE EFFECT.** Calibrated against live TREND over
+the trial-18 window the replay read +$18.55 against +$15.81. The effect is
++$14.89 and the error is up to +$11.40, so this is a 1.3:1 signal. The replay
+also OVERSTATES live, so the estimate is optimistic in the same direction.
+
+**4 slots is identical to 3** because the universe is three symbols and the book
+already enforces one position per symbol. 3 is the structural ceiling, so this
+trial tests the last available unit of TREND capacity.
+
+## Pass criteria (30 TREND closes, or 60 days, whichever first)
+
+TREND books ~2.5 closes/week at 2 slots, so 30 closes is roughly 8-12 weeks.
+This is a SLOW trial and that is a property of the sleeve, not a flaw in the rule.
+
+1. **PRIMARY: `$/fill` not materially below trial 18's TREND baseline.** The
+   whole thesis is that the third slot is non-dilutive. A fill rate that rises
+   while `$/fill` collapses is the failure mode, and it is what killed every
+   universe expansion.
+2. TREND fill rate per week ABOVE the 2-slot baseline — if capacity was not
+   binding, nothing changes and the trial tested nothing.
+3. netR > 0 and netR ex-best > 0.
+
+## Kill conditions
+
+- **Any moment with 3 TREND + 3 WILDCARD positions open AND total margin > 45%
+  of equity.** Peak simultaneous margin measured 35.5% at the current 5-slot
+  ceiling; this trial raises the ceiling to 6 and there is NO portfolio margin
+  cap anywhere on the convex path. This is the kill that matters.
+- TREND `$/fill` below 50% of the 2-slot baseline at n>=15 -> dilution, restore 2.
+- Trial drawdown > 20% of equity -> restore 2.
+- Rollback is one env var **plus a redeploy** — Railway marks variable-only
+  changes SKIPPED and the running process keeps the old environment.
+
+## What this trial does NOT change
+
+WILDCARD is untouched: 3 slots, 8% trigger, 5R cap, retention 0.50 with the 3R
+-> 0.75 ratchet. TREND keeps ETH/XRP/ZEC, the 4% trigger, the 24h clock, the
+3.0x stop and long-only. The regime scaler is untouched, though see below.
+
+## The one thing that might displace this
+
+`regime_size_mult` is the only per-trade feature to cross 2 SE in any study:
+winners 0.756 against losers 0.929, **-2.26 SE** in trial 18, directionally
+consistent three times (-1.28 SE on all history). The scaler appears to size UP
+into the setups that do not extend. Against it: n=23, 7 features tested, and it
+priced net-positive on live fills on 2026-08-26.
+
+If it still reads below -2 SE at n>=30 when trial 18 closes, it is the better
+trial-19 candidate than this one, because it has a mechanism and this has only
+a screen result. Check before opening.
+
+
+---
+
 # PRE-REGISTERED DECISION RULE — CONVEX TRIAL 18 (opened 2026-08-29)
 
 **Under test: the regime scaler's 0.25 FLOOR.** `FUTURES_REGIME_FLOOR_MULT`
