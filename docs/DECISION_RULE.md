@@ -220,6 +220,35 @@ Revisit after the funded window closes, on its own trial.
 
 ---
 
+## DEPLOY TRAP: `railway redeploy` re-runs the OLD COMMIT and can clobber a push
+
+Measured 2026-09-03. `git push` triggers a GitHub auto-deploy of the new commit.
+`railway redeploy` does NOT build the branch tip -- it re-runs the *latest
+existing deployment*, i.e. the commit already live. Running both together is a
+race, and redeploy wins:
+
+    21:45:31  auto-deploy  5f36a14 (the push)      -> REMOVING (superseded)
+    21:45:33  railway redeploy                     -> d3130ed (the OLD commit), SUCCESS
+    21:46:54  railway redeploy, tried again        -> d3130ed AGAIN
+
+The new code never went live and nothing reported an error. Both deployments
+return exit 0 and both say SUCCESS.
+
+**The rule.** After a `git push`, do NOT redeploy -- wait for the auto-deploy.
+Verify with the commit hash, never with deployment status:
+
+```
+railway deployment list --json | python -c "import json,sys;
+d=json.load(sys.stdin)[0]; print(d['status'], d['meta']['commitHash'][:10])"
+```
+
+`railway redeploy` is for restarting the SAME code -- which is exactly what an
+env-var change needs, since Railway marks variable-only changes SKIPPED and the
+running process keeps the old environment. Code change -> push and wait.
+Variable change -> redeploy. Never both at once.
+
+---
+
 ## CARRYOVER: the first two closes of trial 18 are NOT trial 18 trades
 
 Trial 18's environment was written at 2026-08-28 23:46:18Z but the container did
