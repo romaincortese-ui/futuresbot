@@ -3413,6 +3413,19 @@ class FuturesRuntime:
                  "closes to that date — deliberately frozen across trials, so a "
                  "verdict cannot be re-tuned after seeing the week.</i>",
                  ""]
+        # The balance chart goes FIRST: the owner asked for a trend readable in
+        # one look, and a reader who has to scroll past a KPI table to find it
+        # has not been given that. Fails soft - a chart is not worth an
+        # exception in the one command used to decide whether to withdraw.
+        try:
+            from futuresbot.equity_chart import balance_block
+            chart = balance_block(self._feature_rows_cached(), days=7.0)
+            if chart:
+                lines.extend(chart)
+                lines.append("")
+        except Exception as exc:  # pragma: no cover - presentation only
+            log.debug("report: balance chart failed: %s", exc)
+
         lines.append("<code>KPI                  value          verdict</code>")
         for k in kpis:
             icon = {"Good": "✅", "Bad": "❌", "NA": "⚪"}.get(k.verdict, "⚪")
