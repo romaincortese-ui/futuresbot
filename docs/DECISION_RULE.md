@@ -236,6 +236,46 @@ unforecastable BEFORE it. The sixteen earlier failures were not failures of
 imagination; they were attempts to time a quantity with no memory. n=112 days is
 the largest clean sample any regime test in this project has had.
 
+**FORECASTING vs DETECTION - the owner's follow-up, and it is a fair
+distinction.** The autocorrelation above answers whether yesterday predicts
+tomorrow. It does not answer whether the bot can recognise it is CURRENTLY
+inside a drought, and a state can be unforecastable yet persistent enough that
+recognising it pays. `tools/pit_drought_persistence.py` settles it on 116 days:
+
+| test | result |
+|---|---|
+| autocorrelation, every lag 1-14 | lag1 **-0.188** (-2.0 SE); lag 3-14 ~0 |
+| trailing 7d vs next 7d | **-0.263** |
+| below-median run length | **mean 1.90 days, MAX 5** |
+| after 1 dry day -> next day | **52%** |
+| after 2 dry days -> next day | **58%** |
+| unconditional | **50%** |
+
+Detection is possible and worthless, for three independent reasons: the state
+lasts under two days on average, the conditional runs the WRONG WAY (after dry
+days conditions are marginally BETTER, so a detector throttles at the worst
+moment), and the signal is tiny - see below.
+
+**THE AMPLIFICATION, which is the finding worth keeping.** The week that cost
+$40 had a universe reach-1R of **41% against a 50% baseline**. With a daily sd
+of 22% over 7 days the standard error is 8.4 points, so that week was a
+**1.1 SE deviation** - statistically unremarkable.
+
+    universe mean peak   1.62 -> 1.24   (-24%)
+    bot mean peak        1.49 -> 0.95   (-36%)
+    bot P&L             +$32.07 -> -$7.89
+
+**Most of this bot's P&L variance is its own sample size, not the market's.** A
+28-trade convex book with a fat-tailed payoff amplifies an ordinary wobble in
+follow-through into a large swing. That is not a malfunction and not a regime -
+it is what a small convex book does, and it is why no detector can help.
+
+The corollary points somewhere the seventeen refuted studies never reached: the
+lever that reduces this amplification without touching expectancy is MORE TRADES
+PER UNIT TIME. That is not a recommendation - the trigger and slot sweeps failed
+on their own terms and "trade more" needs its own evidence - but it is the first
+framing that is not about prediction.
+
 **What this leaves.** Not prediction. Sizing down scales wins and losses alike,
 so it moves variance rather than expectancy. Entry selectivity was refuted
 separately (13 price features across two sleeves, nothing at 2 SE). The

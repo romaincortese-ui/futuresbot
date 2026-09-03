@@ -161,6 +161,14 @@ def main() -> int:
 
     daily = [(k, 100 * sum(1 for z in byday[k] if z["peak"] >= 1) / len(byday[k]))
              for k in sorted(byday) if len(byday[k]) >= 5]
+    try:
+        with open("/data/universe_followthrough_daily.json", "w", encoding="utf-8") as fh:
+            json.dump({"daily": daily,
+                       "signals": [{"ts": z["ts"], "peak": z["peak"]} for z in SIG]},
+                      fh)
+        print("  (daily series cached to /data/universe_followthrough_daily.json)")
+    except Exception as exc:
+        print("  (cache failed: %s)" % exc)
     print()
     print("=" * 92)
     print("B. IS IT AUTOCORRELATED? does yesterday's follow-through predict today's")
