@@ -242,6 +242,11 @@ railway deployment list --json | python -c "import json,sys;
 d=json.load(sys.stdin)[0]; print(d['status'], d['meta']['commitHash'][:10])"
 ```
 
+**It has not bitten before.** Every deployment from 2026-09-01 onward was
+checked against `git rev-list --count`: all went strictly forward except the two
+redeploys above, both mine, both today. No past feature was silently reverted,
+so nothing in the trial record needs re-auditing for this.
+
 `railway redeploy` is for restarting the SAME code -- which is exactly what an
 env-var change needs, since Railway marks variable-only changes SKIPPED and the
 running process keeps the old environment. Code change -> push and wait.
