@@ -171,9 +171,14 @@ def balance_block(rows: Iterable[dict], *, days: float = 7.0,
             % (arrow, int(round(days)), first, last))
     out = [head]
     if flows:
-        detail = ", ".join("%s $%+.2f on %s" % ("deposit" if d > 0 else "withdrawal",
-                                                d, pts[i][0]) for i, d in flows)
-        out.append("<i>includes %s — traded move is $%+.2f (%+.1f%%)</i>"
+        # The flow size is INFERRED from the balance step, not read from a
+        # transfer ledger, so it absorbs whatever the bot earned or lost on the
+        # same day. A $900 deposit on a day that made $2 reads as $902. Say
+        # "~" rather than print a two-decimal figure that claims to be exact.
+        detail = ", ".join("%s ~$%+.0f on %s" % ("deposit" if d > 0 else "withdrawal",
+                                                 d, pts[i][0]) for i, d in flows)
+        out.append("<i>includes %s — traded move is $%+.2f (%+.1f%%), that "
+                   "day's own P&L absorbed into the transfer</i>"
                    % (detail, traded, pct))
     else:
         out.append("<i>traded move $%+.2f (%+.1f%%)</i>" % (traded, pct))
