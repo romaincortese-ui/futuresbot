@@ -37,7 +37,11 @@ def rt(tmp_path, monkeypatch):
     return r
 
 
-def _row(pnl, r_mult, ts=2000.0, **kw):
+# ts must leave room for the 7h hold: with TRIAL_START=1000 a trade exiting at
+# ts=2000 would have OPENED at -23200, before the trial began. Harmless while
+# rows were filtered by exit time; wrong once they are filtered by entry time,
+# which is the pre-registered rule. 29800 = TRIAL_START + 8h.
+def _row(pnl, r_mult, ts=29800.0, **kw):
     row = {"ts": ts, "kind": "WILDCARD", "pnl_usdt": pnl, "r_multiple": r_mult,
            "risk_pct_actual": 2.41, "equity_at_entry": 165.0,
            "equity_at_close_usdt": 182.56, "margin_used": 22.3, "leverage": 2,
@@ -81,7 +85,7 @@ def test_renders_the_balance_table(rt, monkeypatch):
 def test_rows_outside_the_trial_are_excluded(rt, monkeypatch):
     monkeypatch.setattr(rt, "_feature_rows_cached",
                         lambda *a, **k: [_row(99.0, 9.0, ts=500.0),   # before start
-                                         _row(17.94, 5.09, ts=2000.0)])
+                                         _row(17.94, 5.09, ts=29800.0)])
     msg = rt._build_simulation_message()
     assert "1 closed" in msg
     assert "99" not in msg

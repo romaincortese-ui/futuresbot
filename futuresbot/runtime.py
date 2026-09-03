@@ -2877,6 +2877,20 @@ class FuturesRuntime:
         self._feature_rows_cache = (now, rows)
         return rows
 
+    @staticmethod
+    def _row_opened_at(r: dict[str, Any]) -> float:
+        """Entry time of a close row: `ts` is the EXIT stamp.
+
+        A trial must be scored on the trades it CAUSED, not on the ones that
+        happened to settle inside it. Counting trial 18 by exit time read
+        17 closes and +$2.58; by entry time it was 15 and -$2.04, because two
+        positions opened under trial 17's sizing closed inside 18. The rule is
+        pre-registered in docs/DECISION_RULE.md and was implemented in /status
+        only - /report and /simulation kept filtering on `ts` alone, so the two
+        commands disagreed about the same trial on the same day."""
+        return (float(r.get("ts") or 0.0)
+                - float(r.get("hold_hours") or 0.0) * 3600.0)
+
     def _best_weekly_close_usd(self) -> float | None:
         """Best realized close P&L ($) in the trailing 7 days, for the record
         notification. None when there are no closes in the window."""
@@ -3120,9 +3134,7 @@ class FuturesRuntime:
         # Entry time is recoverable: exit minus hold. A row missing hold_hours
         # counts as in-window rather than being dropped — silently deleting
         # trades is the worse failure and this project has already had one.
-        def _opened_at(r: dict) -> float:
-            return (float(r.get("ts") or 0.0)
-                    - float(r.get("hold_hours") or 0.0) * 3600.0)
+        _opened_at = self._row_opened_at
 
         settled = [r for r in self._feature_rows_cached()
                    if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
@@ -3355,9 +3367,14 @@ class FuturesRuntime:
 
         now_t = time.time()
         days = max(0.01, (now_t - TRIAL_START) / 86400.0)
-        rows = [r for r in self._feature_rows_cached()
-                if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
-                and float(r.get("ts") or 0.0) >= TRIAL_START]
+        # ENTRY time, not exit time - see _row_opened_at. /status has always
+        # done this; /report, the command the trial verdict is actually read
+        # from, did not, so the two printed different n for the same trial.
+        _settled = [r for r in self._feature_rows_cached()
+                    if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
+                    and float(r.get("ts") or 0.0) >= TRIAL_START]
+        rows = [r for r in _settled if self._row_opened_at(r) >= TRIAL_START]
+        _carried = len(_settled) - len(rows)
 
         # Exchange truth for the integrity check, and the lifetime figure.
         ex_n = None
@@ -3426,6 +3443,15 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover - presentation only
             log.debug("report: balance chart failed: %s", exc)
 
+        # Name the exclusion rather than quietly applying it: the owner has seen
+        # this trial's numbers under the old exit-time count, and a figure that
+        # silently drops is worse than one that explains itself.
+        if _carried:
+            lines.append("<i>excludes %d close%s that opened before this trial "
+                         "began — scored by entry time, not exit time</i>"
+                         % (_carried, "" if _carried == 1 else "s"))
+            lines.append("")
+
         lines.append("<code>KPI                  value          verdict</code>")
         for k in kpis:
             icon = {"Good": "✅", "Bad": "❌", "NA": "⚪"}.get(k.verdict, "⚪")
@@ -3470,7 +3496,8 @@ class FuturesRuntime:
         rows = sorted(
             (r for r in self._feature_rows_cached()
              if str(r.get("kind") or "").upper() in shadow.CONVEX_SLEEVES
-             and float(r.get("ts") or 0.0) >= TRIAL_START),
+             and float(r.get("ts") or 0.0) >= TRIAL_START
+             and self._row_opened_at(r) >= TRIAL_START),
             key=lambda r: float(r.get("ts") or 0.0))
 
         # Open positions, so the figure matches what the account shows.
