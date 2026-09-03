@@ -101,3 +101,46 @@ def test_report_calls_it_defensively():
     assert "balance_block" in src, "the chart is not wired into /report"
     seg = src[src.index("balance_block") - 400:src.index("balance_block") + 400]
     assert "try:" in seg and "except Exception" in seg
+
+
+def test_a_day_with_no_closes_is_carried_forward_not_dropped():
+    """THE DROUGHT CASE. The feature store only has rows for closed trades, so a
+    quiet day produces none. Dropping it would draw 28-29-31 as three adjacent
+    columns and hide the gap - the one thing this account needs to see."""
+    now = time.time()
+    day = 86400
+    rows = [{"ts": now - 4 * day, "equity_at_close_usdt": 100.0},
+            {"ts": now - 1 * day, "equity_at_close_usdt": 130.0}]
+    pts = daily_balances(rows, days=7, now_ts=now)
+    labels = [k for k, _ in pts]
+    # day -4 through today: the two silent days between, plus today
+    assert len(labels) == 5, labels
+    assert [v for _, v in pts] == [100.0, 100.0, 100.0, 130.0, 130.0]
+
+
+def test_gap_fill_cannot_run_away():
+    now = time.time()
+    rows = [{"ts": now - 6 * 86400, "equity_at_close_usdt": 100.0},
+            {"ts": now - 60, "equity_at_close_usdt": 110.0}]
+    assert len(daily_balances(rows, days=7, now_ts=now)) <= 8
+
+
+def test_the_lowest_day_is_still_drawn():
+    """At level 0 the minimum column is blank and the day disappears - which
+    looks identical to missing data."""
+    lines = render([("01", 100.0), ("02", 200.0)], height=6)
+    bottom = lines[-3]          # last data row, above the axis rows
+    assert bottom.count("█") + bottom.count("▁") > 0
+    body = "\n".join(lines[:-2])
+    assert "▁" in body or bottom.rstrip()[-1] != "┤"
+
+
+def test_silence_at_the_right_edge_is_shown():
+    """A bot that stopped trading 3 days ago must not draw a chart that ends 3
+    days ago and looks current."""
+    now = time.time()
+    rows = [{"ts": now - 6 * 86400, "equity_at_close_usdt": 170.0},
+            {"ts": now - 3 * 86400, "equity_at_close_usdt": 152.0}]
+    pts = daily_balances(rows, days=7, now_ts=now)
+    assert len(pts) == 7, pts                 # runs all the way to today
+    assert [v for _, v in pts][-3:] == [152.0, 152.0, 152.0]

@@ -40,7 +40,10 @@ def daily_balances(rows: Iterable[dict], *, days: float = 7.0,
     import time as _t
     now = _t.time() if now_ts is None else now_ts
     cut = now - days * 86400.0
-    per: dict[str, tuple[float, float]] = {}
+    # keyed by UTC day ORDINAL, not by an "%m-%d" string: parsing a month-day
+    # without a year is ambiguous, fails on Feb 29, and changes behaviour in
+    # Python 3.15. Ordinals also make the year boundary a non-event.
+    per: dict[int, tuple[float, float, str]] = {}
     for r in rows:
         try:
             ts = float(r.get("ts") or 0.0)
@@ -49,10 +52,34 @@ def daily_balances(rows: Iterable[dict], *, days: float = 7.0,
             continue
         if ts < cut or eq <= 0:
             continue
-        key = dt.datetime.fromtimestamp(ts, dt.UTC).strftime("%m-%d")
+        d = dt.datetime.fromtimestamp(ts, dt.UTC)
+        key = d.toordinal()
         if key not in per or ts > per[key][0]:
-            per[key] = (ts, eq)
-    return [(k, per[k][1]) for k in sorted(per)]
+            per[key] = (ts, eq, d.strftime("%m-%d"))
+    if not per:
+        return []
+
+    # CARRY QUIET DAYS FORWARD. The feature store only holds rows for CLOSED
+    # TRADES, so a day the bot took nothing produces no row. Plotted as-is the
+    # axis would read 28-29-31 with three evenly spaced columns and the drought
+    # would be invisible - the one thing this account most needs to see. A day
+    # with no closes is a day the balance did not move, so repeat it.
+    # ...and carry to TODAY, not to the last close. A bot that stopped trading
+    # three days ago would otherwise draw a chart ending three days ago that
+    # looks perfectly current. The silence at the RIGHT EDGE is the drought
+    # signal that matters most.
+    lo_d = min(per)
+    hi_d = max(max(per), dt.datetime.fromtimestamp(now, dt.UTC).toordinal())
+    out: list[tuple[str, float]] = []
+    carry = per[lo_d][1]
+    for k in range(lo_d, min(hi_d, lo_d + 400) + 1):
+        if k in per:
+            carry = per[k][1]
+            lbl = per[k][2]
+        else:
+            lbl = dt.date.fromordinal(k).strftime("%m-%d")
+        out.append((lbl, carry))
+    return out
 
 
 def detect_flows(points: Sequence[tuple[str, float]]) -> list[tuple[int, float]]:
@@ -94,8 +121,11 @@ def render(points: Sequence[tuple[str, float]], *, height: int = 7) -> list[str]
     if span <= 0:                       # flat week: draw a midline, say so
         return ["  %s  flat at $%.2f" % ("─" * (COL_W * len(points)), hi)]
 
-    # column heights in eighths, so a 7-row chart resolves 56 levels
-    levels = [int(round((v - lo) / span * (height * 8 - 1))) for v in vals]
+    # Column heights in eighths, so a 7-row chart resolves 56 levels. The floor
+    # is 1, not 0: at level 0 the lowest bar draws as blank space and the day
+    # vanishes from the chart entirely, which is indistinguishable from missing
+    # data. Every day present in the series must be visible as a day.
+    levels = [1 + int(round((v - lo) / span * (height * 8 - 2))) for v in vals]
     lab_w = max(len("$%.2f" % hi), len("$%.2f" % lo))
     lines: list[str] = []
     for row in range(height - 1, -1, -1):
