@@ -3340,6 +3340,24 @@ class FuturesRuntime:
                 lines.append(f"  Risk at SL: <b>{stop_risk_text}</b>{stop_risk_pct_text}")
             if self._available_slots() > 0:
                 lines.append(self._signal_line(signal))
+            # PORTFOLIO MARGIN, as a FRACTION OF EQUITY. The pre-registered kill
+            # condition for trial 19 is "3 TREND + 3 WILDCARD open AND total
+            # margin > 45% of equity", and there is no portfolio margin cap
+            # anywhere on the convex path - so this is the guard. Until now the
+            # owner had to sum up to six per-position margins and divide, in
+            # their head, in real time. The trial raises the position ceiling
+            # to 6 and the deposit raises the notional 6.3x, so the one number
+            # the condition is stated in was the one number never printed.
+            try:
+                _eq = float(self._last_known_equity() or 0.0)
+                _mgn = float(self._total_open_margin() or 0.0)
+                if _eq > 0 and _mgn > 0:
+                    _frac = _mgn / _eq * 100.0
+                    _flag = " ⚠️ over the 45% kill line" if _frac > 45.0 else ""
+                    lines.append("<i>portfolio margin ${:.2f} = <b>{:.1f}%</b> "
+                                 "of equity{}</i>".format(_mgn, _frac, _flag))
+            except Exception as exc:  # pragma: no cover - presentation only
+                log.debug("status: portfolio margin line failed: %s", exc)
         last_trade = self._last_trade_line()
         if last_trade:
             lines.append("━━━━━━━━━━━━━━━")
