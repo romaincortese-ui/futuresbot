@@ -911,9 +911,43 @@ lands in it.
 
 ## Operational preconditions
 
-1. **Drawdown brake ON before the deposit.** `USE_DRAWDOWN_KILL=1` is already
-   set; the convex sleeves have never been wired to it. `FUTURES_CONVEX_DRAWDOWN
-   _BRAKE=1` is the missing flag. Live thresholds are `DRAWDOWN_HALT_PCT=0.25`
+1. ~~**Drawdown brake ON before the deposit.**~~ **REFUTED 2026-09-04 by replay,
+   before funding. Do NOT set `FUTURES_CONVEX_DRAWDOWN_BRAKE=1`.**
+
+   This precondition was written 2026-08-29 without a replay. `tools/
+   pit_drawdown_brake.py` replays the brake through trials 17+18 (32 convex
+   entries), and three independent reconstructions (replay anchors, the bot's
+   own `_build_equity_curve`, and a pass using the bot's live equity snapshots
+   from the logs) agree:
+
+   - THROTTLE (x0.5) would have fired on **18 of 32 entries**; 29-31 of 32 once
+     its own halving feeds back, because halved winners keep equity under the
+     line. HALT never (max 30d dd 14.6%).
+   - It would have turned the window's **+$16.22 into -$0.24 to +$5.32** — a
+     cost of $10.90 (truncation applied) to $16.46 (bot's own anchors, which
+     also halve the +$9.50 ZEC winner of 09-03 15:17). Most or all of the profit.
+   - **Expectation is NEGATIVE on this account.** Over 08-05 -> 09-04 (71
+     convex entries, 20 gated), trades entered while >=8% under the 30-day peak
+     averaged **+$0.90 (60% wins) against +$0.51 (49%)** when NORMAL — being in
+     drawdown forecast BETTER trades, not worse. Bootstrap over 121 closes:
+     P(brake helps) = 15%. Every throttled stretch in the anchored history was
+     net-positive.
+   - The 08-22 peak ($182.59) is what the account has sat 2-14% below for a
+     month. A point check reading 0.5% dd on 09-04 was true only because equity
+     was $0.36 off that peak at the instant.
+
+   **Post-deposit it is worse, not safer.** The curve is flow-invariant, so a
+   $900 deposit lifts every historical point and RESETS the brake to ~0% dd.
+   But 8% of ~$1,083 is ~$86 — and a P10 week at the new size is -$86. **A
+   single ordinary bad week lands on the throttle line.** With open positions'
+   unrealised P&L moving the live tip $8-9/hour, it is a coin flip whether the
+   funded week's first red day halves every subsequent entry.
+
+   The "shrink dials pay" finding (streak throttle, regime scaler) does not
+   transfer: those key on loss STREAKS; this keys on equity LEVEL against a
+   trailing peak, and it landed on winning stretches. Rejected on measurement,
+   filed with the other rejections. `USE_DRAWDOWN_KILL=1` stays set — it is inert
+   on the convex path without the flag and harmless. Live thresholds are `DRAWDOWN_HALT_PCT=0.25`
    and `DRAWDOWN_SOFT_PCT` defaulting to 0.08, both over 30 days. Note the halt
    at 25% sits ABOVE the worst observed week (15.3%), so the halt is a backstop
    for something never yet seen; the 8% soft brake is what will actually
