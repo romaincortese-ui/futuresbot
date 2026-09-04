@@ -57,6 +57,66 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## QUEUED FOR AFTER THE FUNDED WEEK (opened 2026-09-04)
+
+Nothing here ships during the funded week. Each item needs a deploy, and a
+deploy restarts the bot; none is worth a restart while the week is running.
+Ordered by value, not by effort.
+
+**1. Candidate-ranking instrumentation.** APPROVED by the owner 2026-09-04 for
+after the week. The 48h missed-opportunity audit found $16.81 of genuine misses
+and **zero dollars of it behind any filter** — UAI SHORT $10.05, CP SHORT $2.35,
+PONS LONG $2.27, SKR LONG $2.14, all of which passed every detector and
+post-detector gate. They were lost to which candidate the scan ranked first, or
+to one-entry-per-pass. That is the only place real money was left, and it is a
+PRIORITISATION question, not a filter question. Log the ranked candidate list
+and the entry decision per pass so the question becomes answerable. Widens no
+aperture, so it carries none of the loosening risk the rejected list warns about.
+
+**2. `/why` prices counterfactuals at TODAY's equity, not the equity in force.**
+It reported "gates saved $100.86 over 7d"; the same 24 decisions at the ~$180
+actually running are worth **-$16.55**. A ~6x overstatement on a number the
+owner reads daily, and it will get worse now that equity is $1,100 while
+historical rows were sized at $180. Direction is right, magnitude is not.
+
+**3. `/report` defects, from the funding-day audit.** In severity order:
+   - **Risk sizing KPI cannot fail.** `base = margin_wanted x sl_margin_pct /
+     equity_at_entry`, and `margin_wanted = risk_pct x available x 100 /
+     sl_margin_pct`, so both terms cancel and `base == risk_pct x 100`
+     identically. The KPI whose note says "off by more than 0.15 VOIDS the
+     trial" is a readback of an env var. `risk_cap_bound` is already stamped on
+     every entry and never read — the fix is free.
+   - **Tail-loss KPI grades its own baseline as failing.** Verdict is an
+     absolute count (`len(tail) <= 1`) while its printed note is a rate
+     (`BASE_TAIL_RATE * n`). The 63-close reference sample it was derived from
+     scores Bad twice over (8 tails; worst -3.79R trips the -2R branch), and at
+     the baseline rate P(Bad) is 91.6% at the n=30 verdict point. Since
+     `overall()` returns MIXED whenever any KPI is Bad, this single row makes
+     "ON TRACK" structurally near-unreachable. Fix at a trial boundary, never
+     mid-trial — the thresholds are pre-registered and frozen on purpose.
+   - Drawdown NA fallback is a deterministic false Good when equity stamps are
+     missing — a ledger defect renders as a green tick.
+   - Regime coverage clamps to bar 0 beyond ~21 days, so a 60-day trial counts
+     its first ~39 days as good coverage on data that does not exist.
+   - Ledger integrity prints "MISSING ROWS" when rows EXCEED the exchange count,
+     sending the reader after absent rows when the fault is duplicates.
+   - `$/fill` does not exist in the runtime at all (only in `tools/pit_*.py`),
+     so trial 19's PRIMARY criterion cannot be evaluated from `/report`.
+
+**4. `no_new_extreme` is unpriced.** Every other gate has measured dollars in
+the gate-cost ledger; this one has zero rows, and it is the binding constraint
+on TREND — the sleeve that produced all of trial 18's profit. A 7,600-bar-per-
+symbol replay put taken-vs-blocked at +0.49 pts / 1.07 SE with heavily
+overlapping windows, i.e. no measurable edge either way; it is a selectivity
+filter (2,010 signals -> 342) rather than an edge filter. That is a substitute
+for the real instrument, not the instrument.
+
+**5. Consider RAISING the turnover floor.** Position notional went from ~$247 to
+**$1,461** with the deposit, so participation scaled 5.9x against an unchanged
+$2M floor. At the thin end of the universe a single position is 1-3% of a full
+day's volume. This is the one change today's numbers argue for, and it TIGHTENS
+rather than loosens.
+
 ## TRIAL 18 FINAL — closed 2026-09-04 10:57 UTC by the funding re-stamp
 
 27 closes by ENTRY-time membership (not the 25 scored at 09:00; USELESS and ZEC
