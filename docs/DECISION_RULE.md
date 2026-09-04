@@ -57,6 +57,79 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## REJECTED 2026-09-04: the two all-time-high hypotheses
+
+Both proposed by the owner after watching the bot buy ZEC at 1036.54 on
+2026-09-04, a fresh peak on the whole available record. Both tested with the
+full control stack. Both rejected — but for OPPOSITE reasons, and the
+difference matters for how much weight each refutation carries.
+
+### A. "Do not enter LONG at an all-time high" — REJECTED, no sample
+
+Fires on **3 of 97** convex LONG entries; only 2 are closed and scoreable.
+
+    threshold        n   booked $   perm p   ex-top5   half-split
+    at the peak      2     -0.93     0.709    -0.945      fails
+    within 2%        6     -6.57     0.394    -0.130      fails
+
+Three defects, any one of them fatal:
+- **CIRCULAR.** The hypothesis came from one ZEC trade and ZEC dominates every
+  cohort that tests it: 1 of 2 at 0%, 5 of 6 at 2%, 12 of 14 at 10%. All 13 ZEC
+  near-peak entries fall inside a single 14-day rally, so the effective
+  independent sample is about three episodes, not ten trades.
+- **THE LABEL IS A PROXY EXACTLY WHERE IT BITES.** All 22 TREND entries sit on
+  proxy-history symbols; there is not one true-ATH TREND observation in the
+  corpus. ZEC's real all-time high is ~$5,900 from 2016, so 1036.54 is a
+  3.7-year MEXC-futures high, not an all-time high at all.
+- **THE CORPUS CANNOT RESOLVE ANY PER-TRADE FILTER.** The 96-trade book is
+  +$37.01 gross and **-$15.47 ex-top-5**. 100% of the P&L sits in 5% of rows, so
+  a filter study returns whichever sign the outlier assignment happens to give.
+
+**Shipping it would be actively harmful.** TREND requires a new 24h extreme by
+construction, so a "do not buy near the multi-month high" veto is a TREND
+killswitch that fires precisely when a trend is working. At the 2% threshold it
+refuses ZEC 2026-09-03 15:17 (+$9.50, third-largest trade in the book) — about
+-$57 at funded size, a whole month's envelope, to avoid a class never shown to
+lose. Power arithmetic: resolving anything short of a catastrophic effect needs
+1 to 11 years of live data at the observed fire rate.
+
+Genuinely new ground, though: `pit_loss_context.py` computes every one of its 13
+features inside a 24-HOUR window (`H24 = 96` bars), so distance-from-multi-month-
+peak was never tested. This is not a rerun of that refutation.
+
+### B. "SHORT into all-time highs" — REJECTED, and strongly
+
+The opposite situation: abundant evidence, all pointing one way. **All 27 cells
+negative** (3 horizons x 3 stop widths x 3 break sizes), where chance alone
+predicts ~1.4 apparent winners.
+
+    de-clustered ATH short   n=660   mean -0.1436R   t = -4.96   win 42.7%
+    random short, matched    n=3304  mean -0.0782R   -> ATH is 0.065R WORSE
+    ex-top-5%                        mean -0.2307R   -> worse, not outlier-borne
+    boundary-swept half-split        fails 0 of 7 boundaries
+    genuine-ATH subset       n=396   mean -0.1593R   -> WORSE than the proxy half
+
+**Mechanism: 73% of ATH bars are followed by another ATH bar within 24h.** The
+rule shorts into continuation, structurally. Exit kinds were 62% timeout, 28%
+stop, 10% trail, and the 5R target never paid once.
+
+Two nulls worth keeping:
+- **Time-matched null**: same calendar moments, random symbol instead of the one
+  making the high, returned **+0.201R** — the ATH short sits at the **0.0
+  percentile**, losing to all 2000 draws. Those moments did offer short edge;
+  the symbol printing the high was the worst possible pick, by -0.26R.
+- **Near-high null**: shorts entered **3-8% below** the peak returned
+  **+0.283R**. So it is not "shorting strength" that fails — shorting strength
+  slightly off the high is the better half. It is specifically AT THE PEAK.
+
+Cost if shipped: about -$23/month against a +/-$60 envelope. No haircut rescues
+it; haircuts move a replay result toward zero and cannot flip a sign.
+
+**OPEN, not rejected:** the near-high short (+0.283R, 3-8% below peak) is an
+unexplored signal in this data. It has not been swept, gated, half-split or
+placebo'd, and it lives on the measured-negative side of the book. Do not act on
+it; note it.
+
 ## QUEUED FOR AFTER THE FUNDED WEEK (opened 2026-09-04)
 
 Nothing here ships during the funded week. Each item needs a deploy, and a
