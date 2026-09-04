@@ -80,7 +80,17 @@ def build_learning_digest(store_rows: list[dict], shadow_rows: list[dict], *,
 
     convex = [r for r in store_rows
               if str(r.get("kind") or "").upper() in CONVEX_SLEEVES]
-    trial = [r for r in convex if float(r.get("ts") or 0) >= trial_start]
+    # ENTRY time, not exit time. `ts` is the exit stamp; a trade opened under
+    # the previous trial's sizing and settled inside this one is not this
+    # trial's trade. /status, /report and /simulation were corrected on
+    # 2026-09-04; this was the fourth surface still counting by exit alone,
+    # and the first trial-19 digest would have claimed three trial-18
+    # carryovers as its own. (The shadow filter below is NOT changed: a shadow
+    # row is an untaken signal, and its ts is when it fired.)
+    trial = [r for r in convex
+             if float(r.get("ts") or 0) >= trial_start
+             and (float(r.get("ts") or 0)
+                  - float(r.get("hold_hours") or 0) * 3600.0) >= trial_start]
     rs = [float(r.get("r_multiple") or 0) for r in trial]
     lines = ["🧭 <b>Weekly learning digest</b>", "━━━━━━━━━━━━━━━"]
     if rs:

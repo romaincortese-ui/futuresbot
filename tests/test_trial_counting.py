@@ -104,3 +104,16 @@ def test_recorded_closes_defaults_to_the_row_count():
     rows = [{"ts": 100.0, "pnl_usdt": 1.0, "r_multiple": 0.5}] * 27
     kpis = build_scorecard(rows, days=6.3, exchange_closes=27)
     assert next(k for k in kpis if k.name == "Ledger integrity").verdict == "Good"
+
+
+def test_the_weekly_digest_scores_the_trial_by_ENTRY_time():
+    """Fourth surface. Found by an adversarial review on funding day: with three
+    trial-18 positions open across the re-stamp, the first trial-19 digest
+    would have counted all three as trial-19 closes with their R and $."""
+    import inspect
+
+    from futuresbot import learning_digest as ld
+    src = inspect.getsource(ld)
+    i = src.index("trial = [r for r in convex")
+    seg = src[i:i + 400]
+    assert "hold_hours" in seg, "the digest is counting by exit time again"
