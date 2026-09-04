@@ -1,3 +1,138 @@
+# Daily Audit — 2026-09-04
+
+---
+
+## Automated Assessment (UTC 17:25)
+
+Equity **$1,095.13** (free $1,033.76, margin $64.99, unrealised -$3.62). The
+operator deposit landed **10:57 UTC today**; equity deltas across it are a
+capital flow, not P&L. Everything below is realised $ / R.
+
+`FUTURES_TRIAL_LABEL=18F`, `FUTURES_TRIAL_START_TS=1788519433` (10:57:13Z) — the
+funding re-stamp is in force and the config is otherwise unchanged, as
+pre-registered (`FUTURES_TREND_MAX_POSITIONS` still 2).
+
+### 1. Closed trades, last 24h — 5, all convex, all exiting legally
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | risk% | exit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 09-03 23:23 | NIULAI_USDT | WILDCARD | LONG | x2 | 0.5h | -1.05 | -2.33 | +0.22 | 1.24 | server stop |
+| 09-04 02:11 | MAGMA_USDT | WILDCARD | SHORT | x1 | 24.0h | +1.98 | +4.65 | +1.95 | 1.46 | TIME_STOP |
+| 09-04 10:16 | USELESS_USDT | WILDCARD | LONG | x2 | 8.3h | **+2.55** | +5.13 | +3.50 | 1.12 | retention trail |
+| 09-04 10:16 | ZEC_USDT | TREND | LONG | x3 | 15.8h | +0.61 | +1.96 | +1.32 | 1.76 | retention trail |
+| 09-04 12:30 | XRP_USDT | TREND | LONG | x8 | 21.5h | -1.12 | -4.24 | +0.63 | 2.37 | STOP_LOSS |
+
+Net 24h **+$5.17 / +2.97R**, 3W/2L. Every close is a server-side stop, the
+shipped retention trail, or the 24h convex time stop — no illegal exit path.
+`EXCHANGE_CLOSE` is the server-side TPSL fill, not an unhandled path
+(`runtime.py:4701`); it is not a bug and stops being re-flagged.
+
+**Exchange reconcile:** 13 exchange rows over 48h vs 13 feature-store rows,
+symbol-for-symbol identical (134 store rows total). No loss-censoring.
+
+The one loss with a story is XRP: entered 09-03 15:01Z six minutes after the
+previous XRP TREND banked +3R, held 21.5h, peaked +0.63R and stopped at -1.12R
+(mae -1.018, so a small stop overshoot). Yesterday's audit named the re-entry as
+concentration risk while the position was still open. It was.
+
+### 1-OPEN. Open positions — TREND 1/2, WILDCARD 0/3
+
+**ZEC_USDT LONG x4** (TREND, opened 09-04 16:55Z, held 0.4h)
+- now **-0.18R**; too young for a meaningful peak/giveback read
+- TP (+3R, 1,189.64) **15.8%** of price away; SL (985.05) **4.1%** away
+- **scaler 0.50 — pinned at the floor.** `[SIZE_TRIM] regime_mult=0.50
+  margin 134.14 -> 67.07`. Realised risk **1.18%** against 2.41% intended
+
+This is the **first post-deposit entry**, and it went on at half size. 1R here is
+$12.87 where the intent was $26.48. See §3.
+
+### 2. Trial 18F (funded week) — 0 closes
+
+Opened 10:57Z; scored by ENTRY-time membership, nothing has closed inside it
+(XRP closed at 12:30Z but entered 21.5h earlier, so it belongs to trial 18).
+Trial 18 final stands at 27 closes, PASSED, TREND baseline **+0.564 R/fill**.
+
+Nothing ships this week — pre-registered, and every queued item needs a deploy
+that restarts the bot mid-week.
+
+### 3. The one thing worth watching: the scaler halves the funded week
+
+The floor is doing the sizing, not the risk dial. Mean realised risk over the
+last 12 entries is 1.723% (in band), but the spread runs 1.11-2.38% and the
+binding term at the bottom is `regime_mult`, not `risk_pct`. Today's entry is
+the cohort's cleanest illustration at 6.3x dollars.
+
+The learner's strongest reading bears on exactly this cohort:
+
+| condition | verdict | n | with | without | OOS |
+|---|---|---|---|---|---|
+| `regime_trimmed_hard(<0.5)` | **AVOID** | 27 | -$0.349 / 37.0% | +$0.533 / 48.6% | consistent |
+
+Read literally, the scaler **identifies bad setups correctly and then takes them
+at half size anyway**. The implied change is a skip, not a smaller size — but
+that is an aperture change needing replay, and it is contested: inside trial 18
+the direction inverts (scaler<0.75 = +7.37R over 8). Both readings are
+underpowered. **Watch item, carried, unacted.** Queued behind the funded week.
+
+Other learner rows, for the record: `roc>=12pct` FAVOR was **closed yesterday as
+unsupported** (non-monotone band, unstable cut point) and is not re-opened.
+`hold>=120min` FAVOR is survivorship — winners are what run long — not an entry
+condition. `side=SHORT` FAVOR / `side=LONG` AVOID reads at a -$0.226 gap on
+n=33 and contradicts the drift-controlled 90-day asymmetry study; not actionable.
+
+### 4. Slot cost — the raw number is a trap, the deduped one is not
+
+| sleeve | raw rows | raw netR | deduped windows | deduped netR | R/window |
+|---|---|---|---|---|---|
+| TREND | 14 | +16.60 | **3** | **-0.40** | -0.13 |
+| WILDCARD | 11 | +7.72 | 7 | +7.84 | +1.12 |
+| SQUEEZE | 6 | +3.15 | 4 | +1.20 | +0.30 |
+
+The raw TREND +16.60R is one signal re-logged every 15-30 minutes across three
+occupancy windows; deduped it is **-0.40R over 3**. Today added three more ETH
+rows (08:54 / 09:10 / 09:41) that all resolve -1.0 — one window, one -1.0R. The
+TREND slot-lock was **protective** today, and the deduped evidence remains far
+short of the 10-window bar. Trial 19's third-slot case rests on replay, not on
+this ledger; nothing here strengthens it.
+
+**Gates** (raw counterfactuals, all-time): `side_disabled` (TREND long-only) is
+strongly SAVING at **-26.21R over 45**. `veto:ref_not_listed` SAVING at -11.92R
+over 34. `veto:crowded_shorts` +1.60R on n=4 — below the bar, no proposal.
+`min_vol_skip` reads COSTING at **+8.37R over 14**, which clears the row count,
+but the cohort is nearly all pre-08-20 and only 2 rows land in the last 14 days;
+it needs a dedupe pass before it is a proposal. Logged, not proposed.
+
+### 5. Scan telemetry
+
+WILDCARD scans clean and dormant: `movers=46-52 candidates=0`, dominated by
+`roc_below_min` (40-47 per pass), then `no_pullback_resume` (3-6). No entry
+failures, no 5003/2015 rejects. TREND: `symbols=3 candidates=1 signal=ZEC_USDT`
+at 16:55Z, then `symbol_open` once held. Dormancy is correct behaviour in this
+regime and no gate is being loosened to manufacture trades.
+
+### 6. Corpus by sleeve (134 closes since 06-27)
+
+| sleeve | n | win% | R/fill | netR | net $ | $/fill |
+|---|---|---|---|---|---|---|
+| WILDCARD | 74 | 44.6 | +0.220 | +16.26 | +$27.54 | +0.372 |
+| **TREND** | 22 | 59.1 | **+0.471** | +10.36 | +$23.65 | **+1.075** |
+| SQUEEZE | 13 | 38.5 | +0.182 | +2.36 | +$1.17 | +0.090 |
+| SNIPER | 8 | 37.5 | -0.112 | -0.90 | -$0.11 | -0.014 |
+| PMT (decommissioned) | 17 | 47.1 | -0.323 | -5.49 | -$4.64 | -0.273 |
+
+TREND is 16% of the fills and half the dollars at three times the per-fill rate.
+That asymmetry is now four trials old.
+
+### 7. Change / deploy
+
+**None.** No lever pulled, no variable set, no deploy. The funded week's
+pre-registration says nothing ships, and nothing today argues for breaking it —
+the one candidate the data raises (skip rather than halve the hard-trimmed
+cohort) is contested, underpowered, and needs a replay before it is even a
+proposal. `pytest` not run: no candidate to gate.
+
+**Shadow:** stale, comparison suppressed pending resync.
+
 # Daily Audit — 2026-09-03
 
 ---
