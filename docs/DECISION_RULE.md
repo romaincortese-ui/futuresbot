@@ -57,6 +57,28 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## TRIAL 18 FINAL — closed 2026-09-04 10:57 UTC by the funding re-stamp
+
+27 closes by ENTRY-time membership (not the 25 scored at 09:00; USELESS and ZEC
+settled after). **PASSED.**
+
+    PRIMARY  mean realised risk 1.690%  in [1.6, 2.2]      PASS
+             max single entry   2.420%  (kill at >3.0%)    clear
+    netR     +9.78   ex-best +6.88                         PASS
+    net $    +17.18  ex-best +7.69
+
+    TREND     n=7    $+17.78   $/fill +2.539   R/fill +0.564
+    WILDCARD  n=20   $ -0.59   $/fill -0.030   R/fill -0.007
+
+**THE TRIAL-19 BASELINE IS R/fill, NOT $/fill.** Trial 19's PRIMARY criterion is
+"TREND $/fill not materially below trial 18's baseline", and the funded week
+runs at 5.9x equity, so a raw dollar comparison is meaningless across it. The
+baseline to beat is **TREND +0.564 R/fill over n=7** (1R was $4.50). Small n --
+treat it as a floor to clear, not a precise target.
+
+TREND carried the whole trial again; WILDCARD was flat-to-negative over 20
+closes. That asymmetry is now four trials old.
+
 ## The evidence, and its limits stated with it
 
     slots  fills     net $  vs live  $/fill  marginal  both halves?
@@ -111,6 +133,14 @@ This is a SLOW trial and that is a property of the sleeve, not a flaw in the rul
 - Trial drawdown > 20% of equity -> restore 2.
 - Rollback is one env var **plus a redeploy** — Railway marks variable-only
   changes SKIPPED and the running process keeps the old environment.
+  **CORRECTED 2026-09-04: this no longer holds.** Setting FUTURES_TRIAL_START_TS
+  and FUTURES_TRIAL_LABEL via `railway variables --set` created a deployment on
+  its own at 10:57:16 and the new env was live in the process by 10:58:36. A
+  following `railway redeploy` was REFUSED ("cannot be redeployed... currently
+  building"), which is the correct behaviour and not an error. So: set the
+  variables, then WAIT and verify by reading the env inside the process. Do not
+  chain a redeploy - it either no-ops or, if it lands first, re-runs the old
+  commit (see the deploy trap above).
 
 ## What this trial does NOT change
 
@@ -217,6 +247,14 @@ Revisit after the funded window closes, on its own trial.
 - Trial drawdown > 20% of equity -> restore 0.25.
 - Rollback is one env var **plus a redeploy** — Railway marks variable-only
   changes SKIPPED and the running process keeps the old environment.
+  **CORRECTED 2026-09-04: this no longer holds.** Setting FUTURES_TRIAL_START_TS
+  and FUTURES_TRIAL_LABEL via `railway variables --set` created a deployment on
+  its own at 10:57:16 and the new env was live in the process by 10:58:36. A
+  following `railway redeploy` was REFUSED ("cannot be redeployed... currently
+  building"), which is the correct behaviour and not an error. So: set the
+  variables, then WAIT and verify by reading the env inside the process. Do not
+  chain a redeploy - it either no-ops or, if it lands first, re-runs the old
+  commit (see the deploy trap above).
 
 ---
 
@@ -248,7 +286,9 @@ redeploys above, both mine, both today. No past feature was silently reverted,
 so nothing in the trial record needs re-auditing for this.
 
 `railway redeploy` is for restarting the SAME code -- which is exactly what an
-env-var change needs, since Railway marks variable-only changes SKIPPED and the
+env-var change needs -- though as of 2026-09-04 a variable change TRIGGERS its
+own deployment, so a chained redeploy is refused or harmful; see the correction
+in the trial sections. Historically Railway marked variable-only changes SKIPPED and the
 running process keeps the old environment. Code change -> push and wait.
 Variable change -> redeploy. Never both at once.
 
@@ -865,23 +905,32 @@ Its "base account after" column assumes the owner withdraws **the deposit
 amount**, so the week's loss falls entirely on the base. That is not the policy.
 The policy, restated by the owner on funding day, is:
 
-> withdraw whatever leaves ~$180 in the account at the end of the week.
+> withdraw whatever leaves **$190** in the futures account at the end of the week.
 
 Under that rule the base is **RESTORED every week** and the week's P&L lands on
-the deposit, not on the base. A -15.3% week at $1,077 ends at $912, of which
-$732 is withdrawn and $180 stays — the owner absorbs $168 of the money they
+the deposit, not on the base. A -15.3% week at $1,087 ends at $920, of which
+$730 is withdrawn and $190 stays — the owner absorbs $170 of the money they
 added, and the base account is untouched. It never reads $5. The $5 figure
 required a withdrawal that was never going to happen.
 
+Funding-day base: **$186.57** futures-account equity (2026-09-04 11:0x UTC;
+available $168.31 + $19.27 margin on the open XRP, less $0.99 unrealised).
+
 | deposit | equity | 1R | median | P10 | P90 | live record | worst of 228 | base after |
 |---|---|---|---|---|---|---|---|---|
-| $300 | $477 | $11.50 | +$10 | -$38 | +$85 | -$31 | -$73 | **$180** |
-| $500 | $677 | $16.32 | +$14 | -$54 | +$120 | -$44 | -$104 | **$180** |
-| $900 | $1,077 | $25.96 | +$22 | -$86 | +$191 | -$71 | -$165 | **$180** |
+| $300 | $486.57 | $11.73 | +$10 | -$39 | +$86 | -$32 | -$74 | **$190** |
+| $500 | $686.57 | $16.55 | +$14 | -$55 | +$122 | -$45 | -$105 | **$190** |
+| $900 | $1,086.57 | $26.19 | +$22 | -$86 | +$193 | -$71 | -$166 | **$190** |
 
-The base column only breaks if equity falls below $180 in a week — an 83% loss,
-against a worst-of-228 of 15.3%. **Net cash to the owner is simply the week's
-P&L, in every row.**
+The base column only breaks if equity falls below $190 in a week — an 83% loss,
+against a worst-of-228 of 15.3%. **Net cash to the owner is the week's P&L less
+$3.43**, the small top-up from $186.57 to the $190 the base is restored to.
+
+SIZING DENOMINATOR, worth knowing on day one: entries size off AVAILABLE
+balance, not equity (`equity_at_entry` is stamped from `available_balance`,
+runtime.py:1802). With XRP holding $19.27 of margin, the first post-deposit
+entry sizes off ~$1,068 rather than ~$1,087 — 1.8% smaller, and it self-corrects
+as positions close.
 
 **Ruling: SUPERSEDED.** The $300 ruling rested entirely on protecting a base
 account that this policy protects by construction. What survives as an argument
