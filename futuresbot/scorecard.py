@@ -105,6 +105,7 @@ def _median(xs: Sequence[float]) -> float:
 
 def build_scorecard(rows: Sequence[Mapping[str, Any]], *, days: float,
                     exchange_closes: int | None = None,
+                    recorded_closes: int | None = None,
                     btc_move_of: Callable[[float], float] | None = None,
                     equity_now: float = 0.0,
                     peak_equity: float = 0.0) -> list[KPI]:
@@ -118,14 +119,26 @@ def build_scorecard(rows: Sequence[Mapping[str, Any]], *, days: float,
     out: list[KPI] = []
 
     # 1. INTEGRITY -- if this fails nothing else can be trusted.
+    #
+    # This counts RECORDED CLOSES, which is not the same set as the trial's
+    # trades. `exchange_closes` counts positions whose CLOSE time falls in the
+    # window; `rows` is filtered by ENTRY time, so a trade that opened before
+    # the trial and settled inside it appears on the exchange side and not in
+    # rows. Comparing the two directly reported "MISSING ROWS — the ledger is
+    # not trustworthy" for two ordinary carryovers, on the morning of a
+    # deposit. `recorded_closes` is the exit-time count and is the like-for-like
+    # figure; it falls back to n so callers that do not filter are unaffected.
+    rec = n if recorded_closes is None else recorded_closes
     if exchange_closes is None:
         out.append(KPI("Ledger integrity", "not checked", "NA",
                        "exchange history unavailable"))
-    elif n == exchange_closes:
-        out.append(KPI("Ledger integrity", f"{n} = {exchange_closes}", "Good",
-                       "every exchange close recorded"))
+    elif rec == exchange_closes:
+        note = "every exchange close recorded"
+        if rec != n:
+            note += f" ({rec - n} opened before the trial, excluded from scoring)"
+        out.append(KPI("Ledger integrity", f"{rec} = {exchange_closes}", "Good", note))
     else:
-        out.append(KPI("Ledger integrity", f"{n} vs {exchange_closes}", "Bad",
+        out.append(KPI("Ledger integrity", f"{rec} vs {exchange_closes}", "Bad",
                        "MISSING ROWS — losses vanish first; investigate before reading on"))
 
     # 2. The trial's own criterion -- measured BEFORE the regime scaler.

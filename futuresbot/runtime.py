@@ -3440,6 +3440,7 @@ class FuturesRuntime:
         eq = float(self._last_known_equity() or 0.0)
         peak = max([eq] + [float(r.get("equity_at_close_usdt") or 0.0) for r in rows])
         kpis = build_scorecard(rows, days=days, exchange_closes=ex_n,
+                               recorded_closes=len(_settled),
                                btc_move_of=btc_of, equity_now=eq, peak_equity=peak)
 
         lines = [f"📋 <b>Report</b> — Trial {TRIAL_LABEL}, day {days:.1f}",

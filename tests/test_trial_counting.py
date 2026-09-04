@@ -65,3 +65,42 @@ def test_report_says_when_it_dropped_a_carryover():
     silently drops is worse than one that explains itself."""
     src = _src_of("KPI                  value")
     assert "opened before this trial" in src
+
+
+def test_integrity_compares_RECORDED_closes_not_trial_trades():
+    """REGRESSION, self-inflicted. Filtering the trial by entry time made the
+    scorecard compare 25 entry-filtered rows against 27 exchange closes and
+    report 'MISSING ROWS - the ledger is not trustworthy', which then set the
+    whole report's INVESTIGATE banner. The two carryovers were ordinary, the
+    ledger was fine, and this fired on the morning of a deposit.
+
+    Integrity asks 'did we record every close' (exit time). Trial scoring asks
+    'which trades belong to this trial' (entry time). Different questions."""
+    from futuresbot.scorecard import build_scorecard
+
+    rows = [{"ts": 100.0, "pnl_usdt": 1.0, "r_multiple": 0.5}] * 25
+    kpis = build_scorecard(rows, days=6.3, exchange_closes=27,
+                           recorded_closes=27)
+    integrity = next(k for k in kpis if k.name == "Ledger integrity")
+    assert integrity.verdict == "Good", integrity.value
+    assert "opened before the trial" in integrity.note
+
+
+def test_integrity_still_catches_a_genuinely_missing_row():
+    """The check must not be defanged by the fix."""
+    from futuresbot.scorecard import build_scorecard
+
+    rows = [{"ts": 100.0, "pnl_usdt": 1.0, "r_multiple": 0.5}] * 25
+    kpis = build_scorecard(rows, days=6.3, exchange_closes=27,
+                           recorded_closes=26)
+    integrity = next(k for k in kpis if k.name == "Ledger integrity")
+    assert integrity.verdict == "Bad"
+
+
+def test_recorded_closes_defaults_to_the_row_count():
+    """Callers that do not filter by entry time must be unaffected."""
+    from futuresbot.scorecard import build_scorecard
+
+    rows = [{"ts": 100.0, "pnl_usdt": 1.0, "r_multiple": 0.5}] * 27
+    kpis = build_scorecard(rows, days=6.3, exchange_closes=27)
+    assert next(k for k in kpis if k.name == "Ledger integrity").verdict == "Good"
