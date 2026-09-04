@@ -859,9 +859,41 @@ entire week's P&L is the BASE account. Sizing follows from that:
 | $500 | $669 | $16.12 | -$102 | $67 |
 | **$300** | **$469** | **$11.30** | **-$72** | **$97** |
 
-**Ruling: $300.** A 2.8x scale-up earns materially if the edge is real while the
-worst week on record still leaves the base account intact. "Worst in 228 windows"
-is not "worst possible", so the margin is deliberate.
+**THE TABLE ABOVE IS WRONG. Corrected 2026-09-04, before funding.**
+
+Its "base account after" column assumes the owner withdraws **the deposit
+amount**, so the week's loss falls entirely on the base. That is not the policy.
+The policy, restated by the owner on funding day, is:
+
+> withdraw whatever leaves ~$180 in the account at the end of the week.
+
+Under that rule the base is **RESTORED every week** and the week's P&L lands on
+the deposit, not on the base. A -15.3% week at $1,077 ends at $912, of which
+$732 is withdrawn and $180 stays — the owner absorbs $168 of the money they
+added, and the base account is untouched. It never reads $5. The $5 figure
+required a withdrawal that was never going to happen.
+
+| deposit | equity | 1R | median | P10 | P90 | live record | worst of 228 | base after |
+|---|---|---|---|---|---|---|---|---|
+| $300 | $477 | $11.50 | +$10 | -$38 | +$85 | -$31 | -$73 | **$180** |
+| $500 | $677 | $16.32 | +$14 | -$54 | +$120 | -$44 | -$104 | **$180** |
+| $900 | $1,077 | $25.96 | +$22 | -$86 | +$191 | -$71 | -$165 | **$180** |
+
+The base column only breaks if equity falls below $180 in a week — an 83% loss,
+against a worst-of-228 of 15.3%. **Net cash to the owner is simply the week's
+P&L, in every row.**
+
+**Ruling: SUPERSEDED.** The $300 ruling rested entirely on protecting a base
+account that this policy protects by construction. What survives as an argument
+for restraint is different and weaker: the edge is not established (live record
+-$71/week at $1,077 against a replay median of +$22, ~1.7 SE apart, so the
+expectation may be negative), capacity at 6.3x notional is unmeasured, and
+WILDCARD ran -$5.73 over 19 closes in trial 18 while TREND made +$15.81 over 6.
+
+Framed honestly: on the live record, a $900 week costs about $70 in expectation
+and buys a week of execution-cost data at 6.3x notional. That is a purchase, and
+a defensible one — but it should be made deliberately, not inherited from a table
+whose central column was answering a different question.
 
 ## What a funded week is expected to do
 
