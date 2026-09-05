@@ -393,6 +393,23 @@ overlapping windows, i.e. no measurable edge either way; it is a selectivity
 filter (2,010 signals -> 342) rather than an edge filter. That is a substitute
 for the real instrument, not the instrument.
 
+**0. RETIRE THE NEWS PROCESS.** APPROVED by the owner 2026-09-05. Set
+`FUTURES_NEWS_CAPTURE_ENABLED=0` at the first post-week restart. Measured
+contribution to P&L: $0. Trading on news refuted on sample (2 corroborated,
+symbol-linked, liquid events in the whole corpus, both BTC). The alerts are
+NEGATIVE, not neutral: 9 of 18 three-source alerts were chain-merges of
+unrelated headlines (clusterer ~50% precise; `rare_df=0.05` is a ratio that
+admits ordinary words at this corpus size). The lag is editorial (median 173
+min for a third newsroom to publish) so news cannot lead the price trigger. The
+one lead — news arriving at 0.81 of the 30-day range vs 0.59 null — is already
+encoded more directly and with no latency by TREND's `no_new_extreme` gate.
+Retire fully; do NOT half-retire by silencing alerts and leaving capture on —
+a subsystem with no consumer and no measurement is the `redis` failure pattern.
+The module and the 328 captured rows stay. If a NEGATIVE-news veto (hack,
+exploit, delisting — the only place news plausibly leads price) ever earns a
+test, it is a new build with a defined sample target, not a revival of this one.
+News touches no trading path, so this change carries zero execution risk.
+
 **5. Consider RAISING the turnover floor.** Position notional went from ~$247 to
 **$1,461** with the deposit, so participation scaled 5.9x against an unchanged
 $2M floor. At the thin end of the universe a single position is 1-3% of a full
