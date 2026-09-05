@@ -1,3 +1,154 @@
+# Daily Audit — 2026-09-05
+
+---
+
+## Automated Assessment (UTC 21:50)
+
+Equity **$1,096.32**, free $1,096.32, margin $0.00, **0 open positions**. Realised
+24h **-$2.66 / -0.21R** on one close. No deposit or withdrawal since 09-04 10:57Z,
+so today's equity delta happens to be P&L — it is stated in realised $ / R anyway.
+
+`FUTURES_TRIAL_LABEL=18F`, `FUTURES_TRIAL_START_TS=1788519433`. Config unchanged,
+and unchanged deliberately: nothing ships during the funded week.
+`USE_DRAWDOWN_KILL=1`, `DRAWDOWN_HALT_PCT=0.25` — inert on the convex path.
+
+### 1. Closed trades, last 24h — 1, convex, exiting legally
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | mae R | risk% | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-05 16:55 | ZEC_USDT | TREND | LONG | x4 | 24.0h | -0.21 | -2.66 | +0.22 | -0.76 | 1.17 | CONVEX_TIME_STOP |
+
+This is the ATH-entry position yesterday's audit flagged while it was open
+(entered 09-04 16:55Z at 1036.54, closed 1027.57). It never worked and it never
+broke: peak +0.22R, worst -0.76R, out on the 24h clock for a -0.9% price move.
+The exit is legal — the shipped convex clock, not an unhandled path.
+
+Two things it says beyond its own $2.66. Fees were **18.4% of gross** — a 24h
+scratch at x4 pays most of its move to the exchange, which is the real cost of a
+time-stopped flat trade. And the half-size scaler (`regime_size_mult=0.50`,
+realised risk 1.17% against 2.41% intended) **halved this loss**: at intended
+size it books about -$5.5. One trade is not evidence, but it is the funded week's
+first data point on the scaler question and it points the same way as the learner.
+
+**Exchange reconcile:** 3 exchange rows over 48h, 3 feature-store rows,
+symbol-for-symbol identical (135 store rows total). No loss-censoring.
+
+### 1-OPEN. Open positions — NONE. TREND 0/2, WILDCARD 0/3, SQUEEZE disabled
+
+Flat since 16:55Z, ~5h. Nothing to report on peak/giveback/undersizing.
+
+### 2. The finding: 09-05 is the first ZERO-ENTRY day in the record
+
+    entries/day  08-23..09-04:  4 2 2 2 5 4 3 4 5 2 4 9 2
+    09-05:                      0
+
+Thirteen consecutive days of 2-9 entries, then none. The funded week is **34.9h
+old and has taken exactly ONE entry**, at half size.
+
+The cause is regime, and the gates are behaving correctly:
+
+    WILDCARD  66 scans / 9h   mean 30.4 movers   candidates 1
+              rejections: roc_below_min 1780 (89%), no_pullback_resume 174,
+                          low_volume_z 40, climax_wick 8, rsi_exhausted 3,
+                          vertical_blowoff 1
+    TREND     34 scans        rejections: roc_below_min 87, symbol_open 15
+
+Nothing is reaching the 8% / 3h trigger in the small-cap band, and none of
+ETH/XRP/ZEC has a 4% / 24h extreme. BTC 12h **-1.6%**, 24h -1.5%, calm_score
+0.95 — a soft, rangebound tape. **This is correct dormancy. Do not loosen a gate
+to manufacture participation**, least of all in the week when a manufactured
+trade is sized at 5.9x.
+
+The single candidate that did qualify (18:27Z, `4_USDT` LONG, roc 25.3%, rsi 86,
+lateness 1.00) was vetoed by the external gate on `crowded_longs(funding=0.169%)`
+and no next-best existed. **That veto is not the lever** — see §3.
+
+No `[SIZE_TRIM]`, no order rejects (5003/2015), no Traceback, no ERROR lines
+across 5,000 log lines. The only WARNING is the known calibration seed fallback
+(9 live trades < 15 required), a PMT-path artefact, and PMT is decommissioned.
+
+**What it means for the week.** The funded week was pre-registered as "mostly a
+bet on whether one tail winner lands in it" (median +$22, P10/P90 -$85/+$190). At
+the current participation rate it ends near ~5 closes, which resolves neither the
+P&L question nor trial 18F's sizing primary. That is a property of the tape, not
+a fault to fix, and it is better said now than discovered on 09-11: **this week
+is on course to be information-free.**
+
+### 3. Learning loop
+
+**Feature store** 135 rows, +1 since yesterday, in sync with the exchange.
+
+Learner rows are unchanged from yesterday and none is newly actionable. The one
+that bears on today: `regime_trimmed_hard(<0.5)` **AVOID**, n=27, -$0.349 with
+against +$0.503 without, OOS-consistent — the scaler identifies bad setups and
+then takes them at half size anyway. Today's ZEC close is a 28th row of the same
+shape. **Still a watch item, still unacted**: the implied change is a skip rather
+than a smaller size, that is an aperture change needing replay, and inside trial
+18 the direction inverts. Queued behind the week.
+
+`roc>=12pct` FAVOR stays closed as unsupported (non-monotone band, unstable cut
+point); re-appearing in the table does not re-open it.
+
+**Shadow ledger** 206 rows, +3 in 24h (1 below_trigger, 2 crowded_longs vetoes).
+
+    slot_occupied   31 resolved   netR +27.47   TREND +16.60/14  WC +7.72/11  SQ +3.15/6
+    veto:*          43 resolved   netR -10.23   -> vetoes SAVED ~10R
+
+Two questions the operator asks repeatedly, both answered with numbers:
+
+- **Am I missing out to the slot lock?** Yes, materially and consistently, and
+  TREND is where it concentrates. That is the standing evidence for trial 19's
+  third TREND slot and it has not weakened. It cost nothing today — no new
+  `slot_occupied` rows since 09-04, because nothing was occupying a slot.
+- **Did the external gate cost me today's only trade?** It blocked it, but the
+  veto class is net **protective** by ~10R over 43 resolved rows. One vetoed
+  candidate is not a case for touching it. Left alone.
+
+**Decision rule.** Trial 18F: **1 close**, netR -0.21, ex-best -0.21. Mean
+realised risk 1.171% — below the 1.6-2.2% primary band, pinned there by the
+scaler floor rather than by the risk dial. n=1; a direction, not a verdict. Max
+drawdown from peak well inside 20%.
+
+**Exits.** All-time with a recorded kind (n=94): TP 8 (8.5%) | stop 44 | other 42.
+Last 40: TP 3 (7.5%) | stop 17 | other 20.
+
+TP completion is under 10% and OTHER now leads, which is the literal trigger for
+the trial-4 watch item — but the reading has changed and the honest version is
+this: since the retention trail shipped 08-29 at `RETAIN_FRAC=0.50`, exiting
+*before* the TP is the design, not a failure to reach it.
+`CONVEX_RETENTION_TRAIL` is 13 of the last 30 exits, and TREND already runs a 3R
+TP, not 5R. A "scale TP down at wide stops" proposal would be re-proposing
+something largely shipped. **Not proposed.** The stop width is not touched
+either, per the standing rule.
+
+### 4. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync. (Action item already raised;
+not re-raised.)
+
+### 5. Validation and deploy
+
+**No lever pulled, no variable set, no deploy.** Nothing was validated because
+nothing was a candidate: the funded week is pre-registered as frozen, and a
+deploy restarts the bot. pytest not run — no code change to gate.
+
+The queue is unchanged and ordered: (1) candidate-ranking instrumentation,
+(2) `/why` counterfactual pricing at current equity, (3) the six `/report`
+defects, (4) pricing `no_new_extreme`, (5) raising the turnover floor.
+
+### 6. Verdict on the last 7 days of changes
+
+| change | shipped | earning its keep? |
+|---|---|---|
+| `CONVEX_TRAIL_RETAIN_FRAC` 0.50 | 08-29 | yes — 13 of the last 30 exits, and trial 18 passed with it |
+| `REGIME_FLOOR_MULT` 0.50 | 08-29 | **contested** — halved today's loss, but the learner says that cohort should be skipped, not shrunk |
+| trial 18F re-stamp | 09-04 | correct; the deposit would otherwise have mixed two equity regimes |
+
+**One line:** flat, dormant, correct — the tape offered the bot nothing and it
+took nothing, and the funded week is on course to answer no question at all.
+
+---
+
 # Daily Audit — 2026-09-04
 
 ---
