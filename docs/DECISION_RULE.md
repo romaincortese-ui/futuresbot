@@ -251,6 +251,94 @@ unexplored signal in this data. It has not been swept, gated, half-split or
 placebo'd, and it lives on the measured-negative side of the book. Do not act on
 it; note it.
 
+## LIVE GATES — the full stack, in signal order (verified 2026-09-05)
+
+Every row was read from the code and the live Railway environment on the date
+above. "live" is the value actually running; where it differs from the code
+default, the default is noted. Rejection tags are what the funnel/shadow logs
+print.
+
+### Stage 1 — Universe (WILDCARD only; TREND's universe is a fixed list)
+
+| gate | rule | env var | live |
+|---|---|---|---|
+| USDT perp | must be a `_USDT` perpetual | — | ~1,061 pairs |
+| crypto only | non-crypto tokens excluded, list refreshed every 6h | `FUTURES_NON_CRYPTO_REFRESH_SECONDS` | ~429 dropped |
+| not open | symbol not already held | — | `symbol_open` |
+| not a major | top-N by deflated turnover excluded (TREND's domain) | `FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER` | 24 |
+| liquidity | 24h turnover >= floor | `FUTURES_WILDCARD_MIN_TURNOVER_USDT` | $2M (default 3M) |
+| 24h range | 24h range >= X% | `FUTURES_WILDCARD_MIN_24H_RANGE` -> defaults to the shadow ROC | 7% |
+| scan cap | max symbols evaluated per pass | `FUTURES_WILDCARD_MAX_SCAN` | 90 (never binds) |
+
+### Stage 2 — Detector
+
+WILDCARD (`futuresbot/wildcard.py`)
+
+| gate | rule | env var | live | rejects as |
+|---|---|---|---|---|
+| trigger | abs(3h ROC) >= 8%; sigma trigger OFF | `FUTURES_WILDCARD_MIN_ROC` | 0.08 | `roc_below_min` |
+| shadow floor | 7-8% logged as untaken, never traded | `FUTURES_WILDCARD_SHADOW_MIN_ROC` | 0.07 | `below_trigger` |
+| pullback-resume | prior bar against the move, current bar resumes | — | required | `no_pullback_resume` |
+| RSI room | long < 90 / short > 10 | `FUTURES_WILDCARD_RSI_MAX/MIN` | 90 / 10 | `rsi_exhausted` |
+| climax candle | adverse wick <= 45% of bar | `FUTURES_WILDCARD_MAX_WICK` | 0.45 | `climax_wick` |
+| vertical blow-off | last-bar move < 2 x ATR | `FUTURES_WILDCARD_VERTICAL_ATR_MULT` | 2.0 | `vertical_blowoff` |
+| volume | breakout-bar volume z >= 1.0 | `FUTURES_WILDCARD_MIN_VOL_Z` | 1.0 | `low_volume_z` |
+
+TREND (`futuresbot/trend.py`)
+
+| gate | rule | env var | live | rejects as |
+|---|---|---|---|---|
+| universe | fixed list | `FUTURES_TREND_SYMBOLS` | ETH, XRP, ZEC | — |
+| trigger | 24h ROC >= 4% | `FUTURES_TREND_MIN_ROC` | 0.04 | `roc_below_min` |
+| side | long only | `FUTURES_TREND_LONG_ONLY` | 1 | shorts discarded |
+| new extreme | price >= max of the prior 96 bars | — | required | `no_new_extreme` |
+| RSI | active only if max > 0 | `FUTURES_TREND_RSI_MAX` | 0.0 = DISABLED | — |
+
+### Stage 3 — Post-detector (both sleeves, `futuresbot/runtime.py`)
+
+| gate | rule | env var | live | note |
+|---|---|---|---|---|
+| calm-shock | per-symbol `calm_ratio` <= 0.75 | `FUTURES_WILDCARD_MAX_CALM_RATIO` | 0.75 | largest measured saver |
+| external veto | listed on the reference exchange, fail-open | `FUTURES_EXTERNAL_GATE_ENABLED` / `_REQUIRE_LISTED` | 1 / 1 | lifetime -14.35R over 34 rows |
+| min volume | contracts >= exchange minimum | — | mechanical | `min_vol_skip` |
+| side enabled | WILDCARD both sides; TREND long | `FUTURES_WILDCARD_LONG_ONLY` | 0 | `side_disabled` |
+| free slot | WILDCARD 3, TREND 2 | `FUTURES_WILDCARD/TREND_MAX_POSITIONS` | 3 / 2 | `slot_occupied` |
+| pre-emption | new signal may evict an open WILDCARD below 0.3R and older than 15 min; TREND never | `FUTURES_WILDCARD_PREEMPT_ENABLED` | 1 | `_BELOW_R`=0.3, `_MIN_AGE_MIN`=15 |
+| one per pass | at most one entry per scan | — | 450s / 900s | — |
+
+### Stage 4 — Sizing (both)
+
+| gate | rule | env var | live |
+|---|---|---|---|
+| base risk | 2.41% of AVAILABLE balance (not equity) | `FUTURES_WILDCARD_RISK_PCT` | 0.0241 |
+| regime scaler | multiplier in [floor, 1.0] | `FUTURES_REGIME_FLOOR_MULT` | 0.50 |
+| streak throttle | halves size on loss streaks | `FUTURES_CONVEX_STREAK_THROTTLE_ENABLED` | OFF |
+| hard risk cap | <= 5% of equity per trade | `FUTURES_MAX_TRADE_RISK_PCT` | 5 |
+| max margin | <= 25% of available | `FUTURES_WILDCARD_MAX_MARGIN_PCT` | 0.25 |
+| balance guard | retry at capped size if the exchange refuses | `FUTURES_BALANCE_GUARD_BUFFER` | 0.95, 2 tries |
+| drawdown brake | halves / blocks on equity drawdown | `FUTURES_CONVEX_DRAWDOWN_BRAKE` | OFF (refuted 2026-09-04) |
+| leverage | WILDCARD fixed; TREND <= max, set by the SL-margin cap | `FUTURES_WILDCARD_LEVERAGE` | 5x / <= 10x |
+
+### Stage 5 — Exit (both)
+
+| rule | WILDCARD | TREND | env var |
+|---|---|---|---|
+| stop | 3.0 x ATR | 3.0 x ATR | `_SL_ATR_MULT` — WILDCARD live 3.0, code default 1.5 |
+| stop cap | <= 20% of margin | <= 20% | `_MAX_SL_MARGIN_PCT` |
+| take profit | 5R | 3R | `_TP_R` |
+| trail arms | peak >= 1R | same | `FUTURES_CONVEX_TRAIL_ARM_R` = 1.0 |
+| trail floor | 0.50 x peak | same | `FUTURES_CONVEX_TRAIL_RETAIN_FRAC` = 0.50 |
+| ratchet | 0.75 x peak above 3R | same | `_RATCHET_R` = 3.0, `_RATCHET_RETAIN` = 0.75 |
+| time stop | 24h | 24h | `FUTURES_CONVEX_TIME_STOP_HOURS` = 24 |
+| stack selector | both flags required or the legacy stack arms | | `FUTURES_STRATEGY_MODE=pmt_threshold`, `FUTURES_WILDCARD_CONVEX_EXIT_ENABLED=1` |
+
+The trail and the time stop run IN-PROCESS; only the initial stop and TP sit on
+the exchange. Three things to know from the assembly: the WILDCARD stop is
+3.0 x ATR live against a 1.5 code default; TREND's RSI gate is dead code at its
+0.0 default; and the two sleeves have deliberately opposite entry shapes —
+WILDCARD demands a pullback THEN a resume, TREND demands a fresh high with no
+pullback at all.
+
 ## QUEUED FOR AFTER THE FUNDED WEEK (opened 2026-09-04)
 
 Nothing here ships during the funded week. Each item needs a deploy, and a
