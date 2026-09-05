@@ -57,6 +57,57 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## REJECTED 2026-09-05: sign-conditional time stop ("extend losers 6h")
+
+Proposed after ZEC_USDT LONG closed at -0.21R on the 24h clock having peaked at
+0.22R. Rule: at 24h close if R >= 0, else hold to 30h. Tested with 9 variants
+(30h/36h/48h extensions, mild-loser-only, the MIRROR, no clock, 12h/18h/36h
+flat) by bar-level replay of every real trade under the live exit stack,
+following `pit_arm_sweep.py`.
+
+**The lever is 7% of the book.** Under the live stack only **5 of 75**
+replayable trades reach the 24h clock (STOP 35, TRAIL 32, TP 3, CLOCK 5). Only
+**2** were negative at that moment. So every extension variant changes at most
+ONE resolved trade — LAB SHORT at $1.19 risk, +$0.42 at 30h — and the mild-loser
+variant changes ZERO.
+
+**The motivating trade refutes the rule on its own.** ZEC at the 24h bar close
+was -0.04R (live fill -0.175R). At 29.3h it sat at **-0.445R**. The owner's rule
+would have turned a -$2.66 close into roughly **-$6 to -$8** on a $12.87-risk
+position. Priced in, V1 all-in is about **-$3 to -$5** over the whole history,
+before slot cost.
+
+**The MIRROR has no content either — and that is the finding.** The sign
+control depends on the trail basis: wick-trail replay has V1 (extend losers)
++$0.42 beating V5 (extend winners) -$2.38; close-trail replay has V5 +$0.67
+beating V1 -$0.03. Two reasonable replays of the same trail flip the sign.
+Neither direction holds.
+
+**24h is a plateau.**
+
+    36h flat      $0.00   (LAB +$1.70 exactly offset by TAC/MAGMA give-back)
+    18h flat     -$3.29
+    12h flat     -$8.94   (MAGMA 09-03 +1.80R -> +0.27R)
+    no clock     -$2.76
+
+**Power.** Observed paired deltas on affected trades have sd ~0.45R, so 0.5R
+needs ~7 affected trades and 0.25R ~28. Affected trades accrue at 2.7-6.7% of
+convex closes -> **5-12 months** at ~3 closes/day before anything resolves.
+
+**Slot cost bounds it further.** A 6h extension occupies a slot; at the live
+mean of ~$0.59 per convex trade one blocked entry per extension costs more than
+V1's entire +$0.42 lever. All extension deltas are upper bounds.
+
+**Harness note, stated so the number is trusted where it should be.** V0 replay
++$17.32 vs LIVE +$44.04 — 61% under, entirely on early trail winners the wick
+trail cuts short (TUT +5.53R live vs +2.74R replay). The live time-stop cohort
+itself replays **within $1.09** of live (6 trades, +$11.19 vs +$12.28), so the
+harness is accurate exactly where this study lives.
+
+The exit stack remains uninvolved in the convex losses. ZEC's problem was a
+tepid move that never reached 1R; no clock rule addresses that. Leave
+`FUTURES_CONVEX_TIME_STOP_HOURS=24`. Refuted count ~27.
+
 ## REJECTED 2026-09-04: trading on corroborated news — plus a REAL clusterer defect
 
 Asked after the ZEC alert arrived 25 minutes AFTER the bot had already entered
