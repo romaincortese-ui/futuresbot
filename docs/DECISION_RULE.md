@@ -57,6 +57,85 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## REJECTED 2026-09-06: "the bot is opening late" — four entry levers swept
+
+Owner's hypothesis: loosening WC_MIN_ROC, WC_MIN_24H_RANGE, TREND_MIN_ROC and
+WC_MAX_CALM_RATIO would let the bot enter earlier and better. Requested on trials
+17-18F; run on that window AND on 230 days, corrected book (`pit_book.take`),
+three intra-bar phase grids, PJ_EQUITY=170, 1000-perm permutation control,
+ex-top-5%, boundary-swept half-split, independent re-run by the reviewer.
+
+**The trials window CANNOT answer this, and it was proven before the sweep.**
+Calibration of the LIVE cell over T17+T18: live 35 closes $+19.07; replay 66
+fills $+33.39. **2.2x WILDCARD fill inflation** (55 vs 25), gap sign flips per
+trial (T17 -$23, T18 +$38), 15 of 36 live trades matched. In the 18F tail the
+replay booked 13 WC fills where live took **zero**. Per-cell null SD on 9.5 days
+is $12.51, so its apparent "+$28 for loosening" is chance sitting in 36 hours
+where the model and the bot disagree completely. The calibratable 8-day core
+shows LOOSENED +$2.28 — nothing. **Nothing on 9.5 days can distinguish "earlier
+is better" from noise.**
+
+**On 230 days: loosening HURTS, tightening does nothing, nothing survives.**
+
+    cell                     d$ vs live   $/mo    $/fill   half-split   perm p
+    LIVE                          —          —     0.320       —           —
+    WC_MIN_ROC 6%              -34.43     -4.5     0.230      no         0.09
+    WC_MIN_ROC 7%              +66.00     +8.6     0.333      NO*        0.375
+    WC_MIN_ROC 9%              -65.26     -8.5     0.295      no         0.22
+    TREND_MIN_ROC 3%           -37.59     -4.9     0.275      no         0.04 (harmful)
+    TREND_MIN_ROC 3.5%         -26.19     -3.4     0.291      no         0.04 (harmful)
+    TREND_MIN_ROC 5%           -29.84     -3.9     0.307      no         0.15
+    MAX_CALM 0.60              +45.52     +5.9     0.382      NO         0.08
+    MAX_CALM 0.90              -31.08     -4.1     0.284      no         0.125
+    MAX_CALM off               +59.05     +7.7     0.333      NO         0.26
+    ALL LOOSENED          -13.6 to -88.8  -1.8..-11.6  0.181-0.253  no   0.015 (harmful)
+    ALL TIGHTENED              -63.74     -8.3     0.333      no         0.345
+    * early half -$49, late +$78
+
+**0 of 14 cells beat live AND pass the screen; the screen's own null predicts
+3.5 spurious passes.** No cell reaches Bonferroni p<0.0036; the only p<0.05
+results point AGAINST the hypothesis. Ordering: LOOSENED < LIVE <= TIGHTENED.
+Full-history per-cell null SD is $54.79 — at this outlier concentration (top 45
+fills carry ~$610 of $370) **no entry-threshold change in the tested range is
+resolvable even on 230 days.**
+
+**Direct band evidence is flat.** Unbooked mean R of candidates by 3h ROC:
+6-7% +0.02..+0.07, 7-8% +0.015..+0.04, 8-9% +0.07, 9-12% +0.007, >=12% +0.047.
+The trades the bot would catch earlier are no better than the ones it takes;
+admitting them costs slot time and turnover. **Earlier entry buys turnover,
+not edge.** ALL-LOOSENED collapses $/fill 0.320 -> 0.181.
+
+**Structural findings, kept:**
+- **`FUTURES_WILDCARD_MIN_24H_RANGE` is a NO-OP at any value <= MIN_ROC.** A
+  24h high/low range >= |3h ROC| by construction (both closes lie inside the
+  window). Verified: 0 candidates with roc>=8% and range<8%; 0.09 touched zero
+  fills; 0.12 removed 3. Lowering it from 0.07 cannot make the bot enter earlier.
+  It only binds ABOVE 8%. Drop it from any future "earlier entry" list.
+- **TREND 4% stands in both directions, for the third time.** The 3-4% band
+  loses ~-0.12R/trade over 847 candidates (3-3.5% -0.135R n=419, 3.5-4% -0.111R
+  n=428); >=5% is +0.218R (n=2751) but 5% still loses via reshuffling.
+- **MAX_CALM is non-monotonic** (0.60 +$45, 0.90 -$31, off +$59) — the noise
+  signature. The 0.75-0.90 band is +0.098R (n=112) yet booking it loses $31:
+  reshuffling dominates. Keep 0.75.
+
+**The WC 7% OPEN item: status SHARPENED, not closed.** It reproduces in sign
+only (+$66, $/fill 0.333) and fails every robustness probe: by quarter of
+history -27 / -12 / +60 / +44 (first half negative, matching the earlier
+finding); ex-top-5% -$26; 7-day block bootstrap CI [-$38, +$172], P(delta<=0)
+= 0.15; phase-grid dispersion +$54 / +$6 / +$15 (moves 10x when the 15m clock
+shifts 5 min); the top 5 added fills exceed the whole delta. Its "unexplained
+mechanism" is now explained: the 7-8% band is ~zero-edge unbooked, so the
+booked +$66 is schedule reshuffling. **It stays OPEN, under the bar.** The
+7-8% shadow band live-logging since 09-03 (n=2-3) is the only instrument that
+can settle it; it needs ~100 rows, not a config change.
+
+**Unmodelled, stated:** the external veto (-0.565R over 24 live rows —
+conservative direction), cross-sleeve margin, 18F's 6x equity, live pool
+snapshot (replay uses today's top-170: survivorship). Absolute dollars are not
+live-comparable; only within-replay deltas are, and those sit inside chance.
+
+Refuted count ~28. Change nothing; the bot is not measurably late.
+
 ## REJECTED 2026-09-05: sign-conditional time stop ("extend losers 6h")
 
 Proposed after ZEC_USDT LONG closed at -0.21R on the 24h clock having peaked at
