@@ -57,6 +57,76 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## REJECTED 2026-09-04: trading on corroborated news — plus a REAL clusterer defect
+
+Asked after the ZEC alert arrived 25 minutes AFTER the bot had already entered
+on price action. Two separate questions came out of it and they have opposite
+answers.
+
+### A. Trading on news — REFUTED, no sample, and the premise was wrong
+
+**I got the premise wrong and it is corrected here.** I claimed the Russian
+forklog item would have been the THIRD source and that fixing cross-language
+matching would have fired the alert 5h39m earlier. It would have been the
+**SECOND**: the only Zcash outlet before it is coindesk (twice, but that is one
+distinct source). Measured across all 18 shipped alerts, a relaxed matcher makes
+**0 fire earlier**, 17 unchanged, and 1 fire 78 min LATER as a merge side-effect.
+
+**The lag is editorial, not technical.**
+
+    first publish -> first fetch          median  12 min   (ours)
+    first publish -> THIRD source PUBLISH median 173 min   (newsrooms)
+    third publish -> third fetch          median   9 min   (ours)
+
+Everything the bot controls sums to ~21 min. No matcher change can make an alert
+fire before a third newsroom has written the story.
+
+**Sample makes the study impossible.** 328 rows, but 43% is one backfill burst;
+real forward capture is 186 items over 47.6h. `big_stories(min_sources=3)` finds
+18 clusters, 9 genuine, of which **7 name no tradeable ticker** (regulatory,
+corporate, security). Corroborated + symbol-linked + liquid = **2 events, both
+BTC, same day, de-clustering to 1**. Non-BTC: **zero**. Yield is ~1 symbol-linked
+corroborated story every two days and ~85% are BTC, so reaching 30 non-BTC
+events needs **6-12 months** of uninterrupted capture — and only after the
+clusterer is repaired, or half the events fed in are fusions.
+
+Credit where due: the lookahead bug that kills most news studies was checked and
+is ABSENT. Entry was clocked at third-source-fetched + 15 min, after every
+publication in each cluster.
+
+### B. The clusterer is ~50% precise — this one is REAL and worth fixing
+
+Of the 18 clusters reaching 3 sources, only **9 are actually one story**. The
+others are chain-merges: one fuses "Lazarus moves $30M through Hyperliquid" with
+"South Korea arrests four over Syrian payments", "Silhouette RFQ", "Ethena USDe
+app" and "Cathie Wood buys Bitcoin".
+
+**Root cause: `rare_df=0.05` is a RATIO and scales with corpus size.** At 330
+documents it means "appears in <= 16 headlines", admitting 909 of 1135 distinct
+tokens including ordinary words — *market, first, since, token, rally, trading,
+global* — plus recurring entities *robinhood, kalshi, strategy, kraken*. Two
+headlines sharing "market" inside the 6h window fuse, and a fused cluster
+inherits both token sets so the fusion snowballs.
+
+**So roughly half of what the news alert tells the owner is not a story.** The
+fix is PRECISION, not the cross-language recall I proposed: an ABSOLUTE
+document-frequency cap (df <= 3 headlines) instead of a ratio, and matching only
+on tokens the seed item owns rather than ones the cluster inherited. Secondary:
+`cluster_stories`' `isalpha()` filter drops "$1,000", which is exactly the token
+that would bind a numeric-milestone story across languages.
+
+### C. Kept, not actioned: news arrives at high RANGE POSITION, not after a move
+
+The "news lags a big move" hypothesis is FALSE as stated. Across 70 fresh
+symbol-naming headlines the pre-24h move at alert time is median **+1.48%**
+against a time-matched null of **+1.57%** — dead centre.
+
+What IS elevated is position in the trailing range: median **0.81** of the
+30-day Hour4 range against a null of **0.59**; 60% sit above 0.80 of range
+(null 20.4%), 41% above 0.90 (null 9.5%). Ex-BTC (n=26, 9 symbols) the direction
+holds and the magnitude shrinks. This is 26 correlated mentions over 48h in one
+up-trending regime, so it is a lead, not a finding.
+
 ## REJECTED 2026-09-04: the two all-time-high hypotheses
 
 Both proposed by the owner after watching the bot buy ZEC at 1036.54 on
