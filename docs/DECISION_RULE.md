@@ -57,6 +57,46 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## REJECTED 2026-09-06: TREND shorts — third refutation, this one live-faithful
+
+Asked: what would TREND have done from the start of trial 18 with shorts
+enabled? Answered from the SHADOW LEDGER, not a replay: the bot detects every
+TREND short signal, refuses it as `side_disabled`, and resolves the
+counterfactual live. That is the decision-grade instrument, and a harness
+replay would have been strictly weaker (the trials-window harness inflates
+fills 2.2x — see the entry-timing rejection above).
+
+**10 raw refusals since T18, -8.87R summed. Deduped by slot occupancy with the
+ledger's own `dedupe_by_occupancy` — three independent positions:**
+
+    when          sym    R      exit      $ at sizing in force
+    09-01 18:39   ZEC   +0.58   trail       +2.61
+    09-02 10:37   XRP   -1.13   stop        -5.08
+    09-04 14:53   XRP   -0.68   timeout    -18.07   (funded size, 1R ~$26.50)
+                       -1.23R              -20.54
+
+**Against the TREND longs actually taken in the same window: +$17.78 (trial
+18, 7 fills) and +$56.09 (18F, 4 fills) = +$73.87.**
+
+Mechanism, same as the 360-day study named: the shorts fire in flat-to-up tape.
+The 09-02 cluster shorted the same dip that made 09-02 the -$8.51 day for
+longs, and lost too — both sides lost that morning because ZEC and XRP bounced
+within hours. The 09-04 XRP short sat through its 24h timeout at -0.68R while
+ZEC, on the same sleeve, printed new highs. Slot contention did NOT bite: the
++$75 ZEC long entered after the XRP short had timed out.
+
+**Three measurements, three methods, one sign:**
+
+    study                       window                    TREND shorts
+    book-level A/B              360d, 51 weekly windows   -$61.51, -$108.64 ex-best
+    slot sweep                  63d x 8 windows           -$14 to -$34, 24% wins
+    shadow ledger (live)        trial 18 -> now           -1.23R, -$20.54
+
+`FUTURES_TREND_LONG_ONLY=1` stays. It is not a restriction; it is the measured
+half of the sleeve. The pre-registered deep-drawdown variant (shorts only while
+BTC 7d <= -12%) remains the only version worth watching; it did NOT trigger in
+this window (BTC held $79-81k) and would correctly have done nothing.
+
 ## REJECTED 2026-09-06: "the bot is opening late" — four entry levers swept
 
 Owner's hypothesis: loosening WC_MIN_ROC, WC_MIN_24H_RANGE, TREND_MIN_ROC and
