@@ -57,6 +57,108 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## REJECTED 2026-09-06 (second pass): sizing and entry-LATENCY levers
+
+The owner rejected "the bot is finished" and tasked a second pass on the
+mechanisms never swept: entry LATENCY (distinct from the threshold lateness
+already refuted), per-sleeve risk, the SL-margin cap, the sizing denominator,
+and the risk LEVEL itself. Five measured, three synthesised, all three attacked,
+none ships. What came out instead is three corrections and one preference.
+
+### A. LATENCY — REFUTED, and the premise briefed to the owner was WRONG
+
+- **THE BAR-CLOSE WAIT IS ZERO.** MEXC's contract kline endpoint returns the
+  IN-PROGRESS 15m bar with a live-ticking close. Verified: two calls 20s apart,
+  same bar index, different closes (79912.9 -> 79912.6). The briefed "up to 15
+  minutes of bar-close wait" does not exist.
+- **CONTENTION IS 0.4 SIGNALS/DAY AT ZERO EXPECTANCY.**
+- A/B on 65 replayable fills: **+0.1196R/fill, SE 0.0772, t=1.55** — below the
+  screen before any control. WILDCARD +0.165 (t=1.94), TREND +0.037 (t=0.24).
+- **PERMUTATION PLACEBO KILLS IT.** Shifting entry back by ANOTHER trade's
+  latency scores HIGHER: placebo +0.1382 vs observed +0.1196, z=-0.29, p=0.574.
+- Decomposition: 4 of 65 trades flip stop/no-stop carrying +1.53R each; the
+  other 61 carry +0.027R. Trades where the price barely moved (n=25) still show
+  +0.071R — the gain is present where the price effect is absent. Path noise.
+- n to resolve a $60/mo effect at 2 SE: **1,631 fills, ~21 months.**
+
+### B. PER-SLEEVE RISK TILT (TREND 1.5x / WILDCARD 0.6x) — REFUTED by one day
+
+Premise confirmed — the sleeves draw identical risk (TREND 1.457% +/- 0.123 vs
+WILDCARD 1.483% +/- 0.085) — and the tilt is monotone and budget-neutral. It
+still dies:
+
+- **LEAVE-ONE-DAY-OUT FLIPS THE SIGN.** Drop 2026-09-03 (three fills in 57 min,
+  XRP and ZEC on one impulse) and the reweight goes **+3.95R -> -1.59R**.
+  TREND's effective sample is 11 days, 3 episodes, one carrying 69%.
+- **WRONG CONTROL.** It bootstrapped over trades; the day-block bootstrap gives
+  P(loss) 31%, p5 **-$211/month**.
+- **THE ZEC CONTROL CANNOT WORK** — ZEC and XRP fired inside the SAME episodes
+  (08-22 01:54/05:02, 09-03 14:55/14:59). Dropping the symbol leaves the episode.
+- **SLEEVE AND SYMBOL CLASS ARE PERFECTLY COLLINEAR AT ANY n.** WILDCARD has
+  ZERO big-cap fills across 89 fills / 57 symbols; TREND trades 5, all big-caps.
+  "Tilt toward TREND" and "tilt toward big caps" cannot be separated.
+- Dollars overstated 1.65x: priced at nominal 2.41% ($27.71/R) not realised
+  1.46% ($16.76/R).
+- Revival: TREND-minus-WILDCARD meanR positive over ~40 more TREND fills across
+  15+ days, no day >20% of cumulative R, day-block bootstrap P(>0) >= 0.90.
+
+### C. THE RISK LEVEL — NOT refuted, and it CANNOT be. It is a PREFERENCE.
+
+Raising `FUTURES_WILDCARD_RISK_PCT` 2.41% -> 3.00% correlates **0.978** with the
+book itself. It is a pure scalar carrying no independent information, so no
+evidence can ever validate it. Leverage is independent of it, slots are
+count-capped not margin-capped, and the shadow ledger shows zero balance-driven
+rejects in 207 rows — it changes no entries, no exits, and no fill identity.
+
+    metric                     2.41%      3.00%
+    median $/month               --       +$48
+    P05 / P95                    --    -$39 / +$503
+    P(delta < 0)                 --        30%     (proposal claimed 4.4%)
+    max drawdown               16.2%      19.9%
+    P(drawdown > 30%)            29%        45%
+
+The 4.4% came from a bootstrap CONDITIONING ON THE SAMPLE MEAN BEING TRUE. Its
+own kill trigger (revert above 22% drawdown) fires **70.8% of the time when the
+lever is working correctly** — it cannot be tested as written.
+
+**KELLY CORRECTION, inverting an argument made to the owner earlier.** The repo's
+own sizing docstring puts full Kelly at **1.9%** at 25% of the measured edge. So
+2.41% is ALREADY above full Kelly and 3.00% would be **1.6x** it — not the
+quarter-Kelly figure quoted from the earlier bootstrap CI.
+
+**Framing: a variance PREFERENCE, not an edge lever.** The owner withdraws to
+$190 weekly, so the base is restored regardless. A 30% chance of costing money
+against 70% of gaining, drawdown 16% -> 20%, is a legitimate appetite decision.
+It must not be sold as evidence-backed.
+
+### D. Three corrections, worth more than the levers
+
+1. **`equity_at_entry` IS NOT EQUITY.** `runtime.py:1802` stamps it from
+   `available_balance` (equity minus committed isolated margin). It understates
+   true equity by **mean 8.8%, median 7.9%, worst 28.5%** (n=73); 13.6% on the 47
+   concurrent entries. Haircut by concurrency: 0 open -> 1.000, 1 -> 0.904,
+   2 -> 0.820, 3 -> 0.717. Every risk figure is computed against a biased
+   denominator. FIX THE TELEMETRY; keep the sizing — switching the denominator
+   has a null permutation control (p=0.344).
+2. **THE 20% SL-MARGIN CAP IS ANALYTICALLY INERT.** It cancels out of
+   risk-targeted sizing: realised risk is identical to six significant figures
+   (2.410%) at caps of 20/25/30, and correlations with outcome are null
+   (r=+0.122 risk, +0.038 R, +0.040 $). It is a capital-utilisation dial, NOT a
+   risk control. Tightening to 12/15 is strictly dominated — it relocates stops
+   TIGHTER on 19.2%/11.0% of fills (vs 4.1% at 20) on a 100% tail-borne book.
+3. **"LEVERAGE >= 7 LOSES" IS UNSUPPORTED — retire it, do NOT sign-flip it.** The
+   claim that it is positive is a sleeve confound: lev>=7 has ZERO WILDCARD fills
+   (TREND 16, SNIPER 8, SQUEEZE 4) while lev<7 is 80% WILDCARD. Within TREND the
+   difference is **+0.09R at t~0.15**; 84% of the headline dollars is one ZEC
+   fill; ex-top-5% the $89.39 becomes $4.53. Leverage carries no measurable
+   signal in either direction — it is a truncated label for volatility and sleeve.
+
+### The honest ceiling
+
+Block bootstrap at 2.41% and $1,150 equity: median **$282/month**, P05 $18,
+P95 $696 — a 38x spread. Every lever found is small next to the uncertainty in
+the thing it multiplies. Refuted count ~31.
+
 ## REJECTED 2026-09-06: making the regime scaler smarter — SIX inputs, none survive
 
 The owner asked for three detailed proposals to improve the scaler beyond
