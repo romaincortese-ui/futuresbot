@@ -1,3 +1,205 @@
+# Daily Audit — 2026-09-06
+
+---
+
+## Automated Assessment (UTC 16:15)
+
+Equity **$1,155.07**, free $1,155.07, margin $0.00, **0 open positions**. Realised
+24h **+$58.75 / +2.30R** on three closes, 2 of 3 winners. No deposit or withdrawal
+since 09-04 10:57Z. Peak equity today $1,183.57 (05:55Z), now 2.4% below it —
+inside every brake.
+
+`FUTURES_TRIAL_LABEL=18F`, `FUTURES_TRIAL_START_TS=1788519433`. Config unchanged
+and unchanged deliberately: nothing ships during the funded week.
+
+**The dormancy broke, and it broke the right way.** Yesterday's audit closed with
+"this week is on course to be information-free". Thirteen hours later the tape
+handed the bot the tail winner the pre-registration said a funded week is mostly
+a bet on. That does not make the week informative about edge — one trade never
+does — but it does make it a real week rather than a flat one.
+
+### 1. Closed trades, last 24h — 3, all TREND, all ZEC, all exiting legally
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | mae R | risk% | 3h roc | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-06 04:46 | ZEC_USDT | TREND | LONG | x7 | 3.7h | **+2.88** | **+75.37** | +3.03 | -0.61 | 2.28 | 6.0% | EXCHANGE_CLOSE (TP) |
+| 09-06 05:55 | ZEC_USDT | TREND | LONG | x4 | 0.9h | +0.43 | +11.88 | +1.03 | -0.13 | 2.42 | 12.2% | CONVEX_RETENTION_TRAIL |
+| 09-06 14:29 | ZEC_USDT | TREND | LONG | x4 | 5.0h | -1.01 | -28.49 | +0.09 | -0.99 | 2.36 | 19.0% | EXCHANGE_CLOSE (STOP) |
+
+**Every exit is a shipped path.** The +2.88R is the server-side 3.0R TREND TP
+filling (slippage and fees take the rest); the +0.43R is `CONVEX_RETENTION_TRAIL`
+at `RETAIN_FRAC=0.50` giving back half of a +1.03R peak, exactly as designed; the
+-1.01R is the resting stop. No unhandled path, no `CONVEX_TIME_STOP`, no
+`SIZE_TRIM`, no 5003/2015 order rejects, no Traceback, no ERROR.
+
+Two things worth naming beyond the $58.75:
+
+**Sizing behaved.** `regime_size_mult=1.0` on all three, `size_efficiency`
+0.987-0.992, realised risk 2.28-2.42% against the 2.41% dial. Yesterday's half-size
+scaler did not fire, so the winner was taken at full size — which is the entire
+difference between +$75 and +$38. The scaler cost nothing today and earned nothing.
+
+**The winner was the LEAST extended entry.** Entry 3h ROC ran 6.0% -> 12.2% -> 19.0%
+across the three fills and R fell monotonically 2.88 -> 0.43 -> -1.01. The obvious
+story is chasing. **Do not act on it** — the 138-row corpus says the opposite
+(`roc>=12pct` is a FAVOR row, n=41, +$0.783 with vs +$0.738 without), and n=3 with
+one outlier cannot overturn n=41. Recorded as an observation, not a lever.
+
+**Exchange reconcile:** 19 exchange rows over 5 days, 138 feature-store rows,
+3 new on each side in 24h, symbol-for-symbol identical. No loss-censoring.
+
+### 1-OPEN. Open positions — NONE. TREND 0/2, WILDCARD 0/3, SQUEEZE disabled
+
+Flat since 14:29Z, ~1.75h. Nothing to report on peak/giveback/undersizing.
+
+### 2. The finding: single-name concentration is NOT the risk it looks like — and NOT an edge either
+
+All three of today's fills were the same symbol, same side, inside 13 hours, and
+ZEC is now 16 of 26 TREND fills all-time carrying **+$67.30 of the sleeve's
++$79.75**. At funded size that concentration looks alarming, and the operator's
+instinct would be a per-symbol cooldown or a same-name re-entry cap. **The corpus
+refuses both directions.**
+
+Serial re-entry (a prior close on the same symbol within the window before this
+one opened), 138 closes:
+
+    window   re-entry n / mean$ / meanR / win%     fresh n / mean$ / meanR / win%
+    12h        16   +4.096   +0.345   62.5          122   +0.313   +0.157   44.3
+    24h        20   +3.977   +0.440   60.0          118   +0.205   +0.134   44.1
+    48h        29   +2.663   +0.321   58.6          109   +0.243   +0.141   43.1
+
+Re-entries look 3-19x better per fill on every window — which would argue for
+LOOSENING, not capping. Then the outlier control kills it:
+
+    24h window      full      ex-best-1     ex-best-2
+    re-entry      +$3.977     +$0.219       -$0.765
+    fresh         +$0.205     +$0.112       +$0.028
+
+**The entire re-entry advantage is two trades.** Drop the second-best and the
+bucket goes negative while the fresh bucket barely moves. This is the same
+outlier concentration `DECISION_RULE.md` already documents at book level, showing
+up at fill level. **No proposal in either direction: no per-symbol cooldown, no
+re-entry loosening.** The value of running it is that the recurring "isn't it
+dangerous to keep hitting one name?" question now has a number attached — it is
+neither dangerous nor profitable at n=20; it is unresolvable.
+
+**The guard is already doing the conservative thing anyway.** The live TREND
+histogram right now reads `roc_below_min: 10, no_new_extreme: 5` over the last
+hour — ZEC still passes the ROC trigger and is being refused a 4th re-entry by
+`no_new_extreme`. That is the queued item (4) "pricing `no_new_extreme`" visibly
+binding in real time, and it is the cheapest of the open queue items to measure
+once the week closes.
+
+### 3. Scan telemetry (last 65 min — Railway retains 500 lines, so this is a snapshot, not a 24h aggregate)
+
+    WILDCARD  9 scans   mean 31.1 movers   candidates 0
+              rejections: roc_below_min 255 (91%), no_pullback_resume 18,
+                          low_volume_z 5, climax_wick 2
+    TREND     5 scans   rejections: roc_below_min 10, no_new_extreme 5
+
+Correct dormancy on WILDCARD — nothing in the small-cap band is reaching 8%/3h.
+No gate loosened, none proposed.
+
+**New non-trading defect:** `Prophet prediction archive refresh failed: HTTP Error
+422` x4 in the hour (`FUTURES_PROPHET_ARCHIVE_ENABLED=true`). It touches no order
+path and no sizing input. Queued, not fixed — it needs a deploy and the week is
+frozen. The known `CALIBRATION_SEED_FALLBACK` warning is unchanged and is a
+PMT-path artefact; PMT is decommissioned.
+
+### 4. Learning loop
+
+**Feature store** 138 rows, +3, in sync with the exchange.
+
+Learner unchanged in substance. `regime_trimmed_hard(<0.5)` stays **AVOID**, n=27,
+-$0.349 with against +$1.019 without, OOS-consistent — the scaler still identifies
+bad setups and takes them at half size instead of skipping them. It did not fire
+today, so today adds nothing to it. Still queued behind the week: the implied
+change is a skip, not a shrink, and that is an aperture change needing replay.
+
+`leverage>=7` FAVOR (n=44, +$1.929 vs +$0.200) and `hold>=120min` FAVOR (n=91)
+both got a supporting row today from the x7 / 3.7h winner. Neither is actionable
+— leverage is an output of the risk dial, not a dial itself, and hold time is not
+settable.
+
+**Shadow ledger** 206 rows, **+1 in 24h**, 1 resolved.
+
+    slot_occupied   31 resolved   netR +20.46   TREND +15.10/14  WC +7.42/11  SQ -2.05/6
+    veto:*          44 resolved   netR -13.84   -> vetoes SAVED ~14R
+    calm_shock      22 resolved   netR  -3.08   -> also protective
+
+**Correction to yesterday's figures:** yesterday reported slot_occupied at +27.47R
+using the gross `outcome` field. The cost-adjusted `outcome_net` (which is the
+comparable number, since live R is net) is **+20.46R**, and SQUEEZE flips from
++3.15 to -2.05 once its costs are charged. The conclusion is unchanged and if
+anything cleaner: the opportunity cost is real, it is concentrated in TREND, and
+SQUEEZE contributes nothing — consistent with SQUEEZE being disabled.
+
+No new `slot_occupied` rows in 24h despite three entries, because the three ZEC
+positions were strictly sequential (04:46 close, 04:59 open; 05:55 close, 09:26
+open). The 2-slot TREND cap never bound today. Today cost the operator nothing in
+missed candidates.
+
+**Decision rule — trial 18F.** By close timestamp, **5 closes**, netR **+0.97**,
+net$ **+$51.85**, ex-best **-1.91R / -$23.52**. By open timestamp (the convention
+used in `DECISION_RULE.md`'s 09-06 entry) it is 4 fills, +$56.09; the difference is
+the 09-04 XRP short, which opened before the trial stamp and closed after. Both
+are stated so the two documents reconcile.
+
+Mean realised risk is now **2.118%**, inside the 1.6-2.2% primary band — yesterday
+it sat at 1.171% on n=1, pinned by the scaler floor. **18F's sizing primary is now
+passing**, on 5 fills.
+
+The P&L primary is not answered and will not be by Friday: +0.97R net, -1.91R
+ex-best. One trade carries the whole result. This is exactly the shape the
+pre-registration warned about ("57% of 7-day windows contain a top-5% trade,
+median +$71.71; the 43% that do not, median -$18.80") and the week has now landed
+in the 57%. **That is luck, correctly harvested — not evidence of edge.**
+
+Max drawdown from peak 2.4%, far inside 20%. `USE_DRAWDOWN_KILL=1`, halt 25%,
+inert on the convex path.
+
+**Exits.** All-time with a recorded kind (n=97): TP 9 (9.3%) | stop 45 | other 43.
+Last 40: TP 4 (10.0%) | stop 15 | other 21. Last 30 exit rules: EXCHANGE_CLOSE 14,
+CONVEX_RETENTION_TRAIL 11, CONVEX_TIME_STOP 3, CONVEX_PREEMPTED 1, STOP_LOSS 1.
+
+TP completion crossed back above 10% on the last 40. The trial-4 watch item stays
+closed for the reason established yesterday: `CONVEX_RETENTION_TRAIL` exiting
+before the TP is the shipped design, and TREND already runs 3R rather than 5R.
+Not proposed. Stop width untouched, per the standing rule.
+
+### 5. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync. (Action item already raised;
+not re-raised.)
+
+### 6. Validation and deploy
+
+**No lever pulled, no variable set, no deploy.** Nothing was a candidate: the
+funded week is pre-registered as frozen, a deploy restarts the bot, and the one
+hypothesis today generated (same-name re-entry) was measured and returned
+unresolvable in both directions. pytest not run — no code change to gate.
+
+Queue unchanged and ordered, with one addition: (1) candidate-ranking
+instrumentation, (2) `/why` counterfactual pricing at current equity, (3) the six
+`/report` defects, (4) pricing `no_new_extreme` — promoted in usefulness by today,
+it bound five times in the last hour, (5) raising the turnover floor, (6) the
+Prophet archive 422.
+
+### 7. Verdict on the last 7 days of changes
+
+| change | shipped | earning its keep? |
+|---|---|---|
+| `CONVEX_TRAIL_RETAIN_FRAC` 0.50 | 08-29 | yes — booked +$11.88 today and is 11 of the last 30 exits |
+| `REGIME_FLOOR_MULT` 0.50 | 08-29 | **still contested** — dormant today; halved a loss on 09-05, but the learner says that cohort should be skipped, not shrunk |
+| `FUTURES_TREND_LONG_ONLY=1` | standing | yes — all three of today's fills were longs, third refutation of shorts filed 09-06 |
+| trial 18F re-stamp | 09-04 | correct |
+
+**One line:** the funded week found its tail winner — +$58.75 on three legal ZEC
+exits at full size — and nothing about that is evidence of edge, so nothing was
+changed.
+
+---
+
 # Daily Audit — 2026-09-05
 
 ---
