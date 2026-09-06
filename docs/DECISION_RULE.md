@@ -57,6 +57,85 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## REJECTED 2026-09-06: making the regime scaler smarter — SIX inputs, none survive
+
+The owner asked for three detailed proposals to improve the scaler beyond
+efficiency-only, aimed at limiting big $ losses at funded size. Six candidate
+inputs researched on the live corpus with the correct control for each
+(permutation for per-trade, placebo for time-keyed), ex-top-5%, and an
+independent adversarial attack on each of the three finalists. **All three
+finalists were refuted by their own review.** Recorded in full because the
+negative result is the useful one.
+
+### THE HEADLINE: no per-trade sizing input reaches 2 SE
+
+    input                        n     verdict
+    side (long/short)           18     already refuted
+    portfolio heat             135     weak
+    move maturity               75     untestable at current n
+    volatility / leverage      113     already refuted
+    same-symbol re-entry       110     weak
+    literature canon           113     untestable at current n
+
+**The ten largest dollar losses are all single full-size LONG stops at leverage
+1-8, with no concentration on ANY tested input.** They are not clustered. There
+is nothing for a smarter sizer to find. Every sizer's upside is bounded by how
+little tail it removes, and the book is tail-borne: ex-top-5% the 96-trade book
+is **-$15**.
+
+### The three finalists and how they died
+
+**1. Post-stop re-entry haircut** (halve a WILDCARD re-entry when the prior
+same-symbol close was a STOP within 24h). Replay said the cell was 12.6% of
+fills at -0.185R. **The live book produced ONE such fill in 74** (1.4%) — MAGMA
+09-03, an OPPOSITE-side re-entry, **+1.98R**, which the rule would have halved.
+The cell rate was a 170-symbol replay artefact. The proposal also misread its
+own table: the scaler already sizes these fills DOWN (0.735 vs 0.846 fresh), not
+up. Live ceiling ~$1-2/mo. Killed.
+
+**2. Exhaustion ramp** (inside the full-size band, ramp WILDCARD longs down by
+3h ROC above 12%). **83% of the positive evidence is shadow rows the live bot
+rejected via other gates** — ref-not-listed, crowded-funding, calm-shock — which
+lose at -0.52R because of what those gates measure, not because of exhaustion.
+The neutral-reason shadow rows (+1.00R) and the TAKEN cell (**+0.28R, n=13,
+p=0.51**) both point the other way. The ramp would have halved O_USDT +5.0R, a
+top-5% trade of the whole book. Over 50 cells were cut; one p=0.05 is exactly
+the expected false positive. Killed.
+
+**3. Portfolio-margin ceiling at the 45% kill line.** Cannot be both alive and
+safe. At 45% it touches **0 of 135** historical entries — dead code that also
+makes trial 19's pre-registered margin kill unreachable, destroying the
+measurement the trial exists for. At any level that binds, it trims the third
+TREND slot on rally days and halves five ~3R TREND winners. Its ruin case rests
+on a -3.79R gap-through that was XAU_USDT on the SQUEEZE sleeve — a disabled
+sleeve on a now-excluded non-crypto symbol. Killed.
+
+### Three structural facts worth keeping
+
+- **CONCURRENCY MARKS WINNERS, NOT DANGER.** By positions already open:
+  0 -> +0.071R (n=76), 1 -> +0.276R (n=39), **2 -> +0.757R (n=18, 67% win,
+  ex-top5 +0.509R)**. Stop rate FALLS with heat (43/42/33%). Every heat,
+  correlation or account-state sizer binds where the book earns — the identical
+  signature that refuted the drawdown brake.
+- **CORRELATED STOPS DO NOT HAPPEN HERE.** 74 overlapping pairs: P(both stop)
+  **14.9% vs 17.8%** under independence; corr(R_a, R_b) = +0.056; TREND-TREND
+  pairs both-win 6, both-lose 1. The r=+0.914 BTC/ETH correlation does NOT
+  translate into simultaneous stops. The worst 7-day window (-8.80R) had mean
+  heat 0.8% and zero entries at 2+ open.
+- **2.41% IS ROUGHLY QUARTER-KELLY.** Bootstrap CI on the full-sample Kelly
+  fraction spans 0.1% to 19%. Sizing is already conservative; the constraint
+  every proposal inherits is "never size up, never trim the tail".
+
+### Corrections this pass produced
+
+- The **-2.26 SE `regime_size_mult` finding is an artefact** — see the
+  withdrawal in the trial-19 staging above. Winners-vs-losers on the scaler is
+  -1.27 SE on trial 18, **+1.29 SE pre-08-29**, +0.31 SE on 109 closes.
+- The **"shorts -0.225R" premise is a biased subsample** from a pinned90 dedup
+  defect; clean sampling gives **-0.043R (t=-0.79)** — flat, not negative. The
+  three TREND-shorts refutations stand on their own evidence and are unaffected,
+  but the -0.225R figure should not be quoted again.
+
 ## REJECTED 2026-09-06: TREND shorts — third refutation, this one live-faithful
 
 Asked: what would TREND have done from the start of trial 18 with shorts
@@ -626,17 +705,25 @@ WILDCARD is untouched: 3 slots, 8% trigger, 5R cap, retention 0.50 with the 3R
 -> 0.75 ratchet. TREND keeps ETH/XRP/ZEC, the 4% trigger, the 24h clock, the
 3.0x stop and long-only. The regime scaler is untouched, though see below.
 
-## The one thing that might displace this
+## The one thing that might displace this — WITHDRAWN 2026-09-06
 
-`regime_size_mult` is the only per-trade feature to cross 2 SE in any study:
-winners 0.756 against losers 0.929, **-2.26 SE** in trial 18, directionally
-consistent three times (-1.28 SE on all history). The scaler appears to size UP
-into the setups that do not extend. Against it: n=23, 7 features tested, and it
-priced net-positive on live fills on 2026-08-26.
+~~`regime_size_mult` is the only per-trade feature to cross 2 SE~~ — **that
+finding is an ARTEFACT and the check it demanded is cancelled.**
 
-If it still reads below -2 SE at n>=30 when trial 18 closes, it is the better
-trial-19 candidate than this one, because it has a mechanism and this has only
-a screen result. Check before opening.
+The -2.26 SE (winners 0.756 vs losers 0.929) was measured on the trial-18
+window alone at n=23. Reconstructed across windows by two independent agents in
+the 2026-09-06 scaler research:
+
+    window            n     winners   losers    SE
+    trial 18 only     29     0.784     0.880   -1.27
+    pre-2026-08-29    43       --        --    +1.29   (OPPOSITE sign)
+    full history     109     0.814      --     +0.31
+
+It is a window/bimodal artefact, not a signal. **The scaler has no measured
+weakness.** Do NOT run the "check at n>=30 before opening trial 19" gate — there
+is nothing to check. Trial 19 (`FUTURES_TREND_MAX_POSITIONS` 2 -> 3) stands on
+its own screen result, which remains the only cell to clear the boundary-swept
+half-split in any study.
 
 
 ---
