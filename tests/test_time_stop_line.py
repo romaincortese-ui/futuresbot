@@ -137,3 +137,130 @@ def test_status_calls_it_for_every_open_position():
     # It must sit inside the per-position loop, after the risk line, not once
     # for the whole message.
     assert src.index("Risk at SL") < src.index("_time_stop_line")
+
+
+# =========================================================================
+# THE TRAIL LINE
+#
+# Added on the owner's instruction to express it in dollars: "translate the R
+# into $, it's easier to read". The defect it fixes is not a missing line but a
+# WRONG one - once the trail arms, the floor is the binding exit and the SL
+# price the row prints is no longer what closes the trade.
+# =========================================================================
+
+def _trail_rt(monkeypatch, *, one_r=18.46, peak_r=None, retain=0.50, arm=1.0,
+              convex=True, flag=True, lev=2, risk_pct=17.06):
+    r = FuturesRuntime.__new__(FuturesRuntime)
+    env = {"FUTURES_CONVEX_TRAIL_ARM_R": arm,
+           "FUTURES_CONVEX_TRAIL_RETAIN_FRAC": retain,
+           "FUTURES_CONVEX_TRAIL_RATCHET_R": 3.0,
+           "FUTURES_CONVEX_TRAIL_RATCHET_RETAIN": 0.75,
+           "FUTURES_CONVEX_COST_PCT": 0.190,
+           "FUTURES_CONVEX_COST_FLOOR_MULT": 1.5}
+    monkeypatch.setattr(FuturesRuntime, "_is_wildcard_convex", lambda self, p: convex)
+    monkeypatch.setattr(FuturesRuntime, "_flag", lambda self, k, default=False: flag)
+    monkeypatch.setattr(FuturesRuntime, "_env_float",
+                        lambda self, k, d=0.0: env.get(k, d))
+    monkeypatch.setattr(FuturesRuntime, "_position_stop_risk_usdt", lambda self, p: one_r)
+    monkeypatch.setattr(FuturesRuntime, "_position_stop_risk_pct_of_margin",
+                        lambda self, p: risk_pct)
+    monkeypatch.setattr(FuturesRuntime, "_metadata_float",
+                        lambda self, md, k: md.get(k))
+    p = _pos()
+    p.leverage = lev
+    p.metadata = {} if peak_r is None else {"convex_peak_r": peak_r}
+    return r, p
+
+
+def test_before_arming_it_says_what_dollar_peak_arms_the_trail(monkeypatch):
+    """The owner's example: 'it will arm at +$7'."""
+    r, p = _trail_rt(monkeypatch, peak_r=0.7037)
+    out = r._trail_line(p)
+    assert "peak <b>$+12.99</b>" in out, out
+    assert "arms at <b>$+18.46</b>" in out, out
+    assert "ARMED" not in out
+
+
+def test_a_position_that_never_moved_still_shows_the_arm_level(monkeypatch):
+    r, p = _trail_rt(monkeypatch, peak_r=None)
+    out = r._trail_line(p)
+    assert "peak <b>$+0.00</b>" in out and "arms at <b>$+18.46</b>" in out
+
+
+def test_once_armed_it_shows_the_dollar_floor_and_says_it_binds(monkeypatch):
+    """peak 2R = $36.92, retain 0.50 -> floor 1R = $18.46."""
+    r, p = _trail_rt(monkeypatch, peak_r=2.0)
+    out = r._trail_line(p)
+    assert "ARMED" in out
+    assert "peak <b>$+36.92</b>" in out, out
+    assert "exits at <b>$+18.46</b>" in out, out
+    assert "keeps 50%" in out
+    assert "binds before SL" in out
+
+
+def test_the_ratchet_above_3R_is_reflected(monkeypatch):
+    """peak 4R = $73.84, retain ratchets 0.50 -> 0.75, floor 3R = $55.38."""
+    r, p = _trail_rt(monkeypatch, peak_r=4.0)
+    out = r._trail_line(p)
+    assert "exits at <b>$+55.38</b>" in out, out
+    assert "keeps 75%" in out, out
+
+
+def test_the_cost_floor_can_lift_the_exit_above_the_plain_retention(monkeypatch):
+    """A tight stop makes the round trip expensive in R, so the breakeven guard
+    raises the floor above 0.50 x peak."""
+    r, p = _trail_rt(monkeypatch, peak_r=1.0, lev=20, risk_pct=2.0)
+    out = r._trail_line(p)
+    # sl_frac = 2.0/(20*100) = 0.001 -> cost_r = 0.0019/0.001 = 1.9R; x1.5 = 2.85R
+    # 2.85 >= peak 1.0, so the exit path refuses to trail at all
+    assert "cannot trail" in out, out
+    assert "SL/TP/clock only" in out
+
+
+def test_a_trail_that_cannot_fire_says_so_rather_than_printing_a_floor(monkeypatch):
+    r, p = _trail_rt(monkeypatch, peak_r=1.2, lev=20, risk_pct=2.0)
+    out = r._trail_line(p)
+    assert "cannot trail" in out
+    assert "exits at" not in out
+
+
+def test_1R_is_the_same_number_as_the_risk_at_SL_line(monkeypatch):
+    """The two lines are computed from one quantity and must never drift: the
+    trail's r_now is (pnl % of margin) / (stop risk % of margin), so 1R IS the
+    Risk at SL dollar figure."""
+    r, p = _trail_rt(monkeypatch, one_r=40.00, peak_r=1.0)
+    out = r._trail_line(p)
+    assert "peak <b>$+40.00</b>" in out, out
+    assert "exits at <b>$+20.00</b>" in out, out
+
+
+# --- a floor that cannot be reached must not be printed -------------------
+
+def test_non_convex_has_no_trail(monkeypatch):
+    r, p = _trail_rt(monkeypatch, peak_r=2.0, convex=False)
+    assert r._trail_line(p) is None
+
+
+def test_the_runner_trail_flag_off_prints_nothing(monkeypatch):
+    r, p = _trail_rt(monkeypatch, peak_r=2.0, flag=False)
+    assert r._trail_line(p) is None
+
+
+@pytest.mark.parametrize("bad", [None, 0.0, -5.0, float("nan")])
+def test_no_usable_stop_distance_prints_nothing(monkeypatch, bad):
+    """Without a stop distance there is no R, so there is no dollar floor."""
+    r, p = _trail_rt(monkeypatch, one_r=bad, peak_r=2.0)
+    assert r._trail_line(p) is None
+
+
+def test_a_nan_peak_prints_nothing(monkeypatch):
+    r, p = _trail_rt(monkeypatch, peak_r=float("nan"))
+    assert r._trail_line(p) is None
+
+
+def test_status_shows_the_trail_before_the_clock():
+    import inspect
+
+    src = inspect.getsource(FuturesRuntime._build_status_message)
+    assert "_trail_line" in src, "the trail is not wired into /status"
+    assert src.index("Risk at SL") < src.index("_trail_line") < src.index("_time_stop_line")

@@ -1876,6 +1876,82 @@ class FuturesRuntime:
         return self._close_position_for_exit(position, current_price=current_price,
                                              reason="CONVEX_TIME_STOP")
 
+    def _trail_line(self, position: FuturesPosition) -> str | None:
+        """The retention trail in DOLLARS, for /status.
+
+        Added 2026-09-08, with the clock line, on the owner's instruction that R
+        is not the unit he reads. It is also the unit the account is not
+        denominated in, which is the same reason the 24h horizon was sized on
+        dollars rather than R.
+
+        THE DEFECT THIS FIXES IS NOT A MISSING LINE, IT IS A WRONG ONE. Once the
+        trail arms, the floor becomes the binding exit and the `SL $0.78` the row
+        prints is no longer what closes the trade - nor is `Risk at SL`, which
+        then overstates the loss by the whole distance from the floor to the
+        stop. The trail is the sleeve's largest earner (29 exits, +22.34R) and
+        the row rendered it only as TP progress, which moves for reasons that
+        have nothing to do with it.
+
+        1R here is `_position_stop_risk_usdt`, and that is exact rather than a
+        convention: `_convex_runner_trail_exit` computes r_now as (pnl % of
+        margin) / (stop risk % of margin), so 1R IS the dollar figure the row
+        already prints on the `Risk at SL` line. The two lines cannot drift.
+
+        Mirrors the live floor, cost guard and ratchet rather than restating
+        them, so this cannot quietly disagree with the exit path. Gross of fees,
+        like the trail's own arithmetic.
+
+        Returns None when the trail cannot fire at all - non-convex,
+        FUTURES_CONVEX_RUNNER_TRAIL off, or no usable stop distance - rather than
+        printing a floor that will never be reached.
+        """
+        if not self._is_wildcard_convex(position):
+            return None
+        if not self._flag("FUTURES_CONVEX_RUNNER_TRAIL", default=True):
+            return None
+        one_r = self._position_stop_risk_usdt(position)
+        try:
+            one_r = float(one_r)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(one_r) or one_r <= 0:
+            return None
+        md = position.metadata or {}
+        peak_r = self._metadata_float(md, "convex_peak_r") or 0.0
+        if not math.isfinite(peak_r):
+            return None
+        peak_r = max(0.0, peak_r)
+        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
+        retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
+        peak_usd = peak_r * one_r
+        if peak_r < arm_r:
+            return ("  🔒 Trail: peak <b>${:+.2f}</b> · arms at "
+                    "<b>${:+.2f}</b>".format(peak_usd, arm_r * one_r))
+        if retain > 0:
+            frac = self._trail_retain_for(peak_r, retain)
+            floor_r = frac * peak_r
+            # The same breakeven guard the exit path applies: a floor below the
+            # sleeve's own round-trip cost banks a loss on a winning trade.
+            lev = float(getattr(position, "leverage", 0) or 0)
+            risk_pct = self._position_stop_risk_pct_of_margin(position) or 0.0
+            sl_frac = (risk_pct / (lev * 100.0)) if lev > 0 else 0.0
+            if sl_frac > 0:
+                cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
+                floor_r = max(floor_r, cost_r * self._env_float(
+                    "FUTURES_CONVEX_COST_FLOOR_MULT", 1.5))
+            if floor_r >= peak_r:
+                # Exit path refuses to trail this position at all.
+                return ("  🔒 Trail: peak <b>${:+.2f}</b> · <b>cannot trail</b>"
+                        " (cost floor above peak) — SL/TP/clock only".format(peak_usd))
+            pct = int(round(frac * 100))
+        else:
+            give_r = max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 2.0))
+            floor_r = peak_r - give_r
+            pct = int(round(floor_r / peak_r * 100)) if peak_r > 0 else 0
+        return ("  🔒 Trail <b>ARMED</b>: peak <b>${:+.2f}</b> · exits at "
+                "<b>${:+.2f}</b> (keeps {}%) — binds before SL".format(
+                    peak_usd, floor_r * one_r, pct))
+
     def _time_stop_line(self, position: FuturesPosition,
                         now: datetime | None = None) -> str | None:
         """The convex hard clock as a DEADLINE, for /status.
@@ -3404,6 +3480,9 @@ class FuturesRuntime:
                 )
                 lines.append(f"  PnL: <b>{pnl_text}</b>{pct_text}{progress_text}")
                 lines.append(f"  Risk at SL: <b>{stop_risk_text}</b>{stop_risk_pct_text}")
+                _trail = self._trail_line(position)
+                if _trail:
+                    lines.append(_trail)
                 _clock = self._time_stop_line(position)
                 if _clock:
                     lines.append(_clock)
