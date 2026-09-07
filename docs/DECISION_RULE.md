@@ -743,6 +743,27 @@ Nothing here ships during the funded week. Each item needs a deploy, and a
 deploy restarts the bot; none is worth a restart while the week is running.
 Ordered by value, not by effort.
 
+**0b. SHADOW-LOG THE DETECTOR-LEVEL REJECTS — the "dark 76%".** The shadow
+ledger records post-detector refusals only (calm_shock, veto, below_trigger,
+side_disabled, slot_occupied, min_vol_skip). It does NOT record DETECTOR-level
+rejects, so the largest filter in the bot has no live counterfactual at all:
+`no_pullback_resume` refuses **64,854 of 84,569 trigger bars (76.7%)** — more
+than every other gate combined — and not one of those refusals has ever been
+resolved against a real outcome. `low_volume_z` (14.4%), `climax_wick` (4.2%),
+`rsi_exhausted` (1.1%) and `vertical_blowoff` (0.8%) are equally dark.
+
+Consequence, found 2026-09-07 while commissioning the pullback-resume study:
+that question can ONLY be answered by replay, and the WILDCARD replay does not
+calibrate (4.16x fill inflation; live is candidate-starved at 7.3% slot
+utilisation against the replay's 46.8%). **The single most expensive gate in the
+book is measurable only with an instrument known to be unfit for absolute
+dollars.** That is the strongest argument for anything on this queue.
+
+Cost: one `_shadow_log_untaken` call on the detector-reject path, the same shape
+as the existing sub-trigger logging. Logging only — widens no aperture, changes
+no trading behaviour. After ~100 rows the gate becomes answerable from LIVE data
+instead of a 4x-inflated replay. Pair with item 1; both are logging-only.
+
 **1. Candidate-ranking instrumentation.** APPROVED by the owner 2026-09-04 for
 after the week. The 48h missed-opportunity audit found $16.81 of genuine misses
 and **zero dollars of it behind any filter** — UAI SHORT $10.05, CP SHORT $2.35,
