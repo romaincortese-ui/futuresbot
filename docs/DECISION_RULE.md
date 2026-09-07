@@ -57,6 +57,221 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-07: THE WILDCARD SLEEVE — "it bleeds" is FALSE; ~50 alternatives priced, none ship
+
+Fifteen agents, 483 tool calls, eight diagnostic angles each adversarially verified, plus a
+completeness critic. Triggered by my own claim to the owner that "WILDCARD bleeds". That claim
+was wrong and this section is the correction.
+
+### The premise, corrected twice
+
+WILDCARD lifetime: 90 closes, 2026-06-15 to 2026-09-06, net **-$7.66**. That headline is one
+trade — MAGMA_USDT LONG 09-06, **-$26.45**, a clean -1.06R stop that happened to be the first
+one taken at 6.3x the old dollar scale. Ex-MAGMA the sleeve is **+$18.78 over 89 closes**.
+
+First correction: in R the sleeve is +0.256R/fill (n=72, t +1.16), not negative.
+
+**Second correction, from the completeness critic, and it is the one that matters:** that
++0.256R is carried by rows with no recorded risk denominator.
+
+    population                        n     meanR    SE     t     netR    P(mean<=0)
+    published "usable"               72    +0.2557  0.220  1.16  +18.41     0.120
+    rows WITH risk_usdt              50    +0.0774  0.213  0.36   +3.87     0.366
+    rows with R but NO risk_usdt     22    +0.6609    -      -   +14.54       -
+    all 90, first-11-days imputed    90    +0.146     -    0.80  +13.17       -
+
+**79% of the sleeve's netR sits in 22 rows whose R is reconstructed, not measured.** On the 50
+fills where the bot actually recorded what it risked the sleeve is **+0.077R, t=0.36** — a coin
+flip — and **negative ex-top-5%** (-0.129R). The 18 unscored rows (2026-06-15 to 06-25, a clean
+instrumentation-start truncation, NOT the loss-censoring pattern) lost -$13.69; imputing them
+makes every published netR for this sleeve about **5R (~$130 at funded scale) too generous.**
+
+**Stop quoting +0.256R.** Defensible: +0.077R (n=50) or +0.146R over all 90 imputed.
+
+### What the sleeve actually is
+
+A tail lottery with **no demonstrated entry skill**, wrapped in an exit stack that is correct and
+one gate that is the only thing in it with a real signal.
+
+- Against a placebo re-entering the SAME symbol at random times with the same hold and the same
+  designed stop, the LONG arm's excess is **-0.007R** (n=43, t -0.03). Not "evidence of no
+  skill" — SE 0.224 cannot separate -0.007 from +0.4 — but nobody had ever looked.
+- The loss column is not a distribution, it is a constant: **24 stop-outs, every one at -1.044R
+  (SE 0.006).**
+- The exit is right and the entry is wrong. After a stop-out price keeps going: mean mark
+  **-0.791R four hours later** (t -5.73), profitable 1h later in **0 of 24** cases. The bot is
+  NOT being wicked out.
+- The whole positive mean is four trades. Ten fills >= +2R contribute +42.79R; the other 61 net
+  **-23.42R**.
+
+### THE ONE HIGH-SIGNAL OBJECT: the external listing veto
+
+`FUTURES_EXTERNAL_GATE_REQUIRE_LISTED=1` blocks signals with no second-venue corroboration.
+Found independently by two agents on the resolved shadow ledger:
+
+    ref_not_listed   n=32   mean -0.492R   SE 0.178   p=0.0045 (5000 shuffles)
+                     leave-one-out -0.594..-0.474    ex-top-5% -0.678R (MORE negative)
+    all ext vetoes   n=42   mean -0.363R vs +0.522R control, gap 0.884R, p=0.0145
+
+**This is the only cell anywhere in the study at p<0.01**, in a search spanning ~120 entry-gate
+cells (zero at p<0.05 where 6 are expected) and ~68 exit/sizing cells. The four post-deposit
+candidates it refused would have cost **-2.528R = -$63.20 in 3.3 days**. The gate is why the
+sleeve is not bleeding.
+
+**The strategic content of the whole exercise:** the junk this sleeve admits is NOT selected by
+any transform of its own price. It is selected by "MEXC-only pump with no second-venue
+corroboration". ROC windows, calm ratios, pullback depths, stop widths, trail parameters and
+regime splits are now searched to exhaustion and return LESS structure than random labels.
+
+**NEVER relax REQUIRE_LISTED.** Sub-item: the veto returns `(True,'failopen')` on any exception
+behind a 0.6s timeout and nothing counts it. Two fail-open fills identified (US_USDT 08-14,
+ORDI_USDT 08-21, both stops), ~0.33/month = -$4 to -$8.5/month. Add a COUNTER; do not touch the
+timeout until the logs say whether those two were timeouts or API errors.
+
+### DATA LOSS WITH A DEADLINE — acted on 2026-09-07
+
+`_save_state` writes `trade_history[-200:]` (runtime.py:4379). The buffer holds **exactly 200
+rows** and the book closes 3.50/day. The 22 rows carrying 79% of the sleeve's netR sit at buffer
+index 65-113: **first evicted in 19 days, last in 33.** Within ~3 weeks nobody could reproduce
+any of this, and the era that makes the sleeve look positive would vanish with no alert.
+
+**Snapshot taken and committed: `data_snapshots/futures_runtime_state_2026-09-07.json` (200 rows
+back to 2026-06-03) and `futures_feature_store_2026-09-07.jsonl`.** Repeat before each roll.
+
+Still outstanding: a MEXC private-history reconciliation against the ring buffer, which is the
+one remaining data-integrity check and needs a live API read.
+
+### THE CLOSED-TRADE RECORD DROPS ALL ENTRY METADATA — fifth occurrence
+
+**WILDCARD rows in trade_history carry `metadata = {}` — 0 of 90.** The live open position
+carries **49 keys**, including `turnover_24h_usdt`, `candidate_rank`, `candidate_field`,
+`calm_ratio`, `vol_z`, `atr_pct`, `entry_lateness`, `ref_listed`, `risk_pct_actual`.
+
+Cause: `_close_history_trade` (runtime.py:4752-4805) builds the record field by field and
+promotes only six metadata keys. The comment beside `entry_slippage_bps` names this exact
+failure and it was fixed for that one field only. `_append_feature_store` (~4892) has the
+sibling whitelist bug and its own comment already says *"Same bug, third occurrence."*
+
+    THE FIX IS ONE LINE:   "metadata": dict(position.metadata or {}),
+
+**Measured cost of the defect:** one agent spent an entire study reconstructing turnover-at-entry
+from klines and its verifier killed the conclusion on a lookahead artefact — while the bot had
+recorded the exact point-in-time `turnover_24h_usdt` on the position object and discarded it 48
+hours earlier. Three other agents reconstructed values the bot had already measured.
+
+Correction to the smaller fix: `roc_z` is ALREADY whitelisted (4913). It is null because
+wildcard.py:229 computes it only under `FUTURES_WILDCARD_SIGMA_TRIGGER`, which is off live. That
+belongs in the detector, not the whitelist.
+
+### exit_kind is a relabelling of P&L, not a record of what fired
+
+`_classify_exit_kind` (runtime.py:4956) derives TP/STOP/OTHER from **realised R** — TP at >=0.9x
+target, STOP at <=-0.85. So "STOP exits average -1.044R" is a tautology. `EXCHANGE_CLOSE`
+(5145) is a reconciler path written whenever a position vanishes from the exchange list, with no
+knowledge of which order filled; it splits into STOP 22 (-22.95R) / TP 2 (+10.05R) / untagged 16
+(+12.15R). `exit_rule` is a byte-for-byte duplicate of `exit_reason` in all 90 rows.
+
+**Every prior exit-family verdict that filtered on `exit_kind` was filtering on a relabelling of
+P&L.** Two mislabelled rows found (BICO 17.17h, BTW 11.26h, both tagged CONVEX_TIME_STOP, closed
+two seconds apart on 08-05 — a restart bulk-close wearing a designed exit's label, contaminating
+29% of that cohort).
+
+### Refuted this round (~50 alternatives, adding to the ~34 already recorded)
+
+| refuted | measurement |
+|---|---|
+| WILDCARD long-only / short-only / asymmetric risk | gap collapses to +0.144R p=0.373 ex-preAug; costs $51-163/mo |
+| raise turnover floor 2M -> 4M | **LOOKAHEAD**: bar-OPEN keying put up to 60min of post-entry volume in the "pre-entry 24h" window |
+| trigger 8% -> 7% | shadow population is not takeable; 2 of 6 rows fail calm_ratio at any trigger; band +0.238R -> +0.025R after the join |
+| TP cap 5R -> 6/7/8R | peak window ran 82-183h past entry against a 24h clock; only 2 of 7 reach 7R inside it |
+| early-adverse cut, full 5x6 grid | 24 of 30 cells negative, grid mean -3.29R; survivor died on phase-jitter |
+| stop tightening 0.5x/0.75x, widening 1.5x | negative in all three exit models; the widening gain is a replay artefact |
+| partial exits / scale-outs at 2R | worst result in the study |
+| leverage cap 2x-10x | analytically inert — leverage cancels out of risk-targeted sizing, 53/53 rows land on int(20/(sl_frac*100)) |
+| per-sleeve risk tilt | the sleeves already draw identical risk, 1.381% vs 1.371%, t +0.07 |
+| risk multiplier 0.25x-1.5x | a line through the origin; netR invariant at +18.41 in every cell |
+| regime scaler pinned to 1.0 | size-neutral lifetime value +$0.84, permutation p=0.941 |
+| WILDCARD slots 3 -> 2 | +$5.3 vs -$5.8/mo, p=0.514; 3 slots occupied **0.35%** of wall-clock |
+| regime/session/BTC-context, 18 formulations | family-wise p 0.15-0.68; best placebo beats the real gate |
+| cooldown after losses | WILDCARD does BETTER after losses (+0.443R vs +0.083R) — the throttle would fire on its best cell |
+| repeat-symbol re-entry (the TREND rule, ported) | depth 1/2/3/4 = +0.192/+0.288/+0.627/+0.192R, p=0.729 |
+| min pullback depth, both parameterisations | refuted |
+| listing age, spread veto, pump-inflation ratio | cuts nothing and destroys runners / bad bucket is n=4 |
+
+### Structural facts established
+
+- **Live is candidate-starved, not slot-constrained.** 0 of 593 post-deposit scans had slots
+  full; 3 WILDCARD slots held 0.35% of wall time; peak simultaneous margin across ALL sleeves
+  $244 = 21.7%. The 5% risk cap and 25% margin cap have **never** bound (max 2.36%, 18.48%).
+  The "slots bind" finding comes from the replay, which runs at **4.16x** live's fill rate.
+  Consequence: every tightening cost in this study is near-pure subtraction with no substitution
+  credit, which makes those costs real.
+- The **fill-rate collapse is market supply, not a defect.** All four internal explanations
+  refuted by direct measurement. `FUTURES_MAX_CONCURRENT_POSITIONS=2` does not constrain the
+  convex path at all — `_open_wildcard_position` never reaches the portfolio-margin block.
+- `FUTURES_WILDCARD_PREEMPT_ENABLED=1` is **structurally inert** — preemption can only fire when
+  slots are full, which is 0.35% of the time; live `preempt_log` is empty.
+- **TREND is signal-supply-constrained too** (0 positions 93.2% of wall-clock). There is no queue
+  of TREND signals waiting for WILDCARD's margin, so **WILDCARD-vs-more-TREND is a false
+  choice**; the comparison is WILDCARD-vs-nothing.
+- Diversification, 38 days: corr(WILDCARD daily R, TREND daily R) = **+0.026**, genuinely
+  uncorrelated. Book Sharpe 3.00 -> 3.50 adding WILDCARD, but maxDD worsens 7.25R -> 9.94R, the
+  block-bootstrap P(no Sharpe gain) = 0.368, and ex-top-5% of WILDCARD the book Sharpe collapses
+  3.00 -> 1.22. **Uncorrelated return, not drawdown reduction.**
+- **Four code-vs-env divergences**, not one: `wildcard_long_only` code default True vs env 0;
+  `max_positions` 2 vs 3; `min_turnover_usdt` $3M vs $2M; `SL_ATR_MULT` 1.5 vs 3.0; `MAX_SCAN`
+  25 vs 90. Losing an env var silently changes the strategy in five places.
+- `MAX_SCAN=90` **does not bind** (scan_capped=0, movers=35). Live's pool is defined by the $2M
+  floor and the 24h-range gate and is 35-57 symbols. **The pullback-resume study's decisive axis
+  was a "top-90 slice" meant to represent live — so the most expensive gate in the bot had its
+  sign flipped on a mis-specified universe.** Re-run it on the real pool.
+- The **7% stopping rule is a rubber stamp**: under a band with exactly zero edge the
+  pre-registered two-condition test passes 47.7% at n=30 and 49.1% at n=100. Retire the rule,
+  not just the cell.
+- Harness defect, generalised: `pit_intrabar.fetch_grids` passed `days` through to a chunk count
+  on a hardcoded BAR=900 while the interval was Min5, so **every published intra-bar "full
+  history" replay before 2026-09-07 ran on ~one third of its stated window.** Seven WILDCARD
+  harnesses have no recorded verdict at all (`pit_cooldown`, `pit_adverse_cut`, `pit_slots`,
+  `pit_trail_cooldown`, `pit_short_tp`, `pit_bands`, `pit_tut_class`) — re-run, do not recall.
+
+### THE ONE MEASUREMENT: shadow-log the detector rejects (queue item 0b)
+
+`detect_wildcard_signal` refuses **64,854 of 84,569 trigger bars (76.7%)** on
+`no_pullback_resume`, 14.4% `low_volume_z`, 4.2% `climax_wick`, 1.1% `rsi_exhausted`, 0.8%
+`vertical_blowoff`. They reject inside the detector via `_rej()` and produce **no shadow row at
+all**, so neither the taken nor the rejected population carries their features — which is why
+four live gates (`MIN_VOL_Z`, `MAX_WICK`, `VERTICAL_ATR_MULT`, `RSI_MAX/MIN`) have **zero
+measurements of any kind** anywhere in this document.
+
+It is the largest unmeasured surface in the bot by two orders of magnitude — tens of thousands
+of observations per week against a taken population accruing 11-18 fills/month. **It is the only
+instrument that escapes the power wall:** sd is 1.875R, so a 2-SE read on the sleeve's own mean
+needs 188 fills, about 20 months at the funded rate. Cost: one `_shadow_log_untaken` call on the
+detector-reject path. Logging only; widens no aperture, cannot move a dollar.
+
+Known limit to fix with it: `MIN_VOL_Z` has a live/replay asymmetry — live fetches klines with
+`end=now`, so a scan landing 3 minutes into a 15m bar sees ~20% of eventual volume. **Live is
+systematically stricter than every replay on exactly this gate.**
+
+### Verdict
+
+**No trading-parameter change ships.** Every behaviour change proposed across eight angles was
+killed — four by its own adversarial verifier, four by the agent that proposed it. What survived
+is three telemetry fixes at $0/month, one prohibition, and one hold.
+
+Post-week deploy bundle (all logging, no decision path): the one-line `metadata` fix; the
+feature-store whitelist (`atr_pct`, `calm_ratio`, `vol_z`, `candidate_rank`, `candidate_field`);
+tag `exit_kind` from `exit_reason` and split `EXCHANGE_CLOSE` into `EXCHANGE_STOP`/`EXCHANGE_TP`;
+queue item 0b; a fail-open counter on the external gate; and flip the four code defaults to match
+live. Then re-run the pullback-resume study on the real 35-57 symbol pool.
+
+Levers still at zero measurement after nine studies, ranked by what they could move:
+`EXCLUDE_TOP_TURNOVER=24` (the only lever with a large recorded number, +$81.43, held back
+before funding and never re-run); the turnover deflator + `BASELINE_POOL_MULT=2.0`;
+`_wildcard_rank_key` (the only quality judgement in the convex path, measurable the moment the
+metadata fix lands); `SCAN_INTERVAL_SECONDS=450`; `ATR_PERIOD`/`RSI_PERIOD`/the 96-bar calm
+window (hard-coded, unreachable by env, never varied).
+
 
 ## 2026-09-07: TREND re-entry-depth haircut — owner's rule REFUTED, variant INCONCLUSIVE
 
