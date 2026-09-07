@@ -56,6 +56,103 @@ only candidate that clears the screen without diluting per-fill quality.
 | convex -> squeeze switch | squeeze marginal contribution -$1.15 |
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
+| TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+
+## 2026-09-07: TREND re-entry-depth haircut — owner's rule REFUTED, variant INCONCLUSIVE
+
+Owner's proposal: "if we already opened a LONG trend on an all-time high, reduce
+risk by 50% on the next all-time high for the same symbol." Tested on the
+COMPLETE TREND population — 27 closes, 2026-08-20 to 2026-09-07, all LONG,
+feature store and trade_history joining 1:1 with zero unmatched rows.
+
+### The owner's rule as stated (H1) is REFUTED and costs real money
+
+Halving at depth >= 1 shrinks **16 of 27 fills including BOTH +2.9R legs and the
++$75.37 ZEC trade** (which sits at depth 1). Constant 1R: **-$3.93**. Actual
+realised dollars: **-$18.79**. At funded 1R ~$26 the ongoing cost is roughly
+**-$50/month**. The direction was right; the threshold was off by one.
+
+### The first pass's gradient did NOT survive doubling the sample
+
+    depth   n=15 (first pass)      n=27 (full population)
+    0       +0.490                 +0.864   <- now the BEST cell
+    1       +1.282  <- was best    +0.622
+    2       -0.023                 -0.273
+    3+      -0.750                 -0.492
+
+Not a monotone gradient — a single CLIFF between depth 1 and 2. Shallow (n=19,
++0.762R) vs deep (n=8, -0.383R): gap 1.145R, SE 0.485, **t=2.36**. That is one
+nominal hit against 35 cells tested, where chance alone predicts 1.75.
+
+### H2 (0.5x at depth >= 2) has genuine virtues — and one fatal hole
+
+    H2   +1.530R   +$6.26 @1R=$4.09   perm p 0.046   31/31 boundaries positive
+
+Virtues, all verified: it **never touches a runner** (largest trade shrunk is
++0.61R; the three +2.8-to-+2.98R legs and the +$75 fill are all depth 0-1, so
+ex-top-5% delta EQUALS full delta — the one place this beats every gate study
+this session); leave-one-out holds (+0.975R to +1.835R); and the maturity
+confound fails in the RIGHT direction (maturity-only loses 7.40R, so depth
+carries what ordering exists).
+
+**THE HOLE: all 8 trades it touches are ZEC. Non-ZEC depth >= 2 is n=0.** Not
+sparse — ZERO. The variant has literally never been evaluated on another symbol.
+"Re-entry depth is bad" cannot be told apart from "the back half of ZEC's
+08-22-to-09-06 run was bad". The earlier all-sleeve re-entry study that appeared
+to corroborate this was reading SEVEN OF THESE SAME EIGHT TRADES — one
+observation, not two independent ones.
+
+### Three more things that sank it
+
+**THE 48h WINDOW IS TUNED**, and it was inherited from the first pass rather
+than pre-registered. H2 delta across ten defensible windows:
+
+    entry12 +0.20 | entry24 +1.78 | entry36 +1.75 | entry48 +1.53 | entry60 +0.09
+    entry72 -0.15 | entry96 -1.92 | close24 +1.57 | close48 +0.09 | close72 +0.40
+
+**THE SIGN CONTROL FAILED.** H6 (halve only after a WINNING prior leg) = +1.155R
+beat H5 (only after a LOSING leg) = +0.375R by 3x, on every axis including the
+half-split (31/31 vs 0/31). If depth >= 2 meant "the trend is tiring", H5 must
+dominate. In fairness: H5 fires on only 2 trades, so the test was never powered
+— the mechanism is UNTESTED rather than disproved.
+
+**THE DEPOSIT LANDS EXACTLY ON THE DEEP CLUSTER.** The 6.3x equity change occurs
+09-04 16:55; the five post-deposit TREND trades have depths [3,1,2,3,3] — four
+of five at depth >= 2. H2's raw-dollar delta is +$21.28 against +$6.26 at
+constant 1R. Any dollar-ordered reading of this is an equity-timeline artefact.
+
+### The owner's literal ATH framing is WRONG IN BOTH DIRECTIONS
+
+Excluding the 4h bar containing the entry (otherwise its own high beats the
+entry and nothing is ever an ATH): new 30-day high on 10 of 27, 90-day on 9,
+1000-day on 6 (all ZEC). Being an ATH entry is **if anything a NEGATIVE**:
+
+    30d high  IS: n=10  +0.380R  win 60%   |   NOT: n=17  +0.448R  win 53%
+    90d high  IS: n= 9  +0.091R  win 56%   |   NOT: n=18  +0.589R
+
+Plain re-entry depth separates better than the ATH version of the same rule. And
+this sits alongside the 2026-09-04 refutation of an ATH entry FILTER — different
+lever, same conclusion.
+
+### The scaler is working AGAINST this, not duplicating it
+
+corr(depth, regime_size_multiplier) = +0.320 Pearson / +0.483 Spearman. Mean
+multiplier by depth: **0 -> 0.679 | 1 -> 0.942 | 2 -> 0.978 | 3+ -> 0.807**. The
+scaler sizes deep re-entries UP, because by the second re-entry the symbol's own
+path efficiency reads well. So the haircut is not redundant with the scaler — it
+would be OPPOSING it. Worth knowing either way.
+
+### The asymmetry that decides it
+
+If H2 is real: **+$66/month** at funded size. If the null is true (deep trades
+no different from shallow): H2 halves 8 fills averaging +0.76R, costing ~5R/mo =
+**-$130/month**. **The downside is 2x the upside**, and the evidence separating
+them is eight ZEC trades in a tuned window with an unpowered mechanism test.
+
+**Verdict: INCONCLUSIVE, do not ship.** Revisit when non-ZEC depth>=2 trades
+exist — note trial 19 (TREND 2 -> 3 slots) spreads fills across MORE symbols,
+which will either produce that evidence or collapse the deep-cell rate toward
+the ex-ZEC rate of 0%. Either outcome is informative. Refuted/inconclusive ~34.
 
 ## 2026-09-07: PULLBACK-RESUME priced at last — sign UNRESOLVED, mechanism clear
 
