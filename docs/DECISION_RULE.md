@@ -57,6 +57,104 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## 2026-09-07: the WILDCARD ROC-WINDOW sweep — REFUTED, plus a HARNESS DEFECT
+
+Owner watched MAGMA_USDT LONG (entered 09-06 19:58 at 0.273, stopped -1.06R /
+-$26.45 after 0.4h, peak 0.02R) and asked to sweep the ROC WINDOW jointly with
+its threshold: "5% in 1 hour, 7% in 2 hours, lots of combinations".
+
+### TWO ERRORS IN THE BRIEF I WROTE — own them before the result
+
+1. **I claimed `ROC_BARS` had NEVER been swept. It HAS.**
+   `tools/pit_roc_sweep.py` (2026-08-25/29) is titled "ROC trigger window x
+   threshold sweep" and sweeps ROC_BARS over {4, 8, 12, 24, 48} across 15 cells
+   on 208 days — and it contains the owner's 1h/5% cell explicitly.
+2. **I stated the live 24h-range gate is 7%. It is 8%.** `runtime.py:5871` sets
+   `min_move` from `FUTURES_WILDCARD_MIN_24H_RANGE`, which defaults to
+   `scan_roc`, which defaults to `min_roc` = 0.08. Consequence that matters:
+   in LIVE code, dropping the ROC threshold to 5% ALSO drops the 24h prefilter
+   to 5%. Any harness that pins the prefilter at 8% mis-specifies every
+   low-threshold cell.
+
+### THE ANSWER: the mechanism is BACKWARDS
+
+**At a fixed threshold a FASTER window fires LATER, not earlier.** Verified on
+MAGMA with freshly fetched klines: live 3h/8% first became true at the 19:00 bar
+(ROC 8.47%, close 0.26041); 1h/8% did not fire until 19:15 at 0.27072 — **4.0%
+WORSE**. 6h/5% fires later than 3h/5%. "Faster window = earlier entry" is false.
+
+**Both named cells would have taken MAGMA anyway** (1h/5% fires 18:45, 1h/7%
+fires 19:00); 41 of 42 cells fire at or before the live entry. The hypothesis
+does not exclude its own motivating trade.
+
+**The owner's 5%/1h cell was already measured** (prior harness, 2026-08-29):
+734 fills, +$233.49 against the live cell's +$378.09 = **-$144.60**, $/fill
+0.318 vs 0.488, 14/29 positive weeks vs 19/29. Note it took FEWER trades than
+live (734 vs 775) — it is a TIGHTENING, so churn and fee drag cannot explain
+the loss. It selected a different, worse population.
+
+The only cell that ever beat live is **6h/12%** (+$62.16, 690 fills, $/fill
+0.638, ex-top-5% +$137.50, both halves pass) — LONGER and STRICTER, the exact
+opposite of the hypothesis, and an unreplicated best-of-15 pick its own author
+flagged as candidate-only. It is also the ONLY cell in the grid that never
+fires on MAGMA. Retest properly on a calibrated harness before anyone acts.
+
+### THE OWNER WAS RIGHT ABOUT LATENESS — the cause is not the window
+
+    live trigger cleared   19:00   price 0.26041
+    bot filled             19:58   price 0.273      58 min, +4.8%
+
+    next hour's drawdown from 0.26041:  -1.62%
+    next hour's drawdown from 0.273:    -6.15%  <- THE STOP-OUT
+
+**The lateness cost the trade.** But the 3h window had already cleared an hour
+earlier. What consumed the 58 minutes was the PULLBACK-RESUME rule doing its
+job — waiting for the dip and buying the bounce. No ROC-window change reaches
+it. This is a DIFFERENT component and it is the one genuinely open question
+this study produced. Note `no_pullback_resume` rejects **64,854 of 84,569**
+trigger bars (76.7%) and has never been priced separately — docs record only
+that it "carried no information" as a diagnostic, not what it costs or saves.
+
+### HARNESS DEFECT — affects EVERY prior intra-bar study
+
+`pit_intrabar.fetch_grids` passes `days` straight to `pit_fetch.fetch_frames`,
+whose chunk count AND want-bars are computed on a hardcoded `BAR=900` while the
+interval is Min5. **At Min5 it fetches ONE THIRD of the requested window and
+its report calls it complete.** Verified: `PJ_DAYS=14` returned 6.9 days of 5m
+data; `PJ_DAYS=220` would deliver ~79 days, not 220. Every published "full
+history" intra-bar replay in this repo has run on roughly a third of its stated
+window. Fixed in this run by passing `days*3`; the corrected fetch returned
+median 70,034 5m bars (243 days) across 169/170 symbols.
+
+### CALIBRATION FAILS WORSE THAN DOCUMENTED
+
+Live cell over the 83.3d overlap: replay 399 fills $+48.31 vs live 96 fills
+$+18.61. **Fill rate off 4.16x, not the documented 2.2x.**
+
+- **Live is CANDIDATE-STARVED, not slot-constrained** — the decisive diagnostic.
+  Live occupies 5.23 slot-hours/day of 72 available (7.3%); the replay occupies
+  33.69 (46.8%). The replay's extra fills are trades the live bot NEVER SAW,
+  hidden by `MAX_SCAN=90` (live scans the top 90 movers, the replay 169), the
+  external listing veto, and the live ticker-snapshot universe.
+- **The extra population is systematically worse.** Replay fills on symbols live
+  actually traded: n=231, +$0.257/fill. On symbols live never traded: n=168,
+  **-$0.065/fill**. So a cell that wins by ADDING FILLS wins inside a book that
+  provably does not exist live — the mechanism that killed the threshold
+  loosening.
+- What IS faithful: 21 of 96 live fills matched, **sign agreement 20/21**, and
+  the replay's entry averages 0.456% EARLIER than live. Per-trade mechanics are
+  sound; the population is not.
+
+### Incomplete, and stated as such
+
+The 42-cell grid NEVER EXECUTED (container SSH went down mid-run). Every grid
+number above is from the PRIOR uncorrected harness. The entry-price vs selection
+DECOMPOSITION — the heart of the question — was coded, staged and never ran.
+At $46/month per-cell noise against a +/-$60/month envelope, the measurement is
+blunter than the thing being measured.
+
+**Recommendation: change nothing on the ROC window.** Refuted count ~32.
+
 ## REJECTED 2026-09-06 (second pass): sizing and entry-LATENCY levers
 
 The owner rejected "the bot is finished" and tasked a second pass on the
