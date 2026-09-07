@@ -57,6 +57,106 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 
+## 2026-09-07: PULLBACK-RESUME priced at last — sign UNRESOLVED, mechanism clear
+
+The bot's largest filter, never before priced. 13 variants on the CORRECTED
+harness (the Min5 fetch fix, 7b757bc, delivered 66,534 median bars over 231.3
+days across 166/170 symbols — pre-fix this call returned ~77 days).
+
+**The exact rule** (`wildcard.py`, gate 2) is three consecutive 15m closes:
+
+    resumed     = cur > prev    (long)
+    pulled_back = prev < prev2  (long)
+    if not (resumed and pulled_back): reject no_pullback_resume
+
+It rejects **78.7% of candidates** that pass every other gate.
+
+### The headline reverses on the universe the bot actually scans
+
+    pool                       gate ON vs gate OFF
+    full 166-symbol replay     gate SAVES $110.78   (~+$21/mo scaled)
+    top-90 slice (LIVE scans)  gate COSTS  $18.27   (~-$3.5/mo)
+    shared fills only          gate COSTS  $42-85   (~-$8 to -$16/mo)
+
+Live runs `FUTURES_WILDCARD_MAX_SCAN=90`; the replay used 169 symbols. **The
+evidence FOR the gate comes entirely from symbols the bot never sees.** On the
+shared-fill axis — the only one the calibration certifies — dropping the gate
+wins in every framing. **Sign UNRESOLVED, |effect| under ~$25/month either way.**
+
+### What IS solid: the mechanism, identical in every framing
+
+    turning the gate OFF:  +$191.30 of top-5% TAIL added
+                           -$302.08 of BODY destroyed        (full pool)
+                           +$143.25 tail / -$124.98 body     (top-90)
+
+Every loosening cell adds tail; every subtractive cell destroys it. **The gate
+buys BODY protection in a book where 100% of the P&L is in the TAIL.** That is
+the wrong shape for this book, and it is a mechanism finding rather than a
+dollar finding.
+
+### The entry-price cost, now priced
+
+Shared fills (same symbol, entries within 6h), sign negative = the cell entered
+BETTER than live:
+
+    V1  gate OFF           n=595   mean -0.089R   p25 -0.172R
+    V7a first-touch <=1b   n=516   mean -0.197R   p25 -0.338R
+    V7b first-touch <=4b   n=561   mean -0.135R   p25 -0.273R
+
+**The owner's instinct is correct and now quantified: on the worst quarter of
+shared trades the gate costs 0.14-0.34R of entry price.** What is NOT
+established is that the gate is worth paying it.
+
+### MAGMA does NOT support the case — my earlier account was wrong
+
+I told the owner the 58 minutes from 19:00 (0.26041) to 19:58 (0.273) were
+consumed by pullback-resume. **They were not.** With the pullback gate REMOVED
+and all other gates live, every candidate bar in the window is:
+
+    19:35  age 1  entry 0.271590  ->  -1.037R
+    19:50  age 2  entry 0.270480  ->  -1.036R
+    19:55  age 3  entry 0.273290  ->  -1.032R   <- the live fill
+
+**There is no candidate at or near 0.26041.** The 19:00 trigger bar never became
+a candidate at all — one of the OTHER guards (volume-z, climax wick, or vertical
+blow-off) refused 19:00-19:30. Removing pullback-resume buys 20 minutes and
+0.0017 of price, and all three available entries stop out within 0.005R of each
+other. The trade was unwinnable at every entry the bot could have taken.
+
+### Cell table (pinned $170, 227.4d, wildcard-only)
+
+    cell                        fills   net $    vs V0   $/fill   perm p
+    V0  LIVE pullback-resume      776  +166.25   +0.00   +0.214   0.037
+    V5d resume + no new extreme   898  +153.78  -12.47   +0.171   0.067
+    V7a first-touch <=1 bar      1195  +152.18  -14.07   +0.127   0.083
+    V5b pullback leg only         809  +151.95  -14.30   +0.188   0.078
+    V4  timeout 8 bars            839  +116.21  -50.04   +0.139   0.154
+    V1  gate OFF                 1355   +55.47 -110.78   +0.041     n/a
+    V6  gate OFF + 2.0xATR stop  1949   +58.03 -108.22   +0.030     n/a
+    V6c gate ON  + 2.0xATR stop   965   -25.88 -192.13   -0.027   0.513
+
+V0 has the highest $/fill and least-negative ex-top-5% of all 13 — but both are
+within-replay ratios on a pool that includes invisible symbols.
+
+### Why nothing ships
+
+- **ZERO of 13 cells beat V0 in both halves at any boundary** (chance predicts
+  ~3.2). The baseline fails the half-split too.
+- **V0's own p=0.037 does not survive an 18-cell family** (Bonferroni 0.0028).
+- **The baseline did not replicate itself**: the same V0 cell on the same 83.3d
+  overlap booked 363 fills/+$86.48 today vs 399/+$48.31 on 09-06 — a 2x swing in
+  per-fill terms, larger than most cells being adjudicated.
+- Live cell NOT calibrated this session: the Futures-bot container was scaled to
+  zero and refused SSH, so the live figure is a document quote, not a measurement.
+
+**Correction to the docs**: the line "`no_pullback_resume` carried no
+information" is WRONG as stated. It carries modest real information (p=0.037 vs
+random filters of its own selectivity), and no relaxation carries more.
+
+**Recommendation: change nothing; shadow-log the gate** (queue item 0b). This is
+the study that proves why 0b matters — the most expensive filter in the book is
+adjudicable only by a replay whose sign flips with the symbol pool.
+
 ## 2026-09-07: the WILDCARD ROC-WINDOW sweep — REFUTED, plus a HARNESS DEFECT
 
 Owner watched MAGMA_USDT LONG (entered 09-06 19:58 at 0.273, stopped -1.06R /
