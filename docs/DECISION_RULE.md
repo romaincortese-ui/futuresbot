@@ -57,6 +57,227 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-07: SLEEVE ALLOCATION — retire WILDCARD, grow TREND, or neither. Answer: neither.
+
+Twelve agents, 430 tool calls, five configuration questions each adversarially verified, plus a
+completeness critic. **All five verifiers rejected their agent's recommendation.** They converge
+anyway, and the convergence is the answer.
+
+### THE BOOK SPLITS AT 2026-08-20 AND NOBODY HAD EVER LOOKED
+
+    era                              closes  days   net $      fees $   gross $
+    BEFORE 08-20 (the PMT era)         130     76   -108.92     49.66    -59.26
+      of which PMT                      55            -101.23    42.73
+    SINCE 08-20 (the CURRENT config)    70     17    **+55.07**   10.55    +65.62
+      TREND  n=27  +$59.36  |  WILDCARD n=42  -$4.46  |  PMT n=1 +$0.17
+
+Lifetime the corpus reads **-$53.85 on $60.21 of fees**, and a completeness critic reported that
+as "the book has lost money and not one of five reports said so". True, and misleading: **the
+entire loss is the decommissioned PMT sleeve** (retired 2026-07-13, last close 08-20). PMT ended
+the same week TREND began. The configuration actually running has made **+$55.07 in 17 days**.
+
+Use the 08-20 split for every future book-level claim. The pre-08-20 rows are a different bot.
+
+### THREE PREMISES I GAVE THE AGENTS WERE WRONG
+
+**1. "Nothing binds" is a WILDCARD fact, not a TREND fact.** On a 5-minute grid over TREND's
+18.2-day life: 0 positions 64.3%, 1 position 24.4%, **BOTH SLOTS FULL 11.2%**. Post-deposit: 0
+positions 21.8%, 1 position 78.2%. The slot cap refused a live TREND candidate **58 times in 131
+days**, 20 of them inside the 17.4-day live window. Wall-clock idleness is the wrong instrument;
+the question is whether a slot was full AT THE MOMENT a signal arrived.
+
+**2. The sleeves DO compete — for available balance, continuously.** `runtime.py:1761` sizes off
+`AVAILABLE_BALANCE`, not equity. **16 of 27 TREND fills opened with non-TREND margin locked**,
+mean haircut 4.96%, max 19.1%. So retiring WILDCARD up-sizes every later TREND fill ~5%, which is
+the same order as WILDCARD's whole contribution. "Retiring frees nothing" was wrong.
+
+**3. TREND books 10.4 closes/week, not the 2.5 this document has been asserting** — off by 4.4x.
+Trial 19's "30 closes is 8-12 weeks" is really **3-6 weeks**. Fix that number wherever it appears.
+
+### IS TREND REAL? BOTH ANSWERS
+
+    symbol          n   meanR    sumR
+    ZEC            17  +0.353   +6.00
+    XRP             4  +0.905   +3.62
+    ETH             4  -0.353   -1.41
+    SOL             2  +1.605   +3.21   <- NOT in FUTURES_TREND_SYMBOLS
+    in-universe    25  +0.328   +8.21
+    ex-ZEC          8  +0.276   +2.21   <- removing one trade takes it to -0.110R
+
+**Three agents and one verifier reported ex-ZEC as +0.542R and concluded "TREND is not one
+coin". That number is wrong** — it includes two SOL fills from a retired universe. Restricted to
+symbols the bot can actually trade it is **n=8, +0.276R, 90% CI [-0.63, +1.28]**. Uninformative.
+
+What IS informative: an independent placebo test, 1 year Min15 and 3.93 years 4h, against random
+entry on the SAME symbol, audited for lookahead and **re-run in raw % return with the ATR
+denominator stripped** so normalisation cannot manufacture the edge:
+
+    ZEC  +1.028% excess (n=844, t=+5.49)   SURVIVES
+    XRP  +0.612%                            SURVIVES
+    ETH  +0.124% (p=0.54)                   does not
+    SOL  -0.027%                            NEGATIVE
+
+**Ruling: the detector is real on ZEC and XRP. The dollars are ZEC's.** Mechanism is mundane and
+matters: the 4% ROC gate is an ABSOLUTE threshold on symbols with 2.5x different volatility, so
+ZEC (163.6% annualised) clears it 2.5x as often. ZEC does not trend better (24h efficiency 0.114
+vs ETH 0.109) — it just moves more. ZEC has had 10 non-overlapping 15-day runs of >=+53% in 3.83
+years, six in the last 12 months; **ETH has had ZERO.**
+
+### THE $/FILL CRITIQUE: RIGHT IN PRINCIPLE, IRRELEVANT IN EFFECT
+
+I argued the prior refutation used the wrong criterion, since +0.215 $/fill is still positive and
+capacity looked free. Rebuilt on total dollars, the verdict does not flip, and it fails on
+arithmetic rather than preference:
+
+    break-even fill multiple = 0.999 / 0.215 = 4.65x
+    measured multiple, 3 -> 11 symbols       = 1.73x to 1.91x
+    measured multiple at 20 symbols          = 3.30x
+    3.30 < 4.65 at the widest universe anyone tested.
+
+The ceiling on the multiple is linear in symbol count because of one-position-per-symbol, and the
+2-slot cap halves the realised figure. **The expansion cannot buy enough fills to pay for the
+quality it gives up even with capacity 100% free.** Three quantified mechanisms, none of which is
+risk concentration:
+
+1. **Empty population.** Top-5 by turnover average +0.387R/fill standalone; the next fifteen
+   average **+0.016R**, with TAO -0.139 (t -2.19), ONDO -0.129, AVAX -0.159 individually
+   negative. Expansion by turnover rank buys zero-expectancy fills.
+2. **Adverse displacement — fills are NOT additive.** A position holds its slot up to 24h, so a
+   new symbol refuses the base symbols' signals concentrated in exactly the broad-trend windows
+   where the base pays most. The 8-majors expansion keeps 76 of 129 base fills, **destroys 53
+   worth $9.19/fill and buys 147 worth $1.685/fill**. Substitution runs 0.11-0.65, never zero.
+3. **Drawdown grows with fill count while return grows sub-linearly.** P(-20% DD in 3 months):
+   3 symbols 26%, 5 symbols 54%, 8 symbols 71%, 12 symbols 85%, 20 symbols 92%.
+
+**The one positive expansion cell was lookahead.** A "wider universe, tighter trigger" cell
+(top-8, MIN_ROC 6%) priced at +$55/mo. Rebuilding the universe ranking POINT-IN-TIME from the bar
+tape at window start, instead of a turnover snapshot taken on the LAST DAY of the measured
+window, the same cell goes to **-$64/mo**. The lookahead was worth $119/mo, 79% of the cell. Its
+two carriers appear in no point-in-time top-8.
+
+**Replace the pre-registered screen.** Not "$/fill must not fall" but: positive excess over that
+symbol's OWN random-entry placebo, in raw % return as well as R, p<0.05 over >=1 year, stable
+sign across >=3 of 4 multi-year eras, membership decided by information available at window
+start. Of everything measured only ZEC and XRP pass, and both are already in.
+
+### 1R IS $15.49, NOT $25
+
+Realised risk drawn is **1.371% of equity (TREND, n=27) and 1.381% (WILDCARD, n=50)**, not the
+2.41% config ceiling, because the regime scaler cuts it. Four of five studies priced at $25 and
+are uniformly **1.61x too high**. And trial 19 is pre-registered to open AFTER the withdrawal, at
+$190, where 1R is **$2.60** — so the "$10 bar is now 9x looser" argument is backwards for the one
+change it was applied to. Every trial-19 estimate divides by 5.95: **+$0.22 to +$1.70/month.**
+
+### THE RANKED CONFIGURATIONS (at realised 1R = $15.49)
+
+    #  configuration                          $/month   maxDD    ex-top-5%   fills/mo  wks->2SE
+    1  DO NOTHING (live)                        +241   -13.9R     +$160        78       9-15
+    2  Retire WILDCARD                          +201    -8.0R     +$226        47       9-15
+    3  Trial 19, slots 2->3                     +241    +0.5-2R    mostly worse 80       >=30
+    4  Drop ETH -> XRP+ZEC only                 +243   -12.0R     best cell     42       9-15
+    5  Shrink WILDCARD to 0.5x                  +221   -10.1R     +$193        78        201
+    6  Refine WILDCARD (any parameter)             0        -         -         78        201
+    7  Universe +8 majors, 2 slots              +190   -16..-18R   -$87        133      >=100
+    8  Universe + slots coupled (11-20, 3-4)  +120..180 -20..-29R  -$100..-290  95-128   >=100
+    9  Retire WILDCARD + lever TREND up         +241    -8.3R     +$241        47       9-15
+    10 Re-enable SQUEEZE                        -117    -8.7R     -$183        16        530
+    11 Re-enable SNIPER                         -106    -4.2R     -$352        67         44
+    12 Re-enable PMT                            -207    -6.3R     -$289        43          4
+
+**Rows 1-5 are inside each other's noise.** The baseline's own 90% band is **$764 wide**
+[-$130, +$634]. Every delta argued across five studies is an order of magnitude smaller than the
+uncertainty on the thing it is a delta from. Rows 7-12 are outside the noise in the wrong
+direction and are settled.
+
+Row 9 is rejected on Kelly: it pushes risk to ~2.72% against a 2.2% pooled-book anchor, buys
+dollars 37% likely negative, and concentrates the book on 25 fills of which 17 are one coin in
+one 15-day run.
+
+### THE DECISION, AND THE ARGUMENT THAT MAKES IT ONE
+
+**Hold every trading parameter. Do not open trial 19. Amend its pre-registration.**
+
+**TREND reaches a 2-SE read on its own mean in 96 in-universe fills — 9 weeks at 47.4/month, 15
+at the conservative 27.4/month.** That read settles whether the sleeve carrying essentially all
+the book's expectation exists outside ZEC, a question worth **$139-241/month**. WILDCARD needs
+1,521 fills = **201 weeks**. The slot question needs ~47 blocked episodes = ~7 months.
+
+A config change starts a new trial under this project's own reset rule. **Opening trial 19 trades
+a 9-15 week read on a $200/month question for a 7-month read on a $0/month question.** That is
+the whole argument.
+
+Time-to-verdict scales as (sd/mean)^2, NOT fill rate. WILDCARD's mean/sd is 0.051 against TREND's
+0.203. **The sleeve kept because "at least it produces data" produces almost none** — 1.4x the
+fill rate and 1/29th the information rate. That retires the measurement-instrument argument for
+keeping WILDCARD, which was mine.
+
+### Corrections to live limits that were nearly made on arithmetic errors
+
+- **DO NOT raise trial 19's 20% drawdown kill.** The proposal to raise it to 35% rested on a
+  25.4%-of-equity baseline drawdown computed by replaying TREND at 2.41% risk instead of live's
+  1.371% — a 1.43x inflation. **Live realised TREND maxDD is 11% of equity.** Nothing breaches.
+  Acting on it would have weakened a live safety limit on a funded account to fix a bad number.
+- **DO NOT set `FUTURES_WILDCARD_RISK_PCT` to 0.5x.** It is the ONLY risk dial in the codebase;
+  `grep` finds no `FUTURES_TREND_RISK_PCT`, and TREND opens through
+  `_open_wildcard_position(..., kind="TREND")` at `runtime.py:6255`. Halving it **halves TREND
+  too**, roughly -$150/month against the WILDCARD variance it buys.
+- **DO NOT ship the shadow-log de-duplication guard.** The defect is real (TREND `slot_occupied`
+  duplicates 3.50x) but de-duplication is an ANALYSIS step: five of six equally defensible
+  aggregation rules give the OPPOSITE sign to the one proposed, on n=4. The guard would destroy
+  the rows needed to sweep that choice. Keep the raw log; de-duplicate in analysis.
+
+### The variance dial nobody priced
+
+`FUTURES_WILDCARD_MAX_POSITIONS` 3 -> 2. Not shared with TREND, no code change — it does what the
+0.5x proposal wanted without its defect. Replaying the live WILDCARD entry sequence in order:
+
+    cap  taken  sumR    meanR    ex-top-5%   blocked
+    3     62    +4.37   +0.070    -0.147       0
+    2     57    +6.35   +0.111    -0.124       5  (sumR -1.98)
+    1     41    -2.38   -0.058    -0.239      21  (sumR +6.75)
+
++1.8R/month, improves the tail, cuts concurrency. **n=5 blocked and post-hoc, so INCONCLUSIVE** —
+but better-shaped than the recommendation that was made, and in nobody's grid. WILDCARD occupancy:
+3 open **0.9%** of wall-clock, so 3->2 is nearly inert on fills and 3->1 is not.
+
+### The largest measured object in the book, which nobody proposed touching
+
+`FUTURES_TREND_LONG_ONLY=1`. Fourteen de-duplicated blocked SHORT episodes resolve at **-0.671R**,
+robust across all six aggregation rules and every gap boundary from 0.25h to 48h, permutation
+**p=0.0085** against the live long arm. At realised 1R that is **~$242/month of avoided loss,
+against a book earning ~$241/month.** It is already on and appears in none of the three options.
+Caveat that keeps it out of the recommendation: 0 of 42 blocked shorts ever reached TP, so this
+may be one violent directional era rather than a permanent property. **Protect it** — and note
+that universe expansion multiplies the population it must filter, an independent fourth reason
+not to expand.
+
+### Corrections to the prior record
+
+- **The 2026-09-07 TREND re-entry-depth finding does NOT replicate.** Live n=8 (all ZEC) gave
+  depth>=2 at -0.383R. On an independent 1-year, 4-symbol, **n=556** replay the sign REVERSES:
+  shallow (d<2) +0.159R vs deep (d>=2) **+0.471R**, and depth 3+ is the best cell at +0.814R
+  (t=+4.29). At matched depth<2, ZEC live is +1.007R (n=9) vs non-ZEC +0.542R (n=10) — ZEC is
+  BETTER like-for-like. The live deep cluster was a 19-day accident and the risk$ gradient by
+  depth was purely the deposit landing on it. The "do not ship" verdict stands; the DIRECTION
+  recorded was backwards.
+- **The replay's 4.16x fill inflation is a WILDCARD figure, not a TREND one.** Calibrated on
+  TREND over the 17.4-day overlap the harness runs at **1.41x** live's fill rate and UNDERSTATES
+  total R by 0.85x. TREND replay work is far better calibrated than the trial-19 estimate was.
+- **The 40 WILDCARD rows missing `risk_usdt` are an ERA, not a random subset**: rows WITH it run
+  2026-08-12 to 09-06, rows WITHOUT run 06-15 to 08-08, zero overlap. The "n=50 honest
+  population" everyone quotes as WILDCARD's edge IS the last 25 days.
+- Ring buffer turns over every **52 days** at the current 3.86 closes/day. Within ~7 weeks it
+  loses all 55 PMT rows, 6 SQUEEZE rows, 24 early WILDCARD rows and every row lacking
+  `risk_usdt`. Snapshot before each roll.
+
+### Verdict
+
+**No trading parameter changes. Do not retire WILDCARD, do not refine it, do not grow TREND.**
+Post-week, logging only: persist `ref_roc` (the external gate computes corroboration STRENGTH on
+every convex entry, thresholds it at 0.4, and stores only the boolean — the `move_not_corroborated`
+veto fired 1 time in 211 shadow candidates, so >99% of the mass and all the structure sit in the
+discarded range; n=100 accrues in ~25 days). Then let the 9-15 week TREND read run undisturbed.
+
 ## 2026-09-07: THE WILDCARD SLEEVE — "it bleeds" is FALSE; ~50 alternatives priced, none ship
 
 Fifteen agents, 483 tool calls, eight diagnostic angles each adversarially verified, plus a
