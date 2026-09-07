@@ -45,8 +45,17 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-BAR = 900
+BAR = 900               # default seconds/bar (Min15), kept for callers
 CHUNK = 1900
+
+# Seconds per bar by MEXC interval name. Used to size the fetch window; a
+# missing key falls back to BAR, which is what the pre-2026-09-07 code did
+# unconditionally and is the reason Min5 fetches were 3x short.
+_BAR_SECONDS = {
+    "Min1": 60, "Min5": 300, "Min15": 900, "Min30": 1800,
+    "Min60": 3600, "Hour1": 3600, "Hour4": 14400, "Hour8": 28800,
+    "Day1": 86400, "Week1": 604800,
+}
 
 
 class FetchIncomplete(RuntimeError):
@@ -103,8 +112,16 @@ def fetch_frames(client, symbols, *, days: float, workers: int = 6,
     its universe must not quietly score a smaller one.
     """
     now = int(now_ts if now_ts is not None else time.time())
-    nch = int(days * 86400 // (CHUNK * BAR)) + 1
-    want = int(days * 86400 // BAR)
+    # DEFECT FIXED 2026-09-07. Both the chunk count and the want-bars were
+    # computed from the hardcoded BAR=900 regardless of `interval`, so a Min5
+    # fetch requested one THIRD of the chunks it needed and the report called
+    # the short result complete. Every intra-bar study in this repo that went
+    # through pit_intrabar.fetch_grids therefore ran on ~1/3 of its stated
+    # window while reporting full coverage. Verified: PJ_DAYS=14 at Min5
+    # returned 6.9 days. Seconds-per-bar is now derived from the interval.
+    bar = _BAR_SECONDS.get(str(interval), BAR)
+    nch = int(days * 86400 // (CHUNK * bar)) + 1
+    want = int(days * 86400 // bar)
     rep = FetchReport(requested=len(symbols), want_bars=want)
     counter = {"retries": 0}
 
@@ -115,7 +132,7 @@ def fetch_frames(client, symbols, *, days: float, workers: int = 6,
             for attempt in range(retries):
                 try:
                     got = client.get_klines(sym, interval=interval,
-                                            start=end - CHUNK * BAR, end=end)
+                                            start=end - CHUNK * bar, end=end)
                     break
                 except Exception:
                     counter["retries"] += 1

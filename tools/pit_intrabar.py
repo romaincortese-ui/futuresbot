@@ -112,9 +112,15 @@ def fetch_grids(client, symbols, *, days: float, workers: int = 6,
                 strict: bool = False):
     """Fetch 5m klines and return (three phase grids, fetch report).
 
-    `days` is in days of history, as for fetch_frames. Note the fetch report's
-    `want` is computed on a 15m bar so it understates the 5m bar count by 3x;
-    that only loosens its truncation guard, it does not mislead about coverage.
+    `days` is in days of history, as for fetch_frames.
+
+    Until 2026-09-07 this docstring claimed the 3x discrepancy "only loosens the
+    truncation guard". That was wrong and the error was material: fetch_frames
+    also computed its CHUNK COUNT from the same hardcoded 900s bar, so a Min5
+    request fetched one third of the chunks it needed and reported the short
+    result as complete coverage. Every intra-bar study that ran through here
+    scored ~1/3 of its stated window. fetch_frames now derives seconds-per-bar
+    from the interval; both `nch` and `want` are correct for Min5.
     """
     f5, rep = fetch_frames(client, symbols, days=days, workers=workers,
                            min_bars=min_bars * 3, interval="Min5",
