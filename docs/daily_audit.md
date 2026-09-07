@@ -1,3 +1,163 @@
+# Daily Audit — 2026-09-07
+
+---
+
+## Automated Assessment (UTC 17:20)
+
+Equity **$1,107.44**, cash $999.61, margin $108.47, unrealised -$0.63, **1 open
+position**. Realised 24h **-$46.91 on two closes, 0 of 2 winners**. No deposit or
+withdrawal since 09-04 10:57Z. Peak equity $1,183.57 (09-06 05:55Z); now **6.4%
+below it** — inside the 25% halt, and now within 1.6pp of the 8% soft brake.
+
+`FUTURES_TRIAL_LABEL=18F`, `FUTURES_TRIAL_START_TS=1788519433`. Config unchanged
+and unchanged deliberately: nothing ships during the funded week.
+
+**DATA GAP, stated first because it limits everything below.** `railway ssh
+--service Futures-bot` was refused on all three attempts this run ("not running
+or in an unexpected state / serverless scaled to zero") while the service was
+demonstrably alive and logging every 45s. The Railway volume was therefore
+unreachable, so **the feature store, the shadow ledger and the learner did not
+run today**. Everything below is derived from the exchange ledger, the live
+config and a 45-minute log window. Section 3 is a hole, not a finding.
+
+### 1. Closed trades, last 24h — 2, both losses, both LONG
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | margin$ | risk% | exit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 09-06 20:21 | MAGMA_USDT | WILDCARD | LONG | x3 | 0.4h | **-0.94** | **-26.51** | 140.6 | 2.30 | stop (-18.86% margin vs the 20% cap) |
+| 09-07 14:07 | ZEC_USDT | TREND | LONG | x4 | 20.5h | **~-1.00** | **-20.40** | 104.4 | 1.71* | stop (-19.54% margin), reason unconfirmed |
+
+Net **-$46.91 / ~-1.94R**. Nothing anomalous in shape: MAGMA was a 22-minute
+wildcard stop-out at the -20% margin cap exactly as designed; ZEC was a 20.5h
+TREND long stopped on a 4.74% adverse price move. Neither hit the 24h
+`CONVEX_TIME_STOP` (ZEC at 20.5h came closest), neither shows a bank/lock/trail
+path, no 5003/2015 rejects, no Traceback, no ERROR in the log window.
+
+**\*The undersizing flag, and it is the one real finding of the day.** Realised
+risk on ZEC reads **1.71% of equity against the 2.41% dial** — about **0.70x**.
+The open PONS position reads **1.67%**, also ~0.70x. Yesterday's three fills all
+sat at 2.28-2.42% with `regime_size_mult=1.0`. So sizing changed direction some
+time after 09-06 16:00Z and has stayed there for both subsequent entries.
+
+Two candidate explanations, and **they cannot be separated without the feature
+store**:
+
+1. the regime scaler firing at ~0.7x (`FUTURES_REGIME_FLOOR_MULT=0.50`, so 0.70
+   is a legal intermediate value), or
+2. stop slippage — if the resting stop sat above the fill, realised |R| exceeds
+   1.0 and the implied risk% is understated by exactly that ratio.
+
+They have opposite implications. (1) means the scaler is quietly shrinking the
+book going into the next winner — the same cohort the learner already says
+should be skipped rather than shrunk. (2) means stops are filling worse than
+booked and the -1R floor is not holding. **Resolving this is the first thing to
+do once `/data` is reachable**, ahead of every queued item.
+
+**Exchange reconcile:** 21 exchange rows over 6 days, 2 new in 24h. The
+feature-store cross-check was not possible this run, so **loss-censoring is
+unverified today** — and both of today's rows are losses, precisely the class
+the 2026-08 censoring defect dropped. Re-reconcile next run.
+
+### 1-OPEN. Open position — PONS_USDT SHORT, the first wildcard short of the trial
+
+    PONS_USDT  SHORT  x2   entry 0.7214   opened 09-07 15:42Z   held 1.9h
+    sl 0.7829 (17.05% margin = 1R)   tp 0.4233 (4.84R)
+    now 0.7176   +0.06R   peak +0.73R (16:30Z)   giveback -0.67R   MAE -0.46R
+    dist to TP -41.0% price   dist to SL +9.1% price
+    margin $108.47   realised risk 1.67% vs the 2.41% dial (~0.70x, see above)
+    turnover24 $8.1M (above the $2M floor), 24h -1.75%
+
+The +0.73R peak was given back almost entirely, and that is **shipped behaviour,
+not a defect**: `CONVEX_RETENTION_TRAIL` arms at 1R and the position never
+reached it, so there was nothing to retain. It is recorded because the retention
+invariant is the standing exit philosophy and a 92%-of-peak giveback is the
+shape it exists to prevent — but arming lower is the exact change the 0.9R-0.4R
+sweep already refuted (winners cut short outnumber losers rescued 2-3x). **No
+proposal.**
+
+`FUTURES_WILDCARD_LONG_ONLY=0` is deliberate and pre-registered: wildcard shorts
+are on and already measured, unlike TREND shorts, which have now been refused
+three times. This position is not a config error.
+
+### 2. Scan telemetry (last 45 min — the Railway 500-line cap, a snapshot not a 24h aggregate)
+
+    WILDCARD  6 scans   36-37 movers   candidates 0   shorts_blocked 0
+              rejections: roc_below_min ~206 (94%), no_pullback_resume 11,
+                          low_volume_z 2      deflated 33-34/48
+    TREND     3 scans   symbols=3 (ETH/XRP/ZEC)   candidates 0
+              rejections: roc_below_min 3
+
+Correct dormancy in the window sampled — but the sleeve is **not** dormant over
+the day: it took MAGMA and PONS inside 20 hours. No gate loosened, none proposed.
+No `[SIZE_TRIM]` line appeared in the window, which is evidence against but not
+proof against explanation (1) above — no entry occurred inside the window.
+
+`Prophet prediction archive refresh failed: HTTP Error 422` x3 in the window,
+unchanged from yesterday and still queued behind the week. Touches no order path
+and no sizing input.
+
+### 3. Learning loop — NOT RUN
+
+Feature store, shadow ledger (`slot_occupied` / `veto:*` / `calm_shock` splits)
+and `tools/learn_from_trades.py` all require `/data`, which was unreachable.
+Nothing is reported rather than yesterday's numbers re-reported as current. The
+2-slot TREND cap and the 3-slot wildcard cap were never simultaneously full
+today, so the slot-cost line is very unlikely to have moved regardless.
+
+**Decision rule — trial 18F, by close timestamp: 7 closes, netR ~-0.97,
+net$ +$4.71, ex-best -3.85R / -$70.66.** Win rate 2/7 (28.6%). By open timestamp
+6 fills, +$9.20 (the difference is the 09-04 XRP short, which opened before the
+trial stamp).
+
+The week has now given back essentially the whole of the 09-06 tail winner. That
+is not new information about edge — it is the pre-registration's own arithmetic
+playing out: **the entire week's result is one trade, and a week whose result is
+one trade answers nothing.** +$4.71 gross against -$70.66 ex-best is the same
+"unresolvable" verdict as +$51.85 / -$23.52 was yesterday, one day further along.
+
+Max drawdown from peak 6.4%, inside the 25% halt. **Watch item: the 8% soft
+brake (`DRAWDOWN_SOFT_PCT`, 30-day window) is 1.6pp away.** Two more losing days
+of this size put the account on the line the 09-04 replay showed to be
+expectation-NEGATIVE on this book (P(brake helps) = 15%). This is not a proposal
+— the brake flag stays unset per that replay — but if the soft brake is what is
+already producing the 0.70x sizing, that answers section 1's open question, and
+it needs checking rather than assuming.
+
+### 4. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Validation and deploy
+
+**No lever pulled, no variable set, no deploy.** The funded week is
+pre-registered as frozen, a deploy restarts the bot, and today generated no
+candidate — the one live question (0.70x sizing) is a *diagnosis to complete*,
+not a change to make, and completing it needs the volume back.
+
+pytest not run — no code change to gate.
+
+Queue, reordered by today: (0) **restore `/data` access and resolve the 0.70x
+sizing question**, (1) candidate-ranking instrumentation, (2) `/why`
+counterfactual pricing at current equity, (3) the six `/report` defects,
+(4) pricing `no_new_extreme`, (5) raising the turnover floor, (6) the Prophet
+archive 422.
+
+### 6. Verdict on the last 7 days of changes
+
+| change | shipped | earning its keep? |
+|---|---|---|
+| `CONVEX_TRAIL_RETAIN_FRAC` 0.50 | 08-29 | untested today — never armed, no position reached 1R |
+| `REGIME_FLOOR_MULT` 0.50 | 08-29 | **now suspect, not merely contested** — prime suspect for the unexplained 0.70x on both new entries |
+| `FUTURES_TREND_LONG_ONLY=1` | standing | neutral today — both closes were longs and both lost |
+| trial 18F re-stamp | 09-04 | correct |
+
+**One line:** two clean stop-outs gave back the week's tail winner, the trial is
+back to unresolvable, and the only new information is an unexplained 0.70x on
+the last two entries that this run could not attribute because the Railway
+volume was unreachable.
+
+---
+
 # Daily Audit — 2026-09-06
 
 ---
