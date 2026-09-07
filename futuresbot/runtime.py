@@ -76,7 +76,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1876,6 +1876,72 @@ class FuturesRuntime:
         return self._close_position_for_exit(position, current_price=current_price,
                                              reason="CONVEX_TIME_STOP")
 
+    def _time_stop_line(self, position: FuturesPosition,
+                        now: datetime | None = None) -> str | None:
+        """The convex hard clock as a DEADLINE, for /status.
+
+        Added 2026-09-08. With PONS_USDT open the owner had no way to tell when
+        it would close absent SL, TP or the trail. Every other exit had a
+        representation in /status - SL and TP print as prices, the trail prints
+        as TP progress - and the clock, which is the second most frequent exit
+        in the scored book (7 of the 29 WILDCARD trail/clock exits), printed as
+        nothing. The position row said what could happen and never said when.
+
+        APPROXIMATE BY DESIGN. `_convex_time_stop_exit` is evaluated on the scan
+        loop, so the close lands at the first scan AFTER the limit - up to
+        FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS (450s live) late, and later still
+        if a scan is skipped. Rounded to the minute so the figure does not imply
+        precision the loop cannot deliver.
+
+        Returns None when the clock CANNOT fire, rather than a zero or a dash: a
+        non-convex position, the clock disabled, or no `opened_at`. A deadline
+        that is not real must not be printed as one - the same rule the regime
+        telemetry learned when a missing reading defaulted to 0.0 and read as a
+        real one forever.
+        """
+        if not self._is_wildcard_convex(position):
+            return None
+        hours = max(0.0, self._env_float("FUTURES_CONVEX_TIME_STOP_HOURS", 24.0))
+        if hours <= 0:
+            return None
+        opened = getattr(position, "opened_at", None)
+        if not isinstance(opened, datetime):
+            return None
+        now = now or datetime.now(timezone.utc)
+        try:
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            held_s = (now - opened).total_seconds()
+            deadline = opened + timedelta(hours=hours)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(held_s):
+            return None
+        # Clock skew or a bad persisted timestamp must not print a negative age.
+        held_s = max(0.0, held_s)
+        left_s = hours * 3600.0 - held_s
+        when = html.escape(deadline.strftime("%a %d %b %H:%M UTC"))
+        held = self._short_duration(held_s)
+        if left_s <= 0:
+            return f"  ⏳ Hard close <b>due now</b> ({when}) | held {held}"
+        return (f"  ⏳ Hard close in <b>{self._short_duration(left_s)}</b>"
+                f" ({when}) | held {held}")
+
+    @staticmethod
+    def _short_duration(seconds: float) -> str:
+        """`3d 4h` / `2h 42m` / `18m`. Minutes matter under a day; days do not."""
+        s = max(0, int(seconds))
+        d, rem = divmod(s, 86400)
+        h, rem = divmod(rem, 3600)
+        m = rem // 60
+        if d:
+            return f"{d}d {h}h"
+        if h:
+            return f"{h}h {m:02d}m"
+        return f"{m}m"
+
     def _trail_retain_for(self, peak_r: float, base: float) -> float:
         """Retention fraction for a peak: `base`, ratcheted once EXCEPTIONAL.
 
@@ -3338,6 +3404,9 @@ class FuturesRuntime:
                 )
                 lines.append(f"  PnL: <b>{pnl_text}</b>{pct_text}{progress_text}")
                 lines.append(f"  Risk at SL: <b>{stop_risk_text}</b>{stop_risk_pct_text}")
+                _clock = self._time_stop_line(position)
+                if _clock:
+                    lines.append(_clock)
             if self._available_slots() > 0:
                 lines.append(self._signal_line(signal))
             # PORTFOLIO MARGIN, as a FRACTION OF EQUITY. The pre-registered kill
