@@ -1952,6 +1952,54 @@ class FuturesRuntime:
                 "<b>${:+.2f}</b> (keeps {}%) — binds before SL".format(
                     peak_usd, floor_r * one_r, pct))
 
+    def _early_stop_line(self, position: FuturesPosition,
+                         now: datetime | None = None) -> str | None:
+        """The early stop as a live level and a deadline, for /status.
+
+        Printed ONLY while it can actually fire: armed for this sleeve, and still
+        inside its window. A guard that cannot fire must not be shown as one -
+        the same rule the clock and trail lines follow, and the reason the line
+        disappears the moment the window closes rather than greying out.
+
+        The level is the dollar figure, not the R, because R is not the unit the
+        owner reads and 1R is already on the row above as "Risk at SL".
+        """
+        if not self._is_wildcard_convex(position):
+            return None
+        kind = self._sleeve_kind(position)
+        arm = self._env_float("FUTURES_" + kind + "_EARLY_STOP_R",
+                              self._env_float("FUTURES_CONVEX_EARLY_STOP_R", 0.0))
+        if arm <= 0 or not math.isfinite(arm):
+            return None
+        window = self._env_float("FUTURES_" + kind + "_EARLY_STOP_MINUTES",
+                                 self._env_float("FUTURES_CONVEX_EARLY_STOP_MINUTES", 30.0))
+        if window <= 0 or not math.isfinite(window):
+            return None
+        opened = getattr(position, "opened_at", None)
+        if not isinstance(opened, datetime):
+            return None
+        now = now or datetime.now(timezone.utc)
+        try:
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            elapsed_min = (now - opened).total_seconds() / 60.0
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(elapsed_min) or elapsed_min < 0.0 or elapsed_min > window:
+            return None
+        one_r = self._position_stop_risk_usdt(position)
+        try:
+            one_r = float(one_r)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(one_r) or one_r <= 0:
+            return None
+        left = max(0.0, window - elapsed_min)
+        return ("  \u26a1 Early stop at <b>${:+.2f}</b> \u00b7 expires in <b>{}</b>"
+                .format(-arm * one_r, self._short_duration(left * 60.0)))
+
     def _time_stop_line(self, position: FuturesPosition,
                         now: datetime | None = None) -> str | None:
         """The convex hard clock as a DEADLINE, for /status.
@@ -2050,6 +2098,162 @@ class FuturesRuntime:
         if trigger <= 0 or high <= base:
             return base
         return high if peak_r >= trigger else base
+
+    # Adverse depths recorded on every convex position, whether or not the early
+    # stop is switched on. These are the free half of the 2026-09-08 finding: the
+    # X axis of the rule is a RIDGE (0.5R pays, 0.4R costs $86/mo, 0.3R costs
+    # $304/mo) and walk-forward says X must never be refit from the same 77 rows
+    # it was read off. Recording time-to-depth on live fills makes the axis
+    # tunable from data the bot gathers itself, at zero behavioural cost.
+    _ADVERSE_MARKS = ((0.25, "t_adverse_25"), (0.50, "t_adverse_50"), (0.75, "t_adverse_75"))
+
+    def _stamp_adverse_marks(self, position: FuturesPosition, r_now: float,
+                             elapsed_min: float) -> bool:
+        """First time this position reached -0.25R / -0.50R / -0.75R, in minutes.
+
+        Decision-free: written, never read by any entry or exit path. Stamped once
+        per depth, so at most three writes per position. Returns True when a mark
+        was newly set, so the caller can persist.
+        """
+        md = position.metadata
+        if md is None:
+            md = position.metadata = {}
+        wrote = False
+        for depth, key in self._ADVERSE_MARKS:
+            if r_now <= -depth and md.get(key) is None:
+                md[key] = round(elapsed_min, 2)
+                wrote = True
+        return wrote
+
+    def _convex_early_stop_exit(self, position: FuturesPosition, current_price: float,
+                                now: datetime | None = None) -> bool:
+        """A tight stop for the first N minutes, widening to the full stop after.
+
+        2026-09-08. The owner asked how to tell early that a trade is going
+        nowhere and cut it before the stop. Comparing the shapes of the four
+        funded-week WILDCARD trades answered it: MAGMA and FORM set their peak
+        inside two minutes and never made another high, dying at minute 7 and 13.
+        PONS took 142 minutes to give back half its risk and went on to peak at
+        +1.10R.
+
+        The signal generalises. Time to first -0.5R against the eventual peak,
+        77 convex trades on Min1 paths:
+
+            reaches -0.5R within 30 min  ->  reaches 1R  11% of the time
+            never reaches -0.5R          ->  reaches 1R  92% of the time
+
+        Scored against LIVE-RECORDED outcomes, WILDCARD only, X=0.5 / T=30:
+        +$114.90/month on 14 fires, 2 harmed. Fourteen of the eighteen trades it
+        cuts were going to -1R anyway. Floor with every pessimistic assumption
+        stacked (market fill, poll blind to wicks): +$56.35/month.
+
+        NOT THE REFUTED RULE. DECISION_RULE records an early-adverse cut as dead:
+        "if the trade is >= X R underwater AT T minutes". That is a SNAPSHOT test,
+        evaluated once at T, exiting at the prevailing price. This is a TOUCH test
+        that fires the moment -X R is reached. At X=0.5/T=30 the touch rule fires
+        on 18 trades and the snapshot rule on 7, the snapshot set is a strict
+        subset, and the two disagree in sign on 12 of 30 grid cells.
+
+        WEAKLY SUPPORTED, AND THESE ARE THE HONEST NUMBERS. Bootstrap 95% CI
+        [-$47.81, +$218.93], P(delta <= 0) = 0.095. Grid-corrected permutation
+        p = 0.042, not the 0.0003 a single cell reports. The candidate's own 5x6
+        grid is 24 of 30 cells negative, the same signature that killed the
+        snapshot rule. And 6 of the 25 trades that touch -0.5R inside 45 minutes
+        went on to peak >= 2R, so cutting a runner is a 1-in-7 recurrence rather
+        than a freak event. A bounded bet, not an established edge, which is why
+        it ships default-OFF.
+
+        X MUST NEVER BE REFIT. T is forgiving - every value from 5 to 35 minutes
+        is positive. X is a ridge: 0.4R prices at -$86 and 0.3R at -$304.
+        Walk-forward refitting BOTH parameters loses (-$32 to -$54/mo); freezing X
+        and fitting only T pays (+$102/mo). The whole result rests on 0.5 having
+        been chosen before the grid was swept.
+
+        WILDCARD ONLY. TREND prices at -$7.57/mo because its touched trades are
+        its runners: SOL reached -0.5R at minute 7 and peaked at +7.93R; ZEC at
+        minute 42 and peaked at +6.32R. On liquid majors an early adverse move
+        carries no information about the setup. On microcaps an early failure is
+        a real failure. No side restriction: shorts fired 0 of 10 in sample, so
+        there is no evidence either way and an untested arm is not a harmful one.
+
+        IN-PROCESS MARKET EXIT, NOT A RESTING ORDER. MEXC exposes a singular
+        stopLossPrice and cancel_all_tpsl is all-or-nothing, so a -0.5R resting
+        stop would have to REPLACE the -1R stop and be re-placed at T. A silently
+        failed replace leaves a position running 23.5 hours with the wrong stop or
+        none. The market fill costs 18-32% of the effect and removes that failure
+        mode entirely.
+
+        THE DENOMINATOR IS THE REAL RISK, NOT THE ORDER. r_now divides by the LIVE
+        stop distance; if that reads too small, |r_now| inflates and this cuts
+        every position inside the window. Guarded below: the rule refuses to act
+        when the live risk_pct is under half the risk recorded at entry.
+        """
+        if not self._is_wildcard_convex(position):
+            return False
+        opened = getattr(position, "opened_at", None)
+        if not isinstance(opened, datetime):
+            return False
+        now = now or datetime.now(timezone.utc)
+        try:
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            elapsed_min = (now - opened).total_seconds() / 60.0
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(elapsed_min) or elapsed_min < 0.0:
+            return False
+        md = position.metadata or {}
+        risk_pct = self._position_stop_risk_pct_of_margin(position)
+        if not risk_pct or not math.isfinite(risk_pct) or risk_pct <= 0:
+            return False
+        # THE GUARD. A live stop distance far below the one sized at entry means
+        # the DENOMINATOR is wrong, not that the trade is in trouble. Acting on it
+        # would cut every position inside the window. It also suppresses the
+        # diagnostic, because a bad denominator poisons the marks too.
+        entry_sl = self._metadata_float(md, "sl_margin_pct")
+        if entry_sl and entry_sl > 0 and risk_pct < 0.5 * entry_sl:
+            log.debug("[CONVEX_EARLY_STOP] skipped symbol=%s risk_pct=%.4f entry_sl=%.4f",
+                      position.symbol, risk_pct, entry_sl)
+            return False
+        gross = self._position_pnl_pct(position, current_price)
+        if gross is None or not math.isfinite(gross):
+            return False
+        r_now = gross / risk_pct
+        # SHADOW DIAGNOSTIC — runs whether or not the rule is armed.
+        if self._stamp_adverse_marks(position, r_now, elapsed_min):
+            self._save_state()
+        # Per-sleeve override falling back to the shared value, which defaults to
+        # 0.0 = OFF. Deploying this changes nothing until a value is set, which is
+        # the property that makes it safe to ship mid-trial.
+        kind = self._sleeve_kind(position)
+        arm = self._env_float("FUTURES_" + kind + "_EARLY_STOP_R",
+                              self._env_float("FUTURES_CONVEX_EARLY_STOP_R", 0.0))
+        if arm <= 0 or not math.isfinite(arm):
+            return False
+        window = self._env_float("FUTURES_" + kind + "_EARLY_STOP_MINUTES",
+                                 self._env_float("FUTURES_CONVEX_EARLY_STOP_MINUTES", 30.0))
+        if window <= 0 or not math.isfinite(window):
+            return False
+        if elapsed_min > window:
+            return False
+        if r_now > -arm:
+            return False
+        # Counterfactual telemetry. Without it the rule is unfalsifiable in
+        # production and the pre-registered kill criterion cannot be scored.
+        peak_r = self._metadata_float(md, "convex_peak_r") or 0.0
+        position.metadata["early_stop_fired"] = 1.0
+        position.metadata["early_stop_r_now"] = round(r_now, 4)
+        position.metadata["early_stop_minutes"] = round(elapsed_min, 2)
+        position.metadata["early_stop_risk_pct"] = round(risk_pct, 4)
+        position.metadata["early_stop_peak_r"] = peak_r
+        log.warning("[CONVEX_EARLY_STOP] symbol=%s side=%s r=%.3f arm=-%.2f elapsed=%.1fm "
+                    "window=%.0fm risk_pct=%.3f peak=%.3f price=%s",
+                    position.symbol, position.side, r_now, arm, elapsed_min, window,
+                    risk_pct, peak_r, self._format_price(current_price))
+        return self._close_position_for_exit(position, current_price=current_price,
+                                             reason="CONVEX_EARLY_STOP")
 
     def _convex_runner_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
         """Proportional retention (trial 7): arm at +1R, floor = 0.30 x peak R.
@@ -3486,6 +3690,9 @@ class FuturesRuntime:
                 )
                 lines.append(f"  PnL: <b>{pnl_text}</b>{pct_text}{progress_text}")
                 lines.append(f"  Risk at SL: <b>{stop_risk_text}</b>{stop_risk_pct_text}")
+                _early = self._early_stop_line(position)
+                if _early:
+                    lines.append(_early)
                 _trail = self._trail_line(position)
                 if _trail:
                     lines.append(_trail)
@@ -3519,6 +3726,41 @@ class FuturesRuntime:
         lines.append("━━━━━━━━━━━━━━━")
         lines.append(f"<i>{self._commands_hint()}</i>")
         return "\n".join(lines)
+
+    def _early_stop_report_line(self) -> str | None:
+        """Early-stop fires this trial, for /report. None when it has never fired.
+
+        This is the falsifiability handle for the pre-registered kill criterion
+        (2026-09-08): kill the flag if two cut trades would have reached +1.5R, or
+        if the running delta goes negative after 20 fires. The unmanaged path is
+        not knowable once a position is closed, so the live proxy reported here is
+        the PEAK THE TRADE HAD ALREADY REACHED when it was cut - a fire on a trade
+        that had been meaningfully positive is the bad case, and it is countable.
+        """
+        fires = []
+        for t in (getattr(self, "trade_history", None) or []):
+            if not isinstance(t, dict):
+                continue
+            if not t.get("early_stop_fired"):
+                continue
+            fires.append(t)
+        if not fires:
+            return None
+        rs, peaks = [], []
+        for t in fires:
+            r = self._metadata_float(t, "early_stop_r_now")
+            if r is not None and math.isfinite(r):
+                rs.append(r)
+            p = self._metadata_float(t, "early_stop_peak_r")
+            if p is not None and math.isfinite(p):
+                peaks.append(p)
+        above = sum(1 for p in peaks if p >= 1.0)
+        mean_r = (sum(rs) / len(rs)) if rs else 0.0
+        worst = max(peaks) if peaks else 0.0
+        flag = " \u26a0\ufe0f" if above else ""
+        return ("\u26a1 <b>Early stop</b>: {} fire{} \u00b7 mean exit <b>{:+.2f}R</b> \u00b7 "
+                "max peak before cut <b>{:+.2f}R</b> \u00b7 cut above 1R: <b>{}</b>{}"
+                .format(len(fires), "" if len(fires) == 1 else "s", mean_r, worst, above, flag))
 
     def _build_report_message(self) -> str:
         """/report — the pre-registered scorecard, plus the context to read it in.
@@ -3643,6 +3885,15 @@ class FuturesRuntime:
                          "/pnl shows a smaller number because it only keeps the last "
                          "200 trades.</i>")
         lines.append("")
+        # /report is the command a withdrawal is decided from. Same rule as the
+        # balance chart: a summary line is never worth an exception here.
+        try:
+            _es = self._early_stop_report_line()
+            if _es:
+                lines.append(_es)
+                lines.append("")
+        except Exception as exc:  # pragma: no cover - presentation only
+            log.debug("report: early-stop line failed: %s", exc)
         lines.append("<i>A week is 7-8 closes; a verdict needs 30. A red week with "
                      "clean closes beats a green one — the regimes we have never "
                      "traded are the ones worth learning.</i>")
@@ -4945,6 +5196,16 @@ class FuturesRuntime:
                 "sl_frac_designed": (position.metadata or {}).get("sl_frac_designed"),
                 "peak_r": (position.metadata or {}).get("convex_peak_r"),
                 "mae_r": (position.metadata or {}).get("convex_trough_r"),
+                # Adverse-depth diagnostic and early-stop telemetry. Promoted
+                # explicitly because this record is built field by field and
+                # everything not named here is discarded at close.
+                "t_adverse_25": (position.metadata or {}).get("t_adverse_25"),
+                "t_adverse_50": (position.metadata or {}).get("t_adverse_50"),
+                "t_adverse_75": (position.metadata or {}).get("t_adverse_75"),
+                "early_stop_fired": (position.metadata or {}).get("early_stop_fired"),
+                "early_stop_r_now": (position.metadata or {}).get("early_stop_r_now"),
+                "early_stop_minutes": (position.metadata or {}).get("early_stop_minutes"),
+                "early_stop_peak_r": (position.metadata or {}).get("early_stop_peak_r"),
                 # ENTRY SLIPPAGE. Stamped on the position since 2026-09-01 and
                 # dropped here ever since, because this record is built field by
                 # field: 119 convex trades carry a measurement that reached no
@@ -5065,6 +5326,12 @@ class FuturesRuntime:
                 # carry them. Genuinely new here are roc_z, sl_frac_designed,
                 # peak_r and the equity snapshots.
                 "roc_z": md.get("roc_z"),
+                "t_adverse_25": md.get("t_adverse_25"),
+                "t_adverse_50": md.get("t_adverse_50"),
+                "t_adverse_75": md.get("t_adverse_75"),
+                "early_stop_fired": md.get("early_stop_fired"),
+                "early_stop_r_now": md.get("early_stop_r_now"),
+                "early_stop_minutes": md.get("early_stop_minutes"),
                 "sleeve": trade.get("sleeve"),
                 # Trial-8 attribution: which of the two universe changes let
                 # this trade in. Without it a trial-8 verdict cannot be split.
@@ -5348,6 +5615,12 @@ class FuturesRuntime:
         # is pmt_threshold (it is, live). A wildcard position is not a PMT
         # position; its clock and giveback rule must not be gated on the PMT
         # strategy flag. Both are no-ops for non-convex positions.
+        # FIRST: the fast-failure gate. It only acts below zero and only inside
+        # its window, so it can never pre-empt the trail (which needs peak >= 1R)
+        # or the clock. It also stamps the adverse-depth diagnostic on every poll
+        # whether or not it is armed, so keep it ahead of every early return.
+        if self._convex_early_stop_exit(position, current_price, now=now):
+            return True
         if self._convex_runner_trail_exit(position, current_price):
             return True
         if self._convex_time_stop_exit(position, current_price, now=now):
