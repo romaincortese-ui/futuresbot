@@ -57,6 +57,135 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: EXIT-AT-PEAK — REFUTED, and it decapitates 11 of 11
+
+Owner's proposal: WILDCARD only, "let it run until it reaches a peak and then close the trade
+right away. No more chances." Five agents. The corner WAS genuinely unswept (prior grids capped
+retention at 0.75); it is also genuinely empty.
+
+### The counter-test the brief said would decide it. It decided it.
+
+All 11 trades with peak >= 2R, under arm 0 / retain 0.98:
+
+    symbol            peak R   peak at   live R   OWNER exit    given up   clears 0.10R
+    HNT_USDT LONG      5.55     m1124    +0.71   +0.296 @ m1     -$10.3        m0
+    HNT_USDT LONG      5.51     m536     +0.58   +0.022 @ m6     -$14.0        m12
+    MAGMA_USDT LONG    5.14     m745     +0.71   +0.095 @ m48    -$15.5        m47
+    TUT_USDT LONG      5.12     m446     +2.74   +0.057 @ m3     -$67.6        m9
+    ENA_USDT LONG      5.02     m791     +4.96   +0.056 @ m61   -$123.4        m101
+    SKR_USDT LONG      4.65     m414     +0.62   +0.067 @ m1     -$13.8        m1
+    TUT_USDT SHORT     4.11     m1355    +2.58   +0.016 @ m5     -$64.6        m207
+    USELESS_USDT LONG  3.52     m461     +1.05   +0.016 @ m1     -$25.9        m74
+    GALA_USDT LONG     2.57     m1006    +0.52   +0.015 @ m28    -$12.7        m34
+    USELESS_USDT LONG  2.56     m441     +0.72   +0.035 @ m1     -$17.3        m109
+    ACE_USDT LONG      2.06     m1037    +0.74   +0.015 @ m0     -$18.3        m1
+
+**It decapitates 11 of 11.** Largest exit +0.296R, **median +0.035R = $0.88**. Median exit minute
+**5**; the true peaks arrive at minutes **414 to 1355**. Cost on this cohort alone: -15.24R =
+**-$454/month**. Across all 22 trades with live peak >= 1R: **-$887.5/month**.
+
+### The owner is right about the cost centre and wrong about the instrument
+
+**He is right:** 26 of 50 rows stop out at -1.03R each = **-26.8R = -$674 over 25 days**. That IS
+the problem.
+
+**The instrument does not reach it.** Decomposed on deltas vs the live baseline:
+
+    RESCUES      24 trades  +26.02R  +$776/mo    (-1R stops converted to scratches)
+    TRUNCATIONS  22 trades  -22.77R  -$679/mo
+    NET                      +3.25R   +$96.9/mo   <- a 96% cancellation
+
+**What the rescues actually BANK is +1.255R in total = $31.58: mean $1.44, median $0.31 per
+trade.** The "+26R rescue" is almost entirely the -1.02R stop avoided, not profit captured.
+Stated plainly: **the rule buys 22 avoided stops for the price of 21 decapitated winners.**
+
+Two ~25R streams cancelling to 2R — any 8% error on either arm flips the sign. Bootstrap 95% CI
+**[-$446, +$582]**, P(delta<=0) = 0.345, removing three trades reverses it, the era split
+disagrees, leave-one-symbol-out flips it, and **placebo matches or beats it in 18 of 20 draws.**
+Against the LIVE book rather than the sim it is **-5.780R = -$167.8/mo**.
+
+### The cosmetic transformation, stated for the record
+
+    exit mix   LIVE:  26 stop / 18 trail / 5 clock24 / 1 TP
+               OWNER:  4 stop / 46 trail / 0 clock24 / 0 TP
+    win rate   44% -> 92%      maxDD 8.12R -> 1.69R      netR -3.84R -> -0.59R
+
+The 24h clock and the 5R TP cap both become **structurally unreachable** — the trail pre-empts
+them on 92% of the book. **The sleeve still loses; it just loses in a way that looks like
+winning.**
+
+### THE OWNER READ A REAL FEATURE — the monotone claim is FALSE as written
+
+The `_convex_runner_trail_exit` docstring says retention above 0.30 is "monotonically worse". It
+is not. At the live arm 1.0R, $/month by retention:
+
+    0.20 +57.3 | 0.30 +41.1 | 0.40 +97.6 | 0.50 0.0 (live) | 0.60 +13.4 | 0.70 -109.7
+    0.75 -81.9 | 0.80 -126.9 | 0.85 -123.3 | 0.90 -109.5 | 0.95 -74.8 | 0.98 -54.0 | 0.995 -43.6
+
+Local maximum at **0.40**, collapse at 0.70, trough at **0.80**, then a steady **+$83 recovery
+from 0.80 to 0.995**. There IS a second-optimum direction at the high end and the owner was
+reading it correctly — the recovery just tops out at **-$43.6/mo**, still below the incumbent, and
+only crosses zero when arm is driven to exactly 0.
+
+The TP-completion half of the docstring IS confirmed: completion is 2.0% at retain <= 0.60 and
+**0.0% at every retain >= 0.70**.
+
+**Note for follow-up: retain 0.40 prices at +$97.6/mo against the live 0.50.** Same noisy grid, so
+not a recommendation — but it is the one cell here pointing at the incumbent being mis-set, and it
+points the OPPOSITE way to the proposal.
+
+### The maximum is a ridge one row wide
+
+The 81-cell maximum sits at arm 0.00 / retain 0.98 at +$96.9/mo and fails every screen:
+ex-top-5%-by-delta is **NEGATIVE** (-$20.9/mo, -$115.5 under the honest engine); the entry-shift
+placebo grid-max null has median **+$202.2** against an observed best of +$96.9, i.e. **family-wise
+p = 0.850 — random entry timing beats the best cell of the real search in 85% of placebo worlds**.
+Along retain at arm 0 it is a smooth plateau (+$37.6 -> +$96.9), but **one step in arm (0 -> 0.05)
+costs $168**. Arm must be exactly zero. That is the definition of a spike.
+
+### MY HYBRID SUGGESTION WAS STRUCTURALLY DEGENERATE
+
+I proposed a two-regime exit: tight peak-exit below 1R, live trail above. **Bound 0.50R and bound
+1.50R produce BIT-IDENTICAL results**, as do all five bounds x three tight-retains. Reason:
+**every trade's peak starts at zero and passes THROUGH the tight regime on its way up, so the
+tight rule always fires first and no trade ever reaches the loose regime.** A peak-bounded
+two-regime exit is not a two-regime exit — it collapses to the tight rule exactly. It cannot
+protect runners by construction. The record showing it untested was right: it was untested because
+it is not a distinct rule.
+
+The time-gated repair ("if peak < 1R by minute 60, switch to tight") looked like a live candidate
+at **+$277.8/mo** and is an engine artefact: every gated exit fires at minute 60-61 and books
+0.98x the prior 60-minute high while price is far below it. Under the honest resting-stop engine
+the same cell is **-$225.8/mo**.
+
+### CORRECTION TO THE ENGINE-FIDELITY RULE SET YESTERDAY
+
+The standing rule says report the faithful subset (trades the Min1 engine reproduces within
+0.15R). **For this class of question that subset is LOSS-ENRICHED BY CONSTRUCTION and must not be
+credited.** The 11 unfaithful rows are almost exactly the sleeve's winners — TUT +5.09 (sim
++2.74), MAGMA +2.98 (sim +0.71), USELESS +2.55 (sim +1.05), BLESS +0.73 (sim -1.04) — carrying
+**+13.41R** of the live book. The engine understates winners by 8.566R, and **8 of 21 sim-peak>=1R
+trades are unfaithful against only 3 of 29 sim-peak<1R trades.**
+
+**So any rule that truncates winners scores well on the faithful subset for a mechanical reason.**
+The owner's cell is +$96.9/mo on the full pool and **+$256.6/mo on the faithful subset** — that
+subset figure is an artefact of the selection, not corroboration.
+
+**AMENDED STANDING RULE: report the faithful subset, and ALSO report whether faithfulness is
+correlated with the outcome the rule acts on. Where it is, the faithful-subset figure is an upper
+or lower bound, not a cleaner estimate.**
+
+### The sign is not determined by the data
+
+Five defensible constructions of the same cell, full pool $/month: favour_first/wick **+96.9** |
+adverse_first/wick +81.0 | favour_first/close-probe **-43.1** | adverse_first/close-probe -1.5 |
+resting-stop with market fill -2.4. **At retain >= 0.90 the exit rule lives entirely inside a
+1-minute bar, so 1-minute bars cannot resolve it in principle.** The verifier adds: 33 of 50
+owner-rule exits fire at minute <= 2, carrying +$350.9/mo of the delta — in exactly the region the
+engine models worst.
+
+**Verdict: REFUTED. Do not ship.** Refuted count ~135.
+
 ## 2026-09-08: THE SHIP BAR IS ABSOLUTE — owner's ruling, pre-registered
 
 **Recorded BEFORE the rescale audit returned, deliberately.** The audit is re-pricing every
