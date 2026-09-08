@@ -57,6 +57,116 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: WILDCARD SHORT-ONLY — REFUTED, and the hedge thesis is BACKWARDS
+
+Seven agents. Owner proposed making WILDCARD short-only so the book becomes LONG-TREND /
+SHORT-WILDCARD, asking for the trial 17->18F number and then a full sweep.
+
+### The trial 17->18F number, and why it evaporates
+
+Reproduced to the digit by two independent agents:
+
+    both sides (live)  n=26  net -$16.21  meanR +0.214  SE 0.232  t +0.92  win 61.5%  netR +5.57
+    LONG only          n=21  net -$24.20  meanR +0.127
+    SHORT only         n= 5  net  +$7.99  meanR +0.582
+    per trial: 17 +$10.83 (L4/S1) | 18 -$0.59 (L16/S4) | 18F -$26.45 (L1/S0)
+
+The +$24.20 delta is **109% one fill**. MAGMA_USDT LONG, 2026-09-06, -$26.447 / -1.051R.
+
+    drop that one long          -> delta +$24.20 becomes **-$2.25**
+    leave-one-SYMBOL-out MAGMA  -> delta +$24.20 becomes **+$0.87**
+
+MAGMA is 5 of the 26 fills and sits on BOTH sides (2 shorts +$5.04, 3 longs -$23.33).
+
+**In R space the proposal LOSES at every window**: -2.78R over T17->18F, -2.01R post-August,
+-7.52R over the full book. The dollar advantage is a **deposit-scale artefact** — MAGMA lost
+$26.45 at the post-deposit 6.3x scale while the longs it would delete were sized at 1/7th of it.
+
+**Not distinguishable from live at ANY window**: best permutation **p=0.134**, and that was on the
+window chosen after seeing it.
+
+### THE HEDGE DOES NOT EXIST — and the proposal makes the book MORE directional
+
+This is the finding. Regressing daily arm-R on fetched BTC daily return (n=19 days):
+
+    TREND      beta  +0.448 R per +1% BTC   (t +1.98)
+    WC_LONG    beta  -0.212                 (t -1.09)   <- the offsetting arm
+    WC_SHORT   beta  -0.031                 (t -0.51)   <- no beta at all
+
+    book beta as it stands  +0.205
+    book beta under the proposal  **+0.417**
+
+**A WILDCARD short is not short the tape. It is a mean-reversion trade on a coin that just
+spiked.** On the full 72-row R history the slope of trade-R on BTC-24h-at-entry is POSITIVE for
+BOTH sides (LONG +0.065R per +1%, SHORT +0.110R) — **the shorts carry MORE long-tape beta than
+the longs do.** Deleting the longs deletes the only arm hedging TREND.
+
+**The sign the owner predicted is in the data and it is drag, not insurance.**
+corr(TREND, WC_LONG) = +0.094; corr(TREND, WC_SHORT) = **-0.239**. Both CIs straddle zero
+([-0.377,+0.526] and [-0.625,+0.242]); the gap has permutation p=0.29. And the mechanism is
+wrong: **on TREND's four worst days ZERO wildcard shorts closed.** The -0.239 comes entirely from
+shorts LOSING on TREND's BEST days (-1.02R). That is correlated drag wearing a hedge's sign.
+
+### The geometry: the docstring is right, the ceiling is not what breaks it
+
+`wildcard.py:100` verifies. Replaying the live detector over 107 symbols x 15m bars,
+2026-08-18 -> 09-07: 225 signals (154 LONG / 71 SHORT), **13/71 shorts = 18.3%** get a pre-clamp
+target at or through price zero (docstring says 21%); log-space median target-distance ratio
+short/long = **1.86x** (docstring 1.7x). Corroborated on the shadow ledger: 12/32 shorts sit at
+the 0.20 stop cap where tp_dist = 1.00, and 3 shadow rows carry a recorded TP price <= 0.
+
+**But the ceiling has never bound: ZERO of 90 wildcard closes have ever exited at TAKE_PROFIT.**
+Under the retention trail the TP order has never fired once. The real defect is one layer deeper —
+**the price distribution does not produce short-side moves of the required size**:
+
+    a LONG needs +45.1% to reach 5R  -> occurs on 7.34% of post-rally bars
+    a SHORT needs -50.0% to reach its clamped target -> 0.35% of post-drop bars (21x rarer)
+    an UNCAPPED 5R short needs -66.7% -> 0 times in 3,468 samples
+
+    favourable-tail R:  LONG p95 6.24R / p99 13.14R  (both ABOVE the 5R TP — the TP truncates the
+                        long's tail)
+                        SHORT p05 2.21R / p01 3.22R  (both BELOW the 3.75R median short ceiling —
+                        the short's tail dies before the ceiling can bind)
+
+**`FUTURES_WILDCARD_MAX_SHORT_TP_DIST` is measured for the first time and is INERT**: every value
+from 0.50 to OFF is identical to the cent, **$0.00/month**. It is already the code default, so no
+live short ever had an unreachable target. Its cost is real but small: 70% of shorts clamp,
+effective TP_R median 4.18 (min 2.36) against longs' 5.0 — 16% of the convex ceiling.
+
+### Corrections to the record
+
+- **"The runners are structurally long" is REFUTED.** The >=+2R population is n=10 summing
+  +38.22R, composed **6 LONG / 4 SHORT**. Denominator-free (pnl_pct >= +40% of margin): 9 fills,
+  6L/3S, hit-rate 9.5% LONG vs **11.1% SHORT**. Shorts are 30% of fills and 33-40% of the tail —
+  proportional, not concentrated in longs.
+- **The full-book SHORT +0.641R is a CENSORING ARTEFACT.** Of 17 pre-August shorts, the 8 carrying
+  an r_multiple net +$11.95 (meanR +1.129) and the 9 without net **-$12.89**. On the 50 clean
+  post-August rows shorts are **+0.251R (n=10)**. Never quote +0.641R again.
+- **"WILDCARD is roughly flat" is wrong in R.** Over the only window where both sleeves exist,
+  WILDCARD both-sides made **+5.72R (+$88.60 at 1R=$15.49) on 42 closes** against TREND's +11.42R
+  on 27. It was a third of the book. It looks flat only in realised dollars (-$4.46) because its
+  losses landed after the deposit multiplied the scale 6.3x.
+- **A short SIGNAL does exist.** BTC rose 18% over the book and the detector's shorts still beat
+  their own random-entry placebo (+0.435R live, +0.287R replay). Drift is the one control that
+  FAVOURS the proposal. The signal is simply far too small and too tail-borne to justify deleting
+  an arm that fires 4x as often.
+- The forward-return figures on file do not reproduce: measured unconditional forward-24h median
+  **+0.70%** (filed -1.19%) and mean **+2.79%** (filed +0.89%); after a -8%/3h drop the mean
+  forward 24h is **+6.52% raw / +5.83% drift-controlled** (filed +0.37%). Direction right,
+  magnitude ~16x off — the filed numbers came from a different window.
+- **Stale premise:** there has been no withdrawal to $190. Equity went $186.11 -> $1,099.36 on
+  2026-09-04 and sits at $1,108.16. The one-week hard-reset frame no longer describes the account.
+
+### The one real benefit, and the cheaper way to get it
+
+Short-only genuinely cuts drawdown: **P(-20% DD over 3 months) 8.8% vs 40.5%**. But that is a
+de-risking, not an edge, and it is **96% reproducible by simply running BOTH sides at 0.33x size**
+(sumR +13.33 vs +13.31). And it costs the median: **LIVE beats PROPOSED on median growth at every
+assumed short mean from +0.641R down to -0.043R.**
+
+**Verdict: DO NOT make WILDCARD short-only. Leave `FUTURES_WILDCARD_LONG_ONLY=0`.** Refuted
+count ~115.
+
 ## 2026-09-08: TREND universe + BTC/SOL/LTC/BNB — REFUTED, and the BTC tier finding is RETRACTED
 
 Ten agents, four harnesses, four adversarial verifiers, three tapes (Min5/Min15/Min30, 182-1,700
