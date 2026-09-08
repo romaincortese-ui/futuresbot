@@ -57,6 +57,109 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: THE RESCALE AUDIT — nothing revives, two things fall, and my own correction was overstated
+
+Owner instructed a re-run of every study affected by the corrected risk fraction. Five agents.
+Scoped by DEATH CAUSE, because only magnitude-deaths are scale-sensitive.
+
+### THE R RECORD IS VALID — but my stated mechanism was WRONG
+
+**Conclusion right, reason wrong.** I attributed the pre/post risk-fraction gap (1.171% ->
+2.183%) to integer-contract truncation and argued R survives because truncation scales P&L and
+risk together. **The truncation premise is REFUTED and runs the WRONG WAY**: the pre-era fill
+ratio is **0.896** against a post-era **0.829** — truncation was LESS severe before the deposit,
+not more. It explains only **5-7%** of the gap. **~63-69% is COMPOSITION** — six wide-stop
+ZEC/MAGMA fills that happened to land post-deposit.
+
+R survives anyway, for a better reason: **`risk_usdt` is recomputed from the contracts ACTUALLY
+FILLED** (`nav_risk_sizing.py:52` floors qty, `:82` returns `risk_usdt = qty x loss_per_contract`;
+`_stamp_realised_risk` re-stamps from realised qty; `runtime.py:4938` recomputes at close from
+`position.margin_usdt` x realised stop%). So R is a **realised-over-realised ratio, invariant to
+every size mechanism**. Verified: R is uncorrelated with the truncation factor (Pearson
+**+0.0087, t=+0.08, n=92**); `risk_usdt` reconciles to margin_USED (median relative error 4.9%)
+not margin_WANTED (33.0%); `r_multiple = pnl_usdt / risk_usdt` to a median error of 0.013R across
+84 rows. The pre/post meanR gap (+0.174 vs +0.019) has permutation **p=0.816**.
+
+### AND THE 1R CORRECTION ITSELF IS OVERSTATED
+
+**The funded 1R of $25.16 rests on n=6, with a bootstrap 95% CI of [$15.86, $26.45] — which
+CONTAINS the old $15.49.** The 1.62x multiplier I applied across four studies is not established.
+Use $25.16 as the point estimate for forward pricing, but stop treating the rescale as a fact:
+**the two figures are not distinguishable at n=6.**
+
+### THE TRIAGE — ~80% of the refuted record needed no re-run
+
+122 refutation lines matched; 87 classified (35 were headers or cross-references):
+
+    (d) MECHANISM / STRUCTURAL   28  (32%)   not scale-sensitive
+    (b) CONTROL FAILURE          27  (31%)   not scale-sensitive
+    (a) MAGNITUDE                15  (17%)   SCALE-SENSITIVE
+    (e) CONSTRUCTION ERROR        9  (10%)   not scale-sensitive
+    (c) TAIL DAMAGE               8   (9%)   not scale-sensitive
+
+Scale-sensitive exposure is **~15-27 items of ~130, i.e. 12-21%** — and the second agent puts the
+clean count at **5**, because most magnitude-class items carry a second, non-scale-sensitive death
+alongside the dollar figure. Either way **roughly 80% of the record needed no re-run and was not
+re-run.** This corroborates the standing claim that the CONTROL STACK, not the dollar bar, has
+been doing the work.
+
+### NO VERDICT FLIPS UPWARD. NOT ONE.
+
+Two items cross the bar at funded scale and both carry a second death scale cannot cure:
+- WILDCARD trigger 7%: +$35.85/mo, but no explained mechanism and it fails the both-halves
+  35-65% screen.
+- WILDCARD trigger 6%: +$42/mo, but ex-top-5% worsens monotonically (-$80 -> -$127) while $/fill
+  falls 0.449 -> 0.372. **That is dilution, not edge.**
+
+### TWO VERDICTS FLIP DOWNWARD, AND BOTH MATTER
+
+**FLIP 1 — `MIN_REF_TURNOVER` 500k -> 12M, the only proposal standing, FALLS BELOW THE BAR.**
+Published +$57/mo at funded scale = **2.266 R/month**. Priced at the **$190 it will actually run
+at** after the withdrawal, that is **$9.40/mo — under the absolute $10 bar**, and it stays under
+at every risk anchor tested ($5.04 at the 1.171% whole-pre-era fraction, $7.47 at the 1.734%
+trailing fraction, $9.40 at the 2.183% funded fraction). Its downside restates to -$4.62/mo so
+the 2:1 ratio holds exactly — ratios are scale-invariant — but the absolute clearance does not.
+It was already failing condition (2) of the standing test (family-wise p=0.092, walk-forward
+p=0.076), so it now fails **(1) and (2) together**. **Struck from the "consider at the 18F
+boundary" line unless the account stays funded.**
+
+This is the owner's own absolute-bar ruling doing exactly what it was written to do, one commit
+after it was written.
+
+**FLIP 2 — trial 19's pre-registered 20%-of-equity drawdown kill NOW TRIPS ON THE BASELINE.**
+maxDD in R is unchanged (-13.9R for the live book, -14.4 to -15.9R with the third TREND slot), but
+at the funded risk fraction that is **30.3% of equity**. The kill fires on doing nothing. The
+trial as pre-registered **cannot be run without amending that condition** — and per the
+2026-09-08 conflict ruling, the amendment must NOT be a relaxation justified by a bad baseline
+figure; it must be re-expressed in R (-16R) with the arithmetic stated.
+
+### THE QUIET FINDING, AND IT IS THE MOST ACTIONABLE THING HERE
+
+**The historical DOLLAR record is flattered by 1.66x relative to flat-R conversion.** Pre-deposit
+dollar sum **+$48.97** against sumR +14.59 x mean 1R $2.02 = **+$29.44**.
+
+The mechanism: **the shrink dials were preferentially applied to LOSERS.** Trades scaled below
+half size average **-0.298R**; full-size trades average **+0.431R**. The regime scaler and streak
+throttle were, in effect, catching bad trades — which is a real protection the dollar record
+benefited from and the R record does not show.
+
+**`FUTURES_CONVEX_STREAK_THROTTLE_ENABLED` has been OFF since 2026-08-27.** So the funded bot no
+longer reproduces that protection, and **every dollar-weighted historical figure is optimistic by
+up to 1.66x until restated in R.** This deserves its own study: the shrink dials may have been
+worth more than the "shrink dials pay" record credits, and one of them is currently switched off.
+
+### STANDING CONVERSION RULE — for every future study
+
+1. Compute the effect in **R**. Never sum historical dollars across a cash-flow boundary: the
+   dollar record is loser-weighted by the shrink dials and is optimistic by up to 1.66x.
+2. Convert **once**, at the end, using the 1R of the equity the change **will run at** — not the
+   equity it was measured at. Post-withdrawal that is ~$4.35, not $25.16.
+3. Report maxDD **both** in R and as a % of the equity it will run at. R-denominated drawdown is
+   invariant; the percentage is not, and the kill conditions are written in percentages.
+4. State the 1R used and its interval. The funded 1R is n=6 and its CI contains the pre-funding
+   figure.
+5. Magnitude is a **floor, not a criterion** — see the absolute-bar ruling.
+
 ## 2026-09-08: EXIT-AT-PEAK — REFUTED, and it decapitates 11 of 11
 
 Owner's proposal: WILDCARD only, "let it run until it reaches a peak and then close the trade
