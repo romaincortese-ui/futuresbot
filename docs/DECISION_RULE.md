@@ -57,6 +57,177 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: THE TRAIL ARM — 0.9R REFUTED, and the %-of-margin variant is worse
+
+Twelve agents on the arm, plus a direct test of the owner's follow-up proposal. Triggered by
+PONS_USDT peaking at **+$17.82** against an arm at **+$18.46** and giving it back: a $0.64 miss.
+
+### The direct answer
+
+**Leave `FUTURES_CONVEX_TRAIL_ARM_R` unset (1.0).** Not "0.9 is worse" — **0.9 is
+indistinguishable from 1.0**, and that is the finding. Five independent corrected harnesses price
+the owner's cell at +$3.38, +$5.71, +$5.80, +$13.41 and unmeasurable per month. Median **+$6/mo**
+against a $10 bar, 95% interval about **-$30 to +$60**, P(delta<=0) = 0.42-0.47 everywhere.
+
+The canonical ledger, on the wick-peak/close-trigger basis validated against the bot's own poll
+(MAE 0.031R on 32 stop exits, where no trail can truncate the peak):
+
+    RESCUED  ONG_USDT   WILDCARD  -1.011R -> +0.479R   +$23.07
+    cut      ETH_USDT   TREND     +1.006R -> +0.393R    -$9.50   (unmanaged peak 2.17R)
+    cut      BICO_USDT            +0.731R -> +0.449R    -$4.37   (peak 1.48R)
+    cut      ZEC_USDT   TREND     +0.559R -> +0.403R    -$2.43   (peak 1.23R)
+    cut      HFT_USDT             +0.508R -> +0.458R    -$0.77   (peak 1.03R)
+                                  1 rescued / 4 cut    +$6.00 over 32 days
+
+Three things kill it, none fixable by a better point estimate:
+
+- **PLACEBO.** Displace entries 15-480 min on the same tapes: the 1.0->0.9 change scores mean
+  **-$42.85/mo, sd $54.59**. The observed result is a +1.0 sigma draw from a distribution centred
+  deeply negative. At 0.80R the placebo is negative in **10 of 10** phases.
+- **n=1.** Drop ONG_USDT and the cell is -$14 to -$16/mo. Leave-one-out flips the sign in every
+  harness.
+- **NO PLATEAU.** 0.95 / 0.90 / 0.85 / 0.80 read +$20 / +$6 / +$1 / +$19 and the sign flips at
+  0.85. The global maximum of the 84-cell grid is at arm **1.50** — the OPPOSITE direction — and
+  the family-wise null's median best-of-84 (+$161/mo) is ABOVE the best observed cell (+$138/mo).
+  **The surface is less structured than chance.**
+
+### The reframe that actually decides it
+
+With the trail switched off, **40 of 80 trades (~38/month) TOUCH 0.9R at some point, while only 2
+FINISH there.** A 0.9R touch is worth **+1.415R unprotected (n=39-40, median +1.262R,
+P(final<0)=0.31)**. The proposal installs a 0.45R floor under 38 trades a month to catch 2. All
+four cuts above are trail-to-trail: trades that dipped under 0.9R and then ran, evicted before
+the run.
+
+**The trade the owner is angry about and the trade the change would cost him are the same trade
+at two different moments.**
+
+### The 1R cliff is MANUFACTURED — retire the peak-bucket table from the record
+
+The table that made the arm look well-placed (peak >=1.0R averages +1.388R vs -0.72R below) is
+circular: trades reaching 1R receive a floor at >=0.5R and trades below it receive nothing. With
+the trail disabled on identical paths the 1.0-1.5R bucket returns **-0.816R to -0.970R**,
+indistinguishable from the 0.9-1.0R bucket's -1.03R. Corroborating: 41 live trades reached peak
+>=1.0R and **zero** realised R<0 — the floor holds by construction.
+
+The only non-circular statement is the conditional survival curve, and it has **no step anywhere**:
+
+    P(unmanaged peak >= 2R | reached X):
+    0.523 @0.7R  0.561 @0.8R  0.575 @0.9R  0.590 @1.0R  0.639 @1.2R  0.697 @1.3R  0.742 @1.5R
+
+Reaching 1R predicts nothing 0.9R does not. **This cuts against the owner, not for him:** with no
+informative level anywhere in 0.7-1.5R, moving the arm reclassifies nothing — it only churns.
+
+### THE %-OF-MARGIN ARM (owner's follow-up: "15%? for PONS that's ~$16")
+
+Tested directly on the same Min1 paths, n=77. A %-of-margin arm is NOT a flat R arm:
+profit as % of margin = r x sl_margin_pct, and sl_margin_pct = sl_frac x leverage x 100, so
+
+    r_arm = P / (sl_frac * leverage * 100)
+
+**1R ranges 10.13% to 21.15% of margin (median 17.19%)**, because leverage is set to
+`int(20/(sl_frac*100))` and integer truncation leaves the effective stop anywhere from 10% to 21%
+of margin. So a flat 15%-of-margin arm fires at **0.71R on some positions and 1.48R on others**.
+
+    P of margin   arm range (median)   resc/cut   $/month    ex-top-5%
+     8%           0.38-0.79R (0.47)     12/23      -40.76     +106.74
+    10%           0.47-0.99R (0.58)     10/16      +39.30     +113.44
+    12%           0.57-1.18R (0.70)      5/8       -21.56      +48.31
+    14%           0.66-1.38R (0.81)      4/8       -68.03       -1.40
+    15%  <-owner  0.71-1.48R (0.87)      4/6        -7.54       -8.06
+    16%           0.76-1.58R (0.93)      5/5        -4.63       -4.95
+    17%           0.80-1.68R (0.99)      6/3        +1.25       +1.34
+    18%           0.85-1.78R (1.05)      5/3       +39.18      +41.93
+    20%           0.95-1.97R (1.16)      6/6        -5.84       -6.25
+    22%           1.04-2.17R (1.28)      9/8       +48.35      +51.74
+    25%           1.18-2.47R (1.45)     13/9      +133.76     +143.13
+
+**The owner's 15% cell is -$7.54/month**, and the placebo settles it: shifting every entry +/-12h,
+**41 of 60 shuffles produce a LARGER absolute effect than the real one** (real -$8.06, placebo
+median -$10.00, 5-95% [-$49.31, +$21.64]). Adjacent cells swing +$39 / -$68 / -$7.5 / -$4.6 /
++$1.3 / +$39. A surface that moves $100 between neighbouring cells is measuring path noise.
+
+**And the mechanism runs backwards.** At 15% the single largest move is **MOVR_USDT, -$18.62** —
+its 1R is 11.7% of margin, so 15% of margin equals **1.282R** and the rule arms LATE, not early.
+The rule arms earliest on positions where integer-leverage truncation happened to make the stop
+cheap, which is a rounding artefact, not information about the trade.
+
+**Note for the record: R IS ALREADY A DOLLAR RULE.** 1R is the position's dollar risk; the trail
+already arms at a dollar figure ($18.46 for PONS). The %-of-margin variant does not make the rule
+more dollar-denominated, it changes the denominator from dollars-at-risk to dollars-of-margin,
+and the two differ only by leverage truncation.
+
+### "The account is funded larger so we let more dollars go" — arithmetically void
+
+Sizing is proportional to equity: `margin = risk_pct x available_balance x 100 / sl_margin_pct`,
+bounded by another fraction of balance. Equity appears linearly in every term and cancels out of
+R. Measured across the 7.01x deposit boundary (equity $169.10 -> $1,098.95): **corr(log equity,
+normalised risk_pct_actual) = +0.041, n=75**, and realised 1R stayed at 1.371% (TREND) / 1.381%
+(WILDCARD) of equity on BOTH sides. **The deposit multiplied every dollar by ~7x and moved the
+R-optimum by exactly zero.** The same ONG rescue worth +$23 today was worth **+$0.55** when it
+happened.
+
+What funded size DOES change is dollar variance: bootstrapped one-week P&L at $1,114 equity over
+21 trades is **mean +$13.1, sd $93.4, P(week<0) = 45.8%**.
+
+**The strongest form of the owner's argument, made properly and then answered.** He is right that
+a one-week-then-withdraw horizon breaks the compounding assumption behind Kelly — variance drag
+(geometric = arithmetic - sigma^2/2) is a compounding phenomenon, and on a fixed horizon with a
+withdrawal you take the arithmetic mean. That version is real. **It is also empty here:** arm
+1.0 -> 0.9 moves week-sd from **$93.4 to $92.7**, a 0.7% reduction. The change buys ZERO variance
+reduction. The only cells that meaningfully cut week-sd are arm 0.50-0.70 (sd $66-$89) and every
+one of them has mean <= 0. **The variance-reduction frontier exists on this book and every point
+on it is bad.**
+
+### Size of the prize, so the ceiling is on the record
+
+Across 80 trades in 32.1 days the book gives back **80.7R = $1,250 of peak excursion**
+(~$1,186/month at 1R=$15.49). But **$558/mo sits in the peak<0.5R bucket where no arm change can
+reach**, and **$465/mo in the >=1.0R bucket which is ALREADY floored**. The slice the owner is
+complaining about — peaks 0.8-1.0R — is **3.89R = $60/month, from two trades.**
+
+### What arming at 0.9R would actually have banked on PONS
+
+Not $17.82. The floor would be `max(0.50 x 0.9653R, 1.5 x cost_r) = 0.483R = $8.91 gross, $8.49
+net` — **48% of the excursion**, +$3.21 against the current mark, and it surrenders a live 5R
+take-profit worth $92.30. It would also NOT have saved MARSCOIN (peak 0.821R); that needs 0.80R,
+where the placebo is negative in 10 of 10 phases.
+
+### Alternatives, all priced and all dead
+
+| mechanism | $/mo | status |
+|---|---|---|
+| two-stage breakeven floor @0.8R | +$2.13 | p=0.935; offered at +$26 before correction |
+| breakeven+cost lock @0.9R | +$3.9 / -$0.5 | matched placebo P=0.53 — trigger carries zero information |
+| tiered retain 0.25-0.35 in [0.9,1.0) | +$3.9 to -$4.7 | sign-unstable |
+| time-conditional arm (last N hours) | +$0 to +$3 | **INERT** — only 6 of 80 trades reach the clock |
+| dollar giveback cap $8-$12 | +$6 | near-inert (1 trade); fully inert at $15-$20 |
+| **% giveback cap (10-25% of peak)** | **-$74 to -$164** | **most harmful thing tested** |
+| arm 0.70 / 0.60 / 0.50 | -$62 / -$86 / -$110 | genuinely refuted; cuts the tail (ENA -4.6R = -$71) |
+
+### Corrections to the record
+
+- **The prior refutation was reproduced BIT-EXACT** (commit e38b5c4, `tools/pit_arm_sweep.py`,
+  unchanged since) and required Min15 bars with the peak updated only at bar END, no cost guard,
+  flat 0.03R cost. Intra-bar makes it **STRONGER**: at 0.9R the winners-cut count goes 2 -> 5.
+- **THE TRAIL DOES NOT POLL AT 45s OR 450s.** `USE_OPEN_POSITION_GUARD` and
+  `FUTURES_OPEN_POSITION_MONITOR_SECONDS=1.0` are live defaults, so
+  `_monitor_open_positions_once` -> `_hourly_exit` -> `_convex_runner_trail_exit` and
+  `_convex_time_stop_exit` run **once per second** against the WS fair price. 450s is the ENTRY
+  scan interval and governs nothing on the exit side. The `/status` clock docstring shipped with
+  this error the same day and was corrected.
+- **The cost guard is INERT** for every configuration tested: `1.5 x cost_r` runs 0.013R-0.126R
+  and exceeds the retention floor on 0 of 80 trades down to retain 0.35, 2 of 80 at retain 0.25.
+- **Recorded `peak_r` is a poll-sampled maximum**, written from `r_now` at the poll mark
+  (runtime.py:2119), not a true intra-bar high. EGLD_USDT recorded peak 1.1241 live and armed,
+  exiting CONVEX_RETENTION_TRAIL at +0.51R — a Min1-CLOSE reconstruction read it as 0.914 and
+  scored it a "rescue". Reconstruction on closes rather than wicks manufactures near-misses.
+- Of the three named near-misses only TWO clear 0.9R (ONG 0.962R, PONS 0.965R). MARSCOIN (0.821R)
+  needs 0.80R.
+
+**Verdict: change nothing. Arm stays 1.0, retain stays 0.50, ratchet stays 3.0R/0.75.** Refuted
+count ~100.
+
 ## 2026-09-07: SLEEVE ALLOCATION — retire WILDCARD, grow TREND, or neither. Answer: neither.
 
 Twelve agents, 430 tool calls, five configuration questions each adversarially verified, plus a

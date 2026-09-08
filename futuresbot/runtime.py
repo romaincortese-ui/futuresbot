@@ -1963,11 +1963,17 @@ class FuturesRuntime:
         in the scored book (7 of the 29 WILDCARD trail/clock exits), printed as
         nothing. The position row said what could happen and never said when.
 
-        APPROXIMATE BY DESIGN. `_convex_time_stop_exit` is evaluated on the scan
-        loop, so the close lands at the first scan AFTER the limit - up to
-        FUTURES_WILDCARD_SCAN_INTERVAL_SECONDS (450s live) late, and later still
-        if a scan is skipped. Rounded to the minute so the figure does not imply
-        precision the loop cannot deliver.
+        CORRECTED 2026-09-08, same day it shipped. This first said the close
+        lands "up to 450s late" because the clock runs on the entry scan loop.
+        It does not. `_convex_time_stop_exit` is called from `_hourly_exit`
+        (line ~5347), which `_monitor_open_positions_once` runs from the
+        open-position guard once per second (USE_OPEN_POSITION_GUARD and
+        FUTURES_OPEN_POSITION_MONITOR_SECONDS=1.0, both live defaults). 450s is
+        the ENTRY scan interval and governs nothing on the exit side. The close
+        lands within ~1s of the deadline, so this countdown is accurate to well
+        inside its own rounding. Still rounded to the minute: a second-precise
+        figure would invite reading it as a guarantee, and a missed poll or a
+        halted market can still delay the close.
 
         Returns None when the clock CANNOT fire, rather than a zero or a dash: a
         non-convex position, the clock disabled, or no `opened_at`. A deadline
