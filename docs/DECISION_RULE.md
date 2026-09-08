@@ -5738,3 +5738,224 @@ human sees the real number while the orders run off the stable trigger.
 **What this does not fix:** the ~13% that gap through inside a single bar, and
 the occasional runner cut short — that is the ~$20 of upside the 0.60 variants
 capture and 0.75 gives back.
+
+---
+
+## 2026-09-09 — ZEC TREND bull-run forensics: the ATH intuition, REFUTED (5th time). Entries are not the problem; exits are.
+
+**Asked:** review every 18F TREND fill on the ZEC run, test "do not open longs at an all-time
+high", find the missed entries. 3 agents / 3 independent replay engines / 3 adversarial
+verifiers / ~670 cells.
+
+### The premise correction
+
+TREND did NOT lose on the run. Since 09-03: **9 ZEC longs, +6.45R / +$31.71**, plus XRP +$2.55.
+The six post-deposit fills net **+$15.36 (+0.115R)**. The felt loss is the equity peak
+($1,183.57 on 09-06 05:55 -> $1,031.54), which is three ZEC stop-outs (-$69.22) plus WILDCARD
+(-$31.99).
+
+### The six, entry and exit
+
+| # | entry | px | roc24 | RSI | ext. above prior 24h close-hi | bar/ATR | stop% | 3R needs | exit | R | $ | peak |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 09-04 16:55 | 1036.54 | 10.0 | 73.8 | 0.87 ATR (p57) | 1.79 | 4.94 | 14.8% | CLOCK24 | -0.206 | -2.66 | 0.22 |
+| 2 | 09-06 01:07 | 1077.87 | 6.1 | 76.6 | **7.48 ATR (p100)** | 6.22 | 2.61 | 7.8% | TP | +3.016 | +75.37 | 3.03 |
+| 3 | 09-06 04:59 | 1140.35 | 12.2 | 73.6 | **5.15 ATR (p99.4)** | 3.94 | 4.29 | 12.9% | TRAIL | +0.419 | +11.88 | 1.03 |
+| 4 | 09-06 09:26 | 1199.51 | 19.0 | 55.3 | 1.03 ATR (p63) | 1.77 | 4.52 | 13.6% | STOP | -1.022 | -28.49 | 0.09 |
+| 5 | 09-06 17:38 | 1224.50 | 18.6 | 53.6 | 1.61 ATR (p78) | 2.89 | 4.76 | 14.3% | STOP | -1.044 | -20.38 | 0.49 |
+| 6 | 09-08 16:38 | 1205.82 | **4.4** | 65.3 | 1.66 ATR (p80) | 1.42 | 3.78 | 11.3% | STOP | -1.048 | -20.35 | 0.12 |
+
+Percentiles vs n=345 in-universe episodes / 358 days. All columns knowable at the entry bar.
+
+**What killed the losers is the REQUIRED MOVE, not the price level.** #1/#4/#5/#6 each needed
+11.3-14.8% within 24h to reach 3R; their peaks were 0.22 / 0.09 / 0.49 / 0.12R and their best
+forward-24h moves +0.5% to +4.7%. That is realised forward vol and nothing at the entry bar
+predicts it. The winner won because it entered while ATR was still COMPRESSED, putting 3R only
+7.8% away, and it carried the TIGHTEST stop of the six (2.61%, p40 of ordinary 4h ZEC pullbacks).
+
+**Post-exit forensics:** #1 CLOCK24 left **+3.62R on the table in the following 24h** (the one
+demonstrably wrong exit). #4 was a whipsaw (price 1221.30 four hours after the 1146.59 stop,
+above the entry). #5 and #6 stops were CORRECT (max favourable after exit -0.73R and -0.60R).
+
+### THE ATH INTUITION: REFUTED, six restatements, three engines, never once positive
+
+| restatement | result |
+|---|---|
+| skip new N-day closing high (n=366) | 7d **-$156/mo**, 14d -$88, 30d -$71, 60d -$52, 90d -$25, 180d -$3. Monotone to zero as it stops binding. **Sign never turns.** |
+| independent engine (n=345) | new-high entries earn MORE: 7d +0.4256R vs +0.0433R (t=+2.46); 30d +0.483 vs +0.140; 365d +0.372 vs +0.203 |
+| third engine (n=389), block 30d-highs | -$67.5/mo; **verifier re-derivation -$37.2/mo, CI95 [-84.1, +5.9] spans zero**, ZEC-only, drop-ZEC flips, ex-top-5% -$20.7 |
+| absolute 24h-ROC cap | 6% -$118/mo, 8% -$74, 10% -$55, 12% -$48, 15% -$25 |
+| 3h blow-off cap | 4% -$68/mo, 6% -$65, 8% -$26, 10% -$6 |
+| FUTURES_TREND_RSI_MAX (env-only, zero deploy cost) | 70 **-$154/mo**, 75 -$89, 80 -$62, 85 -$43, 90 -$36 |
+| half/three-quarter size at a high instead of veto | -$4.1 to -$22.9/mo, all six dosing cells. **No dose of this idea pays.** |
+| max-extension veto (ATR above prior 24h high) | >=1.0 -27.5R, >=2.0 -16.1R, >=3.0 -10.7R. Vetoed groups' mean R is HIGHER than baseline in every cell. |
+
+**Applied literally to the six:** prior all-history max daily close was 952.06 / 1025.41 /
+1025.41 / 1025.41 / 1025.41 / 1226.83. Trades 1-5 were new all-time closing highs; #6 was not.
+**The rule blocks 1-5 including both winners and keeps only the -$20.35 fill: +$15.36 -> -$20.35.**
+
+**Why the six looked so convincing.** Price rose monotonically through the window and the four
+losses arrived late, so ANY monotone-in-time variable sorts them into the top half by
+construction. The falsification is inside the sample: **#6 is the least extended entry, the only
+one below the prior all-time close, and the worst R of the six.**
+
+**Structural correction:** the gate requires a new 24h CLOSING extreme, which by construction sits
+below the window's recent wick high — the bot cannot buy an all-time high. Also ZEC's true ATH is
+2016 and is not in any feed the bot reads (MEXC daily history is 5y); "all-time" was never
+computable.
+
+**Reconciliation with 2026-09-07 (+0.380R ATH vs +0.448R non-ATH):** the record is now CONSISTENT,
+not reversed. Agent 2's positive separation was cut down by its verifier as a bull-regime artefact
+(ZEC is 193/345 fills and +69.04R of +74.97R; over the window ZEC ran +2238% while ETH -47%,
+XRP -55%, SOL -57%, BTC -32%). ATH status carries no reliable positive information EITHER. What it
+does not carry is the negative.
+
+### The n=6 trap, named
+
+Entry-bar range / ATR splits the six PERFECTLY: 6.22 and 3.94 for the winners, 1.42-2.89 for the
+losers, zero overlap, clean threshold at 3.0. On 389 episodes / 360 days it loses at EVERY
+threshold: >=1.5 -$48/mo, >=2.0 -$39, >=2.5 -$106, >=3.0 -$129. At >=2.0 it RAISES mean R from
++0.185 to +0.218 and still loses 18.75R because it deletes 145 of 389 fills.
+
+### The missed entries: 5 of 14, all the symbol lock, and it was NET PROTECTIVE
+
+570 Min15 bars 09-03 -> now; gate TRUE on 36, clustered into **14 episodes; the bot took 9**.
+Zero misses from the slot cap (never reached), scan timing, or a false gate. All five were the
+one-position-per-symbol lock, and taking them sums **-0.805R = -$20.25**:
+
+    09-03 12:45-14:00  846-863    +2.905R
+    09-04 08:45        1023       -1.054R
+    09-04 19:45        1039       -0.558R
+    09-06 18:30        1229       -1.043R      <- the actual top
+    09-06 21:15-21:45  1236-1245  -1.055R      <- the actual top
+
+**The two entries the ATH rule most wants to block were already blocked, by a rule already live.**
+
+### Every alternative entry timing loses, and the control says why
+
+pullback to MA20 (1/2/4/8h validity) -$176.56 / -$171.46 / -$156.49 / -$129.70; first higher-low
+after the new high -$64.88 to -$38.98; limit k*ATR below signal (k 0.25->3.0, fill rate 96%->16%)
+-$35.91 -> -$223.28, **not one cell positive**; buy a dip within 6h of a new 24h high 1% -$42.6 /
+5% -$130.9; first-extreme-after-quiet -$80.6 (6h) to -$133.9 (24h); MIN_ROC 0.03 -$22.9 / 0.035
+-$8.3 / **0.04 baseline** / 0.045 -$16.2 / 0.06 -$35.0 / 0.08 -$42.1; drop the new-extreme
+requirement -$29.7.
+
+**THE CONTROL.** Grant the same price improvement with NO pullback condition (phantom fill, always
+granted, k*ATR better than signal): **+$34 / +$107 / +$175 / +$225 / +$399 / +$582 / +$1,042 per
+month** at k = 0.25 / 0.5 / 0.75 / 1.0 / 1.5 / 2.0 / 3.0.
+
+> At k=1.0 ATR the price improvement ALONE is +$225/mo; the conditional version is -$201/mo.
+> **The pullback SELECTION is worth about -$426/mo. Waiting only fills you on the moves that fail.**
+
+Independently reproduces the 2026-09-08 WILDCARD disguised-stop-widening result, different sleeve,
+different engine. **This is the answer to "find a better entry point": there isn't one. Paying up
+for the new extreme IS the edge and it degrades the instant you wait.**
+
+### THE REFRAME: the exits churn a correctly-identified trend
+
+| | R | $ at $25.16/R |
+|---|---|---|
+| the six as executed | +0.115R | +$15.36 |
+| the six at constant $25.16 risk | +0.115R | +$2.90 |
+| hold the first 18F signal (1036.54), 3xATR stop only | **+2.667R** | **+$67** (stop 985.38, post-entry low 995.84, never touched) |
+| the 9 run fills, same entries, exits stripped to the -1R stop | **+45.73R** vs +6.35R | |
+| buy the run's first gate bar (835.38), hold on the stop alone | **+25.494R** vs +6.35R | |
+
+**Nine sequential trades captured 25% of what one held position would have made.**
+Three caveats that stop this being a proposal: (1) **funding is not modelled anywhere** and a
+multi-week ZEC perp long in a violent bull run pays heavily; (2) it is in direct tension with the
+retention invariant — a conflict between two owner rules, not a bug; (3) every 1-D exit change was
+swept and all lose: TP_R 2.0 -13.71R / 2.5 -10.42R / **3.0 baseline** / 3.5 -6.03R / 4.0 -11.53R /
+5.0 -8.78R; clock extension -$11 to -$24/mo at every setting 12h-240h; profit-conditional clock
+negative at every threshold; no-progress time stops refuted in all 24 cells; SL 2.0x -$129.3 /
+2.5x -$54.3 / **3.0x baseline** / 3.5x -$17.5 / 4.0x -$31.8 / 5.0x -$39.4 / 6.0x -$41.5.
+
+### VERDICT: ship nothing to entries. ~670 cells, honest total $0/month.
+
+Multiplicity: agent 1 250 cells, permutation null max p95 $24.4/mo vs best rule $3.8/mo, FWER
+p=0.62; agent 2 319 cells, best +15.37R vs permutation p95 +18.19R, FWER p=0.1375; agent 3 102
+cells, best survivor Bonferroni p=0.059. **A search this size manufactures $6-24/mo of fake edge
+as routine.** Nothing clears it.
+
+### REFUTED — added to the do-not-resurrect list
+
+- ATH / new-N-day-high entry veto (5th refutation, now with six restatements and three engines)
+- max-extension veto in ATR above the prior 24h high — **this was the untested version; it is now tested and negative at every k**
+- FUTURES_TREND_RSI_MAX at any value
+- absolute 24h-ROC cap and 3h blow-off cap at entry
+- entry-bar ignition filter (range/ATR) — the n=6 trap
+- half/three-quarter sizing at highs
+- pullback / higher-low / limit-below-signal entries on TREND (control: the selection is -$426/mo)
+- post-stop cooldown on TREND (every cell beyond 2h costs -$9 to -$175/mo; 15 cells)
+- blocking re-entry above the previous stop-out price (-$83 to -$102/mo)
+- MIN_ROC moves in either direction; dropping the new-extreme requirement
+- TREND TP_R 3.0 -> 8.0: fails ex-top-5% hardest (-$45 to -$48/mo), 16 of 327 trades carry it,
+  most recent quarter negative, TP_R 4.0 outright negative so the surface is non-monotonic.
+  The accompanying "dead branch" claim is WRONG: FUTURES_CONVEX_TRAIL_RATCHET_R is SHARED
+  across WILDCARD/SQUEEZE/TREND and WILDCARD's TP_R is 5.0, so the tier is live. No bug.
+- drop ETH from the universe: null in isolation (+1.51R; n=77, mean -0.060R, t=-0.40, ex-top-5%
+  +0.18R). Only value is variance (maxDD 12.6R -> 8.3R, return/DD 4.99 -> 7.76). Not P&L.
+
+### REFUTED AND DANGEROUS — second concurrent position per symbol
+
+Priced by the three agents at +$9, +$47 and +$69/mo (a 7x disagreement that already condemns it).
+**It is not implementable as described and its measurement is invalid:**
+- open_positions is dict[str, FuturesPosition] **keyed by symbol** (86 refs in runtime.py;
+  _register_position does `self.open_positions[position.symbol] = position`). Removing the
+  `if sym in self.open_positions: continue` guard does not create a second position — **the second
+  entry silently OVERWRITES the first, destroying its stop level, convex peak, arm state and 24h
+  clock while the size sits live on MEXC with no exit management.**
+- _save_state serialises {sym: pos.to_dict()}; two same-symbol positions cannot survive a restart.
+- config.position_mode = 2 (one-way) means **MEXC nets both fills into one blended position with
+  one stop.** Every replay priced two independent positions with two independent 3xATR stops.
+- Also fails ex-top-5%-by-delta in all three engines, P(delta<=0)=0.08, flat mean R across every
+  capacity setting (leverage, not edge), and a random-entry placebo gains from the same change.
+
+**Cost if wrong is not -$69/mo, it is an unmanaged live position.** Do not run it, not even in
+shadow, until open_positions is re-keyed and the account is in hedge mode.
+
+### The sizing "defect" was the deposit
+
+Two agents headlined a sizing gap (one at $128). Verifier decomposition: **+$143.13 of it is the
+three PRE-deposit winners** (equity $169-186, risk $1.73-$3.27) and **-$12.47 the funded six.**
+110% of the "defect" was the deposit landing between the winners and the losers. Not a bot rule.
+
+**The regime size scaler EARNED ~$12.50 of the $15.36** — half size (0.500) to the first loser,
+0.730/0.761 to the last two, full size (1.000) to the +$75.37 winner. Switching it off on this run
+costs -$11.73. Independently reconfirms 2026-08-26 on new data. **Do not flatten or renormalise it.**
+
+### The one thing left open (not a proposal, a gap in the grid)
+
+Roll the 24h clock only when the trade is flat-to-slightly-negative **AND the entry trigger is
+still live** (roc24 still >=4% at the 24h mark). The grid covered the unconditional clock and the
+profit-conditional clock and skipped this. It is exactly the case trade #1 was — the one exit in
+the six that was demonstrably wrong ex post (+3.62R available in the following 24h).
+
+### Below the bar, cleanest control set in the study, NOT shipped
+
+FUTURES_TREND_SCAN_INTERVAL_SECONDS 900 -> 300. Point estimate **+$69.83/mo** but
+**screened floor $6.01-7.56 — under the $10 bar, fails both robustness screens.** 277 fills
+changed, 164 the 15m scan never saw. Monotone 900s +62.86R -> 600s +75.37 -> 300s +95.50; mean R
+RISES (+0.181 -> +0.242) while n rises (347 -> 394) and t rises +2.40 -> +3.47 — quality and
+quantity both improve, not the signature of pure leverage. 3 of 4 quarters positive. **The only
+candidate positive on all three leave-one-symbol-out folds** (drop ZEC +3.53R, drop ETH +29.74,
+drop XRP +36.52). Day-block bootstrap P(delta<=0)=0.005-0.006. **But 88% of the raw edge is ZEC in
+the twelve months it went $40.49 -> $1,226.83**, faster-cadence slippage is untested, maxDD
+12.6R -> 14.4R, and it costs 864 public kline calls/day. Revisit only with a non-ZEC-carried sample.
+
+### THE CEILING
+
+Best achievable on this window from a rule choosable IN ADVANCE, using only information available
+at the time: **none beat the shipped config.** The gap to the theoretical hold (+$67) is ~$52 over
+four days, it is entirely in the EXITS, it is overstated by unpriced funding, and buying it means
+abandoning the retention invariant.
+
+**The shipped configuration — 3.0x ATR stop, 3R TP, arm 1.0R, retain 0.50, ratchet 3.0R, 24h clock,
+4% ROC, one position per symbol, 2 slots — sits at or adjacent to the optimum of every
+one-dimensional slice run this session.** Three independent searches found no ridge leading away.
+
+### The recurring signature, in one line
+
+**Every filter tested this month raises mean R and destroys dollars, because it deletes 20-82% of
+the trades. This sleeve is volume-limited, not quality-limited. Its dollars are in the volume, and
+every improvement to the average destroys the total.**
