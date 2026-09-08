@@ -57,6 +57,86 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## TRIAL 19F — PRE-REGISTERED 2026-09-08 18:18 UTC, BEFORE THE FLAG WAS SET
+
+**Written before the env var was changed. If any line below is edited after a result
+is seen, the trial is void.**
+
+### The change, in full
+
+    FUTURES_WILDCARD_EARLY_STOP_R        0.0  ->  0.5
+    FUTURES_WILDCARD_EARLY_STOP_MINUTES  (unset, default 30)  ->  30
+    FUTURES_TREND_EARLY_STOP_R           (unset)  ->  0.0     explicit, belt and braces
+    FUTURES_TRIAL_LABEL                  18F -> 19F
+    FUTURES_TRIAL_START_TS               1788519433 -> 1788891501
+
+Nothing else. Not the arm, not the retention, not the ratchet, not the universe,
+not the slots, not the risk.
+
+### What it does
+
+On WILDCARD positions only: exit at market if the trade reaches -0.5R within the
+first 30 minutes. After 30 minutes the ordinary -1R stop applies unchanged.
+
+### The baseline it is measured against
+
+Trial 18F closed at **9 closes, -$47.56**: TREND +$35.72 over 5 fills, WILDCARD
+**-$83.27 over 4 fills (MAGMA -26.45, FORM -25.76, PONS -19.41, MARSCOIN -11.65)**,
+every one a stop-out. Trial 18F's primary criterion (mean realised risk per trade
+in [1.6%, 2.2%]) was **PASSING at 2.018%** when it closed.
+
+### THE PRE-REGISTERED KILL. Either condition, immediately, no discussion.
+
+1. **Two cut trades whose peak before the cut was >= 1.0R.** `/report` prints this
+   as "cut above 1R". A fire on a trade that had already been meaningfully positive
+   is the failure mode; two of them is not bad luck.
+2. **After 20 fires, the running dollar delta against the logged counterfactual is
+   negative.** The rule needs a **>=33% save rate** to break even and delivered 78%
+   in sample (12 helped, 2 harmed). Below 50% over 20 fires it is dead.
+
+Rollback is `FUTURES_WILDCARD_EARLY_STOP_R=0`, one variable, seconds.
+
+### Pass criteria (30 WILDCARD closes, or 45 days, whichever first)
+
+1. **PRIMARY: the running delta against the counterfactual is positive at n>=20
+   fires.** Not "the sleeve made money" — the sleeve's own edge is a coin flip and
+   this trial is not testing it. It is testing whether cutting early beats not
+   cutting.
+2. Cuts above 1R peak: **zero or one** across the whole trial.
+3. Mean realised risk per trade stays in [1.6%, 2.2%] — the standing sizing
+   criterion, unchanged and independent of this rule.
+4. TREND is untouched: zero `CONVEX_EARLY_STOP` exits on a TREND position. Any
+   single one is a defect, not a result.
+
+### What would make me call it a false positive even if it passes
+
+The result rests on **X = 0.5 having been a prior**, chosen from the shape of four
+trades before any grid was swept. Walk-forward refitting X **loses** (-$32 to
+-$54/mo). **X MUST NEVER BE REFIT.** If this trial passes and the temptation
+arises to tune X from its own fires, that is the exact move the evidence forbids.
+Only T may be tuned, and only after n>=30.
+
+### The honest odds going in
+
+Bootstrap 95% CI **[-$47.81, +$218.93]**, **P(delta <= 0) = 0.095**, grid-corrected
+permutation **p = 0.042**. The candidate's own 5x6 grid is 24 of 30 cells negative.
+6 of the 25 trades that touch -0.5R inside 45 minutes went on to peak >= 2R, so
+cutting a runner is a **1-in-7 recurrence**, not a freak event.
+
+**This is a bounded bet with a positive expectation, not an established edge.**
+Expected +$115/month, floor +$56/month under every pessimistic assumption stacked,
+cost if wrong about **-$55/month**, and one runner cut inside the window costs
+**-$138** — 1.3 months of the rule's own edge.
+
+### Running alongside, at zero behavioural cost
+
+The shadow diagnostic (`t_adverse_25/50/75`) records time-to-depth on **every**
+convex position regardless of this flag, and is promoted into the closed record and
+the feature row. It already produced its first row within minutes of deploying:
+ZEC_USDT 09-08 reached -0.25R and -0.50R at **minute 95.24** — far outside a
+30-minute window, and TREND, where the rule is off. That series is what will let X
+be set from live fills instead of from the historical rows it was read off.
+
 ## 2026-09-08: PEAK CAPTURE — the prize is ONE TRADE, and my PONS numbers were wrong
 
 Owner's question: PONS reached +$20.25 and closed -$19.41; how could we have banked it? Seven
