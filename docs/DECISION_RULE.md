@@ -57,6 +57,66 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08 (AMENDMENT): THE WITHDRAWAL POLICY WAS MISREAD — run-equity is FUNDED, not $190
+
+**Correcting an error of mine that propagated into a pre-registered rule and struck a live
+proposal.**
+
+### What the owner actually intends
+
+> "I never said I would do that for each funded week. This funded week is a test, but the idea is
+> that I'm going to fund the bot with a certain amount of money, let the bot trade and compound,
+> and withdraw only profits when I feel like it. It will not go back to $190 every week."
+
+The "$190" figure came from a **single statement about THIS test week**. I generalised it into a
+standing weekly sweep and built on it. The actual policy is: **fund once, compound, withdraw
+profits opportunistically.**
+
+### What that voids
+
+**1. THE BAR RULING'S WORKED EXAMPLE IS WRONG.** The 2026-09-08 absolute-bar entry says "price at
+the equity it will RUN at" and then uses **$190** as that equity, with a table showing a +$57/mo
+item earning ~$10/mo. **The PRINCIPLE STANDS and is unchanged. The FACT is wrong.** Run-equity is
+the funded level and RISING, not $190. Delete the $190 row and the "one sixth of its measured
+dollars" conclusion.
+
+**2. `FUTURES_EXTERNAL_GATE_MIN_REF_TURNOVER` 500k -> 12M IS UN-STRUCK.** The rescale audit's
+FLIP 1 killed it because 2.266 R/month prices at $9.40/mo **at $190**. At funded equity it is
+**+$57/mo**, comfortably above the absolute bar. It still fails condition (2) of the standing test
+— family-wise p=0.092 across the five continuous variables searched, walk-forward p=0.076 — so it
+remains UNPROVEN and does not ship on magnitude alone. But **it is no longer disqualified on
+dollars**, and it returns to the "consider at the 18F boundary" line.
+
+**3. TRIAL 19's PRICING NEEDS RESTATING.** It was priced at "$190 equity where 1R is ~$2.60".
+If trial 19 opens on a compounding funded account, its +$1.91/mo restates at the funded 1R. That
+does not rescue it — it fails on controls and its drawdown kill trips on the baseline (30.3% of
+equity) — but the dollar figure on file is wrong and should not be cited.
+
+**4. THE COMPOUNDING ARGUMENT IS LIVE, NOT INERT.** The owner's hypothesis — that many small
+positive closes compound the allocatable balance and make each subsequent win larger — was about
+to be answered with "your own weekly sweep defeats it." **That objection was my invention, not his
+policy.** Under fund-once-and-compound the geometric frame is the CORRECT objective and the
+additive model every prior study used is the wrong one. The running study prices all three
+policies, so read it against the no-withdrawal and partial-withdrawal rows, not the weekly-sweep
+row.
+
+### What still stands
+
+- **The bar is ABSOLUTE** (owner's ruling, pre-registered). Unchanged.
+- **Price at the equity the change will RUN at, not the equity it was MEASURED at.** Unchanged as
+  a principle — it is simply that run-equity is now the funded, compounding level. This still
+  matters: a change measured during a $1,100 test week and deployed on a differently-sized account
+  must be restated.
+- **Magnitude is a floor, not a criterion.** Unchanged, and it is what still holds
+  MIN_REF_TURNOVER back.
+
+### The lesson worth recording
+
+A one-off operational statement ("I'll withdraw down to $190 this week") was promoted to a
+standing constraint and then pre-registered, where it killed a live proposal and reframed a valid
+methodological argument as self-defeating. **Operational statements about a specific week are not
+policy. Confirm the standing version before building on it.**
+
 ## 2026-09-08: THE RESCALE AUDIT — nothing revives, two things fall, and my own correction was overstated
 
 Owner instructed a re-run of every study affected by the corrected risk fraction. Five agents.
