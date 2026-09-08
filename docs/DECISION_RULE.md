@@ -57,6 +57,63 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: THE SHIP BAR IS ABSOLUTE — owner's ruling, pre-registered
+
+**Recorded BEFORE the rescale audit returned, deliberately.** The audit is re-pricing every
+magnitude-death at the corrected 1R, and a threshold chosen after seeing which items clear it is
+not a threshold. This is the pre-registration.
+
+### The ruling
+
+**The "$10/month does not ship" bar is ABSOLUTE, not relative.** It stays denominated in dollars.
+
+The bar prices an operational cost — a deploy, a restart with live positions, a trial reset, and
+the added complexity of one more branch — and that cost does not scale with the account. It is the
+same deploy at $190 equity as at $1,100.
+
+The rejected alternative: a RELATIVE bar in R. $10/month when 1R was ~$2.66 is **3.76 R/month**,
+which at 1R=$25.16 would be **$94.60/month**. Almost nothing in the project's history clears that,
+and it would make the bar rise every time the account grows, which is not what the bar is for.
+
+### THE CONSEQUENCE THAT MATTERS MOST — price at the equity it will RUN at
+
+An absolute bar only works if the dollars are the dollars the change will actually earn. So:
+
+**Price every proposal at the equity it will RUN at, not the equity it was MEASURED at.**
+
+This is not academic. The owner withdraws to **$190** at week end, so:
+
+    equity      1R (at the funded 2.18% risk fraction)    a "+$57/mo" item earns
+    $1,100      ~$25.16                                    $57/mo
+    $190        ~$4.35                                     ~$10/mo
+
+**A change measured at funded scale earns roughly one sixth of its measured dollars once the
+withdrawal lands.** Trial 19 is the standing example: it is pre-registered to open AFTER the
+withdrawal, so its +$1.91/mo must be priced at $190 equity, where it is worth cents — the
+"rescaling makes it clear the bar" argument is backwards for that specific change.
+
+### The standing test
+
+A change ships when, at the equity it will run at over the horizon it will run for:
+
+1. expected P&L exceeds **$10/month**, AND
+2. it survives the control stack (permutation, entry-shift placebo, family-wise multiplicity,
+   leave-one-out and leave-one-symbol-out, era split), AND
+3. its ex-top-5% delta, **screened by delta and not by baseline outcome**, is not materially
+   negative, AND
+4. it does not raise maxDD as a % of equity into the 45% margin kill line or the trial's own
+   drawdown kill.
+
+Magnitude alone was never sufficient and is not now. The bar is a floor, not a criterion.
+
+### The guard against bar erosion
+
+An absolute bar does get easier to clear as the account grows, which eventually admits noise.
+The guard is condition (2): **a change that clears $10/month but fails a control still does not
+ship.** Across ~130 refuted items the overwhelming majority died on controls rather than on
+magnitude, so the control stack — not the dollar bar — is what has actually been doing the work.
+Revisit the bar's level only if equity changes by another order of magnitude.
+
 ## 2026-09-08: THE WILDCARD REBUILD — 1R IS $25.16 NOT $15.49, and one env var survives
 
 Eleven agents, five lines of attack, adversarial verification on every proposal. **15 proposals
