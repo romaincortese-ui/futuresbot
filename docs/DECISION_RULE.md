@@ -57,6 +57,130 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: THE COMPOUNDING GAP — real, now closed, changes no verdict, and kills retain 0.40
+
+Owner's observation: every study priced additively (sum R, multiply by a constant 1R) while the
+bot sizes off available_balance, so the process is multiplicative. **He was right. The gap was
+real and it had been in every study in this project.** Seven agents closed it.
+
+### WHAT THE FRAME ACTUALLY ADDS — one real number
+
+Peak-exit and retain-0.40 have **statistically identical netR** (+3.251R vs +3.272R against live;
+additively **$15.54 vs $15.64/mo — indistinguishable**). Compounded through the real sizing chain
+they diverge by **$16/month**:
+
+    retain-0.40   +$11.96/mo
+    peak-exit     **-$4.15/mo**
+
+Same sum of R, **opposite dollar sign**. Mechanism: peak-exit's rescues land on **$2.12-risk**
+rows while its truncations land on **$2.44-risk** rows — a risk-weighted delta of **-$0.85**
+against retain-0.40's **+$8.55**. **The additive model literally cannot see this**, and it is the
+single thing the compounding frame adds. The owner's methodological point is vindicated.
+
+### AND IT RUNS AGAINST HIS OWN PROPOSAL
+
+Terminal equity, E0 = $190, f = 2.183%, WILDCARD 50 rows, realised order, 26 days:
+
+    no-trail control        $214.95   (+$26.54/mo)
+    retain-0.40             $202.32   (+$11.96/mo)
+    live arm1.0/retain0.50  $191.95   (baseline)
+    peak-exit arm0/ret0.98  **$188.35**  (**-$4.15/mo**)
+
+**Peak-exit is the only cell that ends BELOW where it started, and the only one with a negative
+geometric mean** (g = -0.000174/trade).
+
+### THE VARIANCE SAVING IS REAL AND WORTH $2.24/MONTH
+
+g ~= f*mu_R - f^2*sigma_R^2/2. The drag budget at f = 1.3876%:
+
+    cell                  meanR      sd R    geometric g    drag/trade
+    LIVE arm1.0 ret0.50  -0.0237    1.223     -0.00047       0.01421%
+    R040 arm1.0 ret0.40  +0.0593    1.368     +0.00064       0.01784%
+    R030 arm1.0 ret0.30  +0.0817    1.429     +0.00094       0.01930%
+    PEAK arm0.0 ret0.98  +0.0255    0.302     +0.00035       0.00089%
+    LIVE-RECORDED        +0.1986    1.537     +0.00253       0.02264%
+
+Peak-exit's **4x variance reduction buys 0.01332%/trade = 1.18% of equity/month = $2.24/month at
+$190**, against a $10 bar. At f = 2.18% the variance term is 9% of the mean term for peak-exit
+versus 23% for live — **the saving exists but the mean it is bought with is negative, so Jensen
+makes it worse rather than better.**
+
+**Critical risk fractions where low variance finally wins on geometric growth:** peak-exit
+overtakes retain-0.40 at **f = 3.97% (2.9x today's risk)**, retain-0.30 at f = 6.23% (4.5x), and
+the live ledger at **f = 18.77% (13.5x)**. Live f is 1.39%, funded 2.18%. **Nothing crosses.**
+
+Objection (2) does NOT bite: the arithmetic mean is **POSITIVE** on the ledger (+0.1986R/trade
+all-book, +0.0774R WILDCARD), so compounding does not flip a sign.
+
+### ORDER-DEPENDENCE IS A MATHEMATICAL IDENTITY, NOT AN EFFECT
+
+With sizing strictly proportional to equity, terminal = E0 * PROD(1 + f*R_i) — **a product of
+commuting scalars, so ORDER CANNOT MATTER.** The owner's "one close at a time" compounding is
+real but order-independent. The entire order-dependence budget comes from integer-contract
+truncation, the streak throttle and the ruin floor. With truncation live and the throttle OFF,
+2000 shuffles give a coefficient of variation of only **0.19-1.11%**, and pairwise on the same
+shuffle **retain-0.40 beats live in 2000 of 2000 shuffles** (+$10.35 median) while **peak-exit
+loses in 2000 of 2000** (-$4.47 median). Neither result is a path artefact.
+
+### THE WITHDRAWAL POLICY CHANGES WEALTH, NOT THE RANKING
+
+Terminal equity from $190, 21 fills/week, 3,000 block-bootstrap paths, median:
+
+    cell            3mo sweep  12mo sweep | 3mo no-wd  12mo no-wd | 12mo maxDD
+    LIVE ret0.50       $172       $133    |   $166        $114    |    58%
+    R040 ret0.40       $228       $337    |   $222        $372    |    40%
+    R030 ret0.30       $243       $398    |   $243        $523    |    39%
+    PEAK arm0          $208       $261    |   $208        $274    |     7%
+    LIVE-RECORDED      $327       $740    |   $372      $2,739    |    27%
+
+**The ranking is IDENTICAL under all three withdrawal policies at 3, 6 and 12 months:
+R030 > R040 > PEAK > LIVE.** Policy changes WEALTH (3.7x over 12 months on the ledger book) but
+not the ORDERING of exit rules. **The finding we were open to — a low-variance rule winning under
+compounding and losing under the sweep — did not occur. Exit rule and withdrawal policy can be
+chosen separately.**
+
+### RETAIN 0.40 IS REFUTED, AND THE REASON RETIRES THIS MORNING'S LADDER
+
+It reproduces at +3.272R = +$98.9/mo and then fails every control: 4 gaining trades against 12
+losing ones; **all 4 gainers are unfaithful engine rows** while 9 of the 12 losers are faithful;
+the faithful-subset delta **SIGN-FLIPS to -$33.9/mo** and ex-top-3-by-delta to -$38.7/mo;
+sign-flip permutation p=0.425; entry-shift placebo p=0.130 and **family-wise p=0.870** against the
+grid-max null, where on jittered entries the median best-of-14 retention cell beats 0.50 by
+**+$236/mo, nearly twice the observed best cell**. The era split is -$6.1/mo in the first half and
++$204/mo in the second. The boundary sweep is a **sawtooth, not a plateau**: 0.45 +$130.6, 0.40
++$98.9, 0.35 +$68.5, 0.30 +$41.7, 0.25 +$12.3, 0.20 +$58.1 — adjacent 0.05 steps swing by $50/mo.
+
+**THE DECISIVE FINDING IS ENGINE REPAIR, NOT EDGE.** Mean |sim - live-recorded| is **0.241R at
+retain 0.50 and 0.162R at 0.40**. MAGMA (live +2.932R), USELESS 09-04 (+2.584R), USELESS 09-01
+(+1.237R) and GALA (+0.715R) **ALL ran live under retain 0.50 and exited via
+CONVEX_RETENTION_TRAIL at the value the sim only produces at 0.40.** Those four rows carry +4.55R
+of the +3.27R delta. The Min1 replay closes them early on a wick the live 1-second poll never
+acted on; lowering the trail below that wick cancels the simulator's own error.
+
+**The retention ladder is measuring how far the level must be moved to stop the replay misfiring,
+not a property of the rule.** The 2026-09-08 entry reporting retain 0.40 at +$97.6/mo is
+RETIRED on this basis.
+
+### THE ONE GENUINE FINDING FROM THE OWNER'S LINE OF THINKING
+
+**Re-enable the streak throttle.** With `FUTURES_CONVEX_STREAK_THROTTLE_ENABLED` ON,
+order-dependence jumps to CV 5-8% and **peak-exit flips to +$6.21 median with P(delta>0) =
+0.752** — because **a 92% win rate never trips a loss-streak throttle.** That is the only
+mechanism found in which the low-variance instinct actually pays. It is worth ~$7/month, it is
+below the bar on its own, and it requires re-enabling a dial that **live fills already priced as
+net-positive in its own right** and that has been OFF since 2026-08-27. It also connects to the
+2026-09-08 finding that the shrink dials were preferentially catching losers (-0.298R on
+sub-half-size rows against +0.431R full-size), worth 1.66x in the dollar record.
+
+**This is the item to take forward from the compounding line — not an exit change.**
+
+### Standing addition to the conversion rule
+
+6. For any comparison between configurations with materially different variance, report the
+   PATH-DEPENDENT terminal equity alongside sumR. Two cells with identical sumR can differ in
+   dollars by the risk-weighting of where their gains and losses land — measured here at $16/month
+   on cells whose additive figures differ by $0.10.
+
 ## 2026-09-08 (AMENDMENT): THE WITHDRAWAL POLICY WAS MISREAD — run-equity is FUNDED, not $190
 
 **Correcting an error of mine that propagated into a pre-registered rule and struck a live
