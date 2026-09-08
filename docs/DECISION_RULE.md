@@ -57,6 +57,148 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: THE EARLY STOP — SURVIVES WEAKLY. The first candidate in ~140 to reach ship.
+
+**RULE: on WILDCARD only, exit at market if the trade touches -0.5R within the first 30 minutes.
+After 30 minutes the normal -1R stop applies. Equivalently: a tight stop that widens.**
+
+Found by comparing the shapes of the four 18F WILDCARD trades at the owner's request ("how can we
+identify this early and cut the losses"). Four agents attacked it from independent angles.
+
+### Verdict: NOT REFUTED, NOT PROVEN
+
+It is not the previously-refuted rule, it is not tail-driven, it is not one trade, and no honest
+fill model turns it negative. **But the corrected statistics are p ~ 0.04-0.13, not 0.0003, and
+the confidence interval crosses zero.** A bounded bet with positive expectation, not an edge.
+
+### The mechanism, and it passes a sign control
+
+    early touchers reach 1R     33%   |  non-touchers  64%
+    mean max excursion        1.34R   |               2.61R
+    ROC sign control: +$69.89/mo on HIGH |3h ROC| entries vs +$37.43 on low, with fewer cuts
+
+The sign control is the important one: the effect is stronger where the mechanism predicts it
+should be. Exit-stack coupling also passes — the rule stays +$75 to +$130/mo against seven
+alternative arm/retain baselines including one with a positive base sumR, so it is not an
+artefact of today's trail.
+
+### Scope is decided by the data
+
+    WILDCARD  50 trades, 14 fires,  2 harmed   +3.853R   **+$114.90/mo**
+    TREND     27 trades,  4 fires,  2 harmed   -0.254R     -$7.57/mo   <- EXCLUDE
+    LONG      67 trades, 18 fires,  4 harmed   +3.599R    +$107.33/mo
+    SHORT     10 trades,  0 fires,  0 harmed    0.000R      $0.00      <- no evidence either way
+
+TREND's touched trades are its runners: SOL t50=m7 peaked +7.93R, ZEC t50=m42 peaked +6.32R. On
+liquid majors an early adverse move carries no information; on microcaps an early failure is a
+real failure. That is the whole finding, and it is why the parameter must be per-sleeve.
+
+### The fill: no resting order needed, and one agent was wrong
+
+    resting order filling exactly at -0.5R    +$107.33/mo
+    in-process market at touch-bar CLOSE      **+$87.79/mo**
+    in-process market at NEXT-bar close        +$73.41/mo
+    close-only trigger (poll blind to wicks)   +$38.17/mo
+
+A market exit costs **18-32%, not half**. Angle 3's claim that the market fill beats the resting
+fill ($90.90 vs $90.55) **does not reproduce** — on one engine it is $74.07 vs $90.55. Its
+conclusion survives anyway: the in-process version clears the bar by 9x while eliminating the
+cancel/replace failure mode, worth more than the ~$20/mo it gives up.
+
+**FLOOR ACROSS EVERY PESSIMISTIC ASSUMPTION STACKED** (WILDCARD-only, market fill, poll blind to
+wicks): **+$56.35/mo. Five times the bar.**
+
+Slippage ladder, WILDCARD-only, market fill: 0bps +$95.6 | 25bps +$81.2 | 40bps +$72.6 |
+100bps +$38.1. Breakeven is far outside any plausible cost.
+
+### Compounding AMPLIFIES it
+
+Path-dependent terminal equity from $1,126 over 26 days: baseline $1,438.28 -> book-wide
+$1,527.13 -> **WILDCARD-only $1,549.06 (+$110.78 over 26 days = +$131/mo)**. The savings land
+early, so the compounding case is BETTER than the flat case — and compounding is the case that
+matters under fund-once-and-compound.
+
+### THE THREE THINGS THAT KEEP IT AT "WEAKLY"
+
+**1. THE CANDIDATE'S OWN GRID REPRODUCES THE FAILURE SIGNATURE THAT KILLED ITS PREDECESSOR.**
+On the refuted rule's own 5x6 axes, live-scored: the CANDIDATE is **24 of 30 cells negative, mean
+-9.53R**; the reproduced SNAPSHOT grid is only 12 of 30 negative, mean -2.00R. DECISION_RULE
+killed the snapshot rule for being 24/30 negative at mean -3.29R. **The candidate reproduces that
+signature three times deeper.** And the snapshot rule's own X=0.5/T=30 cell is **+$19.90/mo, not
+negative** — the prior refutation was a grid-level verdict, not a cell-level one.
+
+**2. YOU CANNOT REJECT ZERO.** Bootstrap over trades, 20,000 draws: point +$90.55, **95% CI
+[-$47.81, +$218.93], P(delta<=0) = 0.095, t = 1.32.** Market fill: P = 0.131. Grid-corrected
+permutation **p = 0.042**; entry-shift grid-max **p = 0.083**. **The headline p = 0.0003 is a
+single-cell number and must never be quoted again.**
+
+**3. THE MECHANISM IS WRONG ONE TIME IN FOUR AMONG THE TRADES THAT CARRY THE SLEEVE.**
+**6 of the 25 trades that touch -0.5R within 45 minutes went on to peak >= 2R.** SOL retraced at
+minute 6.7 and then made 3R. So the ENA-class cost is not a one-off tail event — it is a
+**1-in-7 recurrence** that a 25-day window happened to see only four times.
+
+### Walk-forward: X MUST NEVER BE REFIT
+
+    frozen (0.5, 30), no fitting                    +$102 to +$123/mo
+    X pinned a priori, T refit, rolling origin      +$102/mo
+    X pinned, T refit, coarse folds       +$52 halves / +$22 thirds / **+$9 quarters**
+    both refit, per-trade expanding window           +$31 to +$95/mo
+    both refit, 2-4 coarse folds                    **-$32 to -$54/mo**
+
+The sign flips on one thing: whether the selector lands on X=0.4, a **-$86 cliff cell**. Under
+per-trade refit it picks X=0.5 twenty-three times and X=0.4 eighteen times and still nets
+positive; under a 2-fold split it picks X=0.4 once and loses -$318/mo blind. **T is forgiving; X
+is a ridge.** ENA itself survives every fragility probe (t50 = 36.11 min, stable under Min1, Min5,
+Min15, close-basis and +/-3min jitter) — the cliff is not knife-edge, but X is.
+
+### THE SHIP SPEC
+
+- **X = 0.5R, T = 30 min, FROZEN. Never refit X.** All the fragility lives there.
+- **WILDCARD only.** `FUTURES_TREND_EARLY_STOP_R = 0.0` explicitly.
+- **In-process market exit, NOT a resting order.** Hook into `_maybe_convex_trail` in
+  runtime.py — already gated by `_is_wildcard_convex`, already computes `r_now` from the live
+  stop distance every poll, already persists `convex_trough_r`. Guard: if elapsed <= 30 min and
+  `r_now <= -0.5`, route to `_close_position_for_exit`. **Behind a default-off env flag.**
+- **DO NOT place a second resting stop.** MEXC exposes a singular `stopLossPrice` and
+  `cancel_all_tpsl` is all-or-nothing, so a -0.5R resting stop must REPLACE the -1R stop and be
+  re-placed at T+30. A silently failed replace leaves a position running 23.5 hours with the wrong
+  stop or none. That risk exceeds the ~$20/mo the resting fill adds.
+- **THE REAL IMPLEMENTATION RISK IS THE DENOMINATOR, NOT THE ORDER.** If
+  `_position_stop_risk_pct_of_margin` returns a too-small value, `|r_now|` inflates and the rule
+  cuts everything inside 30 minutes. **Floor it: skip if risk_pct is below half the metadata
+  `sl_margin_pct`.** Log every fire with `r_now`, `risk_pct` and elapsed minutes.
+- **Log the counterfactual on every fire**, or the rule is unfalsifiable in production.
+
+**PRE-REGISTERED KILL, before enabling:** kill the flag if either (a) two cut trades whose
+unmanaged path would have reached +1.5R occur, or (b) after 20 fires the running $ delta against
+the logged counterfactual is negative. The rule needs a **>=33% save rate** to break even and
+delivered **78% in-sample** (12 helped, 2 harmed on WILDCARD); below 50% over 20 fires it is dead.
+
+**Cost if wrong:** CI lower bound ~ **-$55/mo**. One runner cut inside the window costs about
+**-$138**, i.e. 1.3 months of the rule's own edge. Bounded, and dominated by a 1-in-7 event.
+
+**Do not wait for the 18F boundary** — default-off, WILDCARD-only, in-process, reversible in one
+env var. Waiting costs a month of measurement and buys nothing.
+
+**Take no variant.** The ramp is dominated. Breakeven-if-ever-positive is -$481/mo, refuted. ROC
+conditioning is backwards. Shorts cannot be tested (0 of 10 fire), so scope to longs explicitly if
+zero unmeasured exposure is wanted; on this data it costs nothing.
+
+### WHAT IT DOES TO THE FOUR 18F TRADES — and what it does NOT do
+
+    trade      side   t50    live      with the rule          delta
+    MAGMA      LONG   m7    -1.06R    CUT at m7 -> -0.52R    +0.54R = +$13.6
+    FORM       LONG   m13   -1.06R    CUT at m13 -> -0.52R   +0.54R = +$13.6
+    PONS       SHORT  m142  -1.08R    untouched                    0
+    MARSCOIN   SHORT  m267  -1.03R    untouched                    0
+
+Two saved, zero harmed, two untouched: **+$27.2 across the four.**
+
+**THE TWO TRADES THE OWNER MINDED MOST ARE THE TWO THIS RULE NEVER TOUCHES.** PONS held 23.6
+hours, peaked +0.97R and bled to -1.08R; MARSCOIN is the same shape. Both are SHORTS, where the
+rule has zero evidence (0 of 10 fire). **It is a fast-failure rule for longs. It is not a fix for
+the slow bleed** — that remains open, and it is what the peak-capture study was built to answer.
+
 ## 2026-09-08: THE COMPOUNDING GAP — real, now closed, changes no verdict, and kills retain 0.40
 
 Owner's observation: every study priced additively (sum R, multiply by a constant 1R) while the
