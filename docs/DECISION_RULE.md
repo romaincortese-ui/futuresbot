@@ -57,6 +57,146 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: TREND universe + BTC/SOL/LTC/BNB — REFUTED, and the BTC tier finding is RETRACTED
+
+Ten agents, four harnesses, four adversarial verifiers, three tapes (Min5/Min15/Min30, 182-1,700
+days). Owner asked to add BTC, SOL, LTC and BNB. **Every harness refuses the set.** They disagree
+on the price by 2.5x; they do not disagree on the sign, in any era, at any slot count, on any exit
+convention.
+
+### THE HEADLINE CORRECTION: "BTC +0.948R/fill (t=5.33, n=68)" IS A SIGNAL-BAR COUNT
+
+This number motivated the request and it was quoted to the owner from the 2026-09-07 allocation
+study. Three agents reproduced it **to the decimal** — and reproduced it ONLY by counting every
+15-minute bar on which the gate was true as an independent observation of the same move.
+
+    A1: n=68 bars +0.948R t=5.29  ->  deduped to 13 realisable fills, +0.262R, t=0.66
+    A4: n=66 bars +0.768R t=4.37  ->  through the live slot book: n=11, +0.293R, t=0.61
+    A2v: 68 bars -> 15 episodes (4h dedup) / 9 (24h lock). ETH's n=95 -> 31/15 the same way.
+    A3: could NOT reach n=68 under any relaxation (3% gate 21, 2% gate 37, no-extreme 18)
+
+A persistent BTC trend fires ~24 consecutive bars that resolve into ONE move; the bot takes one.
+That inflates n by ~4.5x and t by ~2.1x. **The tier study is RETRACTED as a per-fill statistic.**
+Booked as the bot actually trades, BTC is **-0.13 to -0.26R/fill over >=360 days** — second-worst
+of the seven, not "the best-scoring symbol anyone has measured".
+
+Same correction applies to the whole tier table (top-5 +0.387R/fill vs next-fifteen +0.016R): it
+is bar-counted and must not be quoted per-fill again.
+
+### Symbol by symbol against the pre-registered screen
+
+| | screen | fires/mo | standalone R/fill | $/mo | as sole addition | in |
+|---|---|---|---|---|---|---|
+| BTC | **FAIL** raw-% leg negative or p=0.10-0.44; eras 2/4 | 3.8 | -0.13 to -0.26 | -$8 to -$15 | ~-$6 | No |
+| BNB | **FAIL** p=0.08-0.12, misses p<0.05 in 3 of 4 | 4-6 | ~0 (-0.05 to +0.19) | -$5 to +$11 | ~$0 | No |
+| LTC | **FAIL** all four criteria in 2 of 4 agents | 6-7 | -0.07 to -0.19 | -$9 to -$22 | ~-$18 | No |
+| SOL | **FAIL, second time** raw-% excess NEGATIVE in 3 of 4 | 8-9 | -0.04 to -0.29 | -$5 to -$41 | ~-$27 worst | No |
+
+**BNB is the honest near-miss and still a no**: the only one whose R-excess and raw-% excess agree
+in sign, but it clears $10/month in ZERO of four books, inverts sign on the exit convention
+(+$3.34 -> -$0.93/mo), and its "4/4 eras" was four quarters INSIDE ONE YEAR, not the multi-year
+condition the screen requires. On the only genuine multi-year test (3.93y) it is 0/4.
+
+**SOL has now failed the screen TWICE**, on independently fetched tapes and independent
+implementations (-0.027% on file; -0.091/-0.092/-0.094% here). Settled. Its two live closes at
++1.53R are n=2 from a retired config and are not evidence.
+
+**LTC had never been measured. It has now**: the most decisively null symbol in the book,
+indistinguishable from zero on every window and hold length tested.
+
+### The set as requested
+
+|  | live 3 | owner's 7 |
+|---|---|---|
+| $/month | baseline | **-$28/mo** (agents -$22.7 / -$28.3 / -$36.8 / -$56.8) |
+| fills/mo | 30-34 | 38-43 (+23 to +35%) |
+| substitution | 0 | 0.20-0.50 |
+| maxDD (R) | -9.9 to -18.9 | -12.6 to -49.9 (**1.3-1.7x worse**) |
+| ex-top-5% delta | — | **-$18 to -$60/mo, worse in all four books** |
+
+Negative in 4/4 eras (three agents independently), 0/20 scan-order seeds, at 1/2/3/4/7 slots,
+under both exit conventions, on 182-day, 360-day and 1,700-day tapes. **A flat negative field with
+isolated unreproducible spikes**, each one cell in a 30-44 cell sweep, each dying to a single
+trimmed fill or a convention flip.
+
+**Caveat the owner would find anyway:** on the LAST 131 DAYS all four ARE positive standalone (BTC
++0.717R/fill, SOL +0.462R). He is not hallucinating. But **every one of the seven scores better on
+that window than on the full year** (ETH -0.133 -> +0.356, SOL -0.233 -> +0.087, BNB -0.017 ->
++0.337). It is a favourable regime for the whole detector, not a ranking of symbols — and the
+owner's set is drawn from names that scored well on exactly that snapshot, which is the same
+hindsight-selection defect that killed the 2026-09-07 expansion cell.
+
+### THE BREAK-EVEN ARITHMETIC MOVED IN THE OWNER'S FAVOUR — and the set still fails by ~2x
+
+**His premise was right and this is a real, previously unmeasured finding.** The 4.65x break-even
+came from junk-tier arithmetic ($0.999 baseline / $0.215 expanded). Good-tier names DO hold $/fill
+up: measured **$0.815-$0.856 expanded, ~4x the junk tier**. The required multiple therefore falls
+from **4.65x to 2.33x-2.64x**.
+
+It does not save him because **the binding number is not the symbol multiple**. The 2.33x symbol
+multiple converts to an **achieved FILL multiple of only 1.23-1.35x**, verified four ways: one
+entry per 900s scan, plus one position per symbol, plus 2 slots, compresses supply. Seven symbols
+buy 30% more fills, not 133%. Gap: ~1.3x delivered against ~2.4x needed.
+
+Both escapes close:
+- **Remove the slot lock** (7 symbols, 7 slots): substitution falls 0.20 -> 0.05 and it gets
+  WORSE (-$83.65/mo). The added symbols' own fills are negative.
+- **Capacity is already ~95% free**: both slots occupied only **5.2%** of the time on the live
+  universe over 182 days. This was never a crowding problem. (Note the conflicting 11.2% figure
+  from 2026-09-07 was measured over TREND's own 18-day life, a different denominator.)
+
+What kills it: the added fills lose money **on their own merits** (-$1.00/fill at U7/2; SOL -$1.50,
+LTC -$0.95, BTC -$0.55) **and** destroy incumbents worth +$2.26 (XRP) to +$5.20 average. One
+verifier splits the damage 50/50: -$14.25/mo from new fills, -$14.00/mo from displaced ones.
+**Both sides of the trade lose.**
+
+### The trigger does not fit — and the fix is worse than the problem
+
+The 4% gate is a volatility artefact as documented, but it does NOT settle this cheaply: BTC fires
+3.8/mo, BNB 4-6, LTC 6-7 — 18-35% of ZEC's supply, not zero. **They fail on QUALITY, not scarcity.**
+
+The vol-scaled trigger was swept at the expanded universe, a cell never run before. **It works
+exactly as designed and that is why it loses.** Firing-rate CV across the seven falls 0.60 -> 0.13
+at k=1.0 sigma (BTC 3.8 -> 13.8 fills/mo). Cost: **-$143/mo**. Every ATR-scaled cell (k=4..14) is
+worse.
+
+Mechanism, measured and general: **this sleeve monetises ABSOLUTE move size, because cost is a
+fixed 0.190% of notional divided by an ATR-proportional stop.** Sorting all fills by triggering
+move size: 0-3% band **-0.277R/fill** (0.247R of it cost drag); 3-4% -0.155R; 4-6% -0.004R; >10%
++0.003R (drag 0.045R). **BTC pays 0.139R per round trip against ZEC's 0.051R — a 2.7x handicap
+invisible in an R-denominated scoreboard.** Structurally corroborated: BTC's designed stop is
+0.80% against ZEC's 2.00%, so BTC books ~3.2x the R for an identical % move. That is exactly the
+artefact the screen's raw-% leg exists to catch, and it is the leg BTC and LTC fail.
+
+**BANK THE GENERAL RULE: any transform admitting moves at equal PERCENTILE rather than equal
+ABSOLUTE size loads the book with fills whose cost drag exceeds their edge.** That forecloses
+vol-scaling, ATR-scaling and per-symbol gate calibration in one line.
+
+### NO TREND REPLAY IS CURRENTLY CALIBRATABLE
+
+The four calibration factors are 0.79x, 1.10x/1.71x (CI straddling zero), 0.02-0.22x and 0.93x.
+They do not converge, and the mechanism was found: **17 of 27 live TREND closes are
+`EXCHANGE_CLOSE`, carrying 82% of live R — an exit path no harness models.** Until that is fixed,
+do not quote a calibrated TREND dollar figure. **The standing 1.41x fill / 0.85x R factors are
+UNVERIFIED and should not be reused.**
+
+### Other corrections to the record
+
+- **ZEC fires 11.1 episodes/month, not 20.9.** The 20.9 figure counted re-entries as episodes.
+  ZEC is 53% of U3 supply, not 57%.
+- The supply law `episodes/mo ~ 0.126 x annualised vol%` has the right FORM and the wrong
+  CONSTANT: cross-sectional slope 0.0721 (R2 0.971), within-symbol 0.0849 (R2 0.781). The filed
+  0.126 is 1.5-1.7x too steep.
+- Annualised vol: BTC 45.6%, BNB 48.4%, LTC 61.8%, ZEC 142.0% (not the 163.6% on file).
+- **Struck from the record:** the "+$34.58/mo at an 8% gate" cell. DECISION_RULE already refutes
+  every threshold 3.0-8.0% with the reshuffling mechanism proven. Do not pre-register it.
+- The live TREND `$59.36` is two post-deposit ZEC fills (+$75.37, -$28.49) plus noise: equity ran
+  $153-$186 for 22 of 27 closes and $1,096-$1,184 for the last 5, so realised risk per fill ran
+  $0.56-$4.18 then $12.87-$28.33.
+
+**Verdict: DO NOT SHIP. Leave `FUTURES_TREND_SYMBOLS=ETH_USDT,XRP_USDT,ZEC_USDT` and
+`MAX_POSITIONS=2` untouched.** Refuted count ~110.
+
 ## 2026-09-08: THE TRAIL ARM — 0.9R REFUTED, and the %-of-margin variant is worse
 
 Twelve agents on the arm, plus a direct test of the owner's follow-up proposal. Triggered by
