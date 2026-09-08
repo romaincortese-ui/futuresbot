@@ -57,6 +57,197 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: THE WILDCARD REBUILD — 1R IS $25.16 NOT $15.49, and one env var survives
+
+Eleven agents, five lines of attack, adversarial verification on every proposal. **15 proposals
+raised, 11 killed, 4 survived — and 3 of the 4 survivors are worth $0.** Triggered by a second
+funded-week WILDCARD loss (FORM_USDT -$25.76 after MAGMA -$26.45).
+
+### CORRECTION THAT RESCALES EVERY STUDY IN THIS DOCUMENT
+
+**1R in the funded week is $25.16, not $15.49.** From `feat.jsonl` funded rows (equity > $800):
+
+    symbol  side   R      risk_usdt  risk % equity  margin % equity
+    ZEC     LONG  -0.21     12.87        1.17%          5.9%
+    ZEC     LONG  +2.88     24.99        2.28%         13.1%
+    ZEC     LONG  +0.43     28.33        2.42%         13.9%
+    ZEC     LONG  -1.01     27.87        2.36%         13.2%
+    MAGMA   LONG  -1.06     25.16        2.19%         12.2%
+    ZEC     LONG  -1.03     19.53        1.69%          9.0%
+
+Median funded risk **2.28%**. Median across the 68 pre-funding rows every prior study used:
+**1.435%**. **The bot is drawing 1.6x the risk of the entire measurement window.** The
+"1.371-1.381% realised" figure recorded on 2026-09-07 and used in four studies since is the
+PRE-DEPOSIT era, not now.
+
+Three load-bearing consequences: every dollar figure in the recent studies is **understated by
+1.62x**; every maxDD understates live drawdown by 1.62x (a "-$101.63" baseline is **-$165 live**);
+and the $10/month bar is effectively $16/month in study units, so proposals get EASIER to clear.
+
+**The owner's -$52.21 wildcard loss is -2.08R over two fills (-1.04R each). Nothing anomalous
+happened — two stops at full size.**
+
+### THE OWNER'S FOUR INTUITIONS
+
+**(1) Shorts > longs, we enter too late.** Side gap does not survive: SHORT +0.251R (n=10) vs
+LONG +0.034R (n=40), permutation **p=0.70**, 109% one fill. Asymmetric SIZING priced for the first
+time and loses twice: down-sizing longs to 0.5x costs **-$28/mo** AND raises book beta to BTC by
++32%, because the longs carry the hedge.
+
+**"Too late" is REFUTED IN TIME and CONFIRMED IN PRICE.** The signal is **120 seconds old** when
+we fill (median, 36 reproducible entries); the price given up is $0.10/fill; entering at first-fire
+is +$13/mo at p=0.275. But the fill sits at the **80.8th adverse percentile of its own +/-4h price
+range (median 90.4th, p<0.0001)**. We are not chasing a stale signal — **we are buying the local
+top**, which is exactly what `|3h ROC|>=8%` plus `cur > prev` is engineered to do. The one
+implementable exploitation died: the pullback limit entry's apparent +$122/mo is a **disguised
+stop-widening** — hand the same trade a free 0.94% better price with NO pullback condition and it
+pays MORE (+$174/mo), while the pullback selection itself is worth **-$52/mo**.
+
+**(2) Sizing too high.** **His arithmetic is right and it is worse than he thought** — see the
+1R correction above. But Kelly refuses to support the conclusion: full Kelly on the measured 50
+rows is **4.37% risk per trade**, joint with TREND **3.29%** (corr of daily R = +0.045, so almost
+no diversification haircut). Kelly says size **UP 2.4x**. **There is no defensible middle:** drop
+the two trades that make the sleeve (TUT +5.53R, ENA +4.93R) and mean R is -0.124 and full Kelly
+is **exactly 0.00%**. Either the tail repeats and current size is conservative, or it does not and
+the correct allocation is zero. P(mean<=0) = 0.37.
+
+**(3) The trail never arms.** Refuted — 47.3% reach 1.0R — but **his reading of the bimodal
+distribution is CORRECT**: only 3.6% of fills peak in 0.75-1.00R, so the arm sits in an empty
+region, which is why every arm experiment returned null. His fail-fast consequence is **backwards
+at the timescale he implied**: cutting dead trades at 15-240 min is **the single most expensive
+idea measured anywhere in this project (-$71 to -$247/mo)**.
+
+**THE DURABLE FINDING THAT CLOSES A WHOLE FAMILY OF IDEAS: the sleeve's biggest winners are its
+SLOWEST STARTERS.** ENA_USDT (+4.96R) does not clear 0.10R until **minute 101**; TUT_USDT SHORT
+(+2.59R) until **minute 207**; TAC_USDT SHORT (+1.36R) until **minute 274**. At P=0.25/T=15, 13 of
+the 21 eventual >=1R runners are still below the floor. **Every fast-cut variant is permanently
+wrong.** Push the clock to 8h and it turns positive, then dies on the delta-screened tail
+($0.37/mo after the top-2 deltas) and on relevance: it fires **zero times in the last 14 days**,
+during which 13 fills lost -$212.
+
+**(4) Review the gates.** Right instinct, wrong venue. Twelve gate changes priced, best at
+family-wise **p=0.33** against a noise-only median best cell of **$24/mo**. **My ROC-band lead did
+NOT reproduce**: on the live 91-row history the 8-10% band is the sleeve's SECOND-BEST at +0.207R
+(n=21), not -0.127R, and the shadow ledger reverses the structure on both halves (untaken longs
+8-11% resolve +0.216R, >11% resolve -0.208R — the exact reverse of the taken rows). **The
+ROC-band line is retired.** All four dark detector gates measured for the first time and all four
+fail: MIN_VOL_Z flips sign across the half-split (+$231 -> -$105/mo), MAX_WICK and
+VERTICAL_ATR_MULT flip between reconstruction populations, tightening RSI costs money at every
+threshold (p=0.977).
+
+**Decisive for the owner: neither funded-week loss is near any live gate.** MAGMA roc 13.7 / RSI
+85.7 / wick 0.249 / vert 0.46xATR / vol_z 2.24; FORM roc 13.9 / RSI 68.9 / wick 0.104 / vert
+0.57xATR / vol_z 1.93. **No gate change tested would have stopped either one.**
+
+### THE THREE SUGGESTIONS
+
+**1. `FUTURES_EXTERNAL_GATE_MIN_REF_TURNOVER: 500000 -> 12000000` — +$57/mo, ABOVE THE BAR,
+UNPROVEN.** The binding constraint is on the REFERENCE side, in a parameter on nobody's list. The
+floor is $500k and **the lowest reference turnover ever seen on a taken trade is $3.24M — it has
+never bound once in 70 fills.** Raising it drops 14 of 70 fills at mean **-0.803R**, 11 of them
+~-1R stop-outs.
+
+    ex-top-5% BY DELTA  +6.89R = +$74/mo (it IMPROVES the tail)
+    maxDD               -6.85R -> -4.83R
+    ENA (+4.96R, 89M turnover) is KEPT, so the trade that killed three prior proposals
+      cannot be flattering it
+    PASSED  leave-one-out (worst p 0.0029), leave-one-symbol-out (worst 0.0041), both eras,
+            within-month normalisation (+$59/mo p=0.0495), winsorised at +/-1.2R (unchanged —
+            on de-tailed returns THE SLEEVE'S ENTIRE LOSS IS THIS COHORT), 7-day placebo
+    FAILED  family-wise p = 0.092 across the five continuous variables actually searched;
+            walk-forward vs its own shuffled null p = 0.076. Support is one 13-vs-21 split.
+
+Pure env var, zero code, **structurally inert for TREND** (TREND's minimum reference turnover
+across 27 closes is **193.6M — 16x the proposed floor**). Cost if wrong -$28/mo. Residual leak:
+the guard is `turn > 0` and the OKX fallback returns 0, so an OKX-only pair bypasses it.
+**Ship at the 18F boundary, not mid-week.**
+
+**2. RETUNE THE PREEMPTION PREDICATE — unpriced, but the correct version of the cap question.**
+`FUTURES_WILDCARD_PREEMPT_MIN_AGE_MIN` 15 -> 60/120 and/or `PREEMPT_BELOW_R` 0.3 -> 0.0.
+
+`MAX_POSITIONS 3->2` was **KILLED at -$60/mo** because the counterfactual was wrong: **the cap does
+not REFUSE a signal when the book is full — `runtime.py:6219` converts a full book into an
+EVICTION attempt**, and it demonstrably fires live (CONVEX_PREEMPTED: INX 08-12, ZORA 08-31).
+Re-simulated with the eviction branch in the loop, 4 of the 5 "blocked" fills are taken anyway.
+
+**The finding: the current settings are configured to kill young winners.** At the HEMI 08-28
+episode the eligible victims were TAC at -0.213R (which closed **+1.34R**) and MAGMA at 15.8
+minutes old and -0.078R (which closed **+2.93R**). A 15-minute minimum age plus a +0.3R threshold
+makes a not-yet-working winner the preferred victim — and we now know **the winners are the slow
+starters**, so this is the same defect twice. Exposure ~2 evictions per 90 fills, rising with
+contention (3rd-slot use 7% over 90 days, **19% over the last 14**). Order-of-magnitude $25-75 per
+bad eviction — an inference from two named episodes, NOT a measurement. Env vars, WILDCARD-only,
+zero code. Both dials have **zero measurements of any kind**; the docstring calls them "safety
+rails, not tuned parameters."
+
+**3. THE ONE-LINE RISK-DIAL SPLIT — $0/mo, ships free with any deploy.**
+`runtime.py:1761`: `risk_pct = self._env_float(f"FUTURES_{kind}_RISK_PCT",
+self._env_float("FUTURES_WILDCARD_RISK_PCT", 0.0187))`. Verified: `_entry_margin` already receives
+`kind`, and 1761 is the ONLY production read. With no override set, behaviour is **exact-zero
+change**. It unwelds the weld that has made every sizing proposal unshippable (halving WILDCARD
+currently halves TREND, ~-$150/mo). Caveat the panel missed: the weld is currently a SAFETY
+property, and unwelding means a later edit to `FUTURES_WILDCARD_RISK_PCT` silently stops moving
+TREND. **Do not ship it as a step toward cutting size** — the 0.75x shrink it enables costs
+-$34/mo at true 1R and gains +$46/mo only if the tail does not repeat.
+
+### Below the bar or negative — ranked so they are not revisited
+
+| change | corrected $/mo (true 1R) | why it dies |
+|---|---|---|
+| `MAX_POSITIONS` 3->2 | **-$60** | the cap EVICTS, does not refuse; effect is exactly 0.000 when MAGMA is dropped |
+| `CONVEX_DEAD_CUT` peak<0.15R @8h | +$0.37 | $21.58 of $26.18 is two trades; fires 0 times in 14 days |
+| pullback limit entry | +$14 | sim baseline error ($119) exceeds the effect; it is a stop-widening |
+| asymmetric ROC floor (LONG 11%) | +$18 | argmax of a 60-cell sweep whose noise median best cell is $24/mo |
+| `EXCLUDE_TOP_TURNOVER` 24->12 | +$18 | 220-day replay = $11/mo not $81; ex-tail **-$3.78/mo**; already deferred |
+| BE-tighten at 45m | -$12 | sign inverts under the top-2-delta screen |
+| corroboration STRENGTH (ROC space) | negative | ratio spans only 0.812-1.271 (median 0.998) against a 0.4 gate sitting 51% BELOW the observed minimum; quintiles non-monotonic p=0.35; raising it is -$20 to -$46/mo at every value 0.90-1.00 |
+
+### GUARD RAIL — the most valuable component in the sleeve is already a gate
+
+**`REQUIRE_LISTED` is earning $246/month at true 1R.** Reproduced from shadow.jsonl: 36
+`ref_not_listed` vetoes, all resolved, meanR **-0.455**, sumR -16.38, win 31%, **ex-top-5%
+-0.617 — MORE negative than the mean**, so it removes a broadly bad population rather than being
+flattered by a tail. The verifier attacked it on slot contention (36 extra candidates is +65% on
+32.9 fills/month) and failed to kill it. **That is more than the entire rest of the sleeve's
+measured edge. Never relax it.**
+
+### TWO METHODOLOGICAL DEFECTS THAT TOUCH ~190 PRIOR CELLS
+
+**1. THE REPLAY ENGINE'S BASELINE ERROR EXCEEDS EVERY EFFECT MEASURED ON IT.** The Min1 replay
+scores the same 50 trades at **-3.841R** while the live book recorded **+3.870R** — a 7.71R /
+**$194 at true 1R** baseline error over 25 days. **Standing rule from now on: every replay study
+reports sim-baseline vs live-recorded BEFORE reporting any delta, and reports the effect
+restricted to the faithful subset.** Applying that retroactively would reopen part of the ~50-item
+refutation list **in both directions**.
+
+**2. RECONSTRUCTED ROWS SILENTLY DELETE RECOVERED LOSERS.** Every `EXCHANGE_CLOSE_RECONSTRUCTED`
+feature row is missing all entry-time fields, and every one is a ~-1R loser recovered from the
+ledger loss-censoring incident. **Any study conditioning on an entry feature silently drops them**
+— which is why the same sleeve reads +0.293R on one population, +0.203R on all 75 feature rows,
+and +0.077R on the 50 risk-measured rows. Flag them explicitly.
+
+### Measurement queue (zero behaviour change)
+
+- **`entry_lateness` is not capped, it is mis-normalised.** `runtime.py:6737-6750` min-max
+  normalises the entry close against the last 13 Min15 closes **including the entry bar**, so
+  `cur` defines `hi`. It cannot exceed 1.0 and reads exactly 1.0 whenever the entry bar closes at
+  the window high — which the trigger guarantees. Changing `min(c), max(c)` to
+  `min(c[:-1]), max(c[:-1])` takes saturation **72% -> 2%** and opens the range to 0.549-1.746.
+  NOT free: `_wildcard_rank_key` reads it (`is_deep = 0.50 <= lat < 0.70`). Zero-risk version: add
+  `entry_lateness_unc` as a second field.
+- **Persist the external gate's continuous outputs** (`ref_roc`, `ref_turnover_usdt`,
+  `ref_funding`). ~6 lines, no new network calls. Note `ref_listed` is **conflated**: `listed` is
+  overwritten to False when turnover is below the floor, so the flag collapses "not listed" and
+  "illiquid" into one bit.
+- Stop wiping metadata at close (50 keys on the open position, `{}` on all 90 closed rows).
+- Scan id on shadow rows — without it the `_wildcard_rank_key` test is unrunnable.
+- A `_rej()` counter: the detector refuses 64,854 of 84,569 trigger bars and writes no row.
+- Shadow the pullback touch: record whether price touched `signal_px*(1 -/+ 0.10*sl_frac)` within
+  60 minutes and when. Gives fill rate and timing in 2-3 weeks.
+
+**Verdict: ship nothing mid-week.** At the 18F boundary, consider MIN_REF_TURNOVER. Refuted
+count ~130.
+
 ## 2026-09-08: WILDCARD SHORT-ONLY — REFUTED, and the hedge thesis is BACKWARDS
 
 Seven agents. Owner proposed making WILDCARD short-only so the book becomes LONG-TREND /
