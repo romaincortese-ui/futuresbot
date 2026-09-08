@@ -57,6 +57,147 @@ only candidate that clears the screen without diluting per-fill quality.
 | entry price-context scoring | 13 features, two sleeves, nothing at 2 SE |
 | WILDCARD trigger 8% -> 7% | +$5.54/month, mechanism unexplained, still OPEN |
 | TREND 0.5x risk on re-entry | as proposed (depth>=1) -$18.79; depth>=2 variant is 8 ZEC trades, tuned window |
+## 2026-09-08: PEAK CAPTURE — the prize is ONE TRADE, and my PONS numbers were wrong
+
+Owner's question: PONS reached +$20.25 and closed -$19.41; how could we have banked it? Seven
+agents on the feed gap, the arm x retain corner re-tested clean, and a genuine reversal detector.
+
+### CORRECTION: BOTH PONS FIGURES I REPORTED WERE PRODUCED BY AN ARM THE BOT NEVER SAW
+
+`runtime.py:2101-2113`: the arm is tested against `convex_peak_r`, which is **only ever written
+from a poll of the live price**. PONS's `convex_peak_r` topped out at **0.9653R**. It never
+reached 1.00.
+
+**So on PONS, `arm 1.00` with retain 0.50, 0.90 or 0.95, and every ratchet variant, are
+BYTE-IDENTICAL: -$19.41 in every case.** The **+$9.70** (live rule) and **+$17.80** (owner's 10%
+cell) both came from arming on the Min1 traded tape at 1.0969R. **The owner's cell would not have
+saved PONS.**
+
+Re-run capped at the peak the bot actually saw:
+
+    LIVE arm 1.00 / retain 0.50           tape +$9.70    bot **-$18.88**
+    OWNER'S arm 1.00 / retain 0.90        tape +$17.80   bot **-$18.88**   <- does not save it
+    arm 0.95 / retain 0.90                tape +$17.80   bot +$15.61
+    arm 0.90 / retain 0.90                tape +$17.80   bot +$15.61
+    $15 fixed arm / retain 0.90           tape +$17.80   bot +$15.61
+
+**RETENTION IS NOT WHAT SAVES PONS. LOWERING THE ARM BELOW 0.96R IS.** Every cell with arm >=
+1.00R banks nothing, whatever the retention.
+
+### THE PRIZE IS ONE TRADE
+
+From the 09-07 snapshot, 80 trades, 30 days, counted directly with no simulator:
+
+    peaked >= $20 and closed <= 0 :  0 trades
+    peaked >= $15 and closed <= 0 :  0 trades
+    peaked >= $10 and closed <= 0 :  0 trades  (PONS excepted)
+    peaked >=  $5 and closed <= 0 :  1 trade — ZEC 09-07, peak $9.48 at **0.4855R**, closed
+                                     -$20.38. Its peak is below ANY arm >= 0.75R, so no
+                                     arm-based mechanism reaches it.
+
+**PONS is the only trade in the book's recorded history that peaked above $10 and closed at or
+below zero. $37.23 in 31 days — one event.**
+
+**AND THE REASSURING HALF, which is the real answer to "we're missing it right now."** Of the 16
+trades that peaked above $5, the exit stack banked essentially all of it:
+
+    ZEC  $75.61 -> $75.37  100%      ZEC  $9.60 -> $9.50   99%
+    TUT  $18.03 -> $17.94  100%      XRP  $7.08 -> $6.79   96%
+    ENA  $11.12 -> $11.11  100%      ZEC  $5.74 -> $5.72  100%
+    SOL   $5.70 ->  $5.52   97%      XRP  $5.71 -> $5.84  102%
+
+Total giveback across all 16 is $65, of which two ZEC trades are $47.
+
+**44 trades armed. NONE closed at or below zero. Worst armed outcome: -0.0149R (AVAX, two cents).**
+The 2026-08-07 retention invariant is holding perfectly. **Above the arm, the failure mode the
+owner describes has never occurred.**
+
+### THE MECHANISM THE OWNER NEEDS — his goal is right, his instrument is wrong
+
+**The arm sets where the rule starts WATCHING. It does not set where the rule FIRES.** The floor
+is `retain x peak`, re-evaluated every time the peak rises. Raising the arm to 1.0R does not make
+the trail wait for a genuinely significant peak — it makes it start watching at 1.0R and then fire
+at the **first 10% wobble after that**, which on the median trade is around 1.0-1.1R.
+
+PONS only looked like a counter-example because on that one path the first 10% retrace after 1.0R
+happened to land at the real top. **That is path luck**, and the base rate prices it:
+
+**AFTER A 10% GIVEBACK, THE TRADE MAKES A NEW HIGH 93% OF THE TIME (41 of 44).**
+
+A 10% giveback carries no information about reversal. 30 detectors tested, 27 lose money (-$90 to
+-$210/mo), and the 3 positives all have ex-top-5%-by-delta of exactly **0.000** — their whole
+effect is 1-4 trades.
+
+What the owner's cell costs, named: **-$225/mo on WILDCARD, -$301/mo on the book.** On the 11
+trades with peak >= 2R it banks +11.59R against the live +20.83R:
+
+    ENA      peak 5.02R  live +4.93R : +4.96 TP    -> +0.94 TRAIL   **-$101.17**
+    MAGMA    peak 5.14R  live +2.93R : +3.42 TRAIL -> +1.18 TRAIL    -$56.41
+    USELESS  peak 3.52R  live +2.58R : +2.62 TRAIL -> +0.89 TRAIL    -$43.69
+    TUT      peak 4.11R  live +2.71R : +2.58 TRAIL -> +0.89 TRAIL    -$42.75
+    TUT      peak 5.12R  live +5.53R : +2.74 TRAIL -> +1.42 TRAIL    -$33.13
+
+Honest counter-evidence: **one** trade would have paid — ZEC 09-06 05:55, peak $29.28, trailed out
+at $11.88 (41% capture), where a 0.90 floor plausibly banks ~$26. **One for, five against.**
+
+### TWO CONFIG TRAPS IN THE FORM I PROPOSED
+
+1. **`runtime.py:2048-2051`: `if trigger <= 0 or high <= base: return base`.** Setting
+   `RETAIN_FRAC=0.90` makes `0.75 <= 0.90` true and **SILENTLY DISABLES THE 3R RATCHET** —
+   stripping the only protection the genuine runners have.
+2. **Any `RATCHET_R <= ARM_R` degenerates.** "Ratchet 0.75R/0.90", "ratchet 1.0R/0.90" and "base
+   retain 0.90" are **one rule with three names** and price identically. Only `RATCHET_R` strictly
+   above `ARM_R` is a new shape, and the best such cell (2.0R/0.90) still loses $133-145/mo.
+
+### THE FIXED DOLLAR ARM IS A TRAIL-DISABLE IN A DOLLAR COSTUME
+
+A $15 arm scores **+$269/mo** on the historical book — because book risk spans $0.53 to $28.33
+against a **$2.25 median**, so $15 is a **6.7R median arm**. It arms 3-5 trades of 77 instead of
+36, and prices **to the cent** the same as switching the trail off entirely. Then the scale trap
+closes: at the funded 1R of $25.16 the identical rule is **arm 0.60R** and prices **-$361/mo**.
+**The sign inverts between the book you measured on and the account you would run it on.** On PONS
+it "worked" only because PONS's 1R happened to be $18.46.
+
+### THE ONE REAL DEFECT FOUND — and it is not the one I expected
+
+**The exchange stop triggers and fills on LAST price while the trail measures FAIR.**
+`marketdata.py` sends `/stoporder/place` with **no `priceType`/`triggerType`**, so the stop
+triggers on a feed the bot never sets and never reads back. Measured: **7 of 38 stop-outs filled
+at a price the fair index never printed, and 4 stopped where fair never reached -1.00R at all.**
+Read the MEXC account setting before acting; this study's dollar evidence for it is one ambiguous
+row.
+
+Separately, PONS's $2.43 peak shortfall decomposes into **$1.60 feed choice** (fair vs last) and
+**$0.83 sampling** (an instantaneous poll missing a one-minute wick). The sampling half was
+decisive: **on the bot's OWN fair feed the wick reached 1.0100R, above the arm.** The peak existed
+for under a minute and **no minute CLOSE in the entire 23.6h hold reached even 0.9653R.**
+
+### RULING: SHIP NOTHING. Change no env var.
+
+Keep `ARM_R=1.0`, `RETAIN_FRAC=0.50`, `RATCHET_R=3.0`, `RATCHET_RETAIN=0.75`.
+
+**Queued for the 18F boundary, as a defect fix and not an edge:** evaluate the arm test against the
+fair feed's 1-minute high/low rather than a point sample. It would have armed PONS (~+$9) and
+costs ~$0 by construction. **But the population is n=2** — PONS ($29) and ONG_USDT ($1.46) — and
+ex-top-5%-by-delta is **$0.00**. It is a real defect fitted to two observations; it ships because
+it is monotone-safe, not because it is measured.
+
+**CHEAPEST THING ON THE PAGE — persist the per-position `r_now` poll series.** The entire
+retention axis above 0.50 is currently **unanswerable**: there is no live ground truth anywhere
+above the live setting, so every number in the 0.70-0.95 region is unanchored simulation, and
+**three independent engines disagreed by $85-$220/mo on it.** One log line makes the axis
+measurable in 30 days.
+
+**What would have to be true before any retention change ships:** (1) with the trail disabled the
+engine must score WORSE than the live setting — today one engine scores **+5.69R better**; and (2)
+the residual against live trail exits must minimise **at** retain 0.50, not at 0.30. Until both
+hold, do not re-run the arm x retain grid — it will return a confident mechanical negative by
+construction.
+
+**The failure the owner watched is not a pattern. It is one trade whose $20.25 lasted under sixty
+seconds, never printed as a minute close, and sat $0.64 below an arm the bot's own price feed was
+too slow to see.**
+
 ## 2026-09-08: THE EARLY STOP — SURVIVES WEAKLY. The first candidate in ~140 to reach ship.
 
 **RULE: on WILDCARD only, exit at market if the trade touches -0.5R within the first 30 minutes.
