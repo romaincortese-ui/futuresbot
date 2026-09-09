@@ -43,7 +43,7 @@ wildcard's software stop lives inside a function called `_pmt_hard_exit`.
 | 5 | symbol not already held | — | code |
 | 6 | **exclude top 24 by turnover** | 24 | code default (`EXCLUDE_TOP_TURNOVER`) |
 | 7 | turnover floor | **$2M** | `MIN_TURNOVER_USDT` — *code default is $3M; env is looser* |
-| 8 | 24h range | **8%** | range pre-filter |
+| 8 | 24h range | **7%** | range pre-filter — `MIN_24H_RANGE` unset → defaults to `scan_roc` = `SHADOW_MIN_ROC` 0.07 |
 | 9 | top N by range scanned | 90 | `MAX_SCAN` — *code default 25* |
 | 10 | signal: \|3h ROC\| ≥ 8% | 0.08 | `MIN_ROC` |
 | 11 | pullback-then-resume | on | code default — **rejects ~76% of triggers, never measured** |

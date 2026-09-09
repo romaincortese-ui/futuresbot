@@ -6802,3 +6802,252 @@ The only defect found today is a stopping rule that made trial 19F unable to ans
 question.** No claim is made that anything here clears the $10/month bar in either direction,
 because on a window this short the family-wise 5% critical value is **+$155/month, larger than the
 book's entire envelope.**
+
+---
+
+## 2026-09-09 (sixth pass) — the full WILDCARD gate surface priced. NOTHING SHIPS. The grid is closed permanently, and I quoted a retracted number.
+
+**Asked:** enumerate every WILDCARD gate and trigger, and say what fine-tuning is available.
+Trigger: **funded WILDCARD is 5 fills, 0 wins, -$106.95, every one a full stop** (peak_r 0.0245,
+0.0909, 0.9653, 0.3213, 0.1795 — four of five never cleared 0.33R).
+3 agents / 3 verifiers / 437 priced cells.
+
+### MY ERROR: I QUOTED A RETRACTED FIGURE FROM MY OWN INDEX
+
+I told the owner "the standing measurement says the edge is in the LONGS (+0.244R vs -0.225R)".
+**That figure was retracted on 2026-08-14** (`DECISION_RULE.md:4178-4182`): `pinned90.pkl` had a
+dedup defect, and clean sampling gives shorts **-0.043R (t=-0.79), roughly flat**. It was also an
+**ALL-SLEEVE** figure dominated by TREND/PMT — **never a WILDCARD measurement.**
+
+**The memory FILE was already correct.** Its own description says "the -0.225R figure is RETRACTED
+and must not be quoted". **The stale object was the MEMORY.md INDEX LINE**, which still carried the
+retracted number — and I read the index instead of opening the file. Index line corrected.
+**Lesson: a one-line index summary can outlive the correction inside the file it points to.**
+
+### THE COMPLETE LIVE ENTRY PATH (verified at source)
+
+    L1  ENABLED=1, not paused; SCAN_INTERVAL_SECONDS=450; available>0
+        slots: MAX_POSITIONS=3, scans anyway when full, PREEMPT_ENABLED=1
+        ** runtime.py:6572 `if opened: return` -> AT MOST ONE FILL PER SCAN **
+    L2  _USDT ; _is_tradeable_crypto ; sym not open (one per symbol)
+        not in top EXCLUDE_TOP_TURNOVER=24 by turnover
+        amount24 >= MIN_TURNOVER_USDT = $2,000,000
+        24h RANGE >= min_move ; sort by range desc ; movers[:MAX_SCAN=90]
+    L3  detect_wildcard_signal, Min15, 672 bars:
+        G1 |3h ROC| >= MIN_ROC 0.08 (ROC_BARS=12)   [SIGMA_TRIGGER off]
+        G2 PULLBACK-RESUME (REQUIRE_PULLBACK default True)
+        G3a RSI_MAX=90 / RSI_MIN=10   G3b MAX_WICK=0.45   G3c VERTICAL_ATR_MULT=2.0
+        G4 MIN_VOL_Z=1.0
+    L4  rank = (is_deep_lateness in [0.50,0.70), |roc|) desc  ** blind to pullback shape **
+        sub-trigger refusal (|roc| < 0.08) ; CALM-SHOCK >= MAX_CALM_RATIO 0.75
+        LONG_ONLY=0 -> SHORTS ARE TAKEN ; external listing veto (fail-open)
+    L5  RISK_PCT=0.0241 of AVAILABLE (free margin) ; SL_ATR_MULT=3.0 (code default 1.5)
+        leverage floor 5, overwritten by MAX_SL_MARGIN_PCT=20 ; TP_R=5.0
+        MAX_MARGIN_PCT=0.25 ; regime scaler ON ; streak throttle OFF
+        EARLY_STOP_R=0.5 / MINUTES=30 (19F, zero fires)
+
+### 1. THE PULLBACK GATE — HOLD ON. Verdict is NOT MEASURABLE, not refuted.
+
+**The 76% reproduces exactly: 76.1%** on an independent 150-day / 231-symbol / 3,941-signal replay.
+**The shape is worth nothing** — gap +0.025R, t=0.71, permutation p=0.47; **the +1-bar entry-shift
+placebo produces a LARGER gap (+0.063)**, the classic path-noise signature; the only |t|>2 result
+runs AGAINST the gate (non-pullback bars reach a higher exit-free peak R, t=-2.84). A placebo gate
+keeping a RANDOM 24% of signals recovers -$215 of the -$299, so **~72% of its apparent value is
+generic volume-thinning any 24% filter supplies.**
+
+**BUT MY PREMISE WAS FALSE.** I said loosening only ADDS fills. `_wildcard_rank_key`
+(runtime.py:6785-6789) orders on `(deep-lateness, |roc|)` and is **BLIND to pullback shape**, so
+turning the gate off floods the ranker with a 3x larger non-pullback stream that **outranks pullback
+candidates into the three slots**: 925 fills created, **365-405 existing fills EVICTED**, only 260
+of 665 live entries surviving, and 1R shrinks 7%. **61% of the extra signal population is absorbed
+by eviction, which turns it back into a two-arm gap test — the expensive kind.**
+
+Raw delta **-$299/mo**. It does not survive its own engine: the OFF arm carries $10,770 more risk
+through a Min15 exit engine measured loss-biased by 0.1037 R/fill (SE 0.1301, n=43); break-even
+bias is 0.1368, i.e. **0.25 SE away**. **Corrected -$72/mo, honest band [-$669, +$524]/mo,
+P(flag is positive) ~ 40%.** Corroborating tell: the harness models the ON arm — the LIVE config —
+at -$135/mo against a live verdict of roughly flat, **a ~$318/mo level error on one arm**, which
+cannot resolve a $299/mo delta between two.
+
+**Also: the docstring's "never been measured" is ITSELF out of date** — `DECISION_RULE.md:4171-4177`
+already carries a clean 90-day ablation: ON longs +0.189R (n=568), OFF +0.193R (n=941), rejected
++0.256R (n=646), t=0.74, "no selection at all", ~$0.60/mo to remove.
+
+**Leave it ON** — not because it earns its keep (it does not; stop defending it as a quality
+filter) but because flipping it is a live-money bet with a +/-$600/mo spread against a $10 bar.
+Ten graded half-measures all negative in every era; walk-forward over the family **-$33/mo**.
+
+### 1b. THE ADDING-vs-DELETING ASYMMETRY — real, smaller than claimed, and it did not apply
+
+A **DELETING** gate is judged on a GAP between two arms: clearing $10/mo while removing half the
+fills needs a 0.020R per-fill gap -> **~8,700 fills, six years. Unverifiable.**
+
+An **ADDING** change is judged against a **BREAK-EVEN CONSTANT** — one mean against a fixed number,
+not a difference between two noisy populations. With ~113 extra fills/month at 1R~$21, the added
+fills need only **+0.004R** to clear +$10/mo.
+
+**But the required sample is (2*sd/d)^2 where d is the distance between the added fills' TRUE mean
+and that constant — the thing you do not know in advance.** At a true mean of +0.05R you need
+~1,900 fills; at +0.02R, ~13,000; **at break-even you can never verify it.** The 572-fill figure
+assumed the added fills sit 0.078R from break-even, **measured after the fact**; the 75,800 figure
+assumed ~zero, which is what this sleeve's mean actually is.
+
+> **An adding change is CHEAPER TO VERIFY PER UNIT OF EDGE, but it does not manufacture power
+> against an edge of zero. It is a discount, not an exemption.**
+
+**THE SCREENING RULE — the day's best output.** Before pricing any future candidate ask:
+(1) does it ADD fills, (2) **NET of slot eviction**, (3) is there a PRIOR reason the added fills sit
+meaningfully away from break-even. **Any "no" -> do not spend a study on it.**
+
+### 2. THE SHORT ARM — HOLD `LONG_ONLY=0`. Not stale, on three checks.
+
+- Shipped **2026-08-10, commit d1dcde0**, "re-enable shorts as a **CAPACITY** change; score each
+  side alone" — explicitly capacity, not edge, against the book's own n>=20 bar with 4 rows.
+- Re-opened **2026-08-22** (daily_audit.md:2925-2938): "a reason not to touch
+  FUTURES_WILDCARD_LONG_ONLY in either direction".
+- Re-litigated **2026-09-08 by seven agents**, `DECISION_RULE.md:1194` verbatim: *"DO NOT make
+  WILDCARD short-only. Leave FUTURES_WILDCARD_LONG_ONLY=0."* **25 days AFTER the asymmetry finding.**
+
+**Both pre-registered kill conditions are ARMED and NEITHER is met.** `DECISION_RULE.md:4510`:
+revert if the short arm at n>=10 sits >1.0R/trade below the long arm. n_short=12. Measured gap
+**-0.011R to -0.037R — not met by ~1.0R.** Second condition (any short close worse than -1.5R):
+worst is MARSCOIN at -1.052R. Not met.
+
+Disabling shorts prices at **+$8.27/mo, SE $10.49, CI [-$10.75, +$29.65], P(clears the bar) = 0.42.**
+Drop the largest-|delta| short (PONS) and it collapses to **+$1.34/mo.** LOSO never exceeds
++$11.78/mo in 22 folds. **Fills created: ZERO — measured, not assumed:** all 11 `slot_occupied`
+refusals fall between 2026-07-23 and 2026-08-05 when the sleeve ran 1-2 slots; there has not been
+one since MAX_POSITIONS=3. **Slot budget is 86% idle.**
+
+**DO NOT SAY "shorts are ahead of longs."** They look ahead in R and behind in dollars, and the
+divergence is mechanical — WILDCARD short fills carried below-mean `risk_usdt`, so R-space flatters
+them. Correct statement: **not estimable at n=12; mildly negative-signed in dollars.**
+
+**TREND's precedent does not transfer:** TREND's split has a consistent sign in every cell (shorts
+correctly disabled); WILDCARD's cells do not share a sign.
+
+**And the real reason LONG_ONLY exists is not the asymmetry at all** (`wildcard.py:101-110`): a
+short's payoff is BOUNDED — short targets clamp at 50% price distance (`DECISION_RULE.md:4491-4500`)
+because 21% of short signals otherwise target through price zero. At the live 3.0xATR stop that is a
+**2.5R ceiling against the long's 5R for the same -1R risk.** The short arm's single best close
+(+2.71R) sits just above it.
+
+### 3. DEAD, INERT AND WRONG — the hygiene list
+
+**`FUTURES_WILDCARD_MIN_24H_MOVE=0.03` IS DEAD.** Confirmed three ways: the read at
+runtime.py:6300 is the `else` branch of `range_prefilter`; `_flag` returns True on an absent name
+(runtime.py:9159, `os.environ.get(name,"1")`); RANGE_PREFILTER is absent from the live env.
+Duplicate dead read at runtime.py:2625.
+**Live `min_move` = 0.07**, line by line: MIN_ROC unset -> 0.08; SHADOW_MIN_ROC=0.07 set live;
+`scan_roc = shadow_roc if 0 < shadow_roc < min_roc else min_roc` -> 0.07; MIN_24H_RANGE unset ->
+defaults to scan_roc. **Live telemetry agrees: `range24>=7%`.**
+
+**LATENT TRAP — do not delete the variable.** Because it is SET to 0.03, anyone who ever sets
+`RANGE_PREFILTER=0` gets a **3% screen instead of the 8% code default — a 2.7x universe widening
+from a var that today looks dead.** Leave it in place; fix the documentation instead.
+
+**Also inert — stop treating these as dials:**
+- `MAX_SCAN=90` never binds (live scan_capped=0 on 5/5 scans, movers 29-31; sim uncapped pool max 73
+  over 2,777 scans; cells at 50 and 150 are BYTE-IDENTICAL).
+- `LEVERAGE=5` is a floor that MAX_SL_MARGIN_PCT=20 overwrites (wildcard.py:290-294). Live realised
+  leverage since trial 3: {1:25, 2:19, 3:8, 4:3} across 55 fills. **The seed value realised ZERO times.**
+- `MAX_MARGIN_PCT=0.25` binds only below 9.64% sl_margin = 0% of fills at the live stop width.
+- `EARLY_STOP_R=0.5 / MINUTES=30` — armed, **zero fires, never measured.** Do not file it as
+  live-and-working.
+
+**Two documentation defects:** `wildcard.py:133` says `calm_ratio` uses the 21h before the move;
+the slice is `-(96+12):-12` = 96 Min15 bars = **24h**. And `docs/LIVE_CONFIG.md:141` states the live
+range gate is 8%; it is **7%**.
+
+**The ranking function is structurally inert** — it bites only when candidates exceed free slots:
+**4 of 2,777 scans (0.14%)**. Eight of twelve alternative orderings, including reversing the |roc|
+preference, produce **byte-identical books**. The `_entry_lateness` mis-normalisation is real (15%
+pin at exactly 1.0) but **cannot** touch the [0.50,0.70) band: for any value strictly inside (0,1)
+the current close is not an extreme, so min/max are unchanged by including it — analytic, not
+empirical. Separately, the study behind the ranker **does not reproduce**: the deep band holds
+2 of 103 fills, not the 247-fire population it was fitted on.
+
+### 4. THE GRID IS CLOSED — permanently
+
+**437 cells** (37 one-at-a-time, 400 joint draws over a 10-axis product), 119 exchangeable in a
+2,000-permutation family-wise null. **Zero clear the 5% bar of +$808/mo. The null's MEDIAN best
+cell (+$461/mo) EXCEEDS the observed best (+$361/mo). Family-wise p = 0.709.** Walk-forward
+selection: -$176 / -$516 / -$90 / +$105 per month at 2/3/4/6 folds — **negative in 3 of 4, mean
+-$169/mo.**
+
+| knob | raw | ex-top-5% by delta | walk-forward | kill |
+|---|---|---|---|---|
+| EXCLUDE_TOP 24->0 | +$361/mo | +$210/mo | -$176/mo | family best = the null's own median; sim exaggerates this axis ~5x (live excludes 3.6% of in-band symbols, sim 17%) |
+| MIN_TURNOVER 2M->1M | +$59/mo | **-$4/mo** | -$516/mo | entire delta is ONE fill; axis non-monotone; sim understates added volume ~3.5x |
+| MIN_ROC 0.08->0.07 | +$42/mo | +$14/mo | -$516/mo | almost the whole delta is ONE fill |
+
+**STRUCTURALLY UNVERIFIABLE AT THIS ACCOUNT SIZE — stop asking:** MAX_WICK, VERTICAL_ATR_MULT,
+MIN_VOL_Z, RSI_MAX, MAX_CALM_RATIO, and every joint combination. At 1.124R per-fill sd, separating
+a $10/mo effect from zero while changing half the fills needs **~75,800 fills: 58 years at the
+sim's rate, ~120 at live's.**
+
+### 5. THE STOP WIDTH — and why five full stops does not mean the stop is tight
+
+**Verified at runtime.py:1765:** `margin = risk_pct x available_balance x 100 / sl_margin_pct`, so
+the dollar loss at the stop is `risk_pct x available` = **2.41% of free margin AT EVERY STOP
+WIDTH.** Median margin committed is **13.9% of free margin at 3.0xATR and 13.9% at 4.0xATR —
+identical**, because the 20% cap holds sl_margin near 17% at every rung.
+
+> **Widening the stop cannot reduce what a loss costs. It changes the win rate (46% -> 32% full
+> stops at 4.0x), the hold time (median 3.8h -> 9.1h) and the leverage used (2 -> 1). It does not
+> change 1R. A wider stop would have lost the same $107 across fewer, longer trades.**
+
+**The ladder is the only real signal in the study:** netR across 1.0/1.5/2.0/2.5/3.0/3.5/4.0/5.0/6.0
+= -23.5/-27.4/-21.9/-13.2/-1.7/+3.2/+9.3/+9.6/+5.0, **Spearman +0.933, monotone-trend permutation
+p=0.0003 — the only p<0.01 result on the board.** It still does not ship, for four reasons fixed
+in advance:
+1. **It is an interaction with the RETENTION TRAIL, not a property of the stop.** Spearman across
+   rungs is +1.000 with the live exit stack, +0.821 without the 24h clock, **+0.536 with no trail,
+   +0.464 with no trail on a 6h clock.** A wider stop makes 1R a bigger price move, so the trail
+   arms less often. **An exit-stack finding wearing a stop's name.**
+2. The live PRE/POST corroboration is confounded by **five simultaneous changes** (51% of
+   post-trial-3 exits go through the convex stack, which fired zero times before; margin cap;
+   risk_pct equalisation doubling median margin; account size), with an 8-day fill gap across it.
+3. **Family-wise p = 0.599** across the 8-rung ladder; **entry-shift placebo fails at +3 bars
+   (-$104/mo).**
+4. Apply the study's own fidelity haircut and the book's own 1R: +$261/mo x 0.49 fill-count haircut,
+   then at 1R=$15.49 rather than $22.6 -> **~$88/mo against a bootstrap CI of [-$67, +$589] that
+   spans zero.**
+
+**ON THE FIVE FILLS.** At the measured 46-47% full-stop rate a 5-fill window going 0-for-5 is a ~2%
+event, **but the expected number of 5-stop runs across the 55 fills since trial 3 is ~0.6, so seeing
+one SOMEWHERE is roughly a coin flip.** And read the peak_r column: **four of five never cleared
+0.33R, and nothing in the exit stack arms below 1.0R.** Only PONS at 0.9653R was ever close to
+banking anything. **Four non-starters and one near-miss — a signal-quality distribution, not a
+stop-width problem, and no stop-width change converts any of them.**
+
+### 6. DECISION, RANKED — nothing touches live P&L
+
+| # | action | $/mo | env/code |
+|---|---|---|---|
+| 1 | **Amend the MEMORY.md index line** carrying the retracted -0.225R (DONE) | $0 | memory |
+| 2 | Correct `docs/LIVE_CONFIG.md:141`: the live range gate is **7%**, not 8% | $0 | doc |
+| 3 | Correct `wildcard.py:133` `calm_ratio` docstring: **24h**, not 21h | $0 | comment |
+| 4 | **File the harness fix:** any two-arm delta with UNEQUAL FILL COUNTS through the Min15 exit engine must report the break-even bias b* and fold `sd(b) x delta_risk` into the CI. On this study that term was **2.6x the bootstrap sd** and its omission is how a -$72 became a -$299 headline | $0 | process |
+| 5 | Record the MIN_24H_MOVE trap; **leave the variable set** | $0 | doc |
+| 6 | HOLD `REQUIRE_PULLBACK` ON | -$72 est, band [-$669,+$524] | env |
+| 7 | HOLD `LONG_ONLY=0` | +$8.27 (SE $10.49), +$1.34 ex-top-5% | env |
+| 8 | HOLD `SL_ATR_MULT=3.0` | ~$88 after haircuts, CI spans zero | env |
+| 9 | HOLD everything else | mean -$169/mo walk-forward | — |
+
+**Item 8 is the only thing I will not call settled.** It is the only p<0.01 monotone trend on the
+board and the only positive walk-forward (+$191/mo). If it is ever taken, take it with the label:
+**it buys fewer full stops and longer holds at UNCHANGED dollar risk, costs ~20% of fills to slot
+occupancy, and has no measured dollar gain.** It is not a fix for the five stop-outs.
+
+### WHAT IS NOT KNOWN, AND THE QUESTION THAT SHOULD BE NEXT
+
+**Whether WILDCARD has any edge at all.** meanR **-0.016 +/- 0.111** in sim and **-$0.024/fill live
+over n=55** — statistically zero on both. **Every knob on this entry path multiplies that zero by a
+different fill count. There is no tuning solution to a zero mean.**
+
+> **The question worth a study is not where a threshold sits. It is whether WILDCARD should hold
+> three slots and 2.41% of free margin at all — because those slots also shrink TREND's 1R, and
+> TREND is the sleeve carrying the book's positive expectancy. That is a CAPITAL-ALLOCATION
+> question, it has far better measurement properties than any threshold here, and it is the one
+> that should go on the board next.**

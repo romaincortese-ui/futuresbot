@@ -131,7 +131,7 @@ class WildcardSignal:
 
 
 def calm_ratio(frame: pd.DataFrame) -> float | None:
-    """|3h move| divided by the range of the 21h BEFORE it.
+    """|3h move| divided by the range of the 24h BEFORE it.
 
     Above ~1 the three-hour move was bigger than the whole preceding day: the
     symbol was quiet and then something happened. Owner's observation on
