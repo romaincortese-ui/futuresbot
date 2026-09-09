@@ -1,3 +1,270 @@
+# Daily Audit — 2026-09-09
+
+---
+
+## Automated Assessment (UTC 16:20)
+
+Equity **$1,022.61**, cash $946.71, margin $214.09, **2 open positions**. No
+deposit or withdrawal since 09-04. **No audit ran on 09-08**, so the review
+window below is the 47h since the last entry (09-07 17:20Z), not 24h.
+
+`FUTURES_TRIAL_LABEL=19F`, `FUTURES_TRIAL_START_TS=1788891501` — the operator
+opened **trial 19F on 09-08 18:18Z** (wildcard early stop, -0.5R inside 30
+min). Config otherwise unchanged. **Nothing shipped today.**
+
+`/data` was reachable this run, so the feature store, the shadow ledger and the
+learner all ran. **The 09-07 report's one open question is answered** — see
+section 1a.
+
+### 1. Closed trades — 8 in 47h, 2 winners, **-$84.80 / -4.19R**
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | mult | risk% | exit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 09-08 10:30 | FORM | WILDCARD | LONG | x1 | 2.3h | -1.06 | -25.76 | 1.00 | 2.26 | stop |
+| 09-08 15:18 | PONS | WILDCARD | SHORT | x2 | 23.6h | -1.08 | -19.41 | 0.80 | 1.67 | stop |
+| 09-08 15:44 | MARSCOIN | WILDCARD | SHORT | x1 | 4.5h | -1.02 | -11.65 | **0.50** | 1.04 | stop |
+| 09-08 18:48 | ZEC | TREND | LONG | x5 | 2.2h | -1.06 | -20.35 | 0.76 | 1.85 | stop |
+| 09-09 05:48 | ZEC | TREND | LONG | x8 | 1.2h | -1.10 | -27.25 | 1.00 | 2.44 | stop |
+| 09-09 11:12 | ATOM | WILDCARD | LONG | x5 | 1.5h | -1.11 | -23.68 | 1.00 | 2.24 | stop |
+| 09-09 13:37 | ZEC | TREND | LONG | x7 | 4.6h | **+0.45** | **+10.07** | 0.92 | 2.23 | retention trail |
+| 09-09 15:45 | IOST | WILDCARD | LONG | x1 | 5.1h | **+1.79** | **+33.23** | 1.00 | 1.87 | **MANUAL_CLOSE** |
+
+Six stop-outs, all landing between -1.02R and -1.11R — the -1R floor is holding
+and the 09-07 slippage hypothesis is dead. `mae_r` on every loser sits at -0.95
+to -1.01, so the stops filled where they were placed.
+
+**Exchange reconcile: 8 exchange rows, 8 feature-store rows, matched on $ and
+timestamp. Loss-censoring is clean — all six losses are present.** Feature store
+148 rows.
+
+**MANUAL_CLOSE on IOST — flagged, not explained.** The bot logged an EXIT with
+`exit_reason=MANUAL_CLOSE` at 15:45:31Z on a position running at +1.79R against
+a +5R target, having peaked at +2.24R. That is an externally-closed position
+picked up by reconcile, i.e. **almost certainly the operator closing in the MEXC
+app**, the same pattern as EVAA on 2026-06-14. It is not a bot exit path and not
+a defect. **Operator: please confirm.** Cost so far is negligible — IOST touched
+0.0017499 after the close (+5.4%) but is now 0.001622, *below* the 0.0016599
+exit.
+
+**The ZEC re-entry loop is the shape of the week.** Five TREND ZEC fills in three
+days at rising entries (1199 -> 1224 -> 1206 -> 1234 -> 1253 -> 1277 open), four
+stopped, one trailed out. ZEC is grinding *up*; the sleeve is being whipsawed by
+3.5-5% pullbacks inside an uptrend it is correctly long of. Not a counter-trend
+problem and not a universe problem. It is the cost of a 3xATR stop on a pair
+whose pullbacks are that deep. **No proposal — the stop width is supported in
+both replay windows and by 13/16 live rebounds, and trial 19F freezes it
+regardless.**
+
+### 1a. THE 0.70x SIZING QUESTION FROM 09-07 IS ANSWERED — it is the regime scaler, and it paid $27.20
+
+The 09-07 entry could not separate two explanations for realised risk landing at
+~0.70x the dial. With /data back, the feature store settles it: it is
+**explanation (1), `regime_size_mult`**. Explanation (2), stop slippage, is
+refuted by the -1.02R..-1.11R stop cluster above.
+
+    09-07 ZEC       mult 0.730   margin 104.1 vs wanted 146.8
+    09-08 PONS      mult 0.803   margin 108.2 vs wanted 161.1
+    09-08 MARSCOIN  mult 0.500   margin 103.0 vs wanted 211.4   <- at the floor
+    09-08 ZEC       mult 0.761   margin 101.3 vs wanted 133.8
+    09-09 ZEC       mult 0.917   margin 116.4 vs wanted 126.9
+
+Pricing each fill at the size it *wanted*, and differencing:
+
+| symbol | mult | realised $ | at full size $ | scaler saved |
+|---|---|---|---|---|
+| PONS | 0.80 | -19.41 | -28.90 | **+9.48** |
+| MARSCOIN | 0.50 | -11.65 | -23.91 | **+12.26** |
+| ZEC 09-08 | 0.76 | -20.35 | -26.87 | **+6.53** |
+| ZEC 09-09 | 0.92 | +10.07 | +10.98 | -0.91 |
+| others (mult 1.00) | — | — | — | -0.28 |
+| **net** | | | | **+$27.20** |
+
+**The scaler is the reason this week is -$84.80 and not -$112.00.** It trimmed
+four positions, three of which were losers, and cost $0.91 on the one winner it
+touched. `FUTURES_REGIME_FLOOR_MULT=0.50` moves from "suspect" (09-07) back to
+**earning its keep**, and this is the third independent confirmation of the
+standing "the shrink dials pay" finding. No change.
+
+### 1-OPEN. Open positions — 2
+
+    ZEC_USDT   TREND LONG  x5   entry 1276.75   opened 09-09 13:41Z   held 2.6h
+    sl 1232.08 (-3.50% price = 1R)   tp 1413.01 (+10.67% price = 3.0R)
+    now ~1275.2   ~+0.00R   peak <= +0.44R (Min15, window overlaps pre-entry)
+    dist to TP +10.8% price   dist to SL -3.4% price
+    margin $76.9 -> realised risk 1.32% of equity vs the 2.41% dial (~0.55x)
+
+    SOPH_USDT  WILDCARD  opened 09-09 16:13Z (3 min)
+    [SIZE_TRIM] regime_mult=0.98, margin 141.13 -> 137.72 (intended 12% of balance)
+
+**Watch item:** the ZEC fill is the smallest TREND entry of the week at 0.55x the
+dial, well under the 0.70-0.92x of the preceding fills and **below trial 19F's
+[1.6%, 2.2%] realised-risk band**. The entry log line has aged out of the Railway
+500-line buffer, so the cause is unattributed today — it resolves automatically
+from `regime_size_mult` when the position closes. Nothing to do; flagged so it is
+not read as a surprise later.
+
+Neither position carries bank/lock/runner state. Convex exits only.
+
+### 1a-bis. Learning loop — ran in full
+
+**(a) Feature store:** 148 rows, in sync with the exchange (above).
+
+**(b) Shadow ledger:** 218 rows. Raw counts are inflated by duplicate signals
+logged minutes apart on the same symbol (five XRP rows inside an hour on 08-21,
+all resolving +3.0R). **Deduplicated at 6h per sleeve/symbol/side:**
+
+| bucket | n | net R | avg R |
+|---|---|---|---|
+| shadow_only | 45 | +5.15 | +0.11 |
+| veto:* | 44 | **-13.55** | -0.31 |
+| slot_occupied | 21 | +3.47 | +0.17 |
+| side_disabled | 20 | **-9.41** | -0.47 |
+| calm_shock | 20 | -3.88 | -0.19 |
+| min_vol_skip | 14 | +1.05 | +0.07 |
+| below_trigger | 7 | +1.74 | +0.25 |
+
+- **The vetoes are saving money** (-13.55R avoided over 44 deduped rows, -3.49R
+  over the last 14d). No veto-tuning proposal.
+- **`side_disabled` is the strongest single result on the board** at -0.47R
+  avoided per blocked signal. `FUTURES_TREND_LONG_ONLY=1` and the wildcard side
+  blocks continue to earn their keep; this is the fourth consecutive audit
+  agreeing. TREND shorts stay refused.
+- **Slot cost: +3.47R over 21 resolved rows deduped, and only ONE row in the last
+  14 days.** Before dedup this reads +20.46R, which is the artefact the operator
+  should not act on. At 3 wildcard + 2 TREND slots the sleeves are effectively
+  never slot-blocked any more, so the recurring "am I missing out?" question is
+  answered **no** for the current configuration. No proposal for more slots.
+- `calm_shock` mildly protective; `min_vol_skip` and `below_trigger` neutral at
+  these n. None reach a proposal.
+
+**(c) Scan telemetry:** wildcard scans 38-40 movers/cycle, dominant rejection
+`roc_below_min` (~32-34 of ~40), then `no_pullback_resume` (4-7), `low_volume_z`
+(1-2); deflated 28/48. TREND scans 3 symbols, `roc_below_min` 2 + `symbol_open`
+1. One `[SIZE_TRIM]` line (SOPH, 0.98 — immaterial). **No 5003/2015 order
+rejects, no ERROR, no Traceback in the window.** Execution is clean.
+
+**(d) Conditional-expectancy learner** (n=148, mean $-0.189, meanR **+0.125**,
+win 44.6%). Reportable verdicts at n>=10 per group:
+
+| condition | verdict | with (n / mean$) | without (n / mean$) | OOS |
+|---|---|---|---|---|
+| `hold >= 120min` | FAVOR | 98 / +0.68 | 50 / -1.88 | OK |
+| `regime_trimmed_hard(<0.5)` | **AVOID** | 27 / -0.35 | 121 / -0.15 | OK |
+| `leverage >= 7` | FAVOR | 46 / +1.47 | 102 / -0.94 | OK |
+| `roc >= 12pct` | directional | 44 / -0.92 | 104 / +0.12 | OK |
+
+Three readings, and only one is actionable:
+
+1. `hold>=120min` is an **outcome correlate, not an entry condition** — winners
+   are held longer by construction. Not actionable. Ignore it.
+2. `leverage>=7` is a **confound, not a lever**. Leverage is re-derived from the
+   -20% margin cap, so high leverage means a tight-ATR liquid major and low
+   leverage means a wide-ATR micro-cap. The learner is saying *majors beat
+   micro-caps*, which the `roc>=12pct` row says again from the other side.
+   **On the older "leverage>=7 reliably loses" note: treat it as VOID, not
+   reversed.** Leverage here is an *output* — `lev = min(cap, floor(0.20 /
+   sl_frac))` with `sl_frac = 3.0 x atr_pct` — so "leverage>=7" is arithmetically
+   "atr_pct <= 0.952%", a low-volatility filter. n is too small to claim either
+   sign.
+3. `regime_trimmed_hard` AVOID is the one with teeth, and it says what the 09-07
+   entry predicted: the cohort the scaler trims to the 0.50 floor is a cohort it
+   would do better to **skip than to shrink**. Section 1a shows shrinking is
+   already worth $27.20; skipping might be worth more. **This is a real candidate
+   and it is NOT proposed today** — it is an entry-side change, and trial 19F's
+   pre-registration freezes entries.
+
+**Corpus note worth recording: meanR is +0.125 while mean$ is -$0.189.** The book
+is R-positive and dollar-negative over 148 trades. Most of that is recency (the
+losses are recent and the equity is larger now), but it is the exact signature
+the reporting standard exists for. Do not headline either number.
+
+### 1b. Wildcard diagnosis
+
+**Not dormant.** Four wildcard closes in the window (FORM, PONS, MARSCOIN, ATOM,
+all stops) plus IOST (+1.79R) and SOPH now open — six fills in 47h. Rejections
+are dominated by `roc_below_min` as designed. No gate loosened, none proposed.
+
+Wildcard over the window: 5 closes, **-$47.27**, 1 winner. Over trial 19F alone
+it is 2 closes, **+$9.55**. The sleeve is not at the >=10-trade net-negative
+threshold *within the current trial*, and trial 19F exists precisely to test the
+wildcard's loss handling. **No disable proposal.**
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 3. Trial 19F progress and the decision rule
+
+**Trial 19F, opened 09-08 18:18Z. 5 closes (2 WILDCARD of the 30 required).**
+
+    net R    -1.03      net $   -$27.98      win 2/5 (40%)
+    ex-best  -2.82R     -$61.21
+    mean realised risk per trade  2.125%  -> INSIDE the [1.6%, 2.2%] band (crit 3)
+    early-stop fires: 0      cuts above 1R peak: 0 (crit 2 clean)
+    TREND early-stop exits: 0 (crit 4 clean)
+
+The primary criterion needs 20 fires and has **zero**. Nothing is measurable yet.
+
+**The single most important observation of the day for this trial:** IOST, the
+week's only real winner at +1.79R, **reached -0.5R at minute 38.1** — eight
+minutes outside the 30-minute cut window. ATOM, a loser, reached -0.5R at minute
+41.5 and was likewise not cut. Both non-fires are correct under the rule as
+written. But it means **T=30 came within eight minutes of destroying the week's
+best trade**, and that is direct evidence against ever widening T. The
+pre-registration already forbids refitting X; this run adds that **T should not
+be widened either**, on evidence rather than on principle.
+
+**Exits, last 20 closes: TP 2 (10%) | stop 11 | other 7.** STOP dominates, not
+OTHER, so the trial-4 TP watch item does not trigger. `FUTURES_TREND_TP_R` is
+already 3.0.
+
+**Drawdown: peak equity $1,183.57 (09-06 05:55Z), now $1,022.61 = -13.6%.**
+Inside the 25% halt (`DRAWDOWN_HALT_PCT=0.25`, 30d). It is now well past the 8%
+soft-brake line the 09-07 entry was watching, which per the 09-04 replay is
+expectation-NEGATIVE on this book (P(brake helps) = 15%). **The brake stays
+unset. Reporting, not proposing.** `USE_DRAWDOWN_KILL=0` remains the operator's
+explicit override.
+
+### 4. Validation and deploy
+
+**No lever pulled, no variable set, no deploy.** pytest not run — no code change
+to gate.
+
+The one candidate that surfaced today is **re-enabling the cold-streak throttle**
+(`FUTURES_CONVEX_STREAK_THROTTLE_ENABLED=1`, off since 08-27 as trial 17's change
+under test). The case for it is real: six stops in 47h with `loss_streak_at_entry`
+pinned at 0.0 and `streak_multiplier=1.0` on every fill, and the throttle scored
++$1.67 net saved over its three live firings before it was switched off. The case
+against it is decisive for *today*: trial 19F criterion 3 measures mean realised
+risk per trade, the throttle moves exactly that number, and trial 19F's
+pre-registration says "Nothing else. Not the arm, not the retention, not the
+ratchet, not the universe, not the slots, **not the risk**." Turning it on now
+voids the trial's own sizing comparison. **PROPOSED to the operator for after
+trial 19F closes. Not self-applied.**
+
+Queue, reordered: (1) confirm the IOST MANUAL_CLOSE was the operator,
+(2) skip-don't-shrink at `regime_mult<=0.50` (post-trial, entry-side),
+(3) re-enable the cold-streak throttle (post-trial), (4) resync Futures-shadow,
+(5) candidate-ranking instrumentation, (6) the Prophet archive 422.
+
+### 5. Verdict on the last 7 days of changes
+
+| change | shipped | earning its keep? |
+|---|---|---|
+| `REGIME_FLOOR_MULT` 0.50 | 08-29 | **YES, and measured: +$27.20 over 8 closes.** Cleared of the 09-07 suspicion. |
+| `CONVEX_TRAIL_RETAIN_FRAC` 0.50 | 08-29 | fired once (ZEC +0.45R from a +1.04R peak, 43% retained). Working as specified; two data points now both exit near the retain level immediately after arming. Watch, do not touch. |
+| `FUTURES_TREND_LONG_ONLY=1` | standing | **YES** — shadow `side_disabled` avoided -0.47R per blocked signal over 20 deduped rows. |
+| trial 19F (`WILDCARD_EARLY_STOP_R=0.5`) | 09-08 | 0 fires, 0 defects, criteria 2/3/4 clean. Too new to score. |
+| `CONVEX_STREAK_THROTTLE_ENABLED=0` | 08-27 | **contested** — 6 stops in 47h with no damping. Proposed for reversal after trial 19F. |
+
+**One line:** a -$84.80 week across eight closes and six stop-outs, but the
+regime scaler saved $27.20 of it and the 09-07 sizing mystery is closed in the
+scaler's favour; trial 19F is 22 hours old with zero fires, and its one piece of
+evidence is that a 30-minute cut window missed killing the week's best trade by
+eight minutes.
+
+---
+
 # Daily Audit — 2026-09-07
 
 ---
