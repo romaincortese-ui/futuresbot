@@ -5959,3 +5959,209 @@ one-dimensional slice run this session.** Three independent searches found no ri
 **Every filter tested this month raises mean R and destroys dollars, because it deletes 20-82% of
 the trades. This sleeve is volume-limited, not quality-limited. Its dollars are in the volume, and
 every improvement to the average destroys the total.**
+
+---
+
+## 2026-09-09 (later) — trade 7 turns TREND negative. Judgement reviewed. Ruling HOLDS; my headline was the error.
+
+**Trigger:** a 7th TREND fill closed and flipped the sleeve's sign. Owner asked for the judgement
+to be reviewed. 4 agents / 4 adversarial verifiers / ~150 new cells.
+
+### The funded ledger (n=11, since the deposit)
+
+    sleeve    symbol     side  entry             hold      pnl      R   peak_r    mae_r  risk  lev  equity
+    TREND     ZEC        LONG  09-04T16:55     24.00h    -2.66  -0.21  0.2195  -0.7561  12.9   4    1096
+    TREND     ZEC        LONG  09-06T01:07      3.66h   +75.37  +2.88  3.0255  -0.6070  25.0   7    1172
+    TREND     ZEC        LONG  09-06T04:59      0.94h   +11.88  +0.43  1.0333  -0.1300  28.3   4    1184
+    TREND     ZEC        LONG  09-06T09:26      5.05h   -28.49  -1.01  0.0877  -0.9906  27.9   4    1155
+    WILDCARD  MAGMA      LONG  09-06T19:58      0.38h   -26.45  -1.06  0.0245  -1.0034  25.2   3    1126
+    TREND     ZEC        LONG  09-06T17:38     20.50h   -20.38  -1.03  0.4855  -0.9698  19.5   4    1108
+    WILDCARD  FORM       LONG  09-08T08:11      2.31h   -25.76  -1.06  0.0909  -0.9576  25.3   1    1079
+    WILDCARD  PONS       SHORT 09-07T15:42     23.61h   -19.41  -1.08  0.9653  -0.9507  18.5   2    1064
+    WILDCARD  MARSCOIN   SHORT 09-08T11:12      4.52h   -11.65  -1.02  0.3213  -0.9810  11.3   1    1052
+    TREND     ZEC        LONG  09-08T16:38      2.18h   -20.35  -1.06  0.1168  -0.9994  19.4   5    1032
+    TREND     ZEC        LONG  09-09T04:39      1.16h   -27.25  -1.10  0.8481  -0.9875  25.2   8    1004
+
+    TREND -$11.88 (7)   WILDCARD -$83.27 (4)   TOTAL -$95.15
+    Equity $1,096 -> peak $1,183.57 (09-06 05:55) -> $1,004.30. -8.7% in five days.
+
+**`peak_r` is now written to closed records** — first time. 93 of the 200 ring-buffer rows carry it
+(64 WILDCARD, 29 TREND) back to 2026-08-12. Every earlier arm study had to reconstruct peaks.
+
+### 1. WHAT THE SIGN CHANGE OVERTURNS
+
+**My headline, and nothing else.** The n=6 figure carried s.e. **$94** (per-trade sd $38.55),
+t=0.03, CI95 **[-$121, +$200]**. n=7 is CI95 **[-$156, +$187]**. Same number. **It was already ~41%
+likely at the time that the next single fill alone would flip the sign.** Ex the +$75.37 winner the
+sleeve is -$87.25 on six — the sign is determined entirely by whether one trade is in the sample.
+
+**The ruling holds.** Ship-nothing rested on ~670 cells, not on +$15.36. Trade 7 was a TREND_LONG
+at score 96 that stopped out, already inside the entry study's population.
+
+**What was NOT re-established:** my claim that "the gap is in the exits" is not supported by
+anything measured today. It is untested, not proven. Trade 7 shows a live entry-PRICE leak, which
+is entry-side (below).
+
+### 2. THE ARM — REFUTED, and the motivating anomaly dissolves
+
+**PONS (0.9653R) and ZEC 09-09 (0.8481R) did not "nearly arm".** The trail evaluates the pushed
+**FAIR** feed once per second (runtime.py:5709, 5723-5728, 5736-5753) — not a coarse poll. One
+agent found Min1 highs of 1.0969 and 1.0202 and called it a sampling miss; its verifier corrected
+that: a 0.42%-of-price gap between a 1-second fair maximum and a 1-minute **LAST**-price high is
+**basis, not sampling**. On PONS, where both feeds are known, the true sampling residual is
+**0.035R**. Both trades genuinely did not reach the arm on the feed the bot trails.
+
+| grid | result |
+|---|---|
+| 55 cells (11 arms x 5 retentions), 389 TREND fills / 357 days | **54 negative.** arm 0.80 **-$32.7/mo**, 0.85 -$21.5, 0.90 -$4.7, 0.95 +$12.5. **Non-monotone = noise.** |
+| the one positive cell | **p_FWER = 1.00** (placebo best-cell median +$36.3 EXCEEDS the observed +$12.5), drop-ZEC -$2.3, bootstrap P(delta<=0)=0.174 |
+| 90-cell grid, Min1 engine | every arm<1.0 cell clearing $10 on the point estimate collapses under ex-top-5%-by-delta AND leave-one-symbol-out. **The grid maximum is arm = 2.00 — arming HIGHER** — and even that fails FWER (p=0.116) |
+| runner truncation | **real, not "almost never": 73 of 389 fills reach >=2R and carry +167.77R = 233% of total book R.** Path-exact, arm 0.90 costs -$31/mo, arm 0.80 -$76/mo on that set alone |
+| breakeven stop k=0.4..1.0 | **all seven cells negative**, best -$5.6/mo |
+
+**The retention invariant vs the dollars — a genuine conflict between two standing owner rules.**
+Full compliance IS buyable: arm 0.50 takes the give-back-100% rate among trades building >=0.5R
+from **22% to 0.3%** and costs **-$48/mo**, while cutting total R surrendered by only 17%
+($534 -> $443/mo), because a 0.50 retention hands back half of peak by construction.
+**It resolves for the dollars** ("$ P&L, always" is the senior directive).
+
+**Structural:** `FUTURES_CONVEX_TRAIL_ARM_R` is read globally (runtime.py:2304, VERIFIED) and
+`_is_wildcard_convex` (runtime.py:1476) covers WILDCARD, SQUEEZE **and** TREND. **There is no
+TREND-only arm — it is a code change**, and setting 0.80 also arms WILDCARD, priced -$62/mo on
+2026-09-08. Also runtime.py:2096-2099: any `RETAIN_FRAC >= 0.75` silently disables the ratchet.
+
+**Do not re-open this on funded fills.** At n=7 with CI95 [-$156, +$187] the funded window cannot
+move this parameter in either direction.
+
+### 3. THE SIZING STACK — one real defect, worth $0/month
+
+**The streak throttle is not broken. It is switched OFF by design, and the telemetry lies.**
+VERIFIED IN FILE:
+
+    runtime.py:5121  def _convex_streak_multiplier(self) -> tuple[float, int]:
+    runtime.py:5125      if not self._flag("FUTURES_CONVEX_STREAK_THROTTLE_ENABLED", default=False):
+    runtime.py:5126          return 1.0, 0          # <-- hard-coded 0, streak never computed
+    runtime.py:5127      streak = self._convex_loss_streak()
+    runtime.py:8036      "loss_streak_at_entry": float(loss_streak),
+
+Flag set to 0 on **2026-08-27 09:32** as trial 17 (DECISION_RULE.md:3916). Since then
+`loss_streak_at_entry` is a **hard-coded constant, not a reading**. Last row with a nonzero value:
+ETH 2026-08-27T09:29, ls=5.0, mult=0.25 — three minutes before the flag flipped.
+
+**The true streak at the 09-09 fill was 7.** Correct per-fill sequence across the funded 11:
+1,2,0,0,1,1,3,3,4,6,7. **This is why neither the owner nor I could see from the ledger that the
+account had run seven straight losses.** Fix is two lines (compute the streak before the flag
+check, gate only the multiplier). Zero behaviour change, $0/month.
+
+`_convex_loss_streak` (runtime.py:5102-5118): walks `trade_history[-20:]` in reverse close-order,
+skips non-convex rows, counts consecutive `pnl_usdt < 0`, breaks on the first non-negative.
+**GLOBAL, not per-sleeve. PERSISTED** (saved runtime.py:4784 `[-200:]`, reloaded 4752) — a restart
+or deploy does NOT reset it. Only a winning convex close resets it.
+
+**Do NOT re-enable the throttle.** +$47.70 over 75 days, but era A **-$229** / era B +$137,
+pre-funded **-$89** vs funded +$108 (**the entire gain IS the drawdown under review**),
+ex-top-5%-by-delta **-$269**, order-permutation P=0.161 with a shuffled median of **-$173**.
+Agrees with two prior methods already in the record.
+
+**LEVERAGE IS AN OUTPUT, NOT AN INPUT.** trend.py:171-186 / wildcard.py:284-298, same algorithm:
+`lev = min(cap, floor(0.20 / sl_frac))` where `sl_frac = 3.0 x atr_pct`. **Verified exactly on
+85/85 ledger rows carrying `sl_frac_designed`.** The new trade: 0.20/0.024767 = 8.07 -> 8.
+**"Leverage >= 7" is arithmetically "designed stop <= 2.86% of price", i.e. atr_pct <= 0.952% — a
+LOW-VOLATILITY FILTER, not a risk setting.** Live strata now read lev 7-10 = **+0.4220R (n=17)**,
+the BEST bucket, and the >=7 bucket flips sign under ex-top screening in both directions.
+**MARK "leverage>=7 reliably loses" SUPERSEDED — not reversed, n is too small for that; void.**
+(docs/daily_audit.md:1494 and DECISION_RULE.md:2329-2333 already said this.)
+
+**Do not set the drawdown brake.** 10 cells, all negative, best -$30.51/mo, family-wise P=0.486.
+`FUTURES_CONVEX_DRAWDOWN_BRAKE` is UNSET, so the convex sleeves have no equity-drawdown path at
+all. `USE_DRAWDOWN_KILL=1` and `IGNORE_HALT=True` are live but unreachable from the convex path.
+
+**Do not touch `FUTURES_WILDCARD_RISK_PCT`.** Two agents proposed cutting it; both verifiers killed
+it. There is no compliance breach — the trial primary is a **mean** test (realised 1.943%, inside
+[1.6%, 2.2%]) and the per-trade guard is 3.0% (max observed 2.444%). Cutting to 0.0200 scales the
+whole book -17%, contaminates trial 19 mid-flight, and drags the mean to ~1.61%, toward the trial's
+own "<1.5% -> halt and audit" trigger.
+
+**CONFIRMED, and it reprices old work:** runtime.py:1762 (VERIFIED IN FILE)
+`margin = risk_pct * available_balance * 100.0 / sl_margin_pct` — **risk is a fraction of FREE
+MARGIN, not equity.** Consistent with the already-recorded fact that the sleeves compete for
+`available_balance`, but it means **"halve one sleeve, leave the other alone" is not achievable** —
+freeing margin on one sleeve raises the other's dollar risk. Live dial is 2.41%.
+
+### 4. IS THE DRAWDOWN NORMAL? YES — 10.2%, the HOLD band
+
+**P(an 11-fill path <= -$95.15) = 10.2%** under the sleeves' own measured distributions (200,000
+bootstrapped paths at the observed risk-fraction distribution; 11.4% all-live WILDCARD).
+**If both edges are exactly ZERO, 19.0%.** Independently reproduced: z=-1.25, P~10%.
+
+Marginals: **TREND's -0.966R over 7 is the 27th percentile of its own seven-draw distribution —
+utterly ordinary.** WILDCARD's four consecutive full stops is the 3rd percentile of a four-draw
+distribution whose floor is -4.4R; unconditionally, four straight losses at a 43.4% win rate is
+**10.3%**.
+
+**"Nine of the last ten are losses" computes to 1.4% and is INADMISSIBLE** — it is the worst window
+selected post hoc out of 11 fills. My own framing; it is the n=11 trap and I walked into it.
+
+Pre-stated rule was hold at 20%+, reduce at 2%. **10-19% is the hold band, nowhere near reduce.**
+
+### 5. THE DECISION, RANKED
+
+| # | action | $/month | verdict |
+|---|---|---|---|
+| 1 | **Hold everything** — entries, exits, sizing, leverage, sleeve enablement | 0 | **DO** |
+| 2 | **Telemetry fix** to `_convex_streak_multiplier` (2 lines, no behaviour change) | 0 | **DO** |
+| 3 | **Log, decision-free:** fair AND last price at each poll and at the exit fill; the 1s fair peak series; scan-instant price alongside the last closed bar's close | 0 | **DO** |
+| 4 | pause WILDCARD | +$1 measured / +$106 hostile | NO — sets 19F's fill count to zero; the verdict never arrives |
+| 5 | halve WILDCARD only (code) | -$23 to +$54, midpoint ~$0 | NO — sign is a coin flip, estimate dragged by the four losses under review |
+| 6 | halve the shared dial (env) | -$61 | NO — a risk-tolerance purchase, not P&L |
+| 7 | arm the trail below 1.0R / breakeven stop | -$5 to -$76 | REFUTED |
+| 8 | re-enable streak throttle / cap leverage / set drawdown brake | -$30 and worse | REFUTED |
+| 9 | scan 900s -> 300s | screened floor ~$5-7 | PARKED — below the bar; shadow-measure first |
+| 10 | pause TREND | -$139 | NO — and drawdown gets WORSE |
+| 11 | pause everything | -$137 forgone | capital decision only, below the halt level |
+
+**Item 3 is the one with real value.** 17 of 27 live TREND closes are `EXCHANGE_CLOSE`, an exit
+path no harness models — **which is WHY no TREND replay is calibratable and every dollar figure in
+this review is comparative, not absolute.** Logging the fair/last pair at the exit fill is the only
+route to an absolute TREND number.
+
+### 6. THE ENTRY-PRICE LEAK (new, entry-side, not yet a proposal)
+
+Trade 7 stopped out $1.41 below its stop and was back above its entry **31 minutes later**. But the
+reason the stop was reachable at all is that **the 900s scan filled 24 minutes late and 1.85% above
+the first gate-true bar.** Across all seven funded fills that latency gave up **+1.668R (~$42)** of
+entry price. This is the same quantity the 900s->300s candidate measures, and it is why that
+candidate keeps scoring positive on the point estimate while failing the ZEC screen.
+
+### 7. THE PRE-REGISTERED HALT
+
+**At 2.41% of free margin with blended sd 1.49R and ~78 fills/month, NO equity-drawdown level
+discriminates edge failure from noise inside a year.** Median 3-month max drawdown is ~33% and
+P(>=50% within 12 months) is ~48% **with** the measured positive edge. Any floor above ~50% fires
+on a healthy path. Therefore:
+
+- **STATISTICAL TRIGGER (this is the halt):** at n=25 post-deposit book fills, recompute the
+  envelope percentile of the realised path against the PRE-FUNDED sleeve distributions.
+  **< 2% -> halt and audit. >= 20% -> hold. Between -> recompute each fill, do nothing.**
+  Current reading: **10.2%**.
+- **CAPITAL FLOOR:** a risk-tolerance decision only the owner can make. Set it now, in dollars,
+  while it is far away — and set it below -50% or accept that it fires on a healthy path.
+- **19F runs to its 20-fire verdict (~2026-10-05) untouched.** Three of the four funded WILDCARD
+  losses are exactly its target failure mode.
+
+### 8. THE REPORTING LESSON — the most valuable output of this pass
+
+What should have been said yesterday:
+
+> "Six funded fills: **+$15 +/- $94** (1 s.e.), t=0.03. That is zero. There is a ~41% chance the
+> next single fill flips the sign. The reason to ship nothing is the 670 tested cells, not the +$15."
+
+**STANDING RULE FROM HERE: never headline a signed dollar total whose standard error exceeds it.
+Report the interval and the flip probability, or report only the decision.**
+
+Two corollaries. (1) I reported a point estimate, buried the interval on the one line the owner was
+most likely to remember, and then attached a causal story ("the gap is in the exits") to it.
+(2) **1R = $25.16 is itself a point estimate doing more work than it should.** Actual funded
+`risk_usdt` ran **$11.28-$28.33, mean $22.6**, so every monthly figure in this review reads ~10%
+high. Irrelevant to the rankings; relevant to anything near the $10 bar — which is the 300s scan
+candidate, and it falls below it.
