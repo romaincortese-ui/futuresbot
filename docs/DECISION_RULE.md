@@ -8346,3 +8346,193 @@ First re-read ~2026-11-25, cleanly after 19F closes.
 - **The trigger buys the 3h extreme by construction: fills sit at 0.877 of the prior-3h range, 91%
   above 0.75.** The tape takes 0.2-0.3R back in both eras. **That is a property of the |3h ROC| >= 8%
   gate itself.**
+
+---
+
+## 2026-09-09 (fourteenth pass) — the entry gate. I GAVE A FALSE PREMISE THE REPO HAD ALREADY CORRECTED. Nothing ships but one telemetry key. And the biggest uninstrumented quantity in the system was found.
+
+**Asked (owner):** *"Point the next study at the entry gate."* 3 agents / 3 verifiers.
+
+### MY ERROR — AND IT IS THE SECOND CONSECUTIVE NIGHT
+
+I briefed: *"`ROC_BARS` has never been swept. Only the threshold has."*
+
+**FALSE.** `tools/pit_roc_sweep.py` is titled *"ROC trigger window x threshold sweep"*, its grid is
+`W in {4, 8, 12, 24, 48}` x thresholds, **15 cells, 208 days.** And **`docs/DECISION_RULE.md:2141`
+corrects this EXACT claim two days ago:** *"I claimed `ROC_BARS` had NEVER been swept. It HAS."*
+
+**I handed the agents a false premise that this repo had already corrected in writing, and the
+agent quoted the prior-art section immediately below its own refutation without reading up the
+page.** Second consecutive night for this error.
+
+**The two harnesses do not replicate.** Prior winner **6h/12% (W=24 @ 0.12): +$62.16, 690 fills,
+22/29 weeks** — the only both-halves survivor. Tonight's winner **12h/8% (W=48 @ 0.08): +$270** — a
+cell the prior grid never tested (its lowest W=48 threshold was 0.12), while tonight's grid never
+tested the prior winner. **Two independent replays, two non-replicating winners, neither
+reproducing the other. That is best-of-N search noise, and the family-wise p=0.0875 confesses it.**
+
+**ROC_BARS is now added to the structurally-unverifiable list beside MAX_WICK and
+VERTICAL_ATR_MULT. Swept twice, non-replicating winners, CLOSED.**
+
+### THE LATENESS FEATURE IS BROKEN — but my "it disables the ranker" claim is REFUTED BY PROOF
+
+**Broken, and worse than I said: 70.7-75.0% of fills read EXACTLY 1.0** (53/75 independent pass;
+69/92 and 39/56 in the agents'). The live column carries **18-40 distinct values where the fixed one
+carries 145.** The owner has been reading a variable that is three-quarters a constant.
+
+**But the second half of my lead is FALSE, and it is provable rather than statistical:**
+
+> **`live = clip(fixed, 0, 1)` is an ALGEBRAIC IDENTITY** — verified, 0 violations in 147 rows.
+> **The ranker's deep band [0.50, 0.70) lies STRICTLY INSIDE [0,1], where `clip` is the identity.
+> Band membership CANNOT CHANGE for any input.** Bit-identical under both features (34/940 both
+> ways; 3 of 147 with zero disagreements). Swapping the fixed feature into the rank key moves the
+> book by **EXACTLY $0.00/mo** in all four cells tested.
+
+**So the broken measurement is NOT why the ranker is inert.** The ranker is inert because
+**the candidate field is almost always ONE** — 92 of 93 shadow scans are singletons, all three open
+positions record `candidate_field = 1.0`, zero `rank_dropped` rows since the recorder was added —
+**and because the gate genuinely buys breakouts.** Interior values (0.528, 0.58) sit unclipped in
+the live column, **proving the measurement always COULD see deep pullbacks. There simply are none.**
+
+**The ranker's stated justification is now retired with evidence.** Its docstring cites *"247 fires,
+60d, deep-pullback +1.55R vs +0.12R at the extreme."* **The band holds 1 of 56 / 2 of 75 / 3 of 147
+across three independent corpora, and both live band fills are max losers.** A prior that has sat in
+a live docstring for months is dead.
+
+**Also settled:** `fixed < 0` is IMPOSSIBLE — `base = c.iloc[-(ROC_BARS+1)]` is the oldest bar of
+the same frame and therefore inside `c[:-1]`, so a LONG (roc>0) requires `cur > base >= min(c[:-1])`.
+**The censoring is one-sided.**
+
+### SHIP IT AS A NEW KEY, NOT AN IN-PLACE EDIT
+
+**`entry_lateness` flows to metadata -> `trade_history` -> the feature store the CE engine learns
+from. An in-place edit silently mixes censored and uncensored values across the deploy date with no
+version marker.** This book already lost 32 days of evidence to a column whose semantics changed
+silently.
+
+    KEEP  entry_lateness   exactly as-is (broken, clipped, feeding the inert ranker
+                           and five absolute-threshold CE buckets)
+    ADD   entry_extension  = (cur - min(c[:-1])) / (max(c[:-1]) - min(c[:-1]))
+
+**Consumer audit at source: the value is read by `_wildcard_rank_key` (ordering only) and
+`conditional_expectancy.py:157-170` (propose-only). NO entry, sizing, stop or exit path reads it.**
+**$0/month, and the $0 is CERTAIN rather than estimated.** It can ship today.
+
+**DO NOT drop `is_deep_lateness` from the ranker.** That is BEHAVIOURAL, not a bug fix — it deletes
+a promotion firing on ~2-3% of fills, evidenced by n=2, mid-trial, with two positions open.
+
+### THE HONEST NULL SURVIVES — extremeness is UNINFORMATIVE
+
+Three engines, three corpora, one answer. **Spearman(lateness, R) = +0.011 / +0.026 / +0.056**,
+null at every window from 1h to 12h, null in the refused shadow ledger (+0.088, p=0.411), flat
+across eras and **all 58 leave-one-symbol-out folds.**
+
+> **Buying the extreme is NEITHER the defect NOR the edge. It is uninformative. The 0.877 figure
+> describes the gate accurately and predicts nothing.**
+
+Every gate built on it sits below its own MDE and deletes 21-52% of fills into a volume-limited
+book: keep >1.00 (+$3.6), keep >1.10 (+$4.8), keep <=1.20 (+$0.3), reject [1.00,1.20) (+$10.6),
+reject the less-extended half (+$13.0).
+
+**The one nominally significant cell is the cleanest demonstration of why the controls exist.**
+Median split inside the saturated block: gap **+1.009R +/- 0.476, t=2.12, permutation p=0.042,
+entry-shift placebo CLEAN, LOO 0/39 flips, LOSO 0/30 flips.** Then: family-wise p=0.167;
+**ex-top-5 collapses it +1.009 -> +0.083** (three fills carry the entire gap against a block total
+of -0.13R); era decay +1.687 -> +0.346; **walk-forward +0.085. Ten in a row.**
+
+**And its direction is the opposite of the intuition: MORE extended did BETTER.** The framing does
+not invert the other way either — deep early give-back predicts WORSE outcomes (-1.008R vs +0.755R
+at t+24h, p=0.005) **but its entry-shift placebo FAILS outright** (a fake entry one bar later scores
+HIGHER, +0.422 vs +0.361; one hour later higher still, +0.477). **That is path autocorrelation, the
+same signature that retired the G2 pullback shape.**
+
+### THE REFRAME IS CORRECT — the stop sits inside the move it is trading
+
+    median 3.0xATR stop = 0.645 of the prior-3h high-low range
+    94.6% of stops fall INSIDE the move's own 3h range; only 10.9% sit beyond half of it
+    median MAE -0.505R by 1h, -0.914R by 6h
+    **50.4% of WILDCARD fills settle at R <= -0.9** (exchange-side stops booked as EXCHANGE_CLOSE,
+    which is why only 4 rows carry a STOP_LOSS label)
+
+> **The ~41-50% stop-out rate is ARITHMETIC, not misfortune.**
+
+**But it does not monetise.** Best structural cell (stop at 1.25x the prior-3h range) prices
+**+$17.8/mo against MDE $20.5**; the family-wise null p90 is **+$17.7** for an observed best of
++$17.8 — **it lands ON the search-noise 90th percentile**; the sweep is a one-cell SPIKE (0.90x and
+1.00x negative, 1.10x +$6.3, 1.25x +$17.8, 1.40x +$11.8); **the generic ATR-widening twin at 1.5x
+alone prices +$9.6, so half the effect has no structural content**; ex-top-5 keeps only $8.6 of
+$17.8. **REFUSED — a true statement about the book's geometry, not a trade.**
+
+### THE BIGGEST UNINSTRUMENTED QUANTITY IN THE SYSTEM — found tonight, never measured once
+
+**`signal_price` and `entry_price` NEVER CO-OCCUR ON A SINGLE ROW — 0 of 125 WILDCARD fills carry
+both.** So the gap between "the signal fired" and "we bought" has **never been measured on any
+fill, across the whole history.**
+
+**The one case anybody has ever looked at:** `DECISION_RULE.md` records MAGMA — trigger cleared
+**19:00 at 0.26041**, bot filled **19:58 at 0.273** = **+480 bps ADVERSE**, and the next hour's
+drawdown was **-1.62% from the signal price versus -6.15% from the fill. THE TRADE WOULD NOT HAVE
+STOPPED OUT.**
+
+Meanwhile the instrumented `entry_slippage_bps` has a **median of 3 bps on 11 rows** — **that
+measures the last-mile ORDER FILL. It does not measure THE WAIT.**
+
+> **A 58-minute hole, ~480 bps in the only observed case, and it is where the 0.877 came from.
+> Everyone spent the night arguing about 3h vs 12h ROC windows — a knob worth +/-260 bps of entry
+> location that was already refuted — while the signal-to-fill gap sits uninstrumented.**
+
+### THE PHANTOM CONTROL IS NOT ITSELF CONTROLLED
+
+**Three implementations of the mandatory control disagree by 4x on the same input.** A k=0.05R gift
+prices **+$3.9/mo (Q1), +$6.3/mo (Q3), ~+$7.9/mo (Q2 normalised)** at 1R=$2.41, against the standing
++$172/mo at ~10x risk which normalises to ~$17/mo. One agent asserted its number "is the same $172
+once rescaled" — **its own arithmetic gives $3.9 x 10.4 = $41, not $172.** Another report contains
+**two different values for its own +30bps cell** ($74.4 in the table, $172.02 in the verification).
+
+> **A control that is not itself controlled is decoration. Standardise the phantom implementation
+> before it is used as a gate again.**
+
+### THE POWER ARITHMETIC — this closes the ENTRY programme
+
+Sleeve realised edge **+0.064R/fill, sd ~1.4R, 33 fills/month.** n = (2.802 x sd / delta)^2:
+
+| to resolve | delta (R/fill) | fills | months |
+|---|---|---|---|
+| that the sleeve is positive at all (+0.064R) | 0.064 | 3,757 | **114 (9.5 yr)** |
+| $10/mo at realised 1R $2.40 | 0.126 | 965 | 29 |
+| **$10/mo at the live 1R** | 0.0196 | **40,160** | **1,217 (101 yr)** |
+| paired entry/stop change (sd 0.60R), live 1R | 0.0196 | 7,380 | 224 (18.6 yr) |
+
+**MDE in R is scale-invariant; the deposit changed only the dollar figure a resolvable R-effect maps
+to. At the size this book now trades the smallest resolvable whole-book gate change is ~$64/month,
+and even that takes 29 months. You cannot demonstrate the sleeve is distinguishable from zero inside
+a decade, so ranking two versions of its gate is structurally an exercise in ordering noise.**
+
+> **The EXIT programme closed on a theorem. The ENTRY programme closes on arithmetic, and it closes
+> harder.**
+
+### RANKED DECISION
+
+| # | change | $/mo | phantom | MDE | fills | label |
+|---|---|---|---|---|---|---|
+| **1** | **Add `entry_extension` as a NEW key; leave `entry_lateness` untouched** | **$0 CERTAIN** | $0 | n/a | 0 | **bug fix / telemetry** |
+| **2** | **DO NOTHING to the gate, the stop, the ranker, the window** | $0 | $0 | $0 | 0 | — |
+| 3 | Annotate the dead deep-pullback prior in the ranker docstring + CE comments; add `ROC_BARS` to the unverifiable list | $0 | $0 | n/a | 0 | docs |
+| — | REFUSED: ROC_BARS 12->48 @0.08 (volume-unmatched) | +$270 | **+$794** | $346 | +44 | behavioural, 6 call sites |
+| — | REFUSED: ROC_BARS 12->48 @0.1175 (volume-neutral) | +$178 | **+$778** | $389 | -22 | the controlled twin — a null |
+| — | REFUSED: structural stop at 1.25x prior-3h range | +$17.8 | $0 | $20.5 | 0 | lands ON the null's p90 |
+| — | REFUSED: reject fixed lateness in [1.00,1.20) | +$10.6 | $0 | $22 | -12 | |
+| — | REFUSED: reject the less-extended half | +$13.0 | $0 | $28 | -20 | |
+| — | REFUSED: edit `entry_lateness` in place | $0 | $0 | n/a | 0 | **bug fix WITH A CORPUS BREAK** |
+| — | REFUSED: drop `is_deep_lateness` from the ranker | ~$0 | $0 | unmeasurable (n=2) | 0 | **BEHAVIOURAL** |
+
+**Nothing is pre-registered because nothing survived. Every refused cell fails at least two of
+{own MDE, family-wise multiplicity, ex-top-5 by delta, walk-forward, the volume rule, the phantom
+column}. Item 1 needs no pre-registration: its delta is zero BY PROOF.**
+
+### WHAT TO INSTRUMENT NEXT — and it is the only open direction
+
+**Record `signal_price` and `entry_price` on the SAME row, plus the signal timestamp.** The
+signal-to-fill gap is the largest bps quantity in the system, has never been measured, and the one
+observed case (MAGMA, +480 bps over 58 minutes) would have changed that trade's outcome. **It is
+free to record and nothing can be concluded about the gate until it exists.**
