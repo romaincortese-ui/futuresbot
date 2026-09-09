@@ -7051,3 +7051,269 @@ different fill count. There is no tuning solution to a zero mean.**
 > TREND is the sleeve carrying the book's positive expectancy. That is a CAPITAL-ALLOCATION
 > question, it has far better measurement properties than any threshold here, and it is the one
 > that should go on the board next.**
+
+---
+
+## 2026-09-09 (seventh pass) — 4-week market-regime segmentation vs WILDCARD. The regimes are REAL. The sleeve does not see them. Nothing ships.
+
+**Asked, and bounded by the owner:** segment the last 4 weeks into market trends using standard
+crypto practice, score WILDCARD in each, suggest $ P&L improvements. **"Don't look further than
+4 weeks ago."** Honoured: 2026-08-12 -> 2026-09-09, warm-up bars only for 50d SMA / Wilder ADX(14)
+/ 30d return-stdev. 3 agents / 3 verifiers / n=54 WILDCARD closes.
+
+### 1. THE PERIOD TABLE
+
+**Rule** (applicable 2026-08-12 forward, on closed Day1 bars of the bot's OWN scan universe, the
+158-176 non-top-24 perps): `BR` = % of that universe above its own 10d SMA; `AI7` = 7d ROC of its
+equal-weight index. **BULL** if BR>=65 and AI7>=+5%; **UP** if BR>=65 and AI7<+5%; **DOWN** if
+BR<45 and AI7<=+5%; else **FLAT**. Produces contiguous runs, no isolated flips.
+
+| # | dates | d | label | BTC | alt index | breadth | ADX(14) |
+|---|---|---|---|---|---|---|---|
+| **P1** | 08-12 -> 08-18 | 7 | **DOWN / narrow** | 63,455 -> 64,694 | 101.5 -> 100.0 | 43% -> 22% | 11 -> 14 |
+| **P2** | 08-19 -> 08-27 | 9 | **BULL RUN** | 64,694 -> 80,209 (+26%) | 100 -> 122 | 70-88% | 15 -> 38.5 |
+| **P3** | 08-28 -> 09-02 | 6 | **FLAT price / DISTRIBUTION** | 78.5k -> 77.4k | 121 -> 118 | **74.7% -> 24.1%** | 38.5 -> 44 |
+| **P4** | 09-03 -> 09-09 | 7 | **UP, alt-led** | 77.3k -> 79.1k (flat) | 121 -> 138 (+14%) | 65-83% | 44 -> 47.8 |
+
+**Convergence is the reason to believe it:** three independent rules (Kaufman efficiency + breadth
++ realised vol; breadth + 7d ROC; a 5-day normalised z on a MEDIAN-return alt index) all place a
+boundary at **08-18/19** and at **09-02/03**. The verifier rebuilt breadth under four universe
+definitions and got the same two boundaries every time. Only the mid-window boundary is uncertain
+(08-25 vs 08-28); nothing downstream turns on it.
+
+**TWO CORRECTIONS TO THE OWNER'S READ:**
+- **His "down" leg does not exist at index level.** There was no sustained index downtrend in these
+  four weeks. What he saw as down is P1 (drift with participation rotting, breadth 43% -> 22%) and
+  P3 (**price pinned at the highs while breadth halved in ONE DAY, 74.7% -> 39.9%, then 24.1%**).
+  Both are narrow tape at flat-to-high price. **That is distribution, not decline** — and it is the
+  more useful observation.
+- **Judge the sleeve against the ALT tape, not BTC.** The two were in opposite phases all month:
+  ALT/BTC fell 16% while BTC rose 24%; BTC turnover share 0.42 -> 0.31 at the alt frenzy peak ->
+  0.52 by 09-03; **BTC's daily MA20/MA50 never crossed inside the window at all.** A BTC-based
+  label would have called P3 "flat" while the sleeve's actual universe was bleeding.
+  **Breadth of the bot's own universe does all the segmentation work. BTC price alone does not
+  separate these periods.**
+
+### 2. WILDCARD PER PERIOD — and ALL FIVE post-deposit fills landed in P4, in EVERY segmentation
+
+| period | n | win% | sumR | meanR +/- SE | **$ actual** | **post-dep fills** |
+|---|---|---|---|---|---|---|
+| P1 DOWN/narrow | 8 | 25.0% | -1.85 | -0.231 +/- 0.463 | -$0.76 | 0 |
+| P2 BULL RUN | 17 | 35.3% | +0.50 | +0.029 +/- 0.483 | +$12.07 | 0 |
+| P3 DISTRIBUTION | 19 | **68.4%** | +4.86 | +0.256 +/- 0.242 | +$9.33 | 0 |
+| P4 UP | 10 | 20.0% | -3.91 | -0.391 +/- 0.445 | **-$106.36** | **5 <- THE DEPOSIT** |
+| ALL | 54 | 42.6% | -0.40 | -0.007 +/- 0.202 | -$85.73 | 5 |
+
+**Split P4 at the deposit — same period, same market, same days:**
+
+| | n | sumR | meanR | $ | wins |
+|---|---|---|---|---|---|
+| P4 **pre**-deposit | 5 | +1.42 | **+0.284** | +$0.59 | 2 |
+| P4 **post**-deposit | 5 | -5.33 | **-1.066** | **-$106.95** | 0 |
+
+**The "worst market regime" is a period in which the sleeve was POSITIVE right up to the moment the
+size changed.**
+
+**Deposit-clean (n=49, constant ~$2/R) THE ORDERING INVERTS:**
+
+| period | n | meanR | $ |
+|---|---|---|---|
+| P1 DOWN | 8 | **-0.231** | -$0.76 |
+| P2 BULL RUN | 17 | +0.029 | +$12.07 |
+| P3 DISTRIBUTION | 19 | +0.256 | +$9.33 |
+| P4 UP | 5 | **+0.284** | +$0.59 |
+| ALL | 49 | **+0.101** | **+$21.22** |
+
+**Deposit-clean, the BEST period is risk-on and the WORST is a down period — the exact opposite of
+what the dollar column says. Anyone reading the dollar column alone draws the opposite conclusion
+from the truth.**
+
+**At constant 1R the whole four weeks is -$9.04** (sumR -0.40 x $22.6). **89.5% of the headline
+-$85.73 is the deposit landing on a losing streak, not a rate of loss.** P(5 straight losers at the
+pre-deposit 47% win rate) = **0.042** — unlucky, not anomalous. Slippage on stops worsened only
+0.0435R -> 0.0660R against an **11x notional jump** ($20 -> $223 median), ~$0.51/fill, nowhere near
+enough to explain it. n=5 cannot separate bad luck from a size effect; needs the next 10-15 fills.
+
+**The one sub-cut carrying real information is `peak_r`:** fraction never reaching +0.33R is
+P1 75% / P2 35% / P3 26% / P4 60%; fraction clearing +1.0R is 25/35/63/20%. **That is signal
+QUALITY, not exits.** It still fails: 4-way permutation p=0.080 all-54, **p=0.247 pre-deposit**;
+DOWN-vs-RISK-ON binary p=0.164/0.386; winsorised continuous p=0.86.
+
+Long/short is 42/12 (**the file has 12 shorts — an earlier brief said 7; reconcile before citing
+any short-side number**). LONG-SHORT -0.053R, p=0.912, no side x regime interaction.
+
+### 3. THE VARIATION IS NOT REAL — IT IS BELOW CHANCE
+
+**Four buckets of thirteen coin flips would produce a WIDER spread than the one observed.**
+sd(R)=1.47; a 13-trade bucket mean has SE 0.408R; the expected range of four such buckets under the
+pure null is 2.059 x 0.408 = **0.840R**. Observed max-min: **0.647R** (all 54), **0.515R**
+(pre-deposit), **0.270R** under the strictly mechanical dating.
+**There is LESS between-period structure in this P&L than shuffling it would produce.**
+
+- Omnibus permutation, 4 periods: free p = **0.716** (all 54) / **0.892** (pre-deposit);
+  circular-block p = 0.623 / 0.533. Block and free agree, so time-clustering manufactures nothing.
+  Best of six pairwise p, before correction: 0.138.
+- **LABEL CONSISTENCY — the decisive test.** Pooling same-labelled periods, pre-deposit:
+  DOWN (n=27) +0.111R vs RISK-ON (n=27) +0.087R, **diff 0.024R, p=0.959.** Within-label spread:
+  **P1 DOWN -0.231 vs P3 DOWN +0.256 = 0.487R.**
+  **The gap between two periods wearing the SAME label is 20x the gap between the labels.**
+  A variable whose within-label variance dwarfs its between-label variance is not a regime variable.
+- **Multiplicity, three families, all counted before the P&L was attached.** 29 segmentations:
+  **ZERO reach nominal p<0.05 where 1.5 are expected under the null**; family-wise p of the best
+  split 0.408 / 0.764. 110-cell grid (11 causal vars x 5 quantiles x 2 directions): best |dR|=1.21,
+  P(max >= that under null) = **0.280**. 832 distinct day-labelings: observed best |t| = 4.77
+  against a null MEDIAN best of **5.20** — **the real data's best split is WORSE than a typical
+  shuffle's best**, FW p=0.573.
+- **THE NUMBER TO CARRY.** In a 152-keep-set threshold grid the best REAL rule reaches
+  **+$326/month**. Under 2,000 shuffles the **MEDIAN** best rule in that same grid reaches
+  **+$260/month**; the 95th percentile is +$368. FW p = 0.144 IID, 0.073 block-rotated.
+  **On 54 trades, any search of this shape hands you a +$260/month "improvement" as its EXPECTED
+  result under pure noise. Nothing below ~+$370/month is distinguishable from having found nothing
+  — and this sleeve's entire envelope is +/-$60/month.**
+
+**Is it the earlier per-fill refutation in disguise?** Mechanically a period label IS a per-fill
+condition constant over a date range, so in the limit yes — but it was tested on its own terms, and
+period-level adds immunity to per-fill noise in the conditioning variable. It still finds nothing.
+**Two independent routes, same ceiling: ~331,800 fills (~5,700 months) to separate a $10/month
+effect at 80% power, reproducing the earlier ~75,800-fill figure from a different direction.** Even
+"is this sleeve's mean positive or negative" needs ~1,700 fills = **29 months.**
+
+**Fragility:** P2's headline is two tickets (TUT +5.09R, ENA +4.96R = +10.05R; the rest of that
+block sums negative). Stripping the EXCHANGE_CLOSE channel flips the best contrast from +0.469R to
+**-0.243R**. P3's edge is +0.256 -> +0.104 ex-top-1 -> **+0.031 ex-top-2**.
+
+### 4. THE CAUSAL LAG — it decides tradeability, and it decides against
+
+| indicator | P2 ignition (true 08-19) | P3 turn (true 08-28) | P4 turn (true 09-03) |
+|---|---|---|---|
+| **alt breadth >=65** | **+24h** | **+24h** | **+24h**, no whipsaw |
+| alt index 7d ROC | +48h | +24h | +48h |
+| BTC 7d ROC | -24h (whipsaw) | +24h | -96h, fires inside P3 |
+| BTC > 20d/50d SMA | -24h (whipsaw) | **never flips** | **never flips** |
+| **BTC ADX(14) >=25** | +96h (crosses 08-22, day AFTER the alt peak) | **never flips — rises 38.5 -> 47.5 while breadth halves** | never |
+| ALT daily MA20/MA50 | — | — | crosses UP 09-02, **12 days after the alt peak** |
+| 50/200 cross | **never fires inside the window** | — | — |
+
+1. **ADX(14) on daily bars has ~27-day effective memory under Wilder smoothing — longer than the
+   29-day window itself. It is structurally incapable of dating a boundary inside four weeks.**
+   That is arithmetic, and it disqualifies the most commonly proposed regime indicator for this use.
+2. **Breadth is the only well-behaved label: consistently +24h, never whipsaws.** On 6-9 day
+   regimes that costs 11-17% of each period — and the missed day is the IGNITION day, the highest-
+   move day of a three-day +21% thrust. The Hour4 version lags +20h to +60h and **flipped six times
+   in the last four days**; a live rule would have been wrong about the tape on 7 of the 10 P4 fills.
+3. **The information arrives two orders of magnitude slower than the trades it would gate.**
+   Median hold by period: 10.2h / 6.7h / 5.6h / 2.1h. Label formation: 24-60h.
+
+**CORRECTION TO A NUMBER THAT REACHED ME WRONG:** one agent headlined "a one-day lag flips the
+sign, +$134.66/mo -> -$27.59/mo." **False** — it compares two different rules (18 vs 35 deletions).
+Same blocks, lag varied only: **+$134.66 (0d) / +$108.25 (1d) / +$75.05 (2d). Decay, not reversal.**
+And **93% of the +$134.66 is simply deleting the five post-deposit fills** — deposit-clean the same
+rule is worth **+$10.05/mo**, and "skip FLAT alone" is **-$33.20/mo** because deposit-clean FLAT was
+the BEST period.
+
+### 5. SUGGESTIONS, RANKED
+
+| # | action | $/mo | fills delta (net of eviction) | env/code | in-sample? |
+|---|---|---|---|---|---|
+| **1** | **Add no market-trend gate** | **$0** | 0 | no change | no |
+| **2** | **Complete the market telemetry** | **$0** | 0 | code ~40 lines | no |
+| **3** | Halve `FUTURES_WILDCARD_RISK_PCT` | $0 expected (+$1.5 certain) | 0 | **env, today** | no |
+| 4 | Cut WILDCARD allocation 3/2/1/0 slots | +$0 / +$4.20 / +$8.42 / +$12.64 | -18/-36/-54 | env | yes |
+| 5 | X refuse when alt breadth < 0.80 | +$165 headline | -42 (78%) | code | **yes** |
+| 6 | X refuse when prior-close breadth < 0.50 | +$326 headline | -30 (56%) | env | **yes** |
+| 7 | X x0.5 size when breadth < 70% | +$31.7-44.5 | 0 | code | **yes** |
+| 8 | X refuse when alt-tape z < -0.4 | +$31.1 | -25 (46%) | code | **yes** |
+| 9 | X side-restrict by regime | **-$8.4** | -29 | code | yes |
+| 10 | X fast 1-day majors term | +1.05R in-window | -63-67% | ~15 lines | **yes** |
+| 11 | X RELAX gates in the best regime | +$0.96 | +? | code | yes |
+
+**THE STRUCTURAL ARGUMENT COMES BEFORE THE STATISTICS.** Measured slot occupancy on a 30-minute
+grid across the four weeks: **0 slots in use 52.4% of the time, 1 slot 35.0%, 2 slots 11.3%,
+3 slots 1.3%. The 3-slot cap binds ~7 hours of 696 (1.0-1.3%).** So **no refusal rule frees a slot
+another fill would have used. Every market-regime proposal can ONLY delete fills and never add
+them — it fails the screening rule by construction, before any p-value.** And the capacity lever
+does not exist: cutting 3 -> 1 removes almost no fills and frees almost no margin.
+
+**That leaves RELAXATION as the only shape that could pass, and it is now MEASURED, not assumed.**
+`shadow.jsonl` holds 60 resolved refused WILDCARD candidates in the window: overall meanR_net
+**-0.195 +/- 0.120**; by regime DOWN +0.010 (n=4), BULL -0.203 (n=36), FLAT -0.220 (n=20).
+Admitting the best bucket is worth **+$0.96/month, p=0.435**; admitting them in BULL costs
+**-$171/month.** The one proposal shape that could have cleared the screening rule is dead on
+measurement.
+
+**TWO RULES KILLED THAT THE OWNER WOULD OTHERWISE FIND HIMSELF:**
+- **"Block entries while the tape is risk-on"**: +$94/mo on all 54. On the 49 pre-deposit fills the
+  identical gate **LOSES $12.66** while deleting 22 of them; causal-lagged it loses $27.71. And
+  `breadth<0.80` refusal shows +$105.96 raw — of which **+$106.95 is deleting exactly the five
+  funded fills and -$0.98 is the other 49.**
+- **The fast term — the strongest thing anyone found, killed pre-emptively.** Yesterday's CLOSED
+  daily BTC or alt-index return >= +1%, read causally at the entry instant, separates R by
+  **+1.05R with a family-wise, day-block-corrected p = 0.003** on the pre-deposit sample. Monotone
+  across the sweep, survives LOSO, halves but survives ex-top-2 by delta, and is not entry-day beta
+  (same-day-up is NEGATIVE). **It reverses sign on the 40 WILDCARD fills immediately preceding this
+  window** (win 40% in vs 50% out; return-on-margin -0.077 vs +0.042) **and the majors-24h version
+  was already refuted at n=137 with p=0.998 in the OPPOSITE direction** — a sample with power to
+  see a +1.0R effect at t~3.4. **Two independent samples kill it. It is a 29-day artifact. Anyone
+  who runs a 1-day market cut on this window will find it; this is the answer.**
+- Aside, flagged as a stretch: the x0.5-size-when-breadth-low proposal is **beaten by the
+  market-BLIND control "x0.5 on everything" (+$45.93/mo on the same window).** The gain was never
+  the breadth term — it was touching the five funded stop-outs.
+
+### THE TELEMETRY ITEM — corrected premise, recommendation stands
+
+**Agents claimed `calm`, `btc_24h`, `eth_24h`, `sol_24h` are null on ALL 54 rows. VERIFIED FALSE.**
+Actual coverage, checked directly:
+
+    majors telemetry (btc24/eth24/sol24/calm)  PRESENT on 24 of 54 rows
+      clean cutover: missing 08-12T12:29 -> 08-29T10:13 ; present 08-29T19:59 -> 09-09T09:43
+    roc3h, regime_size_mult  54/54      mae_r  16/54 (from 09-01T08:14)
+    t_adverse_50  1/54 (added 09-08)
+
+So the recording works and started **2026-08-29**; 30 of 54 rows in this window predate it. **The
+gap is partial coverage (44%), not a broken feature.** The useful part of the recommendation
+survives: **record alt-universe breadth-24h and cross-sectional dispersion onto each trade row.**
+The scanner already pulls the full ~1000-row ticker snapshot and already bands non-majors via
+`_major_symbols()`, and the payload carries `riseFallRate` per symbol — the statistic is free, no
+extra network call, ~30-40 lines, changes no behaviour.
+
+Justification is **time-to-verdict only**. Prior-close breadth was the only market-wide variable
+that flickered at all (rho +0.317 with r, surviving the deposit strip at +0.343, LOSO 0/38 sign
+flips) — **but it is also the single best rule in a grid whose noise median is +$260/month, so do
+not read it as promising.** The version that would matter — **breadth recomputed at each
+450-second scan rather than at the previous midnight — cannot be backtested at all today because no
+intraday breadth history exists.** Recording it now is what makes that test possible.
+
+### THE RISK_PCT ITEM — and the justification NOT used
+
+Halving `FUTURES_WILDCARD_RISK_PCT` deletes no fills, so it passes the volume screen for free.
+**EV-neutral only at the point estimate:** at this window's -0.007R it gains ~$4.60/mo; at the
+sleeve's lifetime +0.077R it **costs ~$50/mo**. Honest pricing: **+$1.5/month certain** (margin
+released to TREND), **$0/month expected P&L**, a **+/-$130/month coin flip** depending on which
+side of zero the true mean sits, and monthly dollar SE cut from **+/-$255 to +/-$128.**
+**Below the $10 bar as a P&L change — a variance decision with a real opportunity cost, or nothing.**
+
+**The justification NOT used:** "we earned +4.93R at $2/R and lost 5.33R at $21/R" is exactly the
+deposit artefact this study spent four sections disqualifying. Five consecutive stop-outs at a 47%
+win rate is p=0.042 — unlucky, carrying no information about whether the size is wrong.
+**The defensible reason is the plain one: a sleeve whose mean is statistically zero (-0.007 +/-
+0.200 this window, +0.077 lifetime) is now consuming 1.87% risk per trade at ~10x the size at which
+that mean was measured. Scaling a zero mean by 10 scales the expectation by 10 x 0 and the standard
+deviation by 10.**
+
+### THE CAPITAL-ALLOCATION ALTERNATIVE DOES NOT DOMINATE — measured, not assumed
+
+**WILDCARD's mean margin occupancy is $13.0 = 1.30% of $1,004 equity.** Removing it entirely scales
+TREND's size by **x1.0132**. Full ladder at 1R=$22.60: 3 slots $0, 2 slots +$4.20/mo, 1 slot
++$8.42/mo, **0 slots +$12.64/mo — of which only +$2.95/mo is the reliable margin-release
+component.** The other $9.70 is "stop running a sleeve whose sumR is -0.40 +/- 10.79", which is not
+a measurement. **The reliable part is below the bar.**
+
+### THE COST OF THE 4-WEEK BOUND
+
+The owner set it deliberately and it is not free: **no walk-forward is possible inside 29 days**, so
+every threshold here is in-sample, and the noise floor (+$260/month median under the null) exceeds
+the sleeve's entire envelope. **The bound did not cause the negative result** — two of the three
+strongest candidates were killed by data from OUTSIDE the window (the fast term reverses on the
+preceding 40 fills; the majors-24h version was refuted at n=137, p=0.998 opposite) — but it does
+mean nothing here could have been confirmed even if it were real. Confirming any of it needs
+~1,700 fills for the sign of the mean alone: **29 months.**
