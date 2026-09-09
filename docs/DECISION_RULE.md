@@ -7612,3 +7612,178 @@ fills to close even if designed.
   arithmetic (final R 4.96 vs peak 4.94; 5.09 vs target 5.00), not a reason code.
 - The samples are not the same book (n=44/51/56/61/88 by ring-buffer eviction and required fields).
   **Signs and orderings are comparable; dollar magnitudes are NOT and were not treated as such.**
+
+---
+
+## 2026-09-09 (tenth pass) — the 1R-to-TP window. THE "LEAK" WAS MINE: an era mix, not a defect. The trail is not the instrument operating in that window. Ship nothing.
+
+**Asked (owner):** *"We have the armed trail that provides a nice positive floor, but between it and
+the TP there can be a huge window where the trade is twice or more profitable than the locked floor
+and we never benefit from it. How can we optimize between +1R and the TP?"*
+3 agents / 3 verifiers / **258 cells** across five instrument families.
+
+### MY ERROR — THE LEAK DOES NOT EXIST
+
+I reported realised retention of **39% / 13% / 32%** against a designed 50% and called it "a leak
+between policy and execution, 11-37 percentage points of every peak above 1R."
+
+**`FUTURES_CONVEX_TRAIL_RETAIN_FRAC` was 0.30 — the CODE DEFAULT (runtime.py:1930, :2310) — until
+2026-08-29 00:37Z, when trial 18 set it to 0.50.** My table averaged two different policies.
+
+| era | n | mean gross-banked / peak | range (non-ratchet) | design |
+|---|---|---|---|---|
+| <= 2026-08-28 | 12 | **0.312** | 0.239-0.304 (n=11) | 0.30 |
+| >= 2026-08-29 | 14 | **0.496** | 0.442-0.496 (n=12) | 0.50 |
+
+**Zero overlap, no intermediate row.** Both apparent outliers are the ratchet firing correctly
+against its 0.75 design (0.670 and 0.743). **The trail executes its policy to within 2-6 percentage
+points on every fill it has ever taken.** The "graded" pattern was the config date correlating with
+which fills landed in which band. **Discard that table.**
+
+**The 13% cell is ONE row:** AVAX 2026-08-09, `risk_usdt` **$0.03**, fee $0.0145 = 0.43R. It is the
+exact case named in the code comment at runtime.py:2345-2349 as the reason
+`FUTURES_CONVEX_COST_FLOOR_MULT` exists. **Already fixed.**
+
+**The real residual:** floor minus realised gross = **0.0286R per trail fill** (median 0.0250,
+sd 0.0173, max 0.0604, n=14, every row positive — one-sided by construction, so its mean can never
+be zero even for a perfect trail). Realised **$2.60 total over 11.1 days = $7.19/month, below the
+bar.** Projected forward at 1R=$25.16 it is ~$27/month — but that reprices 13 pre-deposit fills
+(risk $0.73-$4.07) by ~10x under an untested size-invariance assumption whose **only live-size
+observation (ZEC 09-06, risk $28.33) is the LARGEST undershoot in the sample, 0.0604R, 2.1x the
+mean.** Quote with that caveat or not at all.
+
+**Fee drag (0.0265R/fill) is CORRECT ACCOUNTING, not slippage:** `_position_pnl_pct`
+(runtime.py:1178) has no fee term, so `peak_r` and the floor are GROSS while `pnl_usdt` is NET.
+Not recoverable by any exit parameter.
+
+**FAIR-vs-LAST basis REFUTED as the cause:** a fixed ~42bps basis predicts 0.265R undershoot on ZEC
+(sl_frac 1.59%) and 0.028R on HNT (15.13%); observed is 0.018R and 0.032R — **wrong magnitude by
+15x and wrong ordering.** corr(sl_frac, undershoot_R) = +0.24 while corr(sl_frac, undershoot_bps) =
++0.73. Undershoot is roughly constant in R and scales with the symbol's own ATR: **the signature of
+price traversing the floor between discrete evaluations.** Monitor loop verified genuinely 1 Hz and
+ungated. Exit-reason mislabelling: **none** — all 9 EXCHANGE_CLOSE rows with peak>=1.0R realised AT
+OR ABOVE their peak (they are exchange-side TP fills, +$142.66 net).
+
+### THE ORACLE BOUND — the prize is real, and 96% of it is the POLICY, not a leak
+
+Post-era only (2026-08-29 -> 09-09, 11.1 days, 20 armed fills, 54.2 armed/month), oracle = sell at
+the recorded 1-second FAIR peak paying the same fees:
+
+| | R | at own realised risk | at 1R = $25.16 |
+|---|---|---|---|
+| **total peak-to-banked gap** | **10.02R** | $38.39 = $104/mo | $252 = **$683/mo** |
+| of which execution undershoot | 0.40R | $2.60 = $7/mo | $27/mo (**4%**) |
+| of which **DESIGNED GIVEBACK** | 9.62R | $35.79 = $97/mo | **$656/mo (96%)** |
+
+> **That $656/month is the answer to "what am I chasing." It is not lost money — it is what a 0.50
+> retention IS. At the peak, every armed trade is worth exactly twice its floor by construction.
+> The owner's observation that "the trade is twice or more profitable than the locked floor" is not
+> a symptom; it is the DEFINITION of the parameter.**
+
+**Capturable without lookahead: measured at <= $0.** 258 cells across five families.
+**63 of 73 in one grid and ALL 20 in another are negative, where a coin flip gives half.**
+The family is negatively skewed, not noisy-with-a-winner-hidden-in-it.
+
+### THE STRUCTURAL REFUTATION — arithmetic on the closed ledger, no replay engine required
+
+Every replay number here swings $70-$133/month on bar resolution and changes sign. **So the
+decisive argument uses none of them.** For any tightening from 0.50 to 0.80 above a trigger T: the
+**gain is CAPPED** by the peaks of fills that stall above T; the **exposure** is every R banked by
+fills that must cross T on the way up.
+
+| trigger T | stalls above T | max gain @0.80 (zero-truncation, impossible) | runners crossing T | R at risk | **exposure ratio** |
+|---|---|---|---|---|---|
+| 1.00R | 14 | +6.21R | 12 | 21.68R | **3.5 : 1** |
+| 1.25R | 7 | +3.84R | 8 | 19.03R | **5.0 : 1** |
+| 1.50R | 2 | +1.82R | 7 | 17.68R | **9.7 : 1** |
+| 2.00R | 2 | +1.82R | 6 | 15.73R | **8.6 : 1** |
+| 3.00R | 1 | +1.05R | 1 | 2.60R | 2.5 : 1 |
+
+Same shape on the full 35-day 85-row sample (3.9:1 to 9.4:1). **Read as a survival requirement: a
+0.80 floor above 1.25R breaks even only if a 20%-retrace trailing stop survives on 80% of the R
+carried by every runner that crosses 1.25R, over multi-hour runs on thin alt perps.** And the gain
+column is a strict upper bound — a higher floor also fires earlier on the stalls themselves.
+
+**Same geometry that killed the 0.8R one-way floor today — interior rescue CAPPED, truncation
+UNCAPPED — arriving from a different direction and without a simulator.**
+
+### THE SCHEDULE — priced as its own object, not dismissed by the uniform sweep
+
+**It IS genuinely different:** linear 0.50@1.0R -> 0.80@4.0R applies 0.50 at 1.00R, 0.51 at 1.05R,
+0.55 at 1.5R, where the refuted uniform 0.80 applies 0.80 at 1.05R. Non-degeneracy confirmed:
+realised trail-exit level has sd 0.33-0.43R across slopes.
+
+| schedule | $/mo | interior (1-2R) | tail (>=2R) | trades changed |
+|---|---|---|---|---|
+| 15 linear cells, slopes 0.05-0.30 | **all 15 negative**, best -$10.24 | — | — | 20-21 of 53 |
+| linear 0.50@1R -> 0.80@4R | -$31.6 | **+$11.8** | **-$43.5** | 29 of 77 |
+| steep 0.50@1R -> 0.80@2R | -$182.8 | **+$32.0** | **-$214.8** | 32 of 77 |
+
+**The gain comes exactly where the owner expects it, and it comes out of the runners. Tripling the
+interior capture ($11.8 -> $32.0) QUINTUPLES the tail loss ($43.5 -> $214.8), and the loss-to-gain
+ratio worsens monotonically from 3.7:1 to 6.7:1 in precisely the direction the question pushes.**
+That shape is the one thing stable across every bar resolution, even where the total flips sign.
+
+**Reporting caveat:** the signed totals are resolution-unstable (the -$31.6 cell prices +$39.0 at
+Min15/close). **Report as "priced negative in three independent sweeps and structurally refuted by
+the exposure ratio", NOT as a measured -$31.6/month.**
+
+### THE ANSWER: THE TRAIL IS NOT THE INSTRUMENT OPERATING IN THAT WINDOW
+
+Of the 20 armed fills since the config changed, split by which instrument actually closed them:
+
+| exit instrument | n | **capture of peak** | dollars (own risk) |
+|---|---|---|---|
+| `EXCHANGE_CLOSE` (the TP / gap-catcher) | 4 | **101%** | **$96.53 = 69% of all armed money** |
+| `CONVEX_TIME_STOP` (24h clock) | 2 | **91%** | $8.76 |
+| `CONVEX_RETENTION_TRAIL` | 14 | **52%** | $35.48 |
+
+**Fills that get deep into the window are already being caught at ~100% of peak by the TP and the
+clock. The trail ends up owning the fills that STALL at 1.03-1.46R — and for those there is no huge
+window. There is 0.5R of window, and it banks half of it.**
+
+**ONE of twenty armed fills has given back more than 1R from peak since 2026-08-29** (USELESS 09-01,
+2.57 -> 1.26). **ZERO have ever given back 2R, in either era.** Under the old 0.30 policy,
+**8 of 12 gave back more than 1R.**
+
+> **The pain the owner remembers is real, and it is a memory of a policy that stopped running
+> eleven days ago.**
+
+**THE BINDING CONSTRAINT BETWEEN +1R AND THE TP IS REACH, NOT RETENTION.** Only 44 of 93 fills reach
+1R, 17 reach 2R, 6 reach 3R, 1 reaches 5R. Retention already executes at design to within 3-6
+points on every fill. **The money sits in the handful of fills that get past 2R, and raising the
+share that get there is an entry/selection question.**
+
+### THE POWER ARITHMETIC — A CORRECTION. Today's "free finding" does NOT transfer.
+
+| family | sd per fill | months to resolve $10/mo |
+|---|---|---|
+| below-arm perturbations (the finding I quoted) | $0.79 - $1.48 | 2.6 - 8.8 |
+| **ratchet / schedule / ATR — THE INTERIOR** | **$3.56 - $8.32** | **46 - 318** |
+| partial scale-out @3R (3 fills touched) | $1.58 | 11.5 — and it prices **-$8.24** |
+
+**The reason is structural: below the arm a change touches many fills by fractions of an R; above
+the arm THE FILLS THAT CHANGE ARE THE RUNNERS**, individual deltas of $11-$35, so variance is 3-6x
+higher even though FEWER fills change. **You are perturbing the tail, and the tail is the variance.**
+
+**Do not pre-register anything here. This is the first exit family where the power arithmetic
+returns a clear NO — that is itself the finding, and it should stop this question being
+re-litigated.**
+
+### RANKED DECISION
+
+| # | change | $/mo | share of $683 oracle | walk-fwd | trades chg | env/code | controls |
+|---|---|---|---|---|---|---|---|
+| **1** | **DO NOTHING** | **$0** | 0% | — | 0 | — | n/a |
+| **2** | **Persist `r_now`/`exit_level`/guard price from runtime.py:2357 onto the closed row** | $0 | precondition for measuring the <=$27 | — | 0 | CODE | none needed — no fill changes |
+| 3 | ratchet RETAIN 0.75 -> 0.55 | +$58.7 nominal | 9% | +$16.0 | **4** | ENV | **p=0.379**; ex-top-5% -> **+$0.6**; dies on TUT drop; both top movers sit in the 0.30 era |
+| 4 | peak-conditional stall stop (120m) | +$7.4 | 1% | $0.00 | 3 | CODE | p=0.697; ex-top-5% -> $0.00 |
+| 5 | ATR trail k=6 | +$5.8 | 1% | **-$142.8** | 11 | CODE | p=0.856; intrabar swing $11.4 on a $5.8 effect |
+| 6 | lower ratchet trigger to 1.2-2.5R | -$8 to -$144 | neg | -$188.6 | 13 | ENV | **all 20 cells negative** |
+| 7 | rising retention schedule | -$10 to -$183 | neg | -$9.5 | 20-32 | CODE | negative under every LOO |
+| 8 | partial scale-out 25% @3R | -$8.2 | neg | -$8.2 | 3 | CODE | all 9 cells negative; extends "floor-not-bank" above 2R |
+| 9 | `MONITOR_SECONDS` 0.25 | unmeasured | <=4% | — | — | ENV | **REJECT ON RISK** — 4 REST calls/position/sec on WS dropout, rate-limits entries and stop management |
+
+**Nothing clears $10/month. Ship #1. Do #2 because it is free** — `runtime.py:2357` already
+log.warnings peak/now/floor/price at the decision poll and never persists it, so the split between
+poll lag and fill slippage is gone from every closed row.
