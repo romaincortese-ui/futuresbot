@@ -7959,3 +7959,185 @@ years of WILDCARD at best, decades on the tail-heavy measure.**
 > ZERO fills ever at rung 3 — in every cell and every ordering.**
 
 **Nothing survives, so nothing is pre-registered.**
+
+---
+
+## 2026-09-09 (twelfth pass) — OPTIONAL STOPPING. The failures ARE a theorem, but not the one I named. The exit programme is closed permanently. The real defect is in WILDCARD ENTRY TIMING.
+
+**Asked (owner):** *"Is there a mathematical theorem we can use to improve our closing strategy? It
+feels like there's a big gap to fill."* 3 agents / 3 verifiers / two independent free-run
+reconstructions / ~1,100 cells re-examined.
+
+### THE THEOREM IS THE CORNER-SOLUTION TRICHOTOMY, NOT "THE PATHS ARE DRIFTLESS"
+
+I framed it as Optional Stopping on a martingale. **That framing was too weak and too strong at
+once.** The operative result is **Doob in its SUBmartingale form, applied as a trichotomy**, and it
+is stronger because it does not require the drift to be zero:
+
+    mu > 0  -> submartingale  -> E[X_tau] <= E[X_T]  -> HOLD TO THE HORIZON dominates every rule
+    mu = 0  -> martingale     -> EVERY RULE IS IDENTICAL in expectation
+    mu < 0  -> supermartingale -> EXIT IMMEDIATELY dominates every rule
+
+> **In all three regimes the optimum is a CORNER. No interior rule is ever optimal under a constant
+> drift of any sign. Every one of the ~430 cells — trails, one-way floors, ratchets, ladders,
+> retention schedules, TP clamps — is an INTERIOR rule.**
+
+**Interior rules become optimal only when drift depends on STATE or on TIME.**
+- **State-dependence: measured NULL, WITH POWER.** This forbids the entire trail/floor/ratchet/
+  ladder/retention family. **Today's four refutations were predictable in advance.**
+- **Time-dependence: measured, REAL, and it is the one hypothesis that genuinely fails.** Drift runs
+  negative for the first 2-4h then flat-to-positive (goodness index -3.41 at 1h, +0.54 at 24h).
+  Constant-mu is measurably FALSE. **Time-dependence licenses a CLOCK, not a trail** — and clocks
+  have been swept 12h-240h and price negative everywhere.
+
+### THE DRIFT TEST IS UNINFORMATIVE; THE STRUCTURE TESTS ARE DECISIVE
+
+| | n | 24h log drift | t | mu/sigma^2 | Shiryaev alpha | CI |
+|---|---|---|---|---|---|---|
+| Min5, live sleeves | 132 | +0.0216 | +0.89 | +0.504 | +1.004 | [-0.10, +2.11] |
+| Min1, WC+TREND | 77 | +0.0016 | +0.07 | ~+0.04 | +0.538 | [-0.92, +1.91] |
+
+**Both intervals span SELL IMMEDIATELY, THE FREE BOUNDARY and HOLD TO HORIZON simultaneously. The
+regime is not identified.** The direct test **could not have detected a drift worth $572-$1,946 per
+month.** Anyone claiming the martingale is *confirmed* by these t-stats is arguing from ignorance.
+
+**But a trail exploits PATH STRUCTURE, not the mean — and that is measured with far more power:**
+- **Variance ratios 0.957-1.014** at every horizon 0.5h-8h, all CIs covering 1.0. Textbook random walk.
+- **No increment predictability** conditional on current P&L, drawdown from running max, running
+  max, or time held.
+- **E[running max] observed 0.1543 vs driftless sigma*sqrt(2T/pi) = 0.1650 — 93.5% of the
+  theoretical value.** The strongest single number in the study.
+- **THE RECOVERY PRIOR IS THE MARTINGALE'S FINGERPRINT, NOT EVIDENCE OF EDGE.** Observed 93.2% vs
+  **95.9% predicted by the reflection principle**; at 25% giveback 88.4% vs 88.8%. **Retire it as
+  evidence.**
+- Two-barrier passage (denominator corrected to condition on hitting a barrier): 0.196/0.279/0.333/
+  0.493 vs driftless 0.167/0.250/0.333/0.500. *(The earlier "jump fingerprint" was a censoring
+  artefact — RETIRED.)*
+
+**Verdict: you cannot say the paths are driftless. You CAN say, with power, that they carry no
+state-dependent structure for any trail, floor or ratchet to act on.**
+
+### MY COST-PROPORTIONALITY TEST WAS WRONG AND IS STRUCK
+
+I called it "the strongest available evidence." **It is mathematically incapable of testing
+anything on this book.**
+1. **The replay subtracts exactly one round trip in every branch of every rule, so cost CANCELS in
+   every paired delta.** Re-running all 292 cells with `COST_PCT = 0` changed the results by
+   **0.0000000000.** The regressor that actually loaded was hold time.
+2. **The naive prediction fails directly:** `$/mo ~ fire_rate` gives R^2 = 0.0045, t = -1.15. Over
+   88 single-exit reparameterisations with identical turnover by construction, t = -0.84.
+3. **Zero-turnover families falsify it outright.** TP clamps add NO round trips (fees are a
+   percentage of notional, not per order), so the cost model predicts exactly $0. TP@1.0R prices
+   **-$336/month.** Total measurable friction is ~$102/month; the observed slope implies -$483/month
+   per unit fire rate.
+
+**THE CORRECT EXPLANATION IS RIGHT-TAIL CONCENTRATION, NOT COST. Top-1 fill = 44% of total R;
+top-3 = 108%; top-5 = 156%.** Fees are 0.055R against a per-fill delta sd of 0.6-3.0R.
+**A book whose mean IS three trades will refute every rule that touches the right tail and show
+nothing for every rule that does not.**
+
+### THE GAP HE FEELS IS A CONSTANT, NOT AN OPPORTUNITY
+
+| ceiling | value | status |
+|---|---|---|
+| oracle / perfect peak capture | +$1,900 to +$4,900/mo | requires lookahead, unattainable |
+| **structural, imposed by the theorem** | **E[max] = sigma*sqrt(2T/pi) ~ 2.0-2.3R per fill** | **IDENTICAL for every stopping rule** |
+| best rule you can SELECT AND VALIDATE | **-$42/mo, cl95 [-$280, +$184]** | leave-one-out over 810 cells (in-sample the same family looks like **+$251/mo**) |
+| detection floor | $61-$355/mo paired; **$161/mo median cell** | **the $10 bar is 6-35x BELOW the instrument's resolution** |
+
+**The peak-to-banked shortfall is not "designed" in the sense of chosen-and-therefore-changeable.
+Under a driftless path it is IMPOSED. Every rule leaves it behind, by theorem, and the measured
+running max lands at 93.5% of exactly that prediction.**
+
+**Sample sizes: ~990 fills (~12 months) settles the REGIME question (is alpha above or below 1/2).
+~34,000 fills (~35 years) would resolve a $10/month exit effect.**
+
+### AN ENGINE BUG THAT BIASES EVERY TRAILING CELL EVER REPLAYED
+
+**The replay updates the running peak from bar i's HIGH, then tests the trail against bar i's LOW —
+a same-bar lookahead.** Lagging the peak one bar moves the Min5 baseline from **-0.0961R to
+-0.0001R per fill**, and the single cell that survived a permutation FWER test goes from
+**+$12.9/mo (t=4.79) to -$7.7/mo (t=-0.35)**.
+
+> **Until this is fixed, every trailing cell this book has ever replayed is biased DOWN and every
+> hold-longer cell biased UP — precisely the pattern the residual leaders showed.** One line.
+> **Also: quote NO absolute levels from the simulator, only paired deltas.**
+
+### THE COMPOUNDING HATCH — open in theory, closed by DOMINANCE
+
+Variance drag at f=1.7-2.4% is **$13-53/month**, above the bar, so the question deserved asking.
+The in-sample refutation is **circular** (it uses the point estimate of the quantity the same study
+declares unmeasurable; under `dmu=0` every clamp turns POSITIVE, +$14 to +$40/mo).
+
+**What closes it is DOMINANCE, which needs no assumption.** Exit rules and the size dial both buy
+variance with mean. The exchange rate |dVar/dmu|: **exit clamps 6.6-8.5; the size dial 21-29.**
+**The dial buys variance 3-4x cheaper and reaches the WHOLE drag, where the best clamp floors at
+55% of it. In both states of the world every exit rule is strictly dominated by a dial the book
+already has.** And LOO on the growth criterion returns **-94%/month** — right objective, wrong
+instrument.
+
+### THE REAL DEFECT: WILDCARD ENTRY TIMING — the only non-martingale term in the book
+
+**WILDCARD entries carry a market-neutral -0.20R to -0.33R drift in their first 2-3 hours.**
+- t = -2.23 at h=3; **median = mean, so NOT a tail**
+- **replicated independently at Min1 (post-2026-08-10, n=83): h=2 mean -0.0205 log, day-clustered
+  t = -4.71**
+- BTC-neutralised: raw -0.0311, BTC-explained -0.0008, **residual -0.0311, t = -2.63**
+- **ABSENT in TREND (+0.0008, t=+0.07), SQUEEZE (+0.0008, t=+0.06) on the same calendar days**
+- **THE ENTRY-SHIFT PLACEBO PASSES** — run independently by two verifiers, which no agent had done:
+  **offset 0 is the ONLY negative of ten offsets; REAL-minus-placebo = -0.204R (se 0.099)**
+- Worth roughly **-$25 to -$830/month, best guess -$250 to -$430**
+
+**Not all recoverable** — the -1R stop already truncates part of that leg, and skipping the entry
+forfeits whatever the fill later does. **One honest tension: a within-path control found the 22-24h
+window equally adverse (t=-2.31), which the offset placebo contradicts. UNRESOLVED.**
+
+### THE DURABLE ASSET: THE FREE-RUN RECONSTRUCTION
+
+Uncensored 24h forward paths from raw Min1/Min5, sampling ENTRIES not OUTCOMES (206 entries
+reconstructed, 204 with klines, 202 with >=98% coverage):
+
+    free-run:  65% reach +1R | 47% reach +2R | 32% reach +3R | 18% reach +5R | max +42R
+               and 65% ALSO touch -1R MAE, mean MAE -1.91R. E[peak] = +3.19R
+    censored ledger said:  30/66 reach 1R | 10 reach 2R | 5 reach 3R | 1 reaches 5R
+
+> **The book has been reasoning about its own distribution from a sample that hides BOTH tails.
+> That method, not any rule it produced, is the durable asset from this week.**
+
+### RANKED DECISION
+
+1. **FREEZE THE EXIT STACK. SHIP NOTHING.** Arm 1.0R, retain 0.50, ratchet 0.75 above 3R, TP 5R,
+   clock 24h, stop -1R. Not the one-way floor, the rising schedule, the TP clamp, the ladder, nor
+   any of the ~1,100 cells swept this week — **including the ones that printed positive.**
+2. **FIX THE PEAK-LAG LINE BEFORE ANY FUTURE REPLAY.** One line. Until then no trailing result is
+   trustworthy.
+3. **ADD A PRE-FLIGHT MDE GATE TO THE STUDY PROTOCOL.** Refuse any cell whose minimum detectable
+   effect exceeds the effect being hunted, and any cell whose sign flips between same-bar and
+   lagged-peak, or between Min1 and Min5. **Every one of the ~430 historical cells was
+   unfalsifiable BEFORE it was run.**
+4. **SIZE — a separate decision on a different objective.** f=2.41% per fill with max-4 concurrency
+   = 9.64% simultaneous heat against a point-Kelly of 5.35% whose 95% CI includes zero
+   (P(mu<=0) = 22.5%). Cutting to ~1.5% and capping heat at ~5% moves P(12-month DD >= 50%) from
+   **46% to 6%**. **Argue from RUIN, not growth** — as a growth trade it fails the same test that
+   killed the exit cells. Point cost -$57/month of a mean that is statistically zero.
+   **Owner's risk tolerance, not a ruling.**
+5. **NEXT STUDY: WILDCARD ENTRY TIMING** (above).
+
+### WHAT THIS RULES OUT PERMANENTLY
+
+- **Any interior exit rule on arithmetic dollars.** Corner trichotomy + null state-dependence.
+- **Variance-reduction-via-exits on growth.** Dominated by the size dial in every state of the world.
+- **"Is the peak-to-banked gap recoverable?"** No. It is sigma*sqrt(2T/pi), a constant, verified to
+  within 6.5%.
+- **Any exit study on fewer than ~1,000 fills.** It cannot return an answer, only noise with a sign.
+- **Du Toit-Peskir / Shiryaev free boundaries** until n is 10x: the CI spans all three regimes and
+  constant-mu is measurably false.
+- **The 93% recovery prior as evidence of edge** — RETIRED, it is the driftless prediction.
+- **The two-barrier "jump fingerprint"** — RETIRED, denominator error.
+- **The cost-proportionality claim** — STRUCK, mathematically untestable on this engine.
+
+### WHAT STAYS OPEN
+
+Whether mu > 0 at all (~12 months of fills settles the regime); WILDCARD entry timing; and whether
+the historical exit record is contaminated by the peak-lag bug — **probably yes for the trail
+family, which is a reason to STOP, not a reason to re-run.**
