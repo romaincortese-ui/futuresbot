@@ -251,6 +251,11 @@ class FuturesRuntime:
         # Last sizing decision, stamped onto the next position opened.
         self._last_entry_sizing: dict[str, float] = {}
         self._pending_entry_lateness: float | None = None
+        # (captured_at, {breadth_24h, breadth_n, alt_med_24h, alt_disp_24h}).
+        # Written by the wildcard scan, read by every sleeve at entry. TREND and
+        # SQUEEZE never pull the ticker snapshot, so they inherit the wildcard's
+        # most recent one and record its age rather than going without.
+        self._last_breadth: tuple[float, dict] | None = None
         self._pending_ref_listed: bool | None = None
         self._pending_candidate_rank: float | None = None
         self._pending_candidate_field: float | None = None
@@ -5196,6 +5201,15 @@ class FuturesRuntime:
                 "sl_frac_designed": (position.metadata or {}).get("sl_frac_designed"),
                 "peak_r": (position.metadata or {}).get("convex_peak_r"),
                 "mae_r": (position.metadata or {}).get("convex_trough_r"),
+                # Market-wide state at entry. Promoted explicitly because this
+                # record is built field by field and anything not named here is
+                # discarded at close - the same defect that wiped five metadata
+                # fields before it.
+                "breadth_24h": (position.metadata or {}).get("breadth_24h"),
+                "breadth_n": (position.metadata or {}).get("breadth_n"),
+                "alt_med_24h": (position.metadata or {}).get("alt_med_24h"),
+                "alt_disp_24h": (position.metadata or {}).get("alt_disp_24h"),
+                "breadth_age_s": (position.metadata or {}).get("breadth_age_s"),
                 # Adverse-depth diagnostic and early-stop telemetry. Promoted
                 # explicitly because this record is built field by field and
                 # everything not named here is discarded at close.
@@ -5326,6 +5340,11 @@ class FuturesRuntime:
                 # carry them. Genuinely new here are roc_z, sl_frac_designed,
                 # peak_r and the equity snapshots.
                 "roc_z": md.get("roc_z"),
+                "breadth_24h": md.get("breadth_24h"),
+                "breadth_n": md.get("breadth_n"),
+                "alt_med_24h": md.get("alt_med_24h"),
+                "alt_disp_24h": md.get("alt_disp_24h"),
+                "breadth_age_s": md.get("breadth_age_s"),
                 "t_adverse_25": md.get("t_adverse_25"),
                 "t_adverse_50": md.get("t_adverse_50"),
                 "t_adverse_75": md.get("t_adverse_75"),
@@ -6308,6 +6327,13 @@ class FuturesRuntime:
             # side of each OLD gate every candidate sat on, so a trial-8 result
             # can be split by change after the fact instead of being ambiguous.
             # Both are free: one extra sort of a list already in memory.
+            # Market-wide telemetry, recorded not read. Never breaks a scan.
+            try:
+                _b = self._alt_breadth(tickers, majors, floor)
+                if _b:
+                    self._last_breadth = (now_t, _b)
+            except Exception:                      # pragma: no cover
+                pass
             legacy_majors = self._top_turnover_symbols(tickers, 30)
             legacy_move = max(0.0, self._env_float("FUTURES_WILDCARD_LEGACY_MIN_24H_MOVE", 0.03))
             self._wildcard_attribution = {}
@@ -6933,6 +6959,59 @@ class FuturesRuntime:
             return 1.0
         self._turnover_baseline[symbol] = (now_t, ratio)
         return ratio
+
+    def _alt_breadth(self, tickers: list, majors: set[str], floor: float) -> dict | None:
+        """Cross-sectional state of the band the wildcard actually trades.
+
+        Recorded, never read as a gate. The 2026-09-09 four-week segmentation
+        found the sleeve's own scan universe is the only thing that separates
+        the tape at all - BTC price does not, and BTC's daily MA20/MA50 never
+        crossed inside the window while alt breadth halved in a single day. But
+        the version that could matter is breadth AT THE SCAN INSTANT, and that
+        cannot be backtested because no intraday breadth history exists. This
+        creates it, at zero behavioural cost and no extra network call: the
+        ticker snapshot is already in memory for the universe build.
+
+        Deliberately its OWN loop rather than folded into the funnel loop. The
+        funnel skips symbols already held (`sym in self.open_positions`), which
+        is correct for candidate selection and WRONG for a market statistic -
+        breadth must measure the market, not the tradeable remainder.
+
+        MEDIAN, not mean, for the central estimate: one listing pump on a
+        thin alt otherwise defines the tape. `riseFallRate` is a fraction.
+        """
+        if not tickers:
+            return None
+        rates: list[float] = []
+        for t in tickers:
+            sym = str(t.get("symbol") or "")
+            if not sym.endswith("_USDT") or sym in majors:
+                continue
+            if not self._is_tradeable_crypto(sym):
+                continue
+            try:
+                if float(t.get("amount24") or 0.0) < floor:
+                    continue
+                r = float(t.get("riseFallRate") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(r):
+                rates.append(r)
+        n = len(rates)
+        if n < 20:            # too thin to mean anything; record nothing
+            return None
+        rates.sort()
+        up = sum(1 for r in rates if r > 0.0)
+        mid = n // 2
+        med = rates[mid] if n % 2 else 0.5 * (rates[mid - 1] + rates[mid])
+        mu = sum(rates) / n
+        var = sum((r - mu) ** 2 for r in rates) / (n - 1)
+        return {
+            "breadth_24h": round(up / n, 4),
+            "breadth_n": n,
+            "alt_med_24h": round(med, 6),
+            "alt_disp_24h": round(math.sqrt(var), 6),
+        }
 
     def _major_symbols(self, tickers: list, n: int) -> set[str]:
         """The 'majors' band the wildcard stays out of.
@@ -8085,6 +8164,19 @@ class FuturesRuntime:
             metadata["entry_lateness"] = round(float(self._pending_entry_lateness), 3)
         # 1.0 = corroborated on Bybit/OKX, 0.0 = MEXC-only (admitted only since the
         # 2026-08-02 gate relaxation), absent = gate off or fetch failed (unknown).
+        # Market-wide state at entry. Recorded on EVERY sleeve, gates nothing.
+        # `breadth_age_s` is load-bearing: the wildcard scan runs every 450s and
+        # TREND every 900s, so a TREND row can carry a snapshot up to ~15 min old
+        # and any future study must be able to discount it.
+        try:
+            if self._last_breadth is not None:
+                _bt, _bd = self._last_breadth
+                _age = time.time() - float(_bt)
+                if 0.0 <= _age <= 3600.0:          # older than an hour is not state
+                    metadata.update(_bd)
+                    metadata["breadth_age_s"] = round(_age, 1)
+        except Exception:                          # pragma: no cover
+            pass
         if self._pending_ref_listed is not None:
             metadata["ref_listed"] = 1.0 if self._pending_ref_listed else 0.0
         self._pending_ref_listed = None  # consumed — never leak across candidates
