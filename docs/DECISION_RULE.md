@@ -6585,3 +6585,220 @@ Not before 400 TREND closes.
 **Fix the scan-phase sensitivity.** A sleeve whose 13-day P&L swings 7.7R on a 60-second clock
 offset cannot price a filter worth 0.9R. This now outranks the ATH/maturity follow-ups and the
 universe-rotation idea, because all of them would be measured on the same unstable baseline.
+
+---
+
+## 2026-09-09 (fifth pass) — regime forensics on 18F/19F. My chop hypothesis was BACKWARDS. Nothing is broken. One real defect: trial 19F cannot answer its own question.
+
+**Trigger:** 9 consecutive losses, funded book -$118.83 over 12 fills. Owner asked for the MARKET
+characteristics of 18F/19F to find a regime the bot is bad in. 3 agents / 3 verifiers / ~20 a-priori
+market variables per search.
+
+### MY HYPOTHESIS WAS WRONG AND THE SIGN WAS REVERSED
+
+I proposed the funded era was CHOP and the book needs market-wide trend. Built from market data
+before any P&L:
+
+| measure | funded window 09-04 -> 09-09 | percentile vs trailing year |
+|---|---|---|
+| BTC 14d Kaufman efficiency | 0.074 | **3.6th** |
+| BTC 24h realised vol | 0.0107 | 15th |
+| BTC ADX14 / 20d realised vol | 47.2 / 0.504 | 94th / 88th |
+| **ALT/BTC, 6-day net** | **+10.8%** | **97.8th** |
+| equal-weight alt index 7d | +13.8% | 95.6th |
+| cross-sectional alt correlation | 0.393 | 39th (DISPERSING) |
+| BTC 24h Kaufman efficiency (intraday) | 0.181 | **47th — dead average** |
+
+**This was an ALT-SEASON MELT-UP on a stalled, high-volatility BTC. "Quiet index, live alts."**
+Calling it chop is true only of BTC's own path; false of the alt tape, false of breadth, false of
+dispersion, and false of the one symbol that carried half the book.
+
+**And the sign is REVERSED: the book's entire lifetime R was earned in LOW-BTC-efficiency tape**
+(pre-funded meanR **+0.404 in chop** vs **-0.004 out of it**).
+
+**THE DECISIVE EXHIBIT:** the book was **LONG ZEC through a +32.7% five-day move** — the 88th
+percentile of ZEC's own 200-day distribution — **across seven fills, and netted -$11.88.**
+Ex the +$75.37 tail it is -$87.25. **That is not a book hurt by chop. It is a book failing to
+convert the strongest symbol move in its funded life.** That is a CONVERSION question, not a
+regime one.
+
+### THE SLEEVE DECOMPOSITION — the single most useful line, and no agent headlined it
+
+| sleeve | fills | wins | P&L |
+|---|---|---|---|
+| **WILDCARD** | 5 | **0** | **-$106.95** (every one ~ -1.06R, a full stop-out) |
+| TREND (7x ZEC LONG) | 7 | 2 | -$11.88 |
+
+**90% of the funded drawdown is ONE sleeve, and that sleeve was measured 2026-09-07 at +0.077R,
+t=0.36 — a coin flip.** P(a 43.4%-win coin flip goes 0 for 5) = **0.058**.
+**There is no market state to find inside a coin flip.**
+
+The owner's three counter-examples all land and kill "needs market-wide trend" outright: PONS and
+MARSCOIN were SHORTS into a falling tape; ZEC 09-06T09:26 lost on the third-strongest major tape in
+the sample. **Correction to one rebuttal:** the historical "SHORT into falling majors" cell is
+**UNMEASURED, not favourable** — 17 of its 19 rows sit inside the loss-censoring window and the 2
+clean rows mean -0.825R. The story fails for absence of evidence, not contrary evidence.
+
+### THE STREAK IS ORDINARY — it was overdue
+
+Loss rate 0.5721 on the deduplicated corpus (n=201):
+
+| | |
+|---|---|
+| P(the next 9 fills all lose), naive | 0.66% |
+| **P(a run of >=9 losses somewhere in 137 fills)** | **31.3%** |
+| **P(a run of >=9 somewhere in 201 fills — the book's observable life)** | **42.9%** |
+| P(>=9 somewhere in 400 fills) | 67.9% |
+
+**The longest run already in the corpus is 8.** Nine is one past something the book has already
+done.
+
+**P(funded path <= -$118.83): 18.6% if both sleeve edges are exactly zero; 4.0% if you credit the
+measured pre-funded edge.** The WILDCARD verdict says the edge is not there, so **18.6% is the
+number to carry.** Adding the 12th fill moved the edge-on reading 10.2% -> 4.0% and barely moved
+the zero-edge reading 19.0% -> 18.6%; **that gap IS the edge being credited, and it is the
+assumption doing the work, not the data.**
+
+P(<=2 wins in 12) = 5.8% at the corpus rate, 1.15% at the actual sleeve mix. **But the honest
+denominator is not 12: seven of the twelve fills are ZEC TREND LONG re-entered across three days.
+Clustered at 36h this is 7 bets with 1 win, P = 6.3-7.5%. The funded era is closer to n=2
+independent decisions than n=12.** Nothing here is below 1%.
+
+### NO REGIME EFFECT SURVIVED — and none ever can on this book
+
+- **"Book needs the majors up":** majors-avg-24h <= 0 gives meanR **+0.206 IN vs +0.205 OUT,
+  p=0.998. Literally identical.** Trading AGAINST the majors prices better (+0.262R, n=39) than
+  with them (+0.182R, n=98).
+- **"Directionless BTC":** sign REVERSED (above). And the two a-priori operationalisations of
+  "directionless" agree on only 58% of fills (phi 0.154) and give **opposite-signed gaps**, both
+  p>0.28. **The concept does not survive its own restatement.**
+- **Best single candidate anywhere** (BTC 24h realised vol below its 400d median): fails FWER
+  (p=0.0004 vs a required 0.00034 on a 146-cell grid), collapses under block permutation (0.026),
+  retains a third to a half of its effect under a **6-hour entry-shift placebo**, halves
+  ex-top-5%, **deletes 66% of fills**, and **deletes the +$75.37 fill that is the entire funded
+  upside.** Walk-forward +$32/mo against a **+$155/mo family-wise critical value.**
+- Every gate version measured costs **$19-$314/month of forgone realised R** while deleting 65-74
+  of 137 fills.
+- **Selection floor:** with 2 wins in 12 the exact permutation floor is 1/C(12,2) = **0.0152**.
+  No variable CAN score better on this window. Exactly 1 of 20 hit it. Sidak FWER on best-of-20 =
+  **0.264. The funded sample is arithmetically incapable of selecting a regime.**
+
+### THE STRUCTURAL CEILING — this closes the regime question permanently
+
+Power arithmetic (sd(R) ~ 1.30, 80% power, alpha 0.05, 45 fills/month):
+
+| detectable gap between arms | fills needed | months |
+|---|---|---|
+| 0.42R | 300 | 6.7 |
+| 0.30R | 589 | 13.1 |
+| 0.20R | 1,325 | 29.4 |
+| 0.10R | 5,300 | 118 |
+
+Inverted against the $10/month bar: **a gate clearing $10/mo while deleting half the fills needs a
+per-deleted-fill gap of 0.020R. That needs ~21,000 fills — FORTY YEARS.** Run the other way: the
+SMALLEST gate this book can ever verify (0.42R over half the fills) would be worth **~$214/month —
+three and a half times the book's entire +/-$60/month envelope.**
+
+> **There is no gate that is simultaneously large enough to detect and small enough to be
+> plausible. This is a structural ceiling on every regime study at this account size.
+> STOP COMMISSIONING THEM.**
+
+On independence: a market-wide gate WOULD be a distinct lever (corr with BTC vol -0.048; the sizer
+reads the traded symbol's own 6h efficiency, not the market's). But the already-measured
+`regime_trimmed`/`chop_regime` AVOID conditions key on `regime_size_mult` itself and are **100%
+double-counting the sizer**, exactly as the memory note suspected. Do not touch the scaler.
+
+### THE EARLY-STOP WINDOW — the misses are the rule working as specified
+
+**Historical WILDCARD median time-to--0.5R is 53 minutes. T=30 sits BELOW the median and catches
+only the fastest 24-31% of fills. P(miss both live opportunities) = 0.48-0.58** (0.81 on the
+all-minutes denominator). **Missing both is the MODAL outcome.** Three of the five readings are
+TREND, a **2.3x slower clock** (median 120 min) where the rule is deliberately off.
+
+**Is it regime? No — refuted three times:**
+1. Adverse crossings were **FASTER** in the funded era, not slower (median 196 vs 407 min on ZEC;
+   242 vs 629 on ATOM). **The premise runs backwards.**
+2. No market-state variable predicts t50 — 9 variables, max-statistic permutation, **all FWER
+   p > 0.43**. Mechanically expected: the stop is ATR-scaled at entry, so t50 measures traversal of
+   a vol-NORMALISED distance and market vol largely cancels.
+3. **MAGMA, a funded-era WILDCARD fill in this exact tape, crossed -0.5R at minute 7. FORM at
+   minute 13. Both would have fired.** They simply arrived before the flag was armed on 09-08.
+
+**STRUCK — do not carry forward:** one agent found a vol link (58.8 min low vol vs 30.7 high,
+p=0.016). Its verifier killed it: the detector used **intrabar wick first-touch, whose bias scales
+with volatility — the very variable being contrasted.** On close-basis detection the gap collapses
+from +28.1 to +11.0 min and p goes 0.016 -> 0.254. **Specifically do not later build a vol-scaled T
+on top of this.**
+
+**What T the data implies — INFORMATION ONLY, not a recommendation.** Live readings imply T>=42 to
+catch both misses. The historical grid says that is the worst available move: **T=30 +$130.9/mo,
+T=45 -$127.9/mo** (-$105/mo ex-ENA, which is 91% of the raw figure). **T=20 prices at or above
+T=30, so T=30 is a PLATEAU MEMBER, not a fitted peak** — a better reason to leave it frozen than
+the one originally given. The supporting "30-45 min is the best band" mechanism is **91% one trade**
+and should be deleted from the record, not repeated.
+
+### THE ONE REAL DEFECT — TRIAL 19F CANNOT ANSWER ITS OWN QUESTION
+
+Fire rate 12/50 = **0.24**. The stop rule **"30 WILDCARD closes OR 45 days, whichever first"**
+delivers **~7.2 expected fires against a primary criterion requiring 20.** At the observed 2.25
+fills/day the 30-close arm triggers **~2026-09-22** and the trial terminates unable to evaluate
+itself. **P(reaching 20 fires inside 30 closes) = 0 BY CONSTRUCTION.**
+
+Dropping the 30-close arm leaves 45 days x ~2/day x 0.24 = **21.6 expected fires against 20
+needed — a knife edge.**
+
+**This defect was pure arithmetic knowable on 09-08 before the flag was set.** That is why an
+amendment is defensible at all.
+
+### THE HALT READING AT n=12
+
+Realised path sits at the **3.99 percentile** of the pre-funded envelope under the measured-edge
+prior, and **18.6%** under the zero-edge prior. Trigger: <2% halt, >=20% hold, else recompute.
+**Both readings are in the do-nothing band. Trigger unmoved, verdict still at n=25.**
+
+Uncomfortable half said out loud: under the OPTIMISTIC prior the path is nearer the halt than the
+hold, and **two more full-size losses drop it through 2%.** Under the honest prior it reads 18.6%
+and is nowhere near firing. **The trigger's reading is currently driven more by which prior you
+credit than by the trades.** Note it; do not change it mid-trial.
+
+### DECISION, RANKED
+
+**1 — DO NOTHING to trading. Keep trading.** No regime gate, no halt, no change to the size scaler,
+the streak throttle, X or T. Every gate prices at $19-$314/mo of forgone realised R, deletes 48-66%
+of fills, kills the tail, and none clears its multiplicity bar. **The correct response to a
+43%-probability event is to keep the sample coming.** $0/month, highest-value option on the board.
+
+**2 — AMEND trial 19F's stopping boundary. OWNER'S CALL — documentation only, no env var, no code,
+no deploy.** Replace "30 WILDCARD closes or 45 days, whichever first" with **"45 days"**, dropping
+the 30-close arm. Log as an **AMENDMENT WITH REDUCED EVIDENTIAL WEIGHT**, dated, with the reason —
+**not as a costless clarification**: two non-fires have been observed and they prompted this study.
+**Add the omitted fallback: if fewer than 20 fires have accrued at day 45, report the running delta
+at whatever n was reached as DESCRIPTIVE ONLY, and do not let a partial-n positive delta be read as
+a pass.** This is the only item that buys time-to-verdict.
+
+**3 — RECORD, do not act: concentration.** 7 of 12 funded fills are ZEC TREND LONG. The funded
+window is ~7 clusters, not 12 bets. Belongs to the allocation question, not the regime one.
+
+**4 — RECORD, do not act: two retention-invariant breaches.** PONS peak +0.965R -> closed -1.08R;
+ZEC 09-09T04:39 peak +0.848R -> closed -1.10R. Each built ~a full R and returned all of it plus a
+stop. Owner's own a-priori rule, so flagging is compliance not pattern-fitting. But n=2, inside the
+noise floor, and early banking is already measured harmful (floor-not-bank). **Price on the wide
+corpus before anything is touched, and not this week.**
+
+**5 — REJECTED: any market-regime entry gate.** Costs above, and per the ceiling no such gate is
+verifiable at this account size in principle.
+
+**6 — REJECTED: halting the book.** The pre-registered trigger has not fired on either prior.
+
+### THE OPEN LEAD WORTH MORE THAN THE REGIME QUESTION
+
+**The book was long the strongest symbol move of its funded life and netted minus eleven dollars.**
+That is a CONVERSION question — what the exit stack does with a winner — and it is measurable on
+the wide corpus without touching anything live. It now sits alongside the scan-phase sensitivity as
+the highest-value open item.
+
+**FINAL: nothing is broken. This is what a 43%-probability streak looks like in a coin-flip sleeve.
+The only defect found today is a stopping rule that made trial 19F unable to answer its own
+question.** No claim is made that anything here clears the $10/month bar in either direction,
+because on a window this short the family-wise 5% critical value is **+$155/month, larger than the
+book's entire envelope.**
