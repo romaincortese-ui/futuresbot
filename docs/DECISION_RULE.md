@@ -6165,3 +6165,205 @@ most likely to remember, and then attached a causal story ("the gap is in the ex
 `risk_usdt` ran **$11.28-$28.33, mean $22.6**, so every monthly figure in this review reads ~10%
 high. Irrelevant to the rankings; relevant to anything near the $10 bar — which is the 300s scan
 candidate, and it falls below it.
+
+---
+
+## 2026-09-09 (third pass) — the owner pushed back on the ATH refutation. He found a real effect I missed. It is not tradeable, and I owe him three retractions.
+
+**Trigger:** owner rejected the ATH refutation, said 18F/19F proved it, and asked for a
+DIFFERENTIATED STRATEGY (not a veto). 3 agents / 3 adversarial verifiers / 3 independent corpora /
+~1,300 priced cells.
+
+### RETRACTIONS FIRST
+
+**1. My sample was 5.5x under-powered in exactly his cell, and I stated seven refutations more
+strongly than it supported.** Of the 389 fills in the 357-day ZEC/ETH/XRP replay, only **24 (6.2%)
+sit post-peak of a run that subsequently ended** — the cell where the damage lives — against
+**34.5%** in a purpose-built corpus of completed parabolic runs. It was not blind (45 fills, 11.6%,
+sit in the final 20% of an ended run, reading +0.056R vs +0.508R for the first 80%) but it was thin.
+
+**2. I used the re-entry-depth study as a club and it does not reproduce.** I told him the n=556
+replay "directly contradicts" him (depth 3+ = +0.814R, t=+4.29). On 5 years / 106 symbols that
+headline cell returns **+0.0058R, t=+0.11**, and **-0.18R** in the 2026 era. Withdrawn. **Strike
+the re-entry-depth reversal from the usable record — it is fragile in both directions.**
+
+**3. My scope was wrong.** He said differentiated STRATEGY; I tested vetoes, half-sizing and
+ROC/RSI caps seven times. **Handling the trade differently once open had never been tested.** His
+structural argument was also correct: every entry filter this month raised mean R and destroyed
+dollars by deleting 20-82% of fills, and an exit rule deletes zero. That was the right place to
+look and I did not look there.
+
+### THE EFFECT HE FOUND IS REAL — and I missed it in seven prior passes
+
+**Within a run, later entries genuinely do worse.** Mean within-run Spearman(entry price, R) =
+**-0.3523** (se 0.0085, **t = -41.68**) over 2,131 causally-identified runs / 16,961 fills on a
+5-year 106-symbol sample; -0.3035 (t=-30.97) on the 1,017 runs with >=7 fills, matching his n;
+-0.2374 (t=-8.22) independently on a 360-day 42-symbol sample. Permutation p<0.001 in all four cuts
+against a null mean of +0.0003.
+
+My own pooled tabulation had said trades 1-7 are flat (slope +0.0068 R/ordinal, P=0.32). **That was
+confounded by run length** — trade_n=1 draws from every run including one-trade runs; trade_n=7
+only from long ones. On BALANCED panels (runs with a complete 1..L sequence) it is unambiguous:
+L=4 slope -0.338 (P=0.0010, 36 runs), L=5 -0.324 (P=0.0003, 34), L=7 -0.154 (P=0.0022, 34),
+L=10 -0.076 (P=0.0063, 30).
+
+**Post-peak fills earn -0.164R against +0.473R pre-peak (n=11,329 vs 5,974).** Large and real.
+
+### WHY IT CANNOT BE HARVESTED — SIMPSON'S PARADOX
+
+**Within a run: later = WORSE (rho -0.35). Pooled across runs — the only view available at entry
+time: later = BETTER.** Spearman(pct_since_run_start, R) = **+0.0317 (t=+6.84)** wide and
+**+0.0943 (t=+6.64)** fine; fire72 +0.049/+0.133; seq_n positive.
+
+To act on within-run rank you must know at entry whether THIS run will be long. A 7th firing in a
+strong run beats a 1st firing in a weak one. **Post-peak is defined by the peak. Final-ness is not
+causally observable.** Every causal proxy is a mixture of the harmful final firing with continuing
+runs, and the mixture prices **-$91.5/mo** on his own book.
+
+### HIS SEVEN DO NOT SCORE AS MATURE
+
+- **All seven share ONE causal run anchor** (2026-08-16, last daily close <= daily SMA20, close
+  486.14). Every run-anchored measure is a monotone relabelling of the calendar inside his window.
+  **Spearman(price, time) = +0.964** — at n=7 price and the clock are the same variable and cannot
+  be separated even in principle.
+- Gain-since-anchor at his entries: **+113/+122/+135/+147/+152/+148/+154%**. A **>=100% maturity
+  gate fires on all seven, including the +$75.37 winner.** The only cut that splits them is >=140%,
+  which inside one run is arithmetically "ZEC >= 1166" — a price threshold read off the seven
+  observations meant to justify it.
+- On causal measures that are not pure clock, **his deepest entry is his LOWEST-priced trade**:
+  fill #1 at 1036.54 scores runbars 156, run_pct 0.269, run_r 4.28 — the most mature of the seven.
+- Extension-over-SMA20 ordering (41.4/37.0/44.9/52.4/55.6/41.2/39.5%) is non-monotone and would
+  block winner #1 while allowing losers #6 and #7.
+- **nhseq reads [1,1,2,2,1,2,0] — the best rule the entire exit study produced fires on ZERO of
+  his seven.**
+
+### THE RUN DID NOT END — verified independently on MEXC daily bars
+
+    2026-09-06  close 1226.83  high 1255.97
+    2026-09-07  close 1139.29  high 1229.91
+    2026-09-08  close 1177.16  high 1211.66
+    2026-09-09  close 1233.73  high 1265.18   <- NEW ALL-TIME HIGH AND NEW ALL-TIME CLOSE
+
+**Trades 4-7 did not buy an exhaustion. They bought a three-day ~12% shakeout inside a run that
+made a new all-time high today.** There was nothing for any lookahead-free detector to see on
+09-06 09:26 because nothing had happened.
+
+### THE ATH LABEL — REFUTED FOR THE 8TH TIME, now on a sample that CAN see exhaustion
+
+5 years / 106 symbols, containing 11,560 fills followed within 30 days by a -30% drawdown:
+**ATH entries +0.1349R (n=773) vs -0.0481R (n=46,603).** The label is a POSITIVE marker.
+On his own seven, six of seven are new all-time closing highs including both winners; under the
+high definition five of seven including both winners. Any veto keyed on the label keeps the loser
+and deletes the +$75.37.
+
+### THE EXIT-SIDE HYPOTHESIS — his actual proposal, tested for the first time, NULL
+
+| construction | best cell | null |
+|---|---|---|
+| 306 cells (18 causal maturity defs x 17 exit levels), 344 fills, live universe | **+$13.5/mo** | family-wise permutation **median +$13.3/mo**, p=0.48 |
+| 280 cells, fine sample | +$14.5/mo point | **-$32.4/mo ex-top-5%-by-delta** |
+| 648 cells x 6 maturity states, 17,303 fills | best cell is the IDENTICAL cell in every state, and pays MORE on the non-mature complement in all five | FWER **p >= 0.99** |
+
+**The grid maximum EQUALS the null median.** And the killer nobody ran until verification —
+**walk-forward selection** (pick the best cell on the training fold, score on held-out):
+
+    select era1 -> era2   -$8.9/mo     select ex-ZEC -> ZEC   -$16.8/mo
+    select era2 -> era1    -$0.0/mo    select ex-ETH -> ETH    -$5.4/mo
+    expanding folds  +$6.9 / -$11.8 / -$41.4    select ex-XRP -> XRP   -$0.0/mo
+    mean -$15.4/mo, negative in 7 of 9 folds
+
+Entry-shift placebo removes the effect at a **one-hour shift** (-$1.3, +$7.7, -$1.7, +$3.6, -$0.1).
+
+**The degeneracy trap does NOT apply here** (checked first, as required): 0 of 306 cells degenerate,
+because the regime is assigned at ENTRY from a causal feature, so the two regimes govern disjoint
+trade sets. Unlike the path-state hybrid where every peak passed through the tight regime. The
+study was legitimate to run.
+
+**Is it the refuted early-arm in disguise? FOR THE TRAIL, YES, decisively.** His four losers peaked
+at **0.2195R, 0.0877R, 0.4855R, 0.1168R**. A trail acts only at or below peak, so touching all four
+requires arming **below 0.088R**. Arming below 1.0R was refuted at 54 of 55 cells and reproduces
+here (unconditional arm 0.75 -$16.1/mo, 0.50 -$66.8, 0.30 -$103.3). **Conditioning changes WHICH
+trades a rule touches; it cannot change the fact that the rule must fire below the peak to act.**
+
+The clock and TP are genuinely different levers, not the early-arm, and they are null. **Every
+"bank earlier when mature" cell is negative** (TP 3R->1.5R at atr_ext>=4: -$10.0/mo t=-2.45;
+pct_since>=0.30: -$4.3/mo t=-2.27). **The only positive direction is holding LONGER, which dies on
+the tail screen. His proposed cure points the wrong way.**
+
+**Every unconditional tightening is negative:** arm 0.30/0.50/0.75 = -$103.3/-$66.8/-$16.1;
+retain 0.60/0.70/0.80 = -$14.7/-$40.0/-$44.8; TP 1.0/1.5/2.0/2.5R = -$111.2/-$91.0/-$56.8/-$20.2;
+clock 3/6/9/12h = -$87.0/-$47.2/-$43.5/-$21.5. **The live stack is at or near a local optimum on
+every axis. That is the strongest single result in the pass.**
+
+Entry-side on his own universe with slot re-allocation: veto trade_n>=4 (his exact shape)
+**-$91.5/mo** (deletes 144 of 345 fills); veto gain>=100% -$23.7; fitted gain>=140% -$10.1;
+age>=336h -$41.9; no-new-high>=48h -$14.7; half-size gain>=100% -$18.0; half-size trade_n>=4
+-$40.6; size-neutral early-run tilt +$3.2 point but **-$35.2 ex-top-5%-by-delta**, permutation
+p=0.853 with a null mean six times the observed.
+
+### THE BASE RATE — 1 in 10, not 1 in 35, and an earlier pass got this wrong AGAINST him
+
+"The four highest prices are the four worst R" has exact base rate 1/C(7,4) = **2.9%**. Corrected
+for time clustering: circular-shift p = **1/7 = 0.143**, the FLOOR attainable at n=7 (the test is
+unpowered by construction). Measured empirically: **P=0.065** over 46,740 seven-fill windows,
+**P=0.0845** over the 142 windows matching his exact configuration, **6 of 40 complete 7-trade run
+sequences = 15%**. **N ~ 35 raw, N ~ 7-12 once clustering is honoured. Where an earlier pass told
+him 1-in-5040, that was wrong and wrong against him.**
+
+### THE PHENOMENON ITSELF IS OPEN — and the two verifications disagree. Not papered over.
+
+- **Verification 1** built a structureless random-walk null carrying the same run partition and
+  found the within-run rank statistic returns **-0.30 to -0.32 MECHANICALLY**, against observed
+  -0.35 wide and -0.24 fine. A run is a maximal excursion above the MA, so it ends in a breakdown
+  by construction; ranking a fill against its own run's later members is itself a lookahead
+  quantity. **~85-90% of the "strong effect" is partition arithmetic, and the fine sample is WEAKER
+  than pure noise.** The label-shuffle null holds the partition fixed and is blind to this.
+- **Verification 3** built an unselected 561-symbol daily corpus (13,311 fills, 6,211 runs, no gain
+  filter) and found the pooled causal ordinal monotone negative from the second firing:
+  **+0.331, -0.087, -0.128, -0.214, -0.233, -0.266 (n=10,092)**. It also demolished the
+  "front-loaded, no bucket negative" reading as an artefact of a corpus restricted to runs that had
+  already doubled.
+- The 106-symbol hourly sample returns the **OPPOSITE SIGN on the same pooled statistic**
+  (+0.030 to +0.125 across seven measures, both cuts, all positive).
+
+**Two independent unselected samples, one statistic, opposite signs.** Universe-dependent effect or
+noise; I cannot tell which. It does not change the decision.
+
+### WHAT SHIPS: NOTHING
+
+Closest four, for the record:
+
+| # | candidate | $/mo | deleted | env/code | why not |
+|---|---|---|---|---|---|
+| 1 | nhseq>=3 -> clock 12h | +13.5 pt | 0 | code (3 call sites + new feature + migration) | = null median; walk-forward -$15.4; fires on 0 of his 7 |
+| 2 | fire72>=5 -> arm 2.0R | +14.5 pt | 0 | code (global arm covers WILDCARD too, -$62/mo) | -$32.4 ex-top-5%-by-delta |
+| 3 | hours-since-run-start >=72h veto | +3.2 excess | **28% of fills** | code | FWER p=0.138, below placebo median; +$2.1 cross-sample at p=0.91 |
+| 4 | his fitted gain>=140% separator | **+$579 in-sample / -$1.1 out** | 653 | code | **130x fit-to-forecast gap** |
+
+**DO NOT SHIP the tempting one:** clock 6h unconditionally scores **+$25.47 on the funded five**,
+driven almost entirely by the 09-06 17:38 fill. The same rule across 344 fills is **-$47.2/mo**.
+
+**Telemetry — the only thing worth doing, and NOT today.** The causal maturity vector is computable
+at the scan instant at zero behavioural cost: run_anchor_date/close, age_hours, gain_since_anchor,
+trade_n, fires_since_anchor, hours_since_prior_new_24h_closing_high, ext_over_daily_sma20,
+atr_pct/30d-median, swing_low_break. Two conditions: (a) it is a code change on the write path of a
+live trial — bundle it with the fair/last exit-fill logging and do both AFTER 19F's verdict;
+(b) **record only pooled, entry-time statistics. The within-run rank statistic must never be logged
+without its random-walk null (-0.30) attached**, or at n=100 it will read strongly negative
+whatever the market does and this argument runs an eighth time.
+
+### FALSIFICATION — pre-registered now
+
+**One statistic: the slope of R on the POOLED CAUSAL trade_n for in-run TREND fills.** Not the
+within-run rank correlation. With sd(R)=1.49, sd(trade_n)=2.09 over ordinals 1-7, 48.3 TREND
+fills/month and ~62% inside a run:
+
+    -0.429 R/ordinal (what his seven imply)  -> N=13   -> ~2 weeks
+    -0.25                                     -> N=33   -> 1.1 months
+    -0.15 (the corpus value)                  -> N=91   -> 3.0 months, verdict ~2026-12-10
+    -0.10                                     -> N=204  -> 6.8 months
+
+**Decision rule, declared now:** at N=91 in-run TREND fills, a slope <= -0.15 with t <= -2 reopens
+the **early-run UPSIZE** question only — never a late-run veto, never a rule keyed on run length,
+because every actionable deletion has already priced between -$10 and -$92 on this book. Otherwise
+the line closes at the $10 bar.
