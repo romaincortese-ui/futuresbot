@@ -7317,3 +7317,112 @@ strongest candidates were killed by data from OUTSIDE the window (the fast term 
 preceding 40 fills; the majors-24h version was refuted at n=137, p=0.998 opposite) — but it does
 mean nothing here could have been confirmed even if it were real. Confirming any of it needs
 ~1,700 fills for the sign of the mean alone: **29 months.**
+
+---
+
+## 2026-09-09 (eighth pass) — the owner's one-way safety floor. REFUTED, and MY structural framing was the error.
+
+**Proposal (owner's own design, stated precisely):** arm at 1R as today; if the trade reaches
+within 20% of 1R (S = 0.80R), trigger a "safety net" that closes the trade if it later crosses back
+DOWN through S. Above 1R the normal trail arms as usual.
+
+3 agents / 3 verifiers / path-exact Min1 replays / 24-cell (S x retain) surface on three
+independent constructions.
+
+### MY ERROR, FIRST — I told the owner the rule was inert on runners. IT IS THE OPPOSITE.
+
+I framed it as: "the retention floor (0.50 x peak) equals S at peak = 1.6R, so **below peak 1.6R
+the safety floor binds and above it the rule is inert**." **That is wrong, and it inverts the
+finding.**
+
+**The floor arms against `peak-so-far`, NOT the final peak. Peak-so-far starts at zero on every
+trade, so EVERY runner passes through [S, 1.6R) on its way up — at which moment the retention
+floor is still below S and the safety floor binds.**
+
+Measured: **100% of the 93 fills whose baseline peak reached >=1.6R dipped back through 0.80R at
+some point**, median dip **0.464R below S** — three times the FAIR/LAST basis band, so this is not
+a feed artefact.
+
+    at S=0.80, 201 of 389 fills (52%) change hands. Of those 201:
+      128 (64%) have baseline peak in [S, 1.6R)   <- the band I predicted
+       73 (36%) have baseline peak >= 1.6R        <- the band I called INERT
+       54        have baseline peak >= 2.0R
+    11 of the 12 fills reaching peak >=1.6R are changed; 7 of 7 reaching >=2.0R.
+
+**THE KILLER CASE:** ENA_USDT 2026-08-20 peaked **0.850R**, fell to **0.698R**, then ran to
+**5.02R and hit TP**. The safety floor banks +0.76R and forfeits **4.20R (-$95 at today's 1R)**.
+Also cut at a peak-at-fire of 0.83-0.94R: XRP -2.20R, XRP -2.20R, TUT -1.97R.
+
+**This is not a narrow-band tweak. It is a rewrite of the exit for half the book.**
+
+### THE BREAK-EVEN ARITHMETIC — the one-sentence verdict
+
+**Rescues are CAPPED. Truncations are NOT.**
+
+    RESCUES:      126 of 201 fires, average **+0.394R** each.
+                  Capped at +1.80R by construction: the best possible rescue turns -1.0R into +0.80R.
+    TRUNCATIONS:   75 of 201 fires, average **-1.099R** each, UNCAPPED.
+                  Worst single case: a ZEC fill, peak 4.73R, baseline +2.92R, floored to +0.72R = -2.20R.
+
+    Break-even needs rescue share p >= 1.099/(1.099+0.394) = **73.6%**.
+    Measured share: 126/201 = **62.7%. FAILS BY 11 POINTS.**
+
+**And it fails at EVERY S, by 9 to 14 points, with no cell approaching the crossover:**
+
+    S      0.60   0.65   0.70   0.75   0.80   0.85   0.90   0.95
+    need    56%    62%    68%    72%    74%    74%    75%    75%
+    got     44%    51%    55%    58%    63%    63%    66%    66%
+
+Raising S improves the ratio (fewer, larger truncations against a stable rescue count) but **the
+average truncation grows faster than the rescue count does, so the gap never closes.**
+
+### THE RECOVERY PRIOR HELD, IN THIS EXACT BAND
+
+**86% of trades that trigger the S=0.80 floor go on to make a new high above the level they
+triggered at (30 of 35)** — reproducing the record's 93% (41/44) 10%-giveback figure precisely
+where it matters. The rule cuts trades that mostly recover.
+
+### ALL CELLS NEGATIVE, EVERY CONSTRUCTION
+
+    agent 1 (matched cohort, 389 fills): all 24 cells -$50 to -$95/mo; owner's cell -$63/mo real
+    agent 2 (path replay, 82 fills):     all 24 cells -$68 to -$308/mo; owner's cell -$113.8/mo
+                                         nominal / -$102.3/mo realised; 35.2 fires/month
+    agent 3 (Min1, 77 live-stack fills): all 24 cells negative at consistent funded pricing;
+                                         best S=0.95/ret0.50 **-$99.40/mo**; owner's cell **-$196.03/mo**
+    walk-forward: -$15.6 to -$52.4/mo across three splits (agent 2); -$49/mo (agent 1)
+
+Split at S=0.80: **+$105/mo in the band I reasoned about (peak<1.6R) and -$175/mo in the band I
+called inert. Net -$63/mo.**
+
+### MY +$81.60 HEADLINE WAS AN APPLES-TO-ORANGES COMPARISON
+
+I priced PONS at +$34.18 and ZEC 09-09 at +$47.42 by comparing the rule against their **LIVE**
+outcomes. **In path replay they are worth +$6.3 and +$7.3, because the sim's own baseline ALREADY
+rescues both rows** — they are unfaithful rows (sim +0.53R/+0.43R vs live -1.08R/-1.10R). The
+delta must be measured against the same engine's baseline, not against the live ledger.
+
+**And the sign does NOT depend on them: removing both makes the rule WORSE (-$127.9/mo).**
+
+### THE PRICING ARTEFACT THAT MAKES IT LOOK PROFITABLE — worth remembering generally
+
+Agent 3 found the rule flips positive (-$12.69/mo -> +$70.90/mo) **only at realised-risk pricing**,
+and diagnosed why: **the 55 pre-09-01 fills carrying the truncated runners were sized at $2.03 mean
+risk, while PONS and ZEC were sized at $18.46 and $25.21.** Pricing the forfeited runners at their
+historical pocket-money size, and the rescues at funded size, is what manufactures the profit.
+**At one consistent 1R it is never positive.**
+
+**GENERAL RULE TO CARRY: any exit-rule delta spanning the deposit boundary must be priced at ONE
+consistent 1R. Mixed-era realised-risk pricing systematically flatters rules that rescue recent
+losses and truncate older winners.**
+
+### VERDICT: DO NOT SHIP. And the mechanism generalises.
+
+**Any rule that closes on a downward crossing of a fixed R level cuts every runner, because every
+runner crosses that level from below and dips back through it at least once.** The proposal's value
+depended entirely on the claim that it could not touch the tail, and the tail is exactly what it
+touches. That closes not just this rule but the whole family of fixed-level one-way floors.
+
+**What was genuinely new and worth keeping:** the degeneracy check came back the OPPOSITE of the
+prior two-regime hybrid — 201 of 389 fills change hands and every fire changes the outcome, so this
+was a real test of a real rule, not a bit-identical null. The rule is refuted on its economics, not
+dismissed on a technicality.
