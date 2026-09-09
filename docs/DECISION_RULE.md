@@ -7787,3 +7787,175 @@ re-litigated.**
 **Nothing clears $10/month. Ship #1. Do #2 because it is free** — `runtime.py:2357` already
 log.warnings peak/now/floor/price at the decision poll and never persists it, so the split between
 poll lag and fill slippage is gone from every closed row.
+
+---
+
+## 2026-09-09 (eleventh pass) — the staircase/ladder floor with no TP. REFUTED. The rule written to remove the ceiling installs a lower one.
+
+**Proposal (owner's own, specified precisely):** rungs at every NR with a constant **0.2R** buffer
+(confirmed from his worked example: 1R=$10 -> arm $8; 2R=$20 -> arm $18; $2 = 0.2R both times), so
+floors sit at 0.8R / 1.8R / 2.8R / 3.8R / 4.8R... **The take-profit is removed entirely.** Remaining
+exits: initial stop, ladder floor, 24h clock. Rationale: *"no limit to how high it can be."*
+
+3 agents / 3 verifiers / 16-cell grid (spacing x buffer) / path-exact Min1, both intrabar orders.
+
+### THE SURVIVAL TABLE — it answers the proposal on its own
+
+Owner's cell (spacing 1.0R, buffer 0.20R), Min1 adverse-first, n=80 walkable rows:
+
+    rung 1 (floor 0.80R):  41 armed | **37 CUT (90.2%)** |  4 survived
+    rung 2 (floor 1.80R):   4 armed | **4 CUT (100%)**   |  0 survived
+    rung 3 (floor 2.80R):   **0 ever reached**
+    rungs 4, 5:             never reached
+
+> **Max ladder-banked outcome across the entire book = +1.79R.**
+> **The rule sold as "no limit to how high it can be" produces the TIGHTEST CEILING OF ANY EXIT YET
+> TESTED: 1.8R, against a live book that banked 5.09R.**
+
+**The rung-1 cut rate is 89-100% in EVERY ONE of the 16 cells.** No cell lets more than 7 fills
+reach rung 2; no cell lets more than 1 reach rung 3.
+
+**The "reach vs armed" gap is the clearest exposition** (n=53, free-run = what the path would have
+done with only the -1R stop and the clock):
+
+| rung | floor | could reach | armed | cut | survived |
+|---|---|---|---|---|---|
+| 1 | 0.80R | 24 | 24 | 20 | 4 |
+| 2 | 1.80R | **14** | **4** | 4 | 0 |
+| 3 | 2.80R | **8** | **0** | 0 | 0 |
+| 4 | 3.80R | 7 | 0 | 0 | 0 |
+| 5 | 4.80R | 5 | 0 | 0 | 0 |
+
+**14 fills could have armed rung 2 and only 4 did, because 20 were already gone at rung 1. Eight
+could have armed rung 3 and none did. Everything above rung 2 is priced on a population of zero.**
+
+**THE LADDER AMPUTATES ITS OWN TAIL:** it converts 17 fills that would reach 2R into 7, 6 that would
+reach 3R into 3, and **the single 5R fill into zero.**
+
+### THE NAMED CASES — the two biggest wins in the book are both cut at rung 1
+
+    ENA  08-20  live +4.96R (TP)   -> CUT AT RUNG 1 at 0.80R.  Forfeits 4.20R.
+    TUT  08-22  live +5.09R (TP)   -> CUT AT RUNG 1 at 0.80R.  Forfeits 4.29R.
+    MAGMA 08-28 live +2.98R         -> CUT AT RUNG 1 at 0.80R.
+    USELESS 09-04 live +2.55R (peak 3.50R) -> CUT AT RUNG 1 at 0.80R.
+    ZEC  08-21  live +2.98R         -> CUT AT RUNG 1 at 0.80R.  -2.18R.
+    USELESS 09-01 live +1.21R (peak 2.57R) -> cut at RUNG 2, **+0.52R — the ONE case it improves.**
+
+**ENA forfeits the IDENTICAL 4.20R that the single 0.8R floor forfeited this morning. The ladder
+inherits that failure in full and its higher rungs never activate to pay for it.**
+
+**MY ERROR IN THE BRIEF:** I cited a "ZEC fill with peak 4.73R". **It does not exist.** Every ZEC
+fill is TREND, whose TP is 3.0R, so ZEC peaks are TP-capped; the highest ZEC peak in the corpus is
+**3.026R**. The agent correctly refused to fabricate it and said so.
+
+### RUNG 1 ISOLATED — the premise, measured and inverted
+
+    single 0.8R floor alone:        -$143/mo
+    adding rungs 2+:                a FURTHER -$47/mo
+    total:                          -$190/mo
+
+**The higher rungs do not pay for rung 1. They deepen its loss.** And the ladder does not work with
+rung 1 deleted either (-$148/mo). All 16 grid cells negative, **-$38 to -$339/mo.**
+
+### THE TWO HALVES ARE NOT SEPARABLE — adopting the ladder IS deleting the TP
+
+**Under any ladder in any cell, results with the TP kept are BIT-IDENTICAL to results with it
+removed — 0 of 848 fill-cells differ — because nothing survives past 1.8R and the TP sits at
+3.0/5.0R.** So the ladder deletes the only exit in the stack that has ever caught a top (2 fills at
+~101% of peak, 69% of armed money last window) and returns nothing for it.
+
+**TP removal standalone: -$0.4 to -$46/mo**, 5 fills, robust under every control at slightly negative.
+
+### THE "UNBOUNDED" PREMISE IS WORTH LESS THAN ZERO
+
+**The 5R WILDCARD ceiling was exceeded by exactly ONE closed fill (TUT, 5.56R) and the 3R TREND
+ceiling by ONE (ZEC, 3.03R) — 2 of 200. Total real headroom above the ceiling: 0.59R = +$16/mo
+gross, against $24-46/mo to remove it.**
+
+### THE BREAK-EVEN — the same margin that killed the single floor
+
+Rescues are structurally **capped** (best case: a -1R stop converted to +1.78R). Truncations are
+**uncapped** and reach **-4.25R**.
+
+> **The ladder needs to rescue 78-87% of the trades it touches; it rescues 67-77%. It misses by
+> 10-11 points — the same margin, to within 0.3 points, by which the single 0.8R floor missed this
+> morning (73.6% needed, 62.7% measured).**
+
+**15 of 15 non-degenerate cells fail their own break-even, by 4.9 to 22.5 points.**
+Interior **+$158/mo**, tail **-$348/mo** — the identical signature as the refuted rising schedules.
+
+### THE RECOVERY PRIOR, RE-MEASURED ON ACTUAL RUNG EVENTS
+
+After touching a rung floor, a fill makes a new high **67% at rung 1, 70% at rung 2, 62% at rung 3**
+(one agent), or **58% / 57% / 88% / 71% / 100%** ascending on free-run paths (another). Lower than
+the generic 93% giveback prior, **but still means two in three cut trades were STILL ALIVE.**
+On free-run paths the prior gets STRONGER with height, which is exactly why cutting low is
+expensive and why the rule can never collect the cheap cuts higher up.
+
+### THE POSITIVE CELLS ARE AN ARTEFACT — and the control that proves it
+
+Every ladder variant printing positive (+$340 to +$594/mo) **removes the floor entirely below 2R —
+"delete the trail", relabelled.** The **entry-shift placebo reproduces them** (placebo median +$345
+to +$448/mo on randomly scrambled entries), so that gain is **tape drift, not exit skill.** And
+truncating at the live exit collapses +$479 -> +$205 while the owner's own rule moves only $0.70.
+**That asymmetry is the tell.**
+
+### CORRECTION STRUCK BEFORE IT SHIPPED — do not let this become next week's proposal
+
+One agent told the owner his high-rung intuition was right (exposure **0.4:1** above 2.8R, "a floor
+that only exists above 3R"). **That table was computed against today's TP-CAPPED exits** — the tell
+is exposure 0.00R at 5.8R, only possible because a 5R take-profit already amputated everything
+above it. **On genuinely free-running paths — the world this proposal creates by deleting the TP —
+the ratio WORSENS with height: 1.9:1 at 0.8R, 2.7:1 at 1.8R, 7.7:1 at 2.8R, 14.9:1 at 4.8R.
+There is no cheap insurance up there.**
+
+### STRUCTURAL COST IS SMALLER THAN I FEARED — and my "zero buffer" concern was partly wrong
+
+Verified at source: **runtime.py:2331-2336 writes `convex_peak_r`, saves, and RETURNS before
+evaluating the floor — so a rung cannot arm and fire on one poll**, and `convex_peak_r` is already
+persisted. ~5 lines, not new state. **My "the floor equals the current price at the arming moment,
+so the next downtick closes you" concern is prevented by the existing code path.** The rule still
+fails, on economics rather than mechanics.
+
+### RANKED DECISION
+
+| rank | action | $/mo | walk-fwd | tail | changed | env/code |
+|---|---|---|---|---|---|---|
+| **1** | **DO NOTHING** — arm 1.0R / retain 0.50 / ratchet 3.0R->0.75 / TP 5R WC, 3R TREND / 24h clock | **0** | — | — | 0 | — |
+| 2 | TP removal only | -$0.4 to -$46 | -$7 | -$24 | 5 | env |
+| 3 | widest cell S=2.0/B=0.50 (best in sweep) | -$38 | fails | -$180 | 39 | code |
+| 4 | ladder, rung 1 removed | -$148 | -$18 | -$300 | 12 | code |
+| 5 | **owner's rule as specified** | **-$120 to -$290** | fails | -$197 to -$348 | 34-41 | code, global |
+| — | positive-printing cells (+$340 to +$594) | **ARTEFACT** | — | — | — | reject |
+
+**Both readings of his sentence were tested.** Literal (floor live from $8): **-$180 to -$290/mo**.
+Looser (floor live only after price clears $10): **-$90/mo**, ceiling rises to 2.76R, **and it still
+cuts ENA at 0.80R.** Both fail.
+
+### THE DEEPER DIAGNOSIS — worth more than the refutation
+
+**The problem is not the ladder. It is the belief that a FLOOR is the instrument.** Every floor at
+every height is a bet that a giveback means the move is over, and this book says the opposite:
+**58-88% of fills that touch a rung go on to make a new high.** You are not buying protection, you
+are paying a toll on a 2-in-3 false alarm, ~24 times a month.
+
+**And the real case is HNT: it free-ran to 13.95R and the book kept 0.55R.** That is a genuine
+diagnosis and it is **NOT an exit-floor problem** — a floor can only ever REDUCE the distance
+between peak and exit by cutting earlier; **it cannot make you hold longer.** The money on runners
+is a sizing or re-entry question. Different brief.
+
+**The safety-arm intuition is already in the stack and better implemented:** arm 1.0R, retain
+0.50 x peak, ratchet 0.75 above 3R. **That floor is uniformly LOOSER than the ladder at every peak
+level, and looser is what this book pays for.**
+
+### POWER — to close the question, not reopen it
+
+Per-fill delta sd **$12-18**; one-month SE **$116** against a -$120 point estimate; t = -1.04,
+permutation p = 0.13-0.47. **Detecting the $10/mo bar in this family needs ~2,600 fills — four
+years of WILDCARD at best, decades on the tail-heavy measure.**
+
+> **This window cannot resolve the dollars for ANY exit-floor rule, and re-slicing these 53-80 rows
+> will never settle it. Quote the COUNTS, not the total: 37 of 41 cut at rung 1, 4 of 4 at rung 2,
+> ZERO fills ever at rung 3 — in every cell and every ordering.**
+
+**Nothing survives, so nothing is pre-registered.**
