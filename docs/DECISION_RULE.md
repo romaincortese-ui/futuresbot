@@ -6367,3 +6367,221 @@ fills/month and ~62% inside a run:
 the **early-run UPSIZE** question only — never a late-run veto, never a rule keyed on run length,
 because every actionable deletion has already priced between -$10 and -$92 on this book. Otherwise
 the line closes at the $10 bar.
+
+---
+
+## 2026-09-09 (fourth pass) — owner's two proposals: RSI_MAX and a symmetric per-symbol cooldown. BOTH REFUSED. And a finding that outranks them: TREND is not measurable at this n.
+
+**Asked:** sweep `FUTURES_TREND_RSI_MAX` over trials 17-19F and pick the correct value; and test a
+TREND-only cooldown (>1 loss in 24h -> 12h; >2 wins in 24h -> 12h). 3 agents / 3 verifiers.
+
+### TWO ERRORS OF MINE, CORRECTED FIRST
+
+**1. My RSI reconstruction was wrong in the direction that mattered.** I told the owner the losers
+sat at RSI 55.3 and 53.6. The exact `_rsi` is **Cutler/SMA-14 on Min15 INCLUDING the forming bar,
+not Wilder** (`wildcard.py:170-176`). Correct values:
+
+| fill | entry | RSI | R |
+|---|---|---|---|
+| 1 | 1036.54 | 75.7 | -0.206 |
+| **2** | 1077.87 | **90.2** | **+3.016** |
+| **3** | 1140.35 | **83.9** | **+0.419** |
+| 4 | 1199.51 | 67.5 | -1.022 |
+| 5 | 1224.50 | 73.7 | -1.044 |
+| 6 | 1205.82 | 73.4 | -1.048 |
+| 7 | 1234.00 | 75.3 | -1.100 |
+| 8 (open) | 1253.38 | 76.6 | — |
+
+**There are NO low-RSI entries in the book. The two winners carry the two HIGHEST RSIs.**
+Spearman(RSI, R) = **+0.68** on the owner's own fills. All 17 live TREND entries: 74.49, 74.35,
+59.02, 85.72, 89.11, 54.99, 77.43, 91.05, 80.58, 83.48, 75.67, 90.19, 83.91, 67.48, 73.75, 73.43,
+75.34. Winners mean 79.5 (n=7) vs losers 75.3 (n=10). **The lowest-RSI signal in the entire book
+(54.99, ZEC 09-03T11:10) was the second-best trade at +2.81R.**
+
+**2. My cooldown hand-trace was wrong by 43 minutes.** At fill 5's entry (09-06T17:38) the trailing
+24h contains fill 2 (win), fill 3 (win), fill 4 (loss) = **ONE loss**. Fill 1's close (09-05T16:55)
+is **24h43m old, outside the window.** Same on the entry clock.
+- **Evaluate-at-scan** (`if losses_24h > 1: skip`, the obvious implementation): the loss leg blocks
+  **NOTHING** among fills 1-7. **My -$11.88 -> +$8.50 does not happen.**
+- **Latch-from-trigger** (arm at a qualifying CLOSE, hold 12h): the condition became true at fill
+  4's close while fill 1's loss was still in-window, latching to 09-07T02:29, which blocks fill 5.
+  Then it does happen.
+**The entire headline rested on a semantics choice the owner never made, worth 0.9R against a
+scan-phase noise floor of sd 1.93R.**
+
+### RULE A — RSI_MAX: THE CORRECT VALUE IS UNSET. Refuted WITH A MECHANISM.
+
+**The mechanism is structural, not statistical.** Gate 2 demands a **new 24h CLOSING extreme**,
+which mechanically forces RSI-14 high. **Gate 3 is near-collinear with gate 2 — there is no
+operating range between "inert" and "off".** Median entry RSI is 76.4 because that is what the
+detector IS.
+
+Swept over 17-19F (15-phase ensemble, forward re-scan):
+
+    cap    95  92   90   88    85    82    80    78    75    72    70
+    $/mo    0   0  -64  -81  -100  -208  -234  -251  -344  -295  -366
+          inert inert
+
+Independent 358-day replay, shipped 3-symbol universe (n=374): 60 -$88, 65 -$87, 70 -$79, 75 -$38,
+80 -$29, 85 -$13, 90 -$16, 95 +$2.7 (touches 1.6% of fills). **Same monotone-toward-zero shape as
+the prior wide sweep (70 -$154 -> 90 -$36) on a DISJOINT sample.** Wide n=205: Pearson(RSI,R)
+**+0.154 (t=+2.22)**, Spearman +0.213; **the fills each cap removes have a HIGHER meanR than the
+fills it keeps, at every level.**
+
+**Walk-forward: every cap negative OOS in both directions.** Forward (train 17+18 -> hold 18F+19F)
+-$14 to -$42/mo; the in-sample-best cap 90 (worth exactly $0 in-sample because it never binds
+there) forecasts -$35/mo. Reverse -$10/mo. **Expanding folds on the wide book keep selecting cap 95
+— i.e. they keep choosing "off".**
+
+**BOUNDARY HAZARD:** fill 2's RSI computes to **89.99** on a Min15 reconstruction and **90.19** on
+a Min1 one, and the gate is `rsi >= rsi_max`. **A cap at 90 either costs $0 or costs the whole
++$75.37 tail, decided by a 0.2-point reconstruction difference.** The unswept 90.3-91.9 band is the
+only region that could bind without touching fill 2 — and it is locatable only by first looking at
+the tail's RSI, so it is fitted before it is measured.
+
+**THE DATA SUPPORTS A FLOOR, NOT A CAP — and it is not shippable.** `trend.py` reads
+`FUTURES_TREND_RSI_MIN` but applies it only under `if rsi_min > 0 and s < 0` — **SHORTS ONLY**.
+Long-side is a code change deployed into live 19F. Best cell looks like +$58/mo then dies:
+**ex-top-5%-by-delta -1.27R (SIGN FLIP)**, LOSO ex-XRP +0.02R (the rule IS XRP, 2 of 17 live
+fills), Bonferroni p=0.36 over 18 cells, and its OOS gain rides on phantom sim fills.
+
+**TRAP TO NAME:** caps 55/60 score nominally +$35/mo and **delete 19 of 21 fills.** That is not a
+filter, it is "switch TREND off" — a different question, interval [-$155, +$123].
+
+### RULE B — THE COOLDOWN: NULL AT THIS BOOK'S RESOLUTION. Point estimate negative.
+
+Construction: **forward re-scan, NOT row deletion.** `runtime.py:6630` skips a symbol only while
+HELD, so a blocked entry frees it and the 900s scan re-fires.
+**Delete-only overstates by 2.5x (+$59.6 -> +$23.9/mo on the live window). Across the 108-cell grid
+45% of cells are positive under delete-only, only 23% under re-scan.**
+
+| reading | live (fills 1-7) delete-only | wide 358d, re-scan | deleted / created |
+|---|---|---|---|
+| loss leg only | $0 evaluate-at-scan / +$8.50 latched | **-$0.9 +- $4.7/mo** | 6 / 1 |
+| both, **win >=2**, close clock | +$37.00 | **-$15.7 +- $21.6/mo** | 68 / 22 |
+| both, **win >2** (his literal wording), close clock | never fires | +$0.1 +- $7.8/mo | 22 / 7 |
+| both, win >=2, entry clock | — | -$7.5/mo | 57 / 22 |
+| both, win >2, entry clock | — | +$2.8/mo | 11 / 2 |
+
+Named created fills (win>=2, live window): ZEC 09-04T08:49 (+0.655R), ZEC 09-04T08:53 (-1.054R),
+ETH 09-03T15:25 (+0.557R), plus six ETH re-entries all stopping at -1.13 to -1.19R.
+**One block merely moved the same ZEC stop-out 45 minutes earlier.**
+
+**LOSS LEG: UNTESTED, NOT REFUTED.** Fires 6 times in 358 days, -$0.9 +- $4.7/mo. On the live book
+its ONLY firing is **fill 8, which is still open** — no measured cost and no measured benefit.
+**RETRACTION within the pass:** one agent claimed post-loss fills are BETTER (the mechanism that
+refuted the WILDCARD cooldown). That direction holds only on an unconstrained 3052-fill book and
+**FLIPS to the owner's direction on both books matching the shipped 2-slot config.** The loss leg
+fails on dollars and firing rate, not on mechanism.
+
+**WIN LEG (>=2) — the genuinely novel idea, given a real test.** Direct conditional, no cooldown
+mechanics, n=374/358d: after >=2 wins/24h meanR **+0.069 (n=63)** vs **+0.172** otherwise.
+Diff **-0.103R**, bootstrap 95% CI **[-0.42, +0.23]**, p(diff<0)=0.73.
+**His DIRECTION is right. The magnitude is unresolvable — and the cell he would delete is still
+POSITIVE expectancy, so standing aside only pays if the replacement fill is better. The replay says
+it is worse.** Wide re-scan -$16.6 +- $21.2/mo; expanding-fold walk-forward **-$13.23/mo held
+out**; LOSO negative in **4 of 5** folds; **ex-top-5%-by-delta -$29.5/mo (removing its BEST month
+makes it worse)**. Live-window figures span **-$33.2 to +$23.9/mo across two in-house engines on
+the same data** — no live dollar figure is quotable in either direction.
+
+**WIN LEG (>2), his literal wording: never fires on his book** (ZEC's max was exactly 2).
+A null by construction.
+
+### MULTIPLICITY — the deciding control
+
+108 cells (loss 1/2/3 x win 2/3/4 x lookback 12/24/48h x cooldown 6/12/24/48h), permutation null
+with outcome labels shuffled while slot mechanics stay real:
+
+| | real best-of-108 | null median best | family-wise p |
+|---|---|---|---|
+| wide 358d | +$8.0/mo | **+$19.0** | 0.86 |
+| live 17-19F | +$29.8/mo | **+$32.4** | 0.57 |
+
+**On BOTH samples the real grid best is at or below the median of what pure noise manufactures on
+this book.** Zero of 108 cells clears +$10/mo in-sample on the wide book.
+
+### THE OUTCOME-BLIND CONTROL — the most informative number in the study
+
+A 12h cooldown of the **same count, same duration, same symbols, at RANDOM times**: the real
+win-leg sits at the **68th percentile** of that null (one-sided p=0.317); second independent run
+**70th percentile** (p=0.30).
+
+**It is a duty-cycle cut wearing a rationale. The outcome conditioning is worth NOTHING.** ~90% of
+its measured cost is arithmetic volume loss (65 deleted x ~0.15R baseline) — the same
+volume-limited signature that killed every entry filter this month.
+
+### THE HONEST SIZE OF THE LIVE EVIDENCE
+
+| trial | span | closed TREND fills | net | quotable? |
+|---|---|---|---|---|
+| 17 | 08-27 09:32Z -> 09-04 10:57Z | **10** | +$8.83 | 1R was ~$2.73 pre-deposit — **dollars not comparable** |
+| 18F | 09-04 -> 09-08 18:18Z | **6** | +$15.36 | the total that flipped on one trade |
+| 19F | 09-08 18:18Z -> now (0.7d) | **1** closed + 1 open | -$27.25 | **n=1, no rate quoted** |
+| pooled | 13.0d | **17** | -$3.06, SE $94.66 | **not headlined** (reporting standard) |
+
+**The ENTIRE win-leg effect lives in trial 18F alone** — +$119 to +$153/mo there (n~4.5 simulated
+fills), exactly $0.00 in 19F, **-$25.0/mo in trial 17.** That is the owner's eight-fill window and
+it is the only place the rule looks good. **Every reading flips sign between trial 17 and 18F.**
+
+### THE FINDING THAT OUTRANKS BOTH QUESTIONS — TREND IS NOT MEASURABLE AT THIS n
+
+**13-day sleeve P&L moves from -1.7R to +6.0R purely by shifting the scan clock 60 seconds.**
+Same rule at phases 400/600/800s: **+0.352R / -0.458R / +0.530R**, with three completely different
+blocked lists.
+
+**The family-wise 5% critical value on this window is +$155/mo — LARGER THAN THE BOOK'S ENTIRE
++/-$60/mo ENVELOPE**, because one fill is worth ~$53/mo at 1R=$22.6.
+
+**No TREND entry filter is measurable at this n until the phase sensitivity is understood.**
+Everything in this report — including the owner's +$8.50 — is a fifth of that noise floor.
+
+Fidelity, plainly: 17 of 27 live TREND closes are `EXCHANGE_CLOSE`, a path no harness models; the
+sim baseline runs +5.29R where the live book is -$3.06 over the same span. **All TREND dollar
+figures are COMPARATIVE, not absolute.** The external gate (`FUTURES_EXTERNAL_GATE_ENABLED=1`) is
+not replayable, so every counterfactual book may contain fills the live bot would have refused.
+
+### DECISION, RANKED
+
+| # | action | $/mo IS | walk-fwd | del/created | env/code | verdict |
+|---|---|---|---|---|---|---|
+| **1** | **Leave `FUTURES_TREND_RSI_MAX` UNSET** | 0 | 0 | 0/0 | env | **the null action — DO** |
+| **2** | **Do not ship the cooldown, any leg, any of 108 cells** | 0 | 0 | 0/0 | code | **the null action — DO** |
+| 3 | shadow counter only (free) | 0 | 0 | 0/0 | ~3 lines on the existing `_shadow_log_untaken` rail | permitted |
+| 4 | win leg >=2, close clock | +$23.9 live / -$16.6 wide | -$13.2 | 68/22 | code | REFUSED — blind p=0.32, LOSO 4/5 neg, sign flips |
+| 5 | loss leg | $0 measured | -$0.9 | 6/1 | code | REFUSED — untested, 1 open fill |
+| 6 | win leg >2 (literal wording) | +$0.1 to +$2.8 | -$3.3 | 22/7 | code | REFUSED — null by construction |
+| 7 | RSI cap 90 | -$64 to -$84 | -$35 | 2.5/1.6 | env | REFUSED — boundary cell, kills or misses the tail on 0.2 RSI pts |
+| 8 | RSI cap <=85 | -$100 to -$366 | -$189 | up to 75% of fills | env | REFUSED |
+| 9 | long-side RSI FLOOR (the opposite rule) | +$58 | +$26 fwd / +$0.06 rev | 5.1/3.2 | **code + deploy into live 19F** | REFUSED — ex-top-5% -1.27R, ex-XRP +0.02R, Bonferroni p=0.36 |
+| 10 | cap 55/60 ("+$35/mo") | +$35 | — | 19/0.3 | env | **TRAP — deletes 19 of 21 fills = "switch TREND off"** |
+
+### WHAT WOULD HAVE TO BE TRUE — and why waiting cannot deliver it
+
+The win leg >=2 is **the only non-noise-shaped direction found on TREND this month** (-0.103R).
+Current resolution on the 358-day / 374-fill shipped universe is **+/-$21.6/mo**. Shrinking that to
++/-$10 needs ~4.7x the span — roughly **1,700 days (~4.6 years)** of the shipped universe, or
+~1,750 more TREND fills. At ~40-48 fills/month **that is not reachable by waiting.**
+
+**Translation: this question cannot be answered by trading. It can only be answered for free.**
+
+**The one thing worth doing, no dollars at risk:** stamp trailing-24h per-symbol win/loss counts
+into each TREND trade row at entry, **both clocks** (the two readings gave -$15.7 and -$7.5 on the
+same data). Gate nothing. `_shadow_log_untaken` already exists and is already called in the same
+scan path for `slot_occupied` and external-gate vetoes.
+
+Clock choice if ever built: **close clock.** `trade_history` rows are appended at close, the
+scoreboard's `ts` comes from `exit_time` (runtime.py:4736), `_last_exit_by_symbol` is already
+close-keyed (but holds only the LAST exit, so a count rule needs a `trade_history` scan). No
+lookahead in either clock. Ring buffer is not a threat (200 rows span 95 days; a 24h window needs
+<15). **One live hazard: if the ledger loss-censoring defect recurs, the loss leg silently
+under-counts and FAILS OPEN.**
+
+**Revisit criterion:** win-leg conditional diff < -0.25R with a bootstrap CI excluding zero on
+>=400 fills, AND beating its own outcome-blind null at p<0.05, AND surviving LOSO on ZEC.
+Not before 400 TREND closes.
+
+### ESCALATION — do this before any further TREND entry study
+
+**Fix the scan-phase sensitivity.** A sleeve whose 13-day P&L swings 7.7R on a 60-second clock
+offset cannot price a filter worth 0.9R. This now outranks the ATH/maturity follow-ups and the
+universe-rotation idea, because all of them would be measured on the same unstable baseline.
