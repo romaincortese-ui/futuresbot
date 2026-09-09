@@ -7426,3 +7426,189 @@ touches. That closes not just this rule but the whole family of fixed-level one-
 prior two-regime hybrid — 201 of 389 fills change hands and every fire changes the outcome, so this
 was a real test of a real rule, not a bit-identical null. The rule is refuted on its economics, not
 dismissed on a technicality.
+
+---
+
+## 2026-09-09 (ninth pass) — TP geometry. The owner's DIAGNOSIS is right and better than anything produced this month. The REMEDY is refuted. The TP is a GAP-CATCHER, not a goal.
+
+**Trigger:** owner watching a live IOST long at x1 with a TP +79.1% from entry: *"How is +100% a
+good goal for a trade with no leverage?"* 3 agents / 3 verifiers / 5 path-exact estimators.
+
+### THE ARITHMETIC IS REAL; THE CAUSAL CHANNEL I PROPOSED IS NOT
+
+Confirmed at source (`wildcard.py:284-317`): `sl_frac = SL_ATR_MULT x atr_pct` (env 3.0, **code
+default 1.5**); `leverage = int(min(10, max(5, 7)))` — **starts at 7, not 5** — then
+`MAX_SL_MARGIN_PCT=20` trims it to `max(1, int(0.20/sl_frac))`, which is the x1 on IOST;
+`tp_dist = sl_frac x 5.0` = **15 x atr_pct in price**. The clamp at line 313 is `if s < 0`,
+**shorts only**, and its docstring's stated reason is MATHEMATICAL unreachability (a target through
+price zero). **Nobody ever asked whether a LONG target was reachable.** That gap is the owner's find.
+
+Distribution reproduces across three samples (n=44/51/61): **median long target 42-47% of price,
+p90 82-89%, max 100%. 75-95% of longs sit above 25%.** Shorts: 62-74% would exceed their clamp.
+
+**MY "the 24h clock binds asymmetrically" MECHANISM IS REFUTED DIRECTLY.**
+- **High-ATR fills reach their R-targets AS OFTEN OR MORE OFTEN.** By atr_pct tercile, censored at
+  24h and at the stop: +1R **45%/45%/52%** (logrank p=0.86), +2R 25%/35%/38% (p=0.38), +3R
+  20%/15%/24% (p=0.61). The single p=0.019 at +5R is 1 of 12 tests, non-monotone, Bonferroni
+  p=0.23. **On the reach dimension R-space IS time-invariant.**
+- **The clock almost never fires.** Median WILDCARD long is dead in **2.15 hours**; **2 of 61**
+  survive to 23h. Exits are the stop (~43 of 88) and the trail (~34 of 88).
+- Extending the clock is negative at every setting: 30h -$1.83/mo, 36h -$0.22, 48h -$2.98;
+  ATR-conditional negative in all 10 cells.
+
+**The real reason the target is never touched is simpler and worse for the proposal: median 24h
+peak excursion is 6.2-7.0% of price against a 44-47% target.** A 48h clock does not rescue a 44%
+ask from a 7% market. **The live IOST target was reached in 2 of 5,664 rolling 24h windows over 60
+days — 0.04%.** The live target sits at **2.51x the symbol's own 24h-MFE p90** (median), implying a
+median historical hit probability of **1.0%**.
+
+**ONE PIECE OF THE MECHANISM SURVIVES — keep it on file.** Among fills that DO run, high-ATR ones
+are genuinely slower: median hours to +2R **4.9 / 6.8 / 13.6** by tercile. Time dilation is real.
+It costs nothing today because only ~10% of fills are clock-censored. **Any future change that
+makes trades live longer must re-open this.**
+
+### THE HONEST NULL WINS — AND THE TP IS A GAP-CATCHER
+
+**An unfilled resting limit order transfers exactly $0.** Verified structurally
+(`runtime.py:1494-1504`): `_skips_discretionary_locks()` returns True for `_is_wildcard_convex()`,
+removing the sleeve from `_profit_lock_exit`, the micro-lock (`max_peak_tp_progress=0.50`), the
+stagnation exit and `early_exit_tp_progress` — **every rule in the codebase that reads
+`tp_progress()`.** For WILDCARD the target price has **exactly ONE consumer: the exchange-side
+order.** It reads nothing, gates nothing, sizes nothing, blocks no margin.
+
+**And it is not idle — it has been paying.** It resolved **2 of 56 fills (3.6%): ENA +4.93R and
+TUT +5.53R, the book's two best trades.** Its MARGINAL value over what the ratcheted trail would
+have banked anyway (0.75 above 3R -> ~3.70R and ~4.17R) is **~$6 over the window**, not the $29
+gross one report headlined. Small, positive, and pointing away from touching it.
+
+> **The unreachable TP costs nothing, and the two times it did reach, it earned more than the trail
+> would have. It is not a goal. It is a gap-catcher, and gap-catchers are supposed to sit far away.**
+
+### THE CLAMP — his distinction was legitimate and was honoured. It still fails.
+
+**A price clamp is NOT the uniform TP_R sweep.** At 40% it binds on 26 of 40 longs and leaves 14 at
+TP_R=5.0 untouched; at 75% it binds on 6 of 40. It deletes zero fills. **Nobody gets to answer this
+by citing -$111/mo at TP 1.0R.** It was built and swept on its own terms.
+
+**It fails on something the uniform sweep never showed: five estimators cannot agree on the sign of
+a single binding cell.**
+
+| clamp | Min5 n=88 | Min5 TP-favourable | Min1 n=50 | Min1 vs live | peak_r n=54-56 | median |
+|---|---|---|---|---|---|---|
+| 15% | -42.87 | — | **+25.89** | -11.19 | -7.47 | **-9.33** |
+| 20% | -33.91 | — | +11.54 | +13.96 | -2.86 | -0.87 |
+| 25% | -18.41 | +7.89 | — | +7.53 | -2.58 | -2.58 |
+| 30% | -17.14 | — | 0.00 | **+16.37** | -2.83 | 0.00 |
+| 35% | -7.34 | -23.51 | — | -4.14 | -2.09 | -4.14 |
+| 40% | +1.98 | -10.47 | 0.00 | 0.00 | -0.39 | -0.20 |
+| 50%+ | 0.00 | -11.39 | 0.00 | 0.00 | 0.00 | 0.00 |
+
+**Spread at 15% is $69 — seven times the decision bar. No cell has a positive median.**
+
+**Three mechanical reasons the positives are not real:**
+1. **The Min1 sim mis-scored the tail.** It recorded TUT 2026-08-22 as a +2.98R trail exit; live it
+   was a **+5.09R take-profit**. That one row is the difference between +$25.89 and -$11.19 at the
+   15% cell. **Exactly the loss-enrichment hazard, catching the study at the cell it was built on.**
+2. **"Exactly $0.00, zero outcomes changed" is an INTRABAR ARTIFACT.** Five longs traversed >=50%
+   of price (BTW peaked at 56.3% before exiting the trail at +3.05R). The zero comes from the
+   engine updating `peak` with the bar's high BEFORE checking the trail, so the trail pre-empts the
+   clamped TP on the exact bar it would fire. Under TP-favourable ordering a 50% clamp changes one
+   fill and **loses $11.39/mo. The honest 50% figure is [-$11.39, $0.00], not zero.**
+3. **The peak_r "$0.00 at 30%" does not reproduce** — it rests on MAGMA firing at peak_r 4.4169
+   against a threshold of 4.4218, a 0.11% gap resolved by an sl_frac accurate to +/-5%. On recorded
+   `sl_frac_designed` it is -$2.83/mo. **There is no non-negative interior clamp and no near-miss.**
+
+**TAIL COST — the substantive kill.** A price clamp is BY CONSTRUCTION a tail-truncation device:
+inert on every fill that didn't run, live only on the largest excursions. **9 of 56 fills reached
+>=2R and carry 67-69% of the book's gross winnings.** At 25% the tail supplies 71-80% of the
+damage; at 15% it is **-$34/mo on two named fills** (ENA -1.85R, TUT -0.95R). **There is no setting
+at which the clamp is both live and tail-safe.**
+
+**TRAIL OVERLAP — why it can't win even when positive.** 22 of the 25 fills reaching >=1R exited on
+a CONVEX rule, banking a median **46-47% of peak**. Of the fills a clamp NEWLY banks: at 15%,
+**6 of 8 were already profitable trail exits**, carrying +1.409R of the +1.410R total. At 20%, 3 of
+4. At 30%, 2 of 3. **The clamp is not capturing give-backs the system missed — it re-prices exits
+the trail already took, swapping "keep half of whatever peak you got" for a fixed level. A fill
+peaking at 4R exits the ratcheted trail at 3.0R; a 25% clamp banks 2.5R. On every path peaking
+above TP_R/0.75 the trail is strictly better.**
+
+**And the in-sample optimum is a mechanism the book already rejected:** at 15% the single trade
+making the cell positive is ONG, whose implied TP_R is **0.850** — a target BELOW the trail's 1.0R
+arm. That is a sub-1R scalp, and arming below 1.0R is refuted at 54 of 55 cells. Guard against
+targets inside the arm and the 15% cell goes **+$25.89 -> -$13.12/mo.**
+
+**Walk-forward:** blocked 7-day -$22.28/mo; expanding (burn-in 15/20/25) -$12.60 / -$1.27 / -$1.47,
+**selecting do-nothing on 27 of 36 decisions**; two-fold $0.00. **Sixth candidate this control has
+killed.** Permutation p=0.31-0.75 (one observed value IS the null median); era split disagrees in
+sign at every live cell; LOO/LOSO flips the sign on one trade at every live cell.
+
+### THE ALREADY-BUILT ALTERNATIVE IS INERT
+
+`FUTURES_WILDCARD_TP_FROM_DESIGNED_STOP = 1`: **-$0.50/mo, 1 fill changes value, 0 exit-reason
+flips, exit mix identical. Do not set it.** The margin cap trims LEVERAGE first, preserving the ATR
+stop distance and only re-cutting `sl_frac` when even x1 would breach — designed/realised ratio is
+0.90-1.09, pure integer-leverage rounding. The docstring's "~9% of signals" is a SIGNAL-level
+figure; on FILLS it binds 3 of 56, and on those it **widens** the target.
+
+### THERE IS NO BETTER TARGET — and the signature is the proof
+
+Lookahead-free, from Min15 bars strictly preceding each entry:
+- **Target = quantile of the symbol's own trailing 24h MFE:** p50 -$29.77/mo, p70 -$28.32,
+  p80 -$19.94, p90 -$3.79, p95 -$7.53, p99 +$3.00 (4 fills, one is 133% of the effect; drop GALA
+  and it is -$0.98).
+- **Target = k x own 24h realised range:** k=0.5 -$28.12, k=0.75 -$30.15, k=1.0 -$22.40,
+  k=1.5 -$10.71, k=2.0 -$5.50, k=3.0 +$3.44 (7 fills, largest is 107% of the effect).
+
+> **THE FAMILY IS MONOTONE IN EXPOSURE: the more fills a variant touches, the more it loses, and
+> its optimum is the setting closest to doing nothing. That is what "there is no better target"
+> looks like when you measure it instead of arguing it.**
+
+**The reason is structural: a reachable target and a trail are the SAME INSTRUMENT aimed at the
+SAME RANGE, and the trail is the better version because it is PROPORTIONAL — it keeps half of
+whatever peak actually occurred rather than guessing where the peak will be. WILDCARD already has a
+reachable-range exit. It is the retention trail.**
+
+### THE FREE FINDING — this class of question is 20-500x cheaper to close
+
+**A TP change is a PAIRED, LOW-VARIANCE perturbation.** Per-fill dollar-delta sd is **$0.79-$1.48**
+against **$6.86** for raw per-fill P&L. So $10/month is detectable in **130-460 fills = 2.6-8.8
+months** at 51.7 fills/mo — against **191 months** for a raw-edge question and **~75,800 fills** for
+a regime gate. **Exit-parameter questions are answerable on this book; entry-gate and regime
+questions are not. Prefer them.**
+
+### RANKED DECISION
+
+| # | action | $/mo | walk-fwd | tail cost | env/code | verdict |
+|---|---|---|---|---|---|---|
+| **1** | **Do nothing to the exit stack** | **$0** | $0 (**WF selects this 27 of 36**) | $0 | none | **SHIP** |
+| **2** | **Fix the readout** — stop scoring positions as "TP 27%"; show trail floor / peak / clock, label the TP a gap-catcher | $0 trading | n/a | $0 | display only | **SHIP** |
+| 3 | `MAX_LONG_TP_DIST = 0.50` as a labelled cosmetic | $0.00 median, **[-$11.39, $0.00]** | $0 | $0 | ~2 lines + env var | only if #2 is not done. **0.50, never 0.40** — must clear the 41.95% observed max |
+| 4 | `TP_FROM_DESIGNED_STOP = 1` | -$0.50 | -$0.50 | $0 | env only | REJECT — inert, widens where it binds |
+| 5 | clamp 15-35% | -$0.87 to -$9.33 median, sign spread **$69** | -$12.60 to -$22.28 | up to **-$34** | ~2 lines + env | REJECT |
+| 6 | reachability-anchored target | -$29.77 to -$3.79 at every binding setting | -$0.88 | -$4 to -$30 | per-symbol rolling estimator + storage | REJECT |
+| 7 | volatility-conditional clock | negative in all 10 cells | — | -$5.17 | code, 3 call sites | REJECT — the refuted extension wearing a condition |
+
+**Nothing clears $10/month in the right direction on any estimator, and every positive point
+estimate loses its sign when you change the intrabar convention, the baseline, or one trade.**
+
+### THE OPEN ITEM — widening was never priced
+
+`peak_r` is a sufficient statistic only for NEARER targets; **the post-exit path does not exist for
+any fill that exited, so WIDENING is not identifiable from a closed book.** If the target is
+decorative, the untested direction is *"make it decoration that costs nothing and stop pretending
+it is a goal"*, not *"move it closer"*. **We proved a nearer target is worse. Nobody proved a wider
+one is.** Not a proposal — an open item, and the power arithmetic says it would take ~3-9 months of
+fills to close even if designed.
+
+### WHAT COULD NOT BE SETTLED
+
+- **Intrabar ordering at the 50% cell.** Min5 and Min1 cannot resolve whether a clamped TP print or
+  the trail print came first — the whole difference between "$0.00" and "-$11.39/mo". Tick data
+  would close it; it changes no ranking.
+- **Slot/capacity feedback is unpriced.** A nearer target frees a slot earlier and could add fills.
+  Direction favours clamping, magnitude unknown, no slot model exists. **The one omission that
+  could move a clamp from negative toward zero — not toward shippable.**
+- **The two TP resolutions carry `exit_reason = EXCHANGE_CLOSE`**, not a TP label. Attribution is
+  arithmetic (final R 4.96 vs peak 4.94; 5.09 vs target 5.00), not a reason code.
+- The samples are not the same book (n=44/51/56/61/88 by ring-buffer eviction and required fields).
+  **Signs and orderings are comparable; dollar magnitudes are NOT and were not treated as such.**
