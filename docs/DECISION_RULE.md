@@ -8141,3 +8141,208 @@ reconstructed, 204 with klines, 202 with >=98% coverage):
 Whether mu > 0 at all (~12 months of fills settles the regime); WILDCARD entry timing; and whether
 the historical exit record is contaminated by the peak-lag bug — **probably yes for the trail
 family, which is a reason to STOP, not a reason to re-run.**
+
+---
+
+## 2026-09-09 (thirteenth pass) — delayed WILDCARD entry vs the phantom control. REFUSED at the bar. And THREE corrections, one of which retires a hazard that has haunted three studies.
+
+**Asked (owner, with the control named):** *"Test the delayed entry with the price-improvement
+control."* 3 agents / 3 verifiers.
+
+### CORRECTION 1 — "DISGUISED STOP-WIDENING" IS THE WRONG INFERENCE AND I HAVE BEEN ASSERTING IT ALL WEEK
+
+I pre-registered: *if the phantom matches or beats the delay, the rule is a disguised
+stop-widening.* **That inference is FALSE on this data.** A verifier built the actual twin — enter
+at t0, no waiting, widen `sl_frac` 0.105 -> 0.140 so the stop sits exactly where the delayed stop
+would sit, dollar risk held constant:
+
+    stop-widening twin:  +$17/mo (targets rescaled) to +$46/mo (targets frozen)
+    the phantom:         +$309/mo
+    same at d=120/180/240: +$18 to +$57
+
+**A better entry moves the UPSIDE closer as well as the downside further; stop-widening only
+reproduces the second half.** The delay is not a disguised stop-widening. **RETIRE THAT SPECIFIC
+INFERENCE** — it has been used against three proposals this week.
+
+**So the phantom here is a DECOMPOSITION of an ATTAINABLE price, not a competing rule.** An
+unconditional delay fills 100% of the time and the market genuinely hands the improvement over.
+That is why this is the first entry-side candidate that could not be dismissed on the phantom alone.
+
+### WHAT THE PHANTOM DOES ESTABLISH — the SELECTION term is worth negative money
+
+| construction | n | DELAY | PHANTOM | **SELECTION (the waiting itself)** |
+|---|---|---|---|---|
+| live Min1, discovery era, d=150 | 53 | +$387 | +$309 | **+$78, se $200, t=+0.64** |
+| live Min1, discovery era, d=90 | 53 | +$210 | +$451 | **-$242, t=-2.52** |
+| Min5 INDEPENDENT era, N=180 | 36 | -$9 | **+$435** | **-$444** |
+| **pooled, both eras, N=180** | **91** | **+$139** | **+$367** | **-$228, t=-1.49** |
+| Min15 detector replay | 3,911 sig | -$119..+$110 | >= delay in 12/14 cells | negative |
+
+> **The value of waiting, price held identical, is zero or negative in EVERY construction, and the
+> single cell reaching significance is NEGATIVE. Pooled: -$195 to -$228/month. Only the price is
+> worth anything.**
+
+**THE PERMUTATION CONFIRMS IT INDEPENDENTLY:** shuffle which trade receives which realised
+improvement and grant it at signal time — null +19.68R (N=120) and +17.55R (N=180) against observed
++21.02R and +24.90R, **p = 0.405 and 0.065. It does not matter WHICH trade gets the better fill.**
+That is the signature of a pure price effect and the negation of a selection rule.
+
+### THE THREE-WAY DECOMPOSITION — the same shape as the precedent, on the bad side of it
+
+Pooled, n=91, N=180, 1R=$22.60:
+
+    PRICE      +$367     obtainable, 100% fill
+    SELECTION  -$228     t = -1.49
+    RUNAWAY      $0      an unconditional delay forgoes nothing
+    ----------------
+    TOTAL      +$139     t=+1.38, CI [-$58, +$337], **MDE $198**
+
+**The total sits BELOW ITS OWN DETECTION FLOOR, so the cell is REFUSED, not reported as positive.**
+Precedent: the 2026-09-08 pullback was +$174 price / -$52 selection (WILDCARD) and +$225 / -$426
+(TREND). **This lands at +$367 / -$228.**
+
+**Limit variants are dead on forgone accounting exactly as prior art predicted:** declined signals
+were worth **+$280 to +$716/month forgone**, six to fourteen times the price term they chase. Fill
+rate is a coin flip (49-55%) at every horizon. **No limit variant, ever.**
+
+### CORRECTION 2 — THE DRIFT DID NOT REPLICATE OUT OF SAMPLE. I SAID IT DID.
+
+**I told the owner the drift was "replicated at Min1, t=-4.71."** That replication is drawn from
+**post-2026-08-10 — which IS the discovery window.**
+
+**The only genuinely independent era (Jun 15 - Aug 5, n=36) shows the drift at -1.20% at 120m and
+-2.34% at 180m, t = -0.7 and -1.2 — roughly HALF strength and not distinguishable from zero.**
+
+> **The drift is a well-measured property of ONE 27-day window and of live mid-bar fills. It is NOT
+> yet a fact about the strategy. Stop describing it as replicated out of sample.**
+
+The drift IS real on live fills (verifier 1 reproduced it at full magnitude on all 53 rows: h=2
+-0.350R, t=-4.37, median -0.304 tracking mean -0.350; verifier 3's random-time placebo on the price
+improvement is clean at real +3.82% vs 300 random draws at -0.17%, p=0.000). **But obtaining the
+price did not produce dollars outside the window it was found in: the independent era was granted
++20.4R of genuine improvement and delivered -0.7R — a 3% CONVERSION, against 98% in discovery.**
+
+### THE MECHANISM IS STOP SATURATION, NOT INFORMATION — and it is the study's real finding
+
+Baseline stop-outs are **28 of 53 (53%; live realised 51%)**. Entering 3% better with a recomputed
+stop **translates the whole bracket 3% down, so 14 of those 28 stop being stop-outs.** In the
+independent era, whose baseline stop-out rate was 47%, the same delay moved stop-outs 17 -> 15 and
+produced nothing.
+
+**The delay's dollar value is a function of how stop-saturated the window happened to be, not of
+the drift size — which was equal or larger in the era that paid ZERO.**
+
+> **THE COROLLARY IS THE MOST IMPORTANT NUMBER IN THE STUDY: a phantom gift of k=0.05R — about 30
+> BASIS POINTS of price — is worth +$172/month. This book's P&L is a NEAR-DISCONTINUOUS FUNCTION OF
+> STOP DISTANCE. Any study that perturbs entry price or stop placement on this corpus will
+> manufacture enormous apparent dollars.**
+>
+> **MAKE THE MATCHED PHANTOM COLUMN A STANDING REQUIREMENT FOR THAT ENTIRE CLASS OF QUESTION, NOT A
+> PER-STUDY ONE.**
+
+Pure phantom grid (discovery era, $/mo): k=0.05 **+$172**; 0.10 +$240; 0.15 +$349; 0.20 +$343;
+0.30 +$391; 0.35 +$504; 0.50 +$612. **A gift of 30bps is already seventeen times the bar.**
+
+### CORRECTION 3 — THE LIVE ENGINE IS CLEAN. The peak-lag defect is REPLAY-ONLY.
+
+Flagged as "the largest number anyone saw today" and unchecked. **VERIFIED AT SOURCE
+(runtime.py:2331-2337):**
+
+    if r_now > peak_r:
+        position.metadata["convex_peak_r"] = round(r_now, 4)
+        ... self._save_state()
+        return False          # <-- RETURNS before evaluating the floor
+
+**The live bot records a new peak and RETURNS without testing the floor on that poll. It cannot
+arm-and-fire in one tick and does NOT carry the defect.** The bug is in the replay engine only
+(it moved a replay baseline -$73 -> +$248/mo and flipped two headline cells). **The bot is correct;
+only the historical STUDY RECORD is contaminated — which is a reason to stop replaying, not to
+change the bot.**
+
+### SCALE HONESTY — every headline is a 9.4x rescaling
+
+**Median `risk_usdt` on the 53 rows is $2.40, and only 3 of 53 are >= $11.28.** The sleeve's
+realised edge is **+0.013 to +0.027R/fill = $10-20/month.** **A +$387/month claim is 20-40x the
+sleeve's entire realised edge** on a book with a +/-$60/mo envelope. On this book, a number that
+size has always meant a hidden structural assumption.
+
+### TREND IS REFUTED ON MECHANISM — and the contrast is structural
+
+**TREND price improvement is NEGATIVE at every horizon (-0.21% to -0.80%).**
+
+> **TREND signals CONTINUE; WILDCARD signals REVERT.** No p-value needed. Any future entry-timing
+> idea must be sleeve-specific for this reason.
+
+### WHAT THE LIVE RECORD SHOWS
+
+- **Signal->entry latency: 7-9 rows, ~2.5 bps mean** (09-09 ZEC: signal 1233.42 -> entry 1234.00,
+  4.7 bps). At the measured lever of **$2.91/month per basis point**, fixing it ENTIRELY is worth
+  **$7.37/month — below the bar. The book is not losing money to execution latency.**
+- **t_adverse: six readings, 38-95 min.** WILDCARD 38.1 and 41.5 min to -0.5R (6.3 and 14.3 min to
+  -0.25R); TREND 37.9, 56.8, 95.2. Consistent with a trough at h=2-3, **but two WILDCARD rows are a
+  shape, not a distribution.** 19F has zero fires because every crossing landed past its 30-min
+  window.
+- **ENTRY LATENESS: WILDCARD fills sit at 0.877 of the prior-3h range** (median 0.890, **91% above
+  0.75**). **The |3h ROC| >= 8% gate buys the extreme BY CONSTRUCTION**, and the tape takes 0.2-0.3R
+  back over the next 1-3 hours in BOTH eras. **That is a permanent tax on the trigger. It is a
+  property of the GATE, and that is where the next study points — not at the clock.**
+
+### RANKED DECISION
+
+**1. DO NOTHING to the live bot. $0/month.** Keep entering WILDCARD at market on the signal bar.
+**THE TWO CHANGES CANNOT COEXIST:** a 150-minute delay moves every t_adverse later and shallower,
+driving 19F's fire rate to zero, **and 19F's primary is a paired counterfactual on the same
+entries — changing the entries VOIDS IT RETROACTIVELY.**
+
+**2. SHADOW-LOG THE COUNTERFACTUAL. $0/month, zero risk, no code on the trading path.** Every input
+already exists. Re-run the paired counterfactual monthly at d = 30/60/90/120/150/180/240
+**simultaneously**. **Fix the 200-row ring buffer first** (full; every month costs ~33 fills of the
+sample that would settle this), and **store 48h of PRE-signal bars as well as post** — the current
+corpus holds a median 1.2h before each signal, which is why no backward placebo is computable.
+
+**3. REJECTED — DELAY-MARKET(150min), stop recomputed.** In-sample +$387/mo, **phantom +$309 (80%),
+MDE $257, pooled OOS +$139 below its own $198 floor, independent era -$9.** Fails: conversion out of
+era, pooled selection negative, median +0.164R vs mean +0.519R with 13 exact zeros, ex-top-15%
+collapses to +$197, and it is a 41-trade LONG-side result (+0.620R long vs +0.173R short).
+**CODE:** a pending-entry queue surviving `FUTURES_RESUME_ON_BOOT=1`, plus an exchange-bracket fix
+(LIVE_CONFIG anchors TP/SL to the SIGNAL price and never moves it, so a 3.8% delay diverges the
+exchange stop from the software stop by ~0.36R).
+
+**4. REJECTED — d=120 / d=180 / the "hump".** **There is no computable control on this data
+separating d=150 from d=30.** The outcome placebo that condemned d=30 and admitted the band runs on
+**n=14** with a se of $400-700/month, and was reported as a clean PASS/FAIL with no n attached.
+Strip it and what remains is **an argmax over eleven correlated cells on 53 fills, sitting exactly
+where eight trades sit.**
+
+**5. REJECTED — DELAY-LIMIT(N), any k.** -$603/mo net of forgone. Fill rate 49-55%. Declined signals
+carry +0.17R to +0.42R live-exit against a book mean of -0.024R.
+
+**6. REJECTED — TREND delay, any N.** Price improvement negative at every horizon. Mechanism.
+
+**7. DO NOT SET `FUTURES_SL_ATR_MULT` 3.0 -> 5.25.** +$280/mo in-sample **through the IDENTICAL
+stop-saturation channel that just failed out of sample.** That number is a demonstration of the
+sensitivity problem, not a candidate.
+
+### PRE-REGISTRATION — OF THE MEASUREMENT ONLY
+
+**Primary:** running paired dollar delta, logged per fill against the same-signal counterfactual.
+Positive at n>=40 with a 95% day-clustered CI excluding zero at n=87. **The primary statistic is the
+ex-top-5%-by-delta figure, not the mean.** **Secondary:** the LONG-only delta must hold and the
+shorts must stop contradicting it. **Report the placebo n on every run.**
+**Kill:** two fills whose delayed entry is worse than signal by >1.0R of stop width, or a negative
+running delta at n=40.
+
+**Sample size:** per-fill sd of the dollar delta is **$20.20**. At 33 WILDCARD fills/month —
+**87 fills = 2.6 months for a $200/mo MDE; 349 fills = 10.6 months for $100/mo; the $10/mo bar needs
+34,900 fills = 88 years and is unreachable.** At the money actually at risk (median $2.40, not
+$22.60), the honest expected value of the whole proposal is **$15-40/month.**
+First re-read ~2026-11-25, cleanly after 19F closes.
+
+### WHERE THE NEXT STUDY POINTS
+
+**Not the clock. The GATE and the STOP.**
+- **~53% of WILDCARD fills give back a full 1R within 2.5 hours**, and a 30bps price gift is worth
+  $172/mo. **The lever is stop distance or the entry trigger.**
+- **The trigger buys the 3h extreme by construction: fills sit at 0.877 of the prior-3h range, 91%
+  above 0.75.** The tape takes 0.2-0.3R back in both eras. **That is a property of the |3h ROC| >= 8%
+  gate itself.**
