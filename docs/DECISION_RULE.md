@@ -87,12 +87,36 @@ in [1.6%, 2.2%]) was **PASSING at 2.018%** when it closed.
 
 ### THE PRE-REGISTERED KILL. Either condition, immediately, no discussion.
 
-1. **Two cut trades whose peak before the cut was >= 1.0R.** `/report` prints this
-   as "cut above 1R". A fire on a trade that had already been meaningfully positive
-   is the failure mode; two of them is not bad luck.
+1. **Two cut trades whose UNMANAGED PATH would have reached +1.5R**, measured from
+   the post-cut counterfactual, not from the peak before the cut.
+
+   > **CORRECTED 2026-09-10. The wording here read "two cut trades whose peak before
+   > the cut was >= 1.0R" and that criterion is very nearly INOPERATIVE — it was
+   > monitoring for a failure the rule cannot produce, while the failure it CAN
+   > produce went unwatched.** A trade whose peak reaches 1.0R has armed the
+   > retention trail, whose floor sits at 0.50 x peak = +0.5R. Price cannot travel
+   > from +1.0R to the -0.5R fire threshold without first crossing +0.5R, where the
+   > trail exits it. So the trail intercepts the criterion before the early stop can
+   > meet it. **(Note the mechanism precisely: there is NO peak gate in the early
+   > stop. `runtime.py:2250` reads `peak_r` AFTER the fire decision, for telemetry
+   > only. The interception comes from another rule, not from this one.)**
+   >
+   > **The real damage mode is a trade that had NOT yet armed and would have run to
+   > 2-5R.** That is invisible to a peak test by construction, and it is what the
+   > forward-looking wording at the design block below always specified. This block
+   > was weakened at some point; it is now restored to match.
+
 2. **After 20 fires, the running dollar delta against the logged counterfactual is
    negative.** The rule needs a **>=33% save rate** to break even and delivered 78%
    in sample (12 helped, 2 harmed). Below 50% over 20 fires it is dead.
+
+   > **THAT 78% HAS AN UNKNOWN DENOMINATOR UNTIL THE GUARD TRIPS ARE COUNTED.**
+   > `runtime.py:2221` silently returns False whenever
+   > `risk_pct < 0.5 * entry_sl`, before the rule is even evaluated. The guard is
+   > by design (specified in the design block below) and it is correct, but nobody
+   > has measured how often it fires. **Every 19F figure in circulation — the 78%
+   > save rate, the +$77/month, the two observed fires — is conditional on a
+   > denominator no one has counted.** See the count recorded below.
 
 Rollback is `FUTURES_WILDCARD_EARLY_STOP_R=0`, one variable, seconds.
 
@@ -9682,3 +9706,84 @@ difference between a door you have shut and a door that regenerates a proposal e
 **The measurement apparatus is not the bottleneck and neither is the prize. The prize is 50x the bar
 and the paired instrument resolves $2-78/month. THE PREDICTOR is the bottleneck, and this bot's own
 data does not contain one.**
+
+---
+
+## 2026-09-11 — 19F: kill criterion CORRECTED, guard trips COUNTED AT ZERO. Denominator is clean.
+
+Two repairs from the open-trade study. **Documentation and measurement only. No code changed, no env
+var touched, the live rule is untouched.**
+
+### 1. THE KILL CRITERION WAS MONITORING A FAILURE THE RULE CANNOT PRODUCE
+
+`DECISION_RULE.md:90` killed on *"two cut trades whose peak before the cut was >= 1.0R."* **Restored to
+the forward-looking wording the design block at line ~394 always carried: "two cut trades whose
+UNMANAGED PATH would have reached +1.5R."**
+
+**Why the old wording was very nearly inoperative — and the mechanism matters, because the first
+diagnosis of it was wrong.** There is **NO peak gate in the early stop**: `runtime.py:2250` reads
+`peak_r` **after** the fire decision, for telemetry only. The interception comes from a *different*
+rule. A trade whose peak reaches 1.0R has **armed the retention trail**, whose floor sits at
+0.50 x peak = **+0.5R**. Price cannot travel from +1.0R to the -0.5R fire threshold without first
+crossing +0.5R, **where the trail exits it.** So the trail intercepts the criterion before the early
+stop can ever meet it.
+
+**And the failure that IS reachable was unwatched: a trade that had not yet armed and would have run
+to 2-5R.** Invisible to a peak test by construction.
+
+**Also confirmed from source, correcting the brief (not the repo doc, which was right):** the rule
+fires **INSIDE** the first 30 minutes (`if elapsed_min > window: return False`), not after them.
+
+### 2. THE GUARD TRIPS: ZERO IN 10 OF 10. Every 19F figure now has a verified denominator.
+
+`runtime.py:2221` silently returns False when `risk_pct < 0.5 * entry_sl`, **before** the rule is
+evaluated **and before `_stamp_adverse_marks` runs** — the code comment says so explicitly
+(*"It also suppresses the diagnostic, because a bad denominator poisons the marks too"*). That
+suppression is the fingerprint that makes the count possible without any new logging.
+
+**METHOD.** `_stamp_adverse_marks` runs on every tick the guard passes, stamping `t_adverse_25/50/75`
+the first time a position reaches -0.25R / -0.50R / -0.75R. **So a position with `mae_r <= -0.25` and
+NO `t_adverse_25` is a guard trip.** Restricted to positions that **OPENED** after the stamping code
+went live (commit `6d9fbce`, **2026-09-08T18:11:52Z**) — a position opened earlier would have missed
+its adverse dip regardless of the guard.
+
+    positions opened post-deploy      10
+    eligible (mae_r <= -0.25)         10   (all ten; none stayed shallow)
+    guard PASSED, mark stamped        10
+    GUARD TRIPPED                      0
+
+**INDEPENDENT CONFIRMATION FROM THE OPERANDS.** `sl_frac_designed` is a fraction of PRICE while the
+guard reads `sl_margin_pct`, a percentage of MARGIN, so the two reconcile through leverage
+(`sl_frac x lev x 100`). Measured ratio of live to entry stop distance:
+
+    ZEC 1.02 | ATOM 1.04 | ZEC 1.01 | IOST 0.99 | ZEC 0.99
+    MARSCOIN 1.05 | SOPH 1.02 | BTR 1.01 | PONS 1.01 | MARSCOIN 0.96
+
+**Range 0.96-1.05 against a trip threshold of 0.50. The closest observation is nine times further from
+the threshold than the entire observed spread.** The denominator is not merely un-tripped, it is
+nowhere near tripping.
+
+**CONSEQUENCE: the 78% in-sample save rate, the +$77/month and the two observed fires are conditional
+on nothing hidden.** The earlier warning that every 19F figure had an unknown denominator is
+**withdrawn** — the denominator is 10 of 10.
+
+**THE HONEST LIMIT: n=10 over one 2.5-day window.** The guard exists for a failure mode
+(`_position_stop_risk_pct_of_margin` returning a too-small value) that has simply not occurred yet.
+A partial close shrinking `base_qty`, or a failed exchange stop read, could still trip it. **Re-run
+this count at the 2026-10-10 verdict; it is fifteen lines and needs no new instrumentation.**
+
+**AN EARLIER FALSE ALARM, recorded so it is not re-raised.** A first pass filtering on `exit_time`
+rather than `entry_time` found three "trips" — FORM, PONS and MARSCOIN, all 2026-09-08. **All three
+closed BEFORE 18:11:52Z, i.e. before the stamping code existed.** They are not guard trips; they are
+positions that predate the diagnostic. **Filter on entry, not exit.**
+
+### 3. NOTED IN PASSING, NOT ACTED ON
+
+- **Both open positions have closed;** the book is flat as of this count.
+- **`signal_price`, `entry_price` AND `entry_slippage_bps` all now co-occur on closed rows.** The
+  standing defect *"`signal_price` and `entry_price` never co-occur on any row"* appears to be
+  **RESOLVED**. It was called the largest unmeasured quantity in the system, so the slippage series is
+  now measurable and should be read before it is quoted.
+- **The container sleeps when idle** (`railway ssh` returns *"scaled to zero"*), which is why the count
+  was run against the 21:16Z snapshot in scratch rather than live. Confirm this is expected for a bot
+  that must hold positions overnight.
