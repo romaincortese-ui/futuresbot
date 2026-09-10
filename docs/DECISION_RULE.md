@@ -8827,3 +8827,219 @@ near -0.5R, saving roughly **$5.92**.
 > **THAT IS SUGGESTIVE AND MUST NOT BE ACTED ON. Tuning T from the two observations that fired plus
 > one that did not is fitting to n=3. The pre-registration permits T to move only after 30 fires,
 > and that constraint is exactly what stops this from becoming the twelfth refuted candidate.**
+
+---
+
+## 2026-09-10 — SCAN-INSTANT ALT BREADTH: reconstructible after all. Gate REFUSED.
+
+**Question:** could the book since 18F (2026-09-04T10:57Z, n=20 fills, net -$92.81) have been improved
+by refusing entries when `breadth_24h <= 0.30`, and is that data recoverable retroactively?
+
+**Answer: the data IS recoverable — and the gate is refused anyway.**
+
+### 1. THE MECHANISM — the durable output of this study, and it was not known yesterday
+
+> **MEXC contract `riseFallRate` is NOT a rolling 24h change. It is the return since the UTC+8
+> calendar-day open = 16:00Z, and it RESETS DAILY.** The ticker payload carries
+> `riseFallRates.zone = "UTC+8"` and `riseFallRate == r`.
+
+Verified live twice at different prices: BTC rfr -0.0026 at last 77017.8 and rfr -0.0015 at last
+77100.6 **both imply reference 77218.6 = the open of the 16:00Z Min15 bar.** A fixed daily anchor, not
+a rolling window. On 43 live symbols, median |error| vs the true field is **0.0016** day-anchored
+against **0.0563** rolling — 35x. `runtime.py:3136-3142` already documents this for the mover ranking;
+`_alt_breadth` reads the same field and therefore inherits it.
+
+**COROLLARY, a live hazard: any scan landing in the first minutes of the UTC+8 day reads breadth off
+sub-basis-point noise.** SOPH's 0.6271 was taken 13.5 minutes into the day with `alt_med_24h` +0.0009.
+That reading is a coin flip, and it is one of the two rows the whole in-sample story rested on.
+(A systematic time-of-day effect was tested and KILLED: mean breadth by 3h bucket is flat, 0.49-0.57.)
+
+### 2. THE RECONSTRUCTION VALIDATES — the 2026-09-09 "un-backtestable" claim is overturned
+
+Three independent agents rebuilt breadth from klines. All five live rows reproduce:
+
+| scan instant | symbol | live | recon | err | n live -> recon | alt_med live -> recon |
+|---|---|---|---|---|---|---|
+| 09-09T16:13:16Z | SOPH | 0.6271 | 0.586 | -0.041 | 59 -> 58 | +0.00090 -> +0.00047 |
+| 09-09T19:14:51Z | PONS | 0.5345 | 0.535 | +0.000 | 58 -> 58 | +0.00255 -> +0.00245 |
+| 09-09T22:14:31Z | MARSCOIN | 0.1250 | 0.109 | -0.016 | 64 -> 64 | -0.02790 -> -0.02853 |
+| 09-10T04:40:51Z | BTR | 0.2063 | 0.191 | -0.016 | 63 -> 63 | -0.02780 -> -0.02849 |
+| 09-10T05:59:05Z | MARSCOIN | 0.2031 | 0.177 | -0.026 | 64 -> 62 | -0.02695 -> -0.02671 |
+
+Mean |err| **0.020**, max 0.041, band size within +/-2 on 5/5, **`alt_med` within 7bp on 5/5**,
+gate-decision agreement at 0.30 **5/5**. Matching the cross-sectional MEDIAN to four decimals is the
+strongest evidence — it means the whole return distribution is right, not just the sign count.
+
+**A SIXTH POINT, OUTSIDE THE DISCOVERY SAMPLE AND 1.5 DAYS BEFORE THE TELEMETRY SHIPPED.** A complete
+raw ticker payload saved at 2026-09-08T08:46:24Z: the bot's own `_alt_breadth` on that payload gives
+**0.6154, n=65**; the klines-only reconstruction gives **0.6154, n=65** — per-symbol, band membership
+identical 65/65, **zero** symbols in one and not the other, **zero** sign disagreements, median
+per-symbol rate error 0.00061. Exact, not a coincidental fraction match.
+
+**THREE LIMITS THAT TRAVEL WITH THE INSTRUMENT:**
+1. **The bias is SIGNED, not random.** Recon reads low: 4-5 of 5 negative, mean -0.020, sign-test
+   p=0.031. **A reconstructed 0.30 is a live ~0.32.** Flips nothing here; every future study inherits it.
+2. **Every validation point sits between 09-08T08:46 and 09-10T05:59.** Nothing validates the
+   09-04 -> 09-07 era that carries 9 of the 15 out-of-sample fills and the entire high-breadth range.
+   **The technique is proven; the LEVELS more than ~24h before 09-09 are indicative, not validated.**
+3. **Treat the reach as 2026-09-01, not "history".** The turnover scale factor (~1.32) is the free
+   parameter and it is DISPUTED: one measurement p10 1.296 / p90 1.330 over 90 symbols, a verifier
+   1.21-1.32 across four symbols. It sets the effective $2M floor, so an 8% error moves band size 1-2
+   symbols. **Re-derive it PER SYMBOL before reaching back further, and validate in the new era.**
+
+### 3. THE GATE — REFUSED. Lead with the 6, not the 20.
+
+**The deciding cell is WILDCARD out-of-sample, n=6.** Nine of the 15 reconstructed fills are
+TREND-on-ZEC, and **ZEC sits INSIDE the top-24 majors band that breadth excludes by construction** —
+gating ZEC on a number built not to see ZEC. Structural; kills those cells before any statistics.
+
+    WILDCARD OOS (n=6): two decisions — block ATOM -$23.68, block IOST +$33.23.
+    Base -$73.72 -> -$83.27.  DELTA -$9.55.  2 of 6 deleted.  meanR -0.569 -> -1.039.  p=0.865.
+
+**The honest statement is NOT "the gate loses $9.55".** On n=6 with two decisions it is
+**unresolvable** — but it does not point the way the discovery rows did, and its sign turns on one
+fill (IOST, b_hat 0.2632, CI [0.253, 0.322] straddling the threshold) the reconstruction cannot resolve.
+
+    all 20:        +$63.92  (7 deleted)   <- CONTAMINATED, never quote this
+    OOS 15:        +$17.70 to +$38.05     <- three reconstructions, 3-4 deleted
+    discovery 5:   +$25.87  (3 deleted)   <- in-sample by construction
+
+**One fill's classification is not stable across three good-faith reconstructions** (ZEC 09-08T16:38
+reconstructs at 0.17 twice and 0.37 once).
+
+**FIVE KILLS, ANY ONE SUFFICIENT:**
+
+1. **The random-delete null.** This window lost $92.81 over 20 fills, so **every fill deleted is worth
+   +$4.64 FOR FREE.** Blocking 7 of 20 at random: median +$37.88, p90 +$101.93. Observed +$63.92 is an
+   unremarkable draw. The base total (-$92.81) is itself smaller than its SE ($114.63) — **the six-day
+   P&L is not distinguishable from zero BEFORE any gate.**
+2. **The placebo destroys the mechanism.** Breadth read **2h AFTER** entry — causally impossible —
+   scores **better** than the real reading (+$75.9 vs +$43.6), and still better after null-adjusting
+   for deletion count. Observed ranks 3rd-4th of 11 in its own placebo set. Autocorrelation explains
+   it: rho +0.925 at 15min, +0.686 at 6h. **Instantaneity, the entire reason the telemetry shipped,
+   is worth nothing.**
+3. **It is a DATE RULE IN COSTUME.** Pearson(breadth, entry time) = **-0.797**. 75.6% of breadth
+   variance is between-day. Era split: deletes NOTHING before 09-08T16:38 and everything after.
+   **One regime transition, not twenty observations.**
+4. **No interior optimum.** The surface rises with sawteeth to 0.70, where it keeps 2 of 20 fills.
+   Walk-forward converges to "block 16 of 16" — **the fitted optimum is "stop trading"**, guaranteed to
+   score well on a losing window. **Dead at walk-forward: the TWELFTH consecutive candidate.**
+5. **It destroys the right tail.** Top-3 = 108% of net R. It keeps ZEC +$75.37 (breadth 0.74-0.81) by
+   luck and **deletes IOST +$33.23, the book's #2 fill.**
+
+**Continuous test, no threshold:** Pearson(breadth, $P&L) on the 11 WILDCARD fills is **-0.10 to -0.16
+— the WRONG SIGN.** Positive on all 20 only because TREND/ZEC carries it.
+
+**SLOT RE-ALLOCATION: 0 fills created, and the prior 2.5x delete-only overstatement genuinely does not
+transfer — for a reason worth recording.** `runtime.py:6572` (`if opened: return`) promotes a runner-up
+when a SYMBOL-SPECIFIC veto fires. **A market-wide veto takes one value per scan and blocks every
+candidate simultaneously, so there is no runner-up by construction.** Confirmed: zero WILDCARD
+`slot_occupied` and zero `rank_dropped` rows in the shadow ledger since 09-04, on an instrument
+carrying 31 `slot_occupied` rows lifetime. **Which makes this pure volume destruction — rule 3's
+recurring killer: 27-45% of fills deleted to move meanR by 0.008R.**
+
+### 4. MDE AND THE SELECTION FLOOR — no answer was ever obtainable from this window
+
+| cell | n | deleted | MDE/month | observed |
+|---|---|---|---|---|
+| all 20, both sleeves | 20 | 7 | ~$830-1,740 | +$63.92 |
+| OOS 15, both sleeves | 15 | 3-4 | ~$805-1,920 | +$17.70..+$38.05 |
+| WILDCARD 11 | 11 | 5 | ~$470-1,600 | +$16.33 |
+| **WILDCARD OOS 6** | **6** | **2** | **~$550-1,600** | **-$9.55** |
+| discovery 5 | 5 | 3 | ~$2,660 | +$25.87 |
+
+**Every observed effect is 5x to 50x below its own MDE; against the $10/month bar the window is
+50-170x too small.** 1R across the 20 fills ranges $9.39-$28.33, median **$19.49** — the single 1R
+used for any R-to-dollar reasoning here. Signs unchanged in R (both-sleeves all20 +3.68R; WC OOS -0.68R).
+
+**SELECTION FLOORS, stated before any p-value.** WILDCARD OOS with 6 fills and 1 winner:
+**1/C(6,1) = 0.167. No variable, however perfect, can score better on that window. The observed p is
+0.865 — five times worse than the best the window can produce.** And because breadth is market-wide
+and 76% between-day, the BINDING floor is the day-block one: **1/C(6,2) = 0.0667** for choosing which
+2 of 6 days to sit out. Nothing in the study beats even that. Family 52-62 cells, Bonferroni
+alpha ~0.001; the best p anywhere (0.10, in-sample) adjusts to 1.000.
+
+**POWER: $10/month at ~$26/fill sd needs ~18,000-25,000 WILDCARD fills = 45-62 years.** The same wall
+the 2026-09-09 regime study hit at ~75,800 fills. **A breadth gate is neither better nor worse than the
+thirty rules before it. It is the same wall.**
+
+### 5. FIDELITY VS THE ALREADY-REFUTED PRIOR-MIDNIGHT VARIABLE: **UNRESOLVED — and moot**
+
+Three good-faith reconstructions gave **-0.20 / +0.32 / +0.81** correlation with the prior-midnight
+daily-close series, spanning the entire range; their prev-midnight gate deltas diverge just as badly
+($0.00 / +$15.58 / +$63.45). **I do not know whether it collapses into the refuted object.** Two
+reasons the disagreement was predictable: the prev-midnight series takes ~6 DISTINCT VALUES over a
+6-day window (a Pearson quoted "on 649 grid points" borrows precision it does not have); and
+mechanically, now the 16:00Z anchor is known, **scan-instant breadth is not a cross-section at all —
+it is the same cumulative day statistic read part-way through the day.** A within-day running total.
+
+**It is moot: the gate fails its own out-of-sample test on the sleeve that computes the statistic.**
+
+### 6. DECISION — DO NOTHING. Keep recording, gate nothing.
+
+| # | action | all20 | OOS | del | verdict |
+|---|---|---|---|---|---|
+| **1** | **DO NOTHING** | **$0** | **$0** | **0** | **ADOPTED** |
+| 2 | WILDCARD-only veto <= 0.30 | +$16.33 | **-$9.55** | 5 | fails its own OOS cell; one fill (drop IOST -> +$23.68) |
+| 3 | Both-sleeves veto <= 0.30 | +$63.92 | +$17.70..38.05 | 7 | structurally void (ZEC) |
+| 4 | TREND-only veto on ALT breadth | +$47.59 | +$47.59 | 2 | structurally void; upper bound; 2 fills |
+| 5 | `alt_med_24h <= 0` veto | +$67.99 | +$42.12 | 9 | collinear with breadth>0.40 — same family, not an independent test |
+| 6 | Breadth-conditional SIDE selection | — | — | **0** | **data points the WRONG WAY** |
+
+**#6 deserves its own line because it deletes NO fills — the one structural advantage available — and
+the data still says no.** Of the 11 WILDCARD fills, the 3 that COMPLY with "long when breadth>0.30,
+short when <=0.30" sum to **-$62.49**; the 8 that VIOLATE it sum to **-$14.36**. The rule selects the
+losing subset. Its own recommended action (breadth>0.30 LONG) is the single worst cell: n=2, -$52.21,
+zero wins. The cell it forbids contains IOST +$33.23. **And the premise that the low-breadth fills
+"were or should have been shorts" is FALSE: four of the five were LONGS.**
+
+**Cost of #1 if wrong:** forgoing an effect whose own point estimate is ~$49/month against a
+$470-$1,600/month MDE. The telemetry already ships, costs no API call, has no behavioural effect.
+
+**ONE THING TO WATCH, NOT TO ACT ON:** the direction on WILDCARD-only fills is **NEGATIVE** — high
+breadth associated with worse outcomes. That matches the reversal already on file (lifetime R earned
+in low-BTC-efficiency tape, +0.404R in chop vs -0.004R out of it). **If anything ever ships here it is
+likelier to be the OPPOSITE of the rule proposed. Do not chase it; n=11.**
+
+**NOT WORTH MORE TIME ON THIS WINDOW:** further threshold search, sleeve slicing, side-conditioning,
+or any additional cell. The grid has no interior optimum and every new cell widens a multiplicity
+family that has already sunk the result.
+
+### 7. REJECTED LIST ENTRY — quote the OOS number, NEVER the all-20 number
+
+> **Scan-instant alt breadth gate, threshold 0.30 — WILDCARD out-of-sample -$9.55, 2 of 6 fills
+> deleted, p=0.865 against a window floor of 0.167, dies at walk-forward (12th consecutive), one
+> blocked fill is the book's #2 by P&L, breadth-vs-time confound -0.797. Fidelity vs the previously
+> refuted prior-midnight series UNRESOLVED (three reconstructions: -0.20 / +0.32 / +0.81).**
+> **Quoting +$63.92 anywhere repeats the exact contamination this exercise existed to catch.**
+
+### 8. PRE-REGISTERED FALSIFICATION — review 2026-12-10, and the statistic is NOT dollars
+
+Dollars cannot resolve this ($10/month needs ~18,000+ fills). **The only statistic this book can move
+on a human horizon is SIGN AND RANK.** Registered now, before the rows exist:
+
+- **Statistic:** Spearman(scan-instant breadth, realised **$** P&L), **WILDCARD fills only**,
+  **live-recorded breadth only**, against a **deletion-matched** null.
+- **Review date: 2026-12-10** (~100 live WILDCARD breadth rows at the current fill rate).
+- **KILL (permanent, goes to the rejected list and is never revisited):** rho <= 0 at n >= 100, OR
+  sign unstable across the two halves, OR the delta fails to beat a deletion-matched random null at
+  the same k.
+- **PASS (advances to PRICING, not to shipping):** rho >= +0.30 with p < 0.01, AND stable in sign
+  across both halves, AND delta exceeds the deletion-matched null, AND survives walk-forward on >= 30
+  chronological decisions, AND the reconstruction reproduces the live rows in that NEW era.
+  **Even a full pass buys a pricing exercise. The MDE arithmetic does not go away.**
+
+**THE BINDING CONSTRAINT HAS MOVED — this is the operational consequence of section 2.** It is no
+longer market data; it is **the trade corpus.** Waiting for telemetry at ~5 rows/day is now the WRONG
+move, because the reconstruction can price every fill the book already has. **Next: reconcile full
+exchange fill history against the 200-row `trade_history` ring buffer (FULL) and the 32-day
+loss-censoring window. Until that is done every backtest inherits both defects. Snapshot /data first.**
+
+### 9. PROCESS NOTE — a control was double-counted, and I nearly shipped it
+
+"LOSO drop-ZEC takes the delta to -$9.55" and "WILDCARD out-of-sample n=6 delta -$9.55" are **the same
+arithmetic**: the OOS 15 minus the 9 ZEC fills IS the 6 WILDCARD OOS fills. They were presented as two
+independent controls. **One observation, counted twice.** Caught in verification. Also caught: a
+placebo grid that silently disabled the Min1 price series and did not reproduce 6 of 11 cells (the
+conclusion held; the specific numbers were wrong). **Both are the same failure mode — a control that
+agrees with the desired conclusion gets less scrutiny than one that does not.**
