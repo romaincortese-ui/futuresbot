@@ -9043,3 +9043,208 @@ independent controls. **One observation, counted twice.** Caught in verification
 placebo grid that silently disabled the Min1 price series and did not reproduce 6 of 11 cells (the
 conclusion held; the specific numbers were wrong). **Both are the same failure mode — a control that
 agrees with the desired conclusion gets less scrutiny than one that does not.**
+
+---
+
+## 2026-09-10 — BREADTH GATE, WIDENED: the family is CLOSED on arithmetic. 0.26 refused.
+
+**Question:** widen the scope — replay more trades, or run a 2-3 month backtest — and test a 0.26
+threshold alongside 0.30.
+
+**VERDICT: UNRESOLVED WITH DEFAULT NO. Ship nothing. The family is closed permanently.**
+Three sweep lines returned REFUTED; three verifiers confirmed the ACTION and downgraded the GROUNDS.
+**Two of three found the refutation itself rests on one fill.** The file must read *"cannot resolve,
+and never will on this book"*, NOT *"shown to be harmful"* — those are different claims and only the
+first is supported.
+
+### 1. SCOPE — the number, and a 3-month backtest is NOT supportable
+
+> **Trustworthy WILDCARD corpus: 48-50 fills, 2026-08-21T09:41:48Z -> 2026-09-10T05:59Z,
+> 19.8 calendar days = 18 INDEPENDENT UTC+8 BREADTH-DAYS.** Base **-$65.11**, rebuilt independently by
+> three lines and matched **50/50** against the raw exchange pull.
+
+The corpus reaches 88 days and stops at a hard wall. Of the 93-101 fills in that span: **34-36 break
+the delete-only construction, 45-51 sit inside the censoring leak, 16-20 have no sizing**, and 1R moves
+$1.08 -> $18.05 (17x; 460x across the whole book). **The wide window is usable ONLY for scale-free
+tests — correlation, placebo, date-confound — and it earned its keep there. It is not money.**
+
+**THE FIRST FULL EXCHANGE RECONCILIATION EVER RUN.** `railway run --service Futures-bot`, full position
+history, no symbol filter, 2 pages -> **190 closed positions, 2026-06-14T06:01Z -> 09-10T06:14Z, 87
+symbols, 125 on alts.** (`railway ssh` WAS up this session, contradicting last session's finding.)
+
+**THE THREE WALLS, and the one I had wrong:**
+1. **Exchange retention 2026-06-14T06:01Z.** Hard. Nothing before it is verifiable by any means.
+2. **Delete-only is INVALID before 2026-08-06.** **Hard rule 7 is VIOLATED in era A exactly as feared:**
+   the shadow ledger carries **11 WILDCARD `slot_occupied`/`rank_dropped` rows, 07-23 -> 08-05.** Slots
+   WERE contended, so a market-wide veto would have promoted a runner-up. Last WILDCARD slot row
+   08-05T12:58Z; none since. (TREND 14 and SQUEEZE 6 run to 09-04 — the exemption is WILDCARD-specific.)
+3. **Loss-censoring before 2026-08-21T09:41Z** — see below, the window was **>=67 days, not 32**.
+
+**THE RING BUFFER WAS NEVER THE BINDING CONSTRAINT — the premise carried since 09-07 is FALSE.** The
+buffer reaches 2026-06-05, **ten days BEFORE the sleeve's first fill (06-15). Zero WILDCARD fills have
+ever been lost to it.** Diffing the live buffer against `data_snapshots/..._2026-09-07.json` recovered
+14 already-evicted rows -> a 214-row union. Also: `tools/export_position_history.py` hardcodes 6
+majors, so its 226-row `_position_history_full.jsonl` holds **zero alts** and is useless here.
+
+**THE MARKET-DATA CONSTRAINT IS GENUINELY GONE.** 705 symbols of Min60 klines rebuild the exact
+statistic hourly across 88 days. **The binding constraint was never access. It is the trade corpus,
+and it is arithmetic.**
+
+### 2. THE LOSS-CENSORING WINDOW — corrected in BOTH directions
+
+    WAS ON FILE:  32 days, "every missing row is a loss", 5-6 rows
+    ESTABLISHED:  >=67.5 days, 11 rows netting -$8.27, and TWO OF THEM ARE WINS
+
+Window: **2026-06-14T20:39Z (or earlier — unobservable) -> 2026-08-21T09:41:48Z.** The end is exact:
+commit `aa6a59c` landed at 09:41:48Z and ORDI, the last erased close, died at 09:06Z — **35 minutes
+before the fix.** The start is NOT 07-14; that is merely where the feature store's coverage begins.
+Three more erased rows sit in 06-14 -> 06-27, and the retention wall means **the true start cannot be
+observed at all.** The "32 days" was leak-start-*as-then-known* to discovery — the duration of my
+ignorance, not of the leak.
+
+**"EVERY MISSING ROW IS A LOSS" IS FALSIFIED:** EVAA_USDT +$3.21 (06-14) and BILL_USDT +$5.17 (07-16).
+9 of 11 are losses against a base loss rate of 0.558 (expected 6.1); **P(>=9 of 11) ~ 0.13 — NOT
+significant.** The loss-selectivity is real but rests on the CODE PATH (`runtime.py:3903`, `:3933`),
+**never on the counts. A count was being quoted as if it were evidence.**
+
+### 3. THE 0.26 CELL — refused, and it is not even a distinct cell
+
+Reported as one declared cell, never headlined. **0.26 is rank 5 of 10 on every tier, is the sweep's
+best cell nowhere (0.20 is, at the grid edge, p=0.15-0.37), and is NEGATIVE on dollars in all three
+tiers: -$0.36 / -$11.47 / -$27.59.** p vs the deletion-matched null **0.68-0.94 — worse than a coin
+flip.** Three things end it independently of any p-value:
+
+1. **0.26 and 0.28 ARE THE IDENTICAL CELL.** Zero fills between them, in both windows. **A bin edge,
+   not a level.**
+2. **The gap it defines is 2 fills worth +$9.24** (TAC +$4.11, USELESS +$5.13) against an MDE of
+   $76-114 — **one seventh of the noise floor.** In the 6-day study the same gap was ONE fill worth
+   +$33.23. **The membership changed completely between two reconstructions of the same statistic.**
+3. **The instrument cannot resolve it.** Hour-to-hour movement in breadth is median **0.037**, mean
+   0.064 — **larger than the 0.04 gap being argued about.** IOST's five bracketing hourly points run
+   0.3065 / 0.4098 / **0.2034** / 0.2500 / 0.2931. **No sample size fixes this; it is a property of
+   the statistic.**
+
+**ON IOST, THE CORRECTED WORDING** (two lines overstated it and both verifiers caught it): do NOT say
+"0.26 does not spare IOST", and do NOT claim two independent reconstructions — that is one 705-symbol
+grid quoted twice. Say: ***IOST's breadth is not resolvable to either side of 0.26 at any resolution a
+historical reconstruction can offer, and every rebuild other than the top of the original 0.2203-0.2632
+band places it below.***
+
+### 4. WALK-FORWARD — 22 configurations, not one beats its null
+
+Anchored and rolling, 5d/7d/14d folds, fitted on dollars and on R, three tiers. **Best p anywhere
+0.233. Median p ~0.71.** Two results here are **fill-independent and cannot be jackknifed away — these
+are the real output of the whole programme:**
+
+> **GIVEN THE FREEDOM TO BE A REAL GATE, THE OPTIMISER DECLINES.** Constrained to keep >=50% of
+> training fills, it fits "no gate" in **10 of 11 folds**. Free-fitting, it fits 0.00 (no gate) in
+> **7 of 8 folds**.
+>
+> **UNCONSTRAINED, THE FITTED PARAMETER IS BIMODAL BETWEEN THE TWO GRID EDGES** — -1.0 ("no gate") in
+> 8 folds, 0.80 ("block everything") in 3, **interior in none.** It is a stop-trading switch keyed on
+> trailing P&L wearing a threshold's clothes. Where its raw delta is largest the deletion-matched null
+> is degenerate at **p=1.000 BY CONSTRUCTION** — zero information content.
+
+**ERA SPLIT at 0.30** (deleted in brackets): A pre-08-06 -$16.13 [7] *unpriceable*; B -$11.11 [1];
+C +$12.34 base -> -$4.11 [1]; D -$83.86 base -> +$1.86 [6]; E +$6.42 base -> -$7.35 [4].
+**Negative in 4 of 5 eras. The single positive era is D — the worst era on the book, where free
+deletion pays most. Not a config finding in either direction: it is not a rule.**
+
+**DELETION-MATCHED NULL, primary corpus:** 0.26 p_day 0.600 [9 of 50 deleted]; 0.30 p_day 0.812
+[11 of 50]. **Every cell >=0.25 loses to random deletion of the same size.**
+
+**THE CORRECTION THAT CHANGES THE GROUNDS.** The "anti-selective, beaten by 99.4% of random deletions"
+headline is **wide-window only, and 44% of its dollar damage / 69% of its R damage comes from era A** —
+which the same agent declares structurally unpriceable. Strip era A and it collapses to p_day 0.812.
+Separately, **jackknifing the single largest fill FLIPS THE DOLLAR DELTA'S SIGN IN ALL THREE TIERS**:
+T1 at 0.30 goes -$9.60 -> +$23.63; at 0.26, -$0.36 -> +$32.87. **A point estimate whose sign is set by
+1 of 48 observations, inside an error band 8x its own magnitude, refutes nothing.**
+
+**HONEST PRIMARY NUMBERS: 0.30 = -$14.6/mo [11 of 50 deleted, 22%], MDE +/-$123/mo.
+0.26 = -$0.55/mo [9 of 50, 18%], MDE +/-$114/mo.**
+
+### 5. DID THE FIVE 6-DAY KILLS INVERT AT SCALE?
+
+| # | 6-day kill | at scale |
+|---|---|---|
+| 1 | deletion pays for free | **DEFUSED, not inverted.** Base -$4.64/fill -> -$1.30. The claimed R-inversion (+11.51R) is an era-A artifact: five fills at ~+5R on ~$1 risk units, **~$13 of real money.** On every priceable corpus base R is negative and the excuse stands. |
+| 2 | placebo beats the real reading | **PERSISTS — and is near-uninformative.** Causal d=0 ranks 19th-24th of 25, but with ACF h1 +0.86 / h12 +0.27 the 25-shift set has **~2-3 effective draws.** It does not support the gate; it does not carry the weight it was given. |
+| 3 | a date rule in costume | **DISSOLVED — genuinely.** Pearson(breadth, entry time) **-0.797 -> -0.007/+0.008.** **This is what widening bought, and it is real.** The clean test the wider window promised got run. |
+| 4 | no interior optimum | **CONFIRMED.** Best cell at a grid edge in all three tiers; three sign changes across 12 cells; fitted parameter bimodal at the edges. |
+| 5 | wrong sign | **SIGN CONFIRMED, magnitude is one fill.** IOST-independent: Spearman(breadth, R) **-0.190** (T1, p=0.099) / **-0.251** (56-fill R set, p=0.030) — **the most durable number in the study** — and it STILL fails its own Bonferroni floor of 0.00625. **A hint, not a finding.** |
+
+### 6. THE NO-DELETION CANDIDATES — the door is closed, and this is where I expected to find something
+
+- **1.5x size scaler when breadth <= 0.30, ZERO deletions.** Wide: +$18.42 = **+$6.5/mo at p=0.051,
+  MDE $20/mo** — **the closest anything on this book has come to the ship bar**, and it sidesteps
+  volume destruction entirely. **Excluding IOST it is +$1.80 over 85 days = $0.64/mo.** On the primary
+  corpus +$4.80 total and **-$11.81 excluding IOST.** The delta is **exactly 0.5 x $33.23 — 91% of the
+  only live variant in the family is one trade.**
+- **Inverse gate (trade ONLY when <=0.30).** +$13-14.5/mo but deletes **78-82% of fills**, leaving 19
+  fills per quarter on a 3-slot sleeve. **Fails on construction before statistics.**
+- **Side rule (longs in low breadth).** n=12, +$31.16 — **IOST again.**
+
+> **GATE, INVERSE AND SCALER ALL REDUCE TO THE SAME +$33.23 IOST_USDT LONG THAT MOTIVATED 0.26 IN THE
+> FIRST PLACE. That is the single cleanest statement of the verdict.**
+
+### 7. RANKED DECISION
+
+| # | option | $/mo | netR | deleted | MDE/mo | env or code |
+|---|---|---|---|---|---|---|
+| **1** | **DO NOTHING — gate nothing, keep recording** | **$0** | 0 | **0 of 50** | n/a | **none** |
+| 2 | 1.5x low-breadth scaler | +$6.5 (**+$0.64 ex-IOST**) | +10.18 | 0 | $20 | sizing hook, `risk_controls.py` |
+| 3 | gate > 0.26 | -$0.55 | +2.46 | 9 of 50 (18%) | $114 | code, no kill switch |
+| 4 | gate > 0.30 | -$14.6 | -1.44 | 11 of 50 (22%) | $123 | code, no kill switch |
+| 5 | inverse gate <= 0.30 | +$13.0 | +20.35 | 82 of 101 (81%) | $40 | code |
+
+**TAKE RANK 1.** Cost if wrong: forgo an effect whose best honest estimate is **negative** and whose
+sign flips on one fill. **No fold ever selected it.** Rank 2's risk is that it raises size in the
+thinnest tape, against the retention invariant.
+
+### 8. THE PERMANENT CLOSE — and why nothing will ever resolve it
+
+Per-fill dollar sd $7.13-$9.92; per-day sd $10.38-$15.66. Resolving $10/month at 2.8 SE needs
+**4,437-37,471 fills (11-42 years)** OR **2,509-14,668 breadth-days (12-44 years)**.
+
+> **BECAUSE A MARKET-WIDE VETO TAKES ONE VALUE PER DAY AND BLOCKS EVERY CANDIDATE AT ONCE, THE DAY
+> REQUIREMENT BINDS — AND IT CANNOT BE SHORTENED BY TRADING MORE.** Trading more adds fills but not
+> decisions. **This closes the entire market-wide-veto family on arithmetic, and it is the only result
+> here that transfers to other variables.**
+
+Widening moved best-cell MDE **$161 -> $109 -> $27/mo** across 6, 20 and 85 days. **Real progress, and
+the next doubling does not exist: the exchange wall is 2026-06-14.**
+
+**REOPENING REQUIRES ALL FOUR, PRE-REGISTERED:**
+1. **NOT a market-wide daily veto.** One decision per day is a structural ceiling; **any proposal with
+   that shape is refused on arithmetic without pricing.**
+2. **Thresholds >= 0.15 apart** on this regressor. Hour-to-hour noise is 0.037; anything finer asks the
+   instrument a question it cannot answer at any n.
+3. **Priced on LOGGED ground-truth breadth only** (`breadth_24h` at scan time). No reconstructed levels
+   before 2026-09-01, and no hour-16 fills unless Min15 bars are fetched.
+4. **LEAVE-ONE-OUT ON THE LARGEST |$| FILL, REPORTED BEFORE THE HEADLINE. Mandatory.** It caught the
+   6-day POSITIVE result and the 3-month NEGATIVE one. **PASS = the sign survives the jackknife.
+   KILL = it does not.**
+
+### 9. CARRY FORWARD REGARDLESS
+
+- **16:00Z RESET-HOUR OFF-BY-ONE — a live defect in reusable code.** A fill entering 16:00-17:00Z reads
+  the PREVIOUS day's anchor, mis-scoring by up to **0.39** (SOPH read 0.2373 against a live 0.6271).
+  **The current patch substitutes the next hour, which is LOOK-AHEAD.** Compute the anchor at the fill
+  instant, or exclude the hour.
+- **THE INSTRUMENT'S TOLERANCE IS CONDITIONAL AND WAS OVERSTATED.** The headline mean |err| 0.0347 is
+  **alignment-inflated — it reads the 09-09 16:13 anchor an hour into the future.** Under one
+  consistent causal rule the six anchors give **0.0931, which FAILS the pre-declared 0.05 bar.** It
+  passes at 0.0337 only after excluding the 16:00-17:00Z post-reset hour, where a day-anchored
+  statistic **is not reconstructible from hourly bars at all.** Record it as conditional.
+- **TWO R DEFINITIONS DISAGREE ON THE SAME 50 FILLS:** `sum(pnl/risk_usdt)` = -1.20 vs
+  `sum(r_multiple)` = -1.94, **0.74R apart. Resolve before any future R study.**
+- **R IS MEANINGLESS AT MICRO-DENOMINATORS.** Era A's +12.42R is five fills at ~+5R on ~$1 risk units,
+  **~$13 of real money, which revalues at today's 1R as +$242. Never restate R across a 17x 1R move
+  without printing the denominator.**
+- **Corrections to facts asserted earlier in this same study:** `r_multiple` exists from 2026-06-27 in
+  the feature store (not "uncomputable before 08-08"); **BILL_USDT is NOT a hole** — it is in the
+  feature store at 07-16, +$5.15, R +4.43.
+- **KEEP THE RECONSTRUCTION ENGINE** (`wc/REACH/`, 705 symbols, `breadth_final.json`). **It backtests
+  any future market-wide regressor to 88 days on day one instead of waiting six weeks for fills.**
+  That, the dissolved date confound, and the fact that `trade_history` now logs breadth at scan time
+  are the three assets from this exercise. **None of them is the gate.**
