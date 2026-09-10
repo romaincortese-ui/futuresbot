@@ -9787,3 +9787,153 @@ positions that predate the diagnostic. **Filter on entry, not exit.**
 - **The container sleeps when idle** (`railway ssh` returns *"scaled to zero"*), which is why the count
   was run against the 21:16Z snapshot in scratch rather than live. Confirm this is expected for a bot
   that must hold positions overnight.
+
+---
+
+## 2026-09-11 — TIGHT PEAK-GIVEBACK TRAIL (owner proposal, 10-30%): REFUTED on mechanism, not statistics.
+
+**Proposal:** *"every time a trade reaches a new peak when it's armed, give it 20% room to keep growing.
+If it goes down 20% then close the trade... try 10% to 30%."* Example: peak $20, armed at $10, close
+under $18. **Read-only. Nothing edited, deployed or changed.**
+
+**Two forms tested because the words and the arithmetic diverge:**
+
+    FORM A - PROPORTIONAL (the words):   floor = peak x (1-x)     -> retain 0.70-0.90
+    FORM B - FIXED-R      (the example): floor = peak - x*1R      -> constant width in R
+
+**THE TWO FORMS ARE THE SAME RULE AT HIS OWN EXAMPLE, because the 1R is stale.** The $18 assumed
+1R=$10. At the current-era 1R the forms give **$16.00 and $16.31** at a $20 peak — 31 cents apart.
+**They only separate above ~3R**, where Form B becomes radically tighter than anything ever run here.
+
+### THE DECISIVE NUMBER — the whole answer, and it needs no statistics
+
+> **The deepest giveback any winner survived on this book before going on to make a NEW HIGH was
+> 53.4%. The live floor is 50%. It sits empirically within THREE POINTS of the tightest proportional
+> floor that never clips a runner. Every value proposed moves the floor 20-40 points inside that
+> boundary and starts clipping survivors immediately.**
+
+Per-armed-trade max giveback survived before a new high: **median 25-42% of peak** (0.39-0.75R),
+p75 38-73%, p90 41-115%, max 50-154%. Event-level over 192 retracements followed by a new high:
+p50 6.3%, p75 12.3%, p90 23.8%, **max 53.4%**. **Every version of the number puts the 10-30% range at
+or below the median.**
+
+Fraction of the givebacks winners actually NEEDED that each setting cuts short:
+
+    x        Form A cuts   Form B cuts
+    0.10        32%           50%
+    0.20        14%           26%
+    0.30         7%           16%
+    live 0.50   ~0%            -
+
+**AND THE TWO LEGS MOVE AGAINST HIM TOGETHER.** As x tightens 0.30 -> 0.10, money SAVED **falls**
+($21.80 -> $18.90) while money CLIPPED **rises** ($12.03 -> $30.79). **Tightening buys LESS protection
+and MORE clipping at the same time.** In all 36 cells on the second engine the clipped leg is
+**1.4x to 6.1x** the saved leg. **There is no cell where banking peaked-and-died trades outweighs
+clipping runners.**
+
+### THE SWEEP — 36 cells x 2-3 conventions x 3 engines. Nothing at 2 SE.
+
+**0 of 201 paired cell-evaluations positive at 2 SE. Max t = 1.14** (a verifier re-scan over 207 cells
+found max t=1.73, still 0 at 2 SE). Permutation p 0.249-0.932; every bootstrap CI straddles zero.
+**Paired MDE $57-$105/mo at realised sizing, $104-$161/mo at forward sizing, against a $10/mo bar —
+29 to ~100 months to resolve. "Run it and see" is not available either.**
+
+**Cells whose SIGN FLIPS between bar conventions are artifacts by the brief's own rule — and
+Form A x=0.20 is one of them.** Two independent engines price **all** cells negative (-$20.60 to
+-$84.38/mo, negative in both config eras in 36/36).
+
+**THE LITERAL EXAMPLE IS THE ONE SIGN-STABLE CELL IN THE STUDY, AND IT IS AGAINST HIM.** Form B
+x=0.20: negative on **three engines x two conventions x after both corrections**, and negative in
+**32 of 33 leave-one-symbol-out folds.**
+
+### THE TAIL — four of the five 2R+ trades are clipped by EVERY cell
+
+| trade | what every cell does |
+|---|---|
+| **TUT** +5.53R (filled the resting 5R TP) | **Negative in all 36 cells, both conventions, no exceptions.** It gave back **1.65R from a 3.65R peak and THEN RAN TO 5.5R.** No cell in the range survives that. |
+| **IOST** +$33.23 | **Worse than "fails to help".** Every cell fires **~3 HOURS BEFORE the peak**, at +0.9R to +2.0R, on an early retracement **on the way up**. Damage -$12 to -$44. Top-abs-delta fill in all 36 cells. |
+| **SOPH** +$24.68, peak 2.31R -> exit 1.10R | **The one trade matching his picture, and the ONLY reason any cell is positive.** A 52% giveback, the deepest realised in the window. Worth +$16 to +$22. **But it survived the 19F early stop by 0.017R and flips sign by convention in two of three engines.** |
+| MAGMA (4.42R), USELESS (3.50R) | clipped in **every single cell** |
+
+> **REMOVE SOPH AND EVERY POSITIVE CELL IN THE STUDY COLLAPSES** (best +$26 -> +$3.89; ex-top-2 ->
+> +$0.09). **The sweep is a two-observation study wearing a fifty-observation costume**, and both
+> observations are from the same day.
+
+### THE PREMISE IN MY OWN BRIEF WAS WRONG — the range was NOT untested
+
+`DECISION_RULE.md:795-805` already holds a full retention axis at arm=1.0. **Form A maps exactly onto
+retain 0.70-0.90, which is THE WORST CONTIGUOUS REGION OF THE ENTIRE AXIS:** 0.70 -$110/mo, 0.75 -$82,
+0.80 -$127, 0.85 -$123, 0.90 -$110. Same source: **TP completion 2.0% at retain <=0.60 and 0.0% at
+every retain >=0.70.** Our replays disagree with those magnitudes by $85-$220/mo, **but agree on the
+sign of the tight half.**
+
+### DIRECTION — the open door is LOOSER, not tighter
+
+Within the range **the loose end beats the tight end in both families and all three conventions**, and
+the wider scale-free set is negative for every cell. **That is the MEAN-REVERSION signature: peaks are
+followed by pullback-then-recovery, not continuation.** If momentum after a peak were the regime a
+tight trail would win. It does not. **The escape hatch is open toward leaving the floor alone or
+LOOSENING it, and closed in the direction proposed.**
+
+**ON THE THEOREM: INDETERMINATE, not confirmatory.** Two lines called the flat surface a confirmation
+of the corner-solution prediction; the decision agent declined, **because with 21 armed fills and 2
+carrying all the dollar weight this corpus cannot distinguish "flat" from "structured."** What can be
+said: **extending the axis from retain 0.90 down to 0.30 keeps the total inside a +/-$21 band whose SE
+is +/-$11-$28. No interior optimum outside noise, no gradient to climb.**
+
+### FOUR CORRECTIONS AND ONE NEW REUSABLE RESULT
+
+1. **THE POLL SEES ~75% OF THE BAR — now MEASURED, not assumed.** Modelling poll visibility as
+   `close + lambda*(high-close)` and fitting against the bot's own recorded `convex_peak_r` gives
+   **lambda ~ 0.75-0.78, mean error 0.000R**, and reproduces the arm count **exactly (21)** where close
+   gives 19 and full wick gives 22. **This settles the wick-vs-close question my brief could not, and
+   it INVERTS my instruction to treat wick as realistic** — the MEXC exit path polls the smoothed
+   mark/fair price, not last-trade kline extremes. **Reusable for every future intrabar study here.**
+2. **SETTING `FUTURES_CONVEX_TRAIL_RETAIN_FRAC >= 0.75 SILENTLY KILLS THE 3R RATCHET**
+   (`_trail_retain_for` returns base when 0.75 <= base). **So Form A at x <= 0.25 is NOT "the live rule
+   tightened" — it is the live rule with the runners' only step-up protection REMOVED.** Anyone setting
+   this env var by hand expecting to keep the ratchet would not get it.
+3. **There is a COST FLOOR the brief omitted:** `exit_level = max(retain*peak, 1.5 * 0.190%/sl_frac)`,
+   and **the trail is disabled entirely if that exceeds the peak.** Inert on WILDCARD's wide stops
+   (0.024-0.063R) but implemented.
+4. **1R IS BIMODAL ACROSS THIS WINDOW AND A FLAT FIGURE INFLATES EVERY CELL 3-6x.** Median `risk_usdt`
+   over the 50 in-window fills is **$2.96** — 39 fills at $0.73-$4.07 (pre-deposit) and 11 at
+   $9.07-$25.27 (post-deposit). **The $18.46 current-era figure is right for recent fills and wrong as
+   a flat conversion for this corpus.** Paired replays must price each fill at **its own realised
+   risk**. (Not a contradiction of the $19.49 median quoted for the 20 fills since 18F — different
+   window.)
+5. **Arm/level census corrected from recorded peaks:** armed >=1.0R **21** (not 22); 1.5R **10**;
+   2.0R **8**; 3.0R 3; 4.0R 2; 5.0R 1. **29 of 50 fills are untouched by every cell in this study.**
+
+**ONE ENGINE FAILED ITS OWN VALIDATION AND ITS POSITIVES WERE AN ARTIFACT.** An ASIS fallback silently
+**pinned the baseline to the realised outcome** on the 17 fills it could not reproduce while still
+letting the counterfactual fire — not a paired comparison. **Dropping the broken baselines flips every
+positive cell it reported to negative.** Caught in verification.
+
+### RANKED DECISION
+
+| # | action | $/mo | fills moved | paired MDE | env or code |
+|---|---|---|---|---|---|
+| **1** | **DO NOTHING** — arm 1.0R, retain 0.50, ratchet 3.0R->0.75 | **$0 by construction** | 0 | — | none |
+| 2 | Form A x=0.30 (retain 0.70) | +$5..+$19 on one engine, **-$33..-$53 on another** | 16-18 | $90-105 | env only |
+| 3 | gated Form B (live 0.50 below 2R, peak-0.20R above) | +$26 +/- $39 (**SE > estimate**) | 7 | $57-104 | code |
+| 4 | Form A x=0.20 (the words) | **artifact**, sign flips by convention; -$18 corrected | 19 | $161 | env, **kills the ratchet** |
+| 5 | Form B x=0.20 (the example) | **-$20 to -$81** | 18-21 | $158 | code |
+
+**Every non-incumbent row fails ex-top-1, fails walk-forward (folds 1-3 flat or negative, fold 4 carries
+100%), and is negative in netR on the wider 60-fill scale-free set (-0.06R to -0.26R per armed trade).**
+
+**THE RETENTION INVARIANT IS SATISFIED BY ALL 36 CELLS** — every one tightens the floor. **This is the
+rare proposal that structurally cannot violate the owner's hardest rule. It just doesn't pay.**
+
+### TWO QUEUED ITEMS THAT EACH OUTWEIGH THIS ENTIRE SWEEP
+
+1. **THE PONS ARM MISS.** PONS's recorded peak was **0.9653R — it missed the 1.0R arm by 0.035R and
+   cost $28.52, which is 44% of the whole window's loss.** Evaluate the arm against the fair feed's
+   1-minute high/low rather than a point sample. **One fill, more money than any cell in this study.**
+2. **PERSIST THE PER-POSITION `r_now` POLL SERIES.** One log line. **It makes the entire retention axis
+   directly measurable in 30 days instead of unanswerable forever.** Already listed as "the cheapest
+   thing on the page" at `DECISION_RULE.md:293-297`.
+
+> **STOP SWEEPING OWN-PATH EXIT PARAMETERS. Three sweeps this month have landed flat within noise
+> against a ~$90/month MDE. Each one costs more than it can possibly find.**
