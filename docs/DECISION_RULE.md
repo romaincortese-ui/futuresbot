@@ -8536,3 +8536,215 @@ column}. Item 1 needs no pre-registration: its delta is zero BY PROOF.**
 signal-to-fill gap is the largest bps quantity in the system, has never been measured, and the one
 observed case (MAGMA, +480 bps over 58 minutes) would have changed that trade's outcome. **It is
 free to record and nothing can be concluded about the gate until it exists.**
+
+---
+
+## 2026-09-10 — staggered partial TP (the ladder, done properly). REFUSED. And MY IOST counterfactual was wrong by $16.
+
+**Asked (owner):** deep-dive SOPH and IOST, design the best staggered TP, test 4 weeks, then wider
+if it survives. 3 agents / 3 verifiers / 3 independently built engines / ~120 cells.
+
+### CORRECTION 1 — THE IOST TRAIL EXIT WAS NEVER $58.02
+
+I reported all evening that the trail would have banked **3.153R = $58.02** off a 4.204R peak.
+**Wrong.** Path-exact Min1:
+
+    16:56Z  peak 3.0887R  -> TRIPS THE 3R RATCHET, retain 0.50 -> 0.75, floor jumps to 2.3165R
+    17:11Z  low prints 2.2208R -> THROUGH THE FLOOR. The trail exits at ~2.32R = ~$42.
+    18:37Z  price runs on WITHOUT the position to 4.5762R (the true free-run max)
+    22:02Z  a second, LOWER high at 4.4417R
+    09-10 07:14Z  collapses through the stop to -1.35R
+
+**The 4.204R I was tracking was a LATER, LOWER local high, printed 83+ minutes after the position
+would already have been flat.** My figure came from a bar-close reconstruction — my tracker polled
+every 10-30 minutes and never saw the 17:11 wick. A close-only replay gives $58.70, which is where
+my number came from; **the live 1-second poll sees the wick.**
+
+> **CONSEQUENCE: the owner's manual close at 15:45 for +$33.23 cost him about $9, NOT $25.**
+
+**Caveat stated honestly:** the ratchet trips by 2.9% and the breach clears the floor by 0.096R on a
+single minute bar. Knife-edge. On a close-only basis the ladder costs IOST -$22.71 instead of
+-$10.02. **Every basis is negative; only the size moves.**
+**If 3.153R / $58.02 is load-bearing anywhere else in the record, re-derive it.**
+
+### CORRECTION 2 — MY SOPH NUMBER WAS ~30% HIGH
+
+I said thirds at 1R/2R give +$6.20. **Correct: +$4.70.** I compared GROSS rung levels against the
+NET realised residual (1.11R). The residual carries the cost too; it must be gross-vs-gross.
+**Sign and shape right, magnitude high.**
+
+### CORRECTION 3 — MY CROSSOVER TABLE WAS WRONG FOR THE 2R RUNG
+
+I briefed "a 2R rung helps only when the trade peaks below 4R." **It is below 3R.** The ratchet
+raises F **discontinuously**: at peak 2.999 the floor is 1.500 and the 2R rung pays; at 3.001 the
+floor is 2.251 and it is **already underwater.** **The ratchet removes a full R of winning zone from
+the 2R rung, exactly where the fat fills live.** My 1R statement was exactly right.
+
+### THE CROSSOVER RULE — the durable yield of this study
+
+    delta = SUM_j f_j (L_j - F)     where F = the eventual trail exit level
+
+**A rung at L pays IF AND ONLY IF L exceeds the eventual floor F.** Verified to 4 decimals against
+path replay on both named trades by three independent engines.
+
+| rung | pays iff peak is |
+|---|---|
+| 1.0R | < 2.00R |
+| 1.5R | < 3.00R |
+| **2.0R** | **< 3.00R — NOT 4R** |
+| 2.5R | < 3.33R |
+| 3.0R | < 4.00R |
+| 4.0R | < 5.00R |
+
+**TWO STRUCTURAL FACTS, neither a sample estimate:**
+
+**(a) The rung fires at L => peak >= L => F >= 0.5L.** So the gain per rung is **CAPPED at 0.5L**
+(0.25L above the ratchet) while **the loss grows without bound as peak grows** — and the losses land
+on the fills that make the book.
+
+**(b) `L > F` is a condition on a peak the trade HAS NOT YET MADE.** At the instant the 1R rung
+fires, a staller and a runner are the same observation. **NO IMPLEMENTABLE RULE CAN SELL ONLY INTO
+STALLS. This is not a tuning problem.**
+
+**Live E[peak | armed] = 2.221R, so the median floor sits at 1.111R — ABOVE a 1R rung. The
+proposal's first rung is a losing bet before any cost is counted.**
+
+### THE TWO NAMED TRADES
+
+| | peak | baseline F | ladder (thirds 1R/2R) | delta | peak capture |
+|---|---|---|---|---|---|
+| **SOPH** SHORT | 2.379R | 1.1895R (= 0.50 x peak exactly) | 1.3965R | **+$4.70** | **49.0% -> 57.7%** |
+| **IOST** LONG (free-run) | 3.089R at the cut | **2.3165R = ~$42** | 1.7600R | **-$10.02** | **74.6% -> 57.0%** |
+
+**NET OVER THE PAIR: -$5.32.** SOPH is a stall and gains; IOST is a runner and pays for it; **the
+runner's loss is twice the stall's gain.**
+
+> **THE OWNER'S SOPH INTUITION WAS CORRECT. It really would have finished closer to its peak, and
+> it would have paid him to. The proposal fails on everything else.**
+
+### THE 4-WEEK RESULT — zero positive cells, three engines, ~120 cells
+
+**Rung reach and the sign census (live rows, n=77):**
+
+| rung | reached | pays | costs |
+|---|---|---|---|
+| 1.0R | 37 (48%) | 22 | 15 |
+| 1.5R | 20 (26%) | 7 | **13** |
+| 2.0R | 17 (22%) | 5 | **12** |
+| 2.5R | 14 (18%) | 2 | **12** |
+| 3.0R | 6 (8%) | 3 | 3 |
+
+> **Above 1.5R the MAJORITY of reachers are on the losing side — because reaching a high rung is
+> itself evidence the trade is a runner. THE RUNG'S OWN TRIGGER IS NEGATIVELY PREDICTIVE OF THE RUNG
+> PAYING.**
+>
+> **And ZERO of the 39-43 losing fills is touched by any rung: every loser peaks below 1R.
+> ALL EXPOSURE SITS ON THE WINNERS.**
+
+**Exposure ratio (loss to runners : gain from stalls): 1R rung 2.7-3.4:1, 1R+2R 5.0:1,
+1R+1.5R+2R 7.1:1.** Compare the measured tightening triggers: T=1.00R 3.5:1, 1.50R 9.7:1, 2.00R
+8.6:1, and the rising schedules 3.7:1 -> 6.7:1. **Same curve, same ridge, worsening monotonically
+with depth. The partial scale-out is the tightening family measured through a different instrument.**
+
+**Walk-forward -$2.25 / -$2.29 / -$22.89/mo. Eleventh kill in a row — and the FIRST candidate to
+arrive dead: the optimiser could not find a positive cell to overfit to and converged on "put the
+rung so high it never fires."**
+
+**Contamination worth knowing:** the corpus straddles RETAIN 0.30 -> 0.50 (2026-08-29); 43 of 81
+rows realised F ~ 0.263 x peak, so half the book was described by the wrong crossover table.
+**Repricing at live retain makes every cell WORSE. The era mix was biased in the ladder's favour.**
+
+**Multiplicity, honestly:** "0 of 122 cells" reads stronger than it is — the cells are deterministic
+linear combinations of ~7 rung statistics on one overlapping sample. **It is seven numbers, not 122.**
+Best |t| anywhere is 2.17; Bonferroni over the week's ~1,255 exit cells needs 4.1.
+
+### IT DOES NOT EVEN BUY THE STATED OBJECTIVE
+
+| | equal-weighted | **R-weighted (the actual P&L)** |
+|---|---|---|
+| baseline | 57.4% | **74.1%** |
+| 1R @ 25% | **57.5% (+0.2pp)** | **67.1% (-7.0pp)** |
+| 1R+2R @ 1/3 | 55.8% (-1.6pp) | **58.4% (-15.7pp)** |
+| 1R+1.5R+2R @ 25% | 53.7% (-3.7pp) | **55.1% (-19.0pp)** |
+
+**Exactly ONE cell in the entire family raises peak capture — 1R @ 25%, by two tenths of a point,
+for about $19/month. And it raises it only on the EQUAL-WEIGHTED metric, which up-weights
+small-peak fills relative to their dollar contribution.**
+
+> **"Closer to peak", averaged equally across trades, is arithmetically A REWEIGHTING TOWARD THE
+> STALLERS — and the stallers are not where the money is. Weight it by money and the same cell is
+> 7 points FURTHER from the peak. THE LADDER BUYS A METRIC, NOT A POSITION.**
+
+### THE COMPOUNDING ARGUMENT DIES ON ITS OWN DECOMPOSITION
+
+Per-fill sd falls 18-46% — real. **And worthless: max drawdown is IDENTICAL across every ladder
+cell. Downside sd is IDENTICAL. Zero losing fills are changed.**
+
+> **100% of the variance reduction is UPSIDE dispersion, because a rung can only fire on a trade
+> already in profit and cannot touch the left tail by construction. The ladder sells the only
+> variance worth owning and buys nothing on the side that hurts.** Log-growth falls at every cell.
+
+The size dial dominates it 3x on |dVar/dmu| — **but the dominance argument is not needed; the
+decomposition kills it outright.**
+
+### THE BEST SETUP, AS ASKED — and the trap inside it
+
+**Single rung at 2.0R, sell 25%, residual keeps the unchanged trail, entry and stop untouched.**
+Chosen by the crossover, not by search: the lowest rung clearing E[F|armed]=1.11R that still fires
+on a SOPH-shaped trade. Gains SOPH **+$4.60 — 98% of the full thirds ladder from one rung.**
+Book cost **-$3.8 to -$16.3/mo**, MDE $8.6-26.9, **fails the gate.** Fires on 17 fills/4 weeks.
+
+> **THERE IS NO SETTING THAT DOES BOTH. The rungs that help SOPH (1R, 2R) are the expensive ones.
+> The rungs that are nearly free — 3R and 4R, the only ones near break-even (1.12:1 exposure,
+> MDE $4.16, a genuine NULL WITH POWER) — NEVER FIRE ON SOPH AT ALL, whose peak was 2.38R.
+> The harmless setup cannot deliver the purpose. The setup that delivers it costs the most.**
+
+### THE LABEL THE RECORD MUST CARRY
+
+**NULL WITH CERTAIN COSTS — not "-$43/month measured."** Under a martingale, optional stopping makes
+a staggered TP worth EXACTLY ZERO, and the peak-conditioned ratchet does NOT exempt it: conditional
+on touching L the residual restarts at L, so E[F | touched] = L regardless of exit definition.
+**Two of the three agents got this wrong.** The measured negative requires drift; drift was measured
+at +0.45 to +0.79R over 6 of 7 rungs but **nothing clears |t| = 2.6 and the rungs are nested.**
+**No cell clears its own MDE — every one sits at 0.45-0.62x its detection threshold, and that ratio
+is scale-invariant in f, so NO CHOICE OF FRACTION CAN BUY POWER.**
+
+### ENGINEERING — reusing the existing module would import a refuted family
+
+`partial_bank.py` **exists and is wired end to end, but is DELIBERATELY DORMANT** — refused for
+convex sleeves at `runtime.py:1389-1391`, gated on `pmt_stop_first` (the retired PMT sleeve), and it
+expresses **only two rungs**. **Worse: `runtime.py:1448` calls `breakeven_stop_price()` after a bank,
+moving the runner's stop to entry +/-0.15%. Reusing it would import the breakeven-stop family
+(7 of 7 negative) and DESTROY the stop-untouched property that makes this construction clean.**
+`_banked_realized_pnl` (`:5139`) is the reusable half.
+**Also: 5.6% of fills hold 1 contract and cannot ladder at all; 15.6% hold under 4, so a four-rung
+25% ladder is inexpressible on them.**
+
+**No phantom control needed, confirmed at source:** the trail is a function of (price, peak) only,
+never of size, so a partial moves neither entry, stop, nor peak, and baseline and ladder exit at the
+SAME INSTANT at the SAME PRICE on every path. **Corollary: "the replay matched the algebra to the
+cent" is a TAUTOLOGY, not a validation.** Bar basis binds in exactly one place — the IOST named walk
+— and there it binds hard.
+
+### THE MEMORY TRANSFERS EXACTLY, AND HAS NOW BEEN MEASURED THREE TIMES
+
+The owner's own standing memory — *"early banking measured harmful, floor-not-bank", 2026-08-08* —
+**was written about this exact object.** It recorded **-0.115R/trade at t=-2.06**. Independent
+measurement on a **disjoint** window five weeks later: **-0.1216R at t=-1.98** and **-0.1028R**.
+**Same object, same magnitude to three significant figures, different sample, different engine.**
+
+### THE WIDE TEST WAS NOT RUN, CORRECTLY
+
+The owner gated it on 4 weeks surviving. It did not. Also checked it was even cheap: `wild.jsonl`
+(90 rows to 2026-06-15) carries **no `peak_r` and no `r` column** and spans the PEAK_PROFIT_LOCK and
+RETAIN 0.30 eras, so it cannot be baselined without re-deriving peaks from bars for 90 symbols.
+**The algebra is window-independent; only the staller/runner mix is not. Budget not spent confirming
+a null.**
+
+### RULING
+
+**DO NOT SHIP.** The next step is a deletion from the queue, not a config change.
+**The durable yield is the crossover test** — a rung at L pays iff L exceeds the eventual floor F,
+where F = 0.50 x peak below 3R and 0.75 x peak above. One line, no replay, applies to any future
+exit idea. **And the 4R rung is the first exit cell this week that is measurably NOTHING rather than
+merely unmeasured. Remember its shape.**
