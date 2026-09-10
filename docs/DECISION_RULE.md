@@ -8748,3 +8748,82 @@ a null.**
 where F = 0.50 x peak below 3R and 0.75 x peak above. One line, no replay, applies to any future
 exit idea. **And the 4R rung is the first exit cell this week that is measurably NOTHING rather than
 merely unmeasured. Remember its shape.**
+
+---
+
+## 2026-09-10 — TRIAL 19F: AMENDMENT TO THE STOPPING RULE. Owner-approved. Documentation only.
+
+**AMENDED WITH REDUCED EVIDENTIAL WEIGHT. This is not a costless clarification and must not be
+scored as one.** Two fires had already been observed when the amendment was made, and it was those
+non-fires-then-fires that prompted the arithmetic below. The defect being fixed was knowable on
+2026-09-08 before the flag was set, which is the only reason the amendment is defensible at all.
+
+### THE CHANGE
+
+    WAS:  stop at "30 WILDCARD closes OR 45 days, whichever comes first"
+    NOW:  stop at "45 days"   -- the 30-close arm is DROPPED
+
+Nothing else moves. `FUTURES_WILDCARD_EARLY_STOP_R` stays 0.5, `MINUTES` stays 30,
+`FUTURES_TREND_EARLY_STOP_R` stays 0.0. **X MUST STILL NEVER BE REFIT. T may still be tuned only
+after n >= 30 fires.** No env var changed, no code changed, no deploy.
+
+### WHY — the trial could not reach its own primary criterion
+
+Measured fire rate since arming (2026-09-08 18:18Z): **2 fires in 7 WILDCARD closes = 29%**,
+against the 24% assumed at pre-registration. The primary criterion needs **20 fires**.
+
+    20 fires at 29%           ->  ~69 WILDCARD closes needed
+    observed close rate       ->  ~4.7 WILDCARD closes/day
+    69 closes                 ->  ~15 days  ->  verdict ~2026-09-23
+    the 30-CLOSE ARM triggers ->  ~2026-09-15
+
+> **P(reaching 20 fires inside 30 closes) = 0 BY CONSTRUCTION. The trial was scheduled to terminate
+> roughly eight days before it could evaluate itself.**
+
+Dropping the 30-close arm leaves 45 days x ~4.7 closes/day x 0.29 fire rate = **~61 expected fires
+against 20 needed** — comfortable, where the original 45-day-only estimate at the lower assumed
+fill rate was a knife edge at ~21.6.
+
+### THE FALLBACK THAT WAS OMITTED FROM THE ORIGINAL PRE-REGISTRATION — added now
+
+**If fewer than 20 fires have accrued at day 45, report the running delta at whatever n was reached
+as DESCRIPTIVE ONLY. A partial-n positive delta MUST NOT be read as a pass.** The original document
+had no instruction for the under-powered case, which is how a trial ends up being scored on whatever
+n it happened to reach.
+
+### UNCHANGED — restated so the amendment cannot be read as loosening anything
+
+**KILL (either condition, immediately, no discussion):**
+1. **Two cut trades whose peak before the cut was >= 1.0R.** `/report` prints this as "cut above 1R".
+2. **After 20 fires, a negative running dollar delta against the logged counterfactual.**
+
+**PASS (30 WILDCARD closes... now 45 days):**
+1. PRIMARY: running delta positive at n >= 20 fires.
+2. Cuts above 1R peak: zero or one across the whole trial.
+3. Mean realised risk per trade stays in [1.6%, 2.2%].
+4. TREND untouched: zero `CONVEX_EARLY_STOP` exits on a TREND position.
+
+### STATUS AT THE TIME OF AMENDMENT
+
+**2 fires, both clean, neither a kill event:**
+
+| symbol | window | cut at | minutes | peak before cut | counterfactual | delta |
+|---|---|---|---|---|---|---|
+| MARSCOIN SHORT | 09-09 22:14 -> 22:42 | -0.570R, -$10.29 | 27.9 | **0.2064R** | stop touched 00:07 -> -$19.01 | **+$8.72** |
+| MARSCOIN LONG | 09-10 05:59 -> 06:14 | -0.510R, -$4.79 | 15.5 | **0.2291R** | never stopped, now ~-0.42R | **~-$0.78** |
+
+**Running delta +$7.94 at n=2.** Both peaks are far below the 1.0R kill threshold — these were
+non-starters, exactly the target population. **n=2 supports no inference; it is recorded, not
+interpreted.**
+
+**The counter-case, recorded for the T question that opens at n>=30:** BTR_USDT LONG 09-10 04:41 ->
+05:17 went to a full stop at **-1.12R = -$10.79** with a peak of 0.0646R. Its `t_adverse_50` was
+**36.35 minutes — the 30-minute window missed it by 6.35 minutes.** At T=45 it would have been cut
+near -0.5R, saving roughly **$5.92**.
+
+**WILDCARD `t_adverse_50` distribution so far (7 readings):** 15.45, 27.93, 36.35, 38.13, 41.53,
+72.33, 272.03 minutes. **Median 38.13. T=30 catches 2 of 7; T=45 would catch 5 of 7.**
+
+> **THAT IS SUGGESTIVE AND MUST NOT BE ACTED ON. Tuning T from the two observations that fired plus
+> one that did not is fitting to n=3. The pre-registration permits T to move only after 30 fires,
+> and that constraint is exactly what stops this from becoming the twelfth refuted candidate.**
