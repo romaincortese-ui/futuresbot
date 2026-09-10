@@ -1,3 +1,257 @@
+# Daily Audit — 2026-09-10
+
+---
+
+## Automated Assessment (UTC 16:25)
+
+Equity **$1,023.19** — cash $837.24, frozen margin $169.40, unrealized
+**+$16.55**, **2 open positions**. Yesterday's line was $1,022.61, so the
+headline is flat: that is realized **-$17.2** offset by an equal open gain. No
+deposit or withdrawal. **Do not read the flat equity as a flat day.**
+
+`FUTURES_TRIAL_LABEL=19F`, `FUTURES_TRIAL_START_TS=1788891501`. Config
+unchanged since 09-08. **Nothing shipped today.** `/data` reachable; feature
+store, shadow ledger and learner all ran. No Traceback or ERROR in the log
+window; no 5003/2015 order rejects.
+
+### 1. Closed trades — 6 in 24h, 1 winner (16.7%), **-$17.2 / -2.24R**
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | mult | risk% | exit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 09-09 22:01 | ZEC | TREND | LONG | x5 | 8.3h | -1.04 | -14.14 | 0.66 | 1.35 | stop |
+| 09-09 22:42 | MARSCOIN | WILDCARD | SHORT | x1 | 0.5h | -0.57 | -10.29 | 1.00 | 1.79 | **early stop** |
+| 09-10 01:22 | SOPH | WILDCARD | SHORT | x2 | 9.2h | **+1.11** | **+24.54** | 0.98 | 2.22 | retention trail |
+| 09-10 05:17 | BTR | WILDCARD | LONG | x1 | 0.6h | -1.12 | -10.80 | 0.50 | 0.95 | stop |
+| 09-10 05:59 | PONS | WILDCARD | SHORT | x2 | 10.7h | -0.12 | -1.70 | 1.00 | 1.64 | **preempted** |
+| 09-10 06:14 | MARSCOIN | WILDCARD | LONG | x2 | 0.3h | -0.51 | -4.79 | 0.50 | 0.90 | **early stop** |
+
+**Exchange reconcile: 6 exchange rows, 6 feature-store rows, matched on symbol,
+side, entry, close and timestamp.** Exchange realized -$17.17 vs feature-store
+-$17.27; the $0.10 gap is fee/funding rounding on SOPH and PONS. No censoring.
+Feature store 154 rows (148 on 09-09, +6 = the six closes).
+
+By sleeve: TREND 1 trade, -1.04R / -$14.14. WILDCARD 5 trades, -1.20R / -$3.13.
+The dollar damage is one ZEC stop; the wildcard sleeve was close to flat.
+
+### 1a. THE 19F EARLY STOP EARNED ITS FIRST TWO FIRINGS — Min5 replay confirms both
+
+Trial 19F's only change is a wildcard early stop: cut at -0.5R if the trade is
+still under water 30 minutes in. It fired twice today, for the first and second
+times in its life. **Both were correct, and neither is a coin flip.**
+
+Min5 replay of the six hours *after* each early exit:
+
+| trade | exited at | full stop reached later? | best favourable excursion after exit |
+|---|---|---|---|
+| MARSCOIN SHORT | -0.57R / -$10.29 | **yes** (0.110530 vs 0.110425 stop) | +0.07R |
+| MARSCOIN LONG | -0.51R / -$4.79 | **yes** (0.101210 vs 0.104617 stop) | +0.12R |
+
+Both positions went on to hit the stop they were pulled out of, and neither
+offered any recovery worth naming in between. The cut saved **$8.72 + $4.28 =
+$13.00** against the full-stop counterfactual. That is not a verdict on 19F at
+n=2, but it is the first live evidence, and it points the right way.
+
+### 1b. THE PREEMPT PATH IS THE ONE THING WORTH WATCHING — PONS cost roughly $22
+
+`CONVEX_PREEMPTED` evicts a losing convex position to free a slot for a fresh
+signal. It fired on PONS SHORT at **-0.12R** (-$1.70) at 05:59Z, handing the
+slot to MARSCOIN LONG — which was early-stopped fifteen minutes later at -0.51R
+(-$4.79).
+
+**PONS did not hit its stop over the following six hours. It ran to +1.88R
+favourable.** Under the live retention trail (arm at 1R, retain 0.5) a held PONS
+plausibly banks **+0.9R or better, about +$15**. So the swap cost roughly $17 of
+foregone gain plus $4.79 of realized loss on the replacement — call it **-$22**.
+
+Lifetime record of the path, all three firings:
+
+| ts | symbol | R | $ |
+|---|---|---|---|
+| 2026-08-11 | INX SHORT | -0.39 | -0.29 |
+| 2026-08-29 | ZORA LONG | -0.65 | -2.12 |
+| 2026-09-10 | PONS SHORT | -0.12 | -1.93 |
+
+n=3, net -1.16R / -$4.34 on the evicted legs alone. **That is far too few to
+propose anything**, and the realized column understates the true cost because
+the loss is in the path not taken. **Watch item, not a proposal:** if preempt
+fires twice more, replay each evicted leg the way PONS was replayed here and
+score the swap end-to-end (evicted counterfactual minus replacement realized).
+No env change today.
+
+### 1-OPEN. Open positions — two wildcard shorts, both in profit
+
+| symbol | side | lev | held | R now | peak R | giveback | to +5R TP | to -1R stop | mult | intended -> used margin |
+|---|---|---|---|---|---|---|---|---|---|---|
+| UAI | SHORT | x1 | 11.9h | **+0.78** | +0.96 | -0.18 | 45.2% below | 22.6% above | 0.66 | $188.05 -> $124.27 |
+| BTR | SHORT | x1 | 11.0h | **+0.45** | +0.45 | 0.00 | 42.2% below | 38.8% above | 0.50 | $95.42 -> $44.86 |
+
+Both entered at lateness 0.93 / 1.00, i.e. at the extreme rather than mid-path,
+which is the wildcard's normal shape and not a deep-pullback entry. Both are
+sized well under intent: the regime scaler trimmed UAI 34% and BTR 53%. On the
+09-09 evidence that the scaler saved $27.20 over eight closes, that trim is a
+feature. Combined unrealized is the +$16.55 in the equity line.
+
+**BTR was flipped, not re-entered.** The sleeve stopped out of BTR LONG at
+05:17Z (-1.12R) and opened BTR SHORT at 05:20Z, three minutes later. That is
+two independent scanner decisions, not a stop-and-reverse rule; the short is
+currently +0.45R, so the flip is working. Flagged for visibility only.
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** — 154 rows, in sync with the exchange ledger (see 1).
+Conditional-expectancy report over the full 154-trade corpus: overall mean
+**-$0.293/trade, sum -$45.20, win 43.5%, mean R +0.106**.
+
+Conditions reaching verdict with n>=10 in both groups:
+
+| condition | verdict | gap $ | with | without | oos |
+|---|---|---|---|---|---|
+| hold >= 120min | FAVOR | +3.003 | 101 / +$0.740 / 53.5% | 53 / -$2.263 / 24.5% | OK |
+| leverage >= 7 | FAVOR | +2.517 | 46 / +$1.472 / 50.0% | 108 / -$1.045 / 40.7% | OK |
+| exit = stop | AVOID | -0.573 | 24 / -$0.777 / 45.8% | 130 / -$0.204 / 43.1% | OK |
+| regime trimmed hard (<0.5) | AVOID | -0.067 | 27 / -$0.349 / 37.0% | 127 / -$0.282 / 44.9% | OK |
+| at extreme (lat >= 0.99) | FAVOR | +0.294 | 63 / -$0.120 / 44.4% | 91 / -$0.414 / 42.9% | OK |
+| roc >= 12% | FAVOR | **-1.594** | 46 / -$1.411 / 56.5% | 108 / +$0.183 / 38.0% | OK |
+| leverage <= 4 | FAVOR | **-0.739** | 89 / -$0.605 / 44.9% | 65 / +$0.134 / 41.5% | OK |
+
+**Nothing here is actionable, and three of the seven are not what they look
+like.** `hold>=120min` and `exit=stop` are outcome variables, not entry
+conditions — under a retention trail winners are held long by construction and
+losers exit at the stop, so both restate the P&L rather than predicting it.
+`roc>=12%` and `leverage<=4` carry a FAVOR label with a **negative** dollar gap;
+the label is scored in R and the standing objective is dollars, so treat those
+two labels as unreliable rather than as signals.
+
+That leaves `leverage>=7` (+$2.52, OOS-consistent) as the only substantive line.
+**It contradicts the corpus finding recorded on 2026-06-26 that leverage>=7
+reliably loses.** The sign has flipped as the corpus grew from ~20 to 154 rows.
+It is also confounded: leverage is derived from stop width, so "high leverage"
+is largely "tight stop on a low-ATR pair", not a dial anyone sets. **Propose
+nothing. Re-check at n=200.**
+
+**(b) Shadow ledger** — 232 rows, 225 resolved.
+
+| bucket | n | gross R | net R | avg net | wins |
+|---|---|---|---|---|---|
+| side_disabled | 52 | -24.41 | **-28.34** | -0.545 | 12 |
+| shadow_only | 46 | +16.20 | +13.70 | +0.298 | 25 |
+| veto: ref_not_listed | 39 | -15.23 | **-17.73** | -0.455 | 12 |
+| slot_occupied | 31 | +27.47 | +20.46 | +0.660 | 20 |
+| calm_shock | 23 | -1.76 | -2.27 | -0.099 | 14 |
+| min_vol_skip | 14 | +8.37 | +8.05 | +0.575 | 10 |
+| below_trigger | 10 | +2.89 | +2.56 | +0.256 | 7 |
+| veto: crowded_longs | 5 | -1.81 | -1.90 | -0.379 | 2 |
+| veto: crowded_shorts | 4 | +1.60 | +1.55 | +0.388 | 3 |
+
+**Two vetoes are clearly paying.** `ref_not_listed` blocked 39 signals that
+would have lost 17.73R — the external cross-listing gate remains the one
+external filter with a real record. `side_disabled` blocked 52 shorts that
+would have lost 28.34R, which is the largest single line in the table and
+independently re-confirms TREND long-only. Neither needs tuning; both need
+leaving alone. The two crowding vetoes are at n=5 and n=4 and say nothing.
+
+**(c) Slot cost — the answer is "no, you are not missing out", and it is worth
+showing why.** The headline looks like the opposite: 31 resolved blocked
+candidates, net **+20.46R**. Split it:
+
+| cut | n | net R |
+|---|---|---|
+| all resolved | 31 | +20.46 |
+| ex-best single | 30 | +15.47 |
+| resolved at >= +2.5R (paper TP completions) | 9 | **+30.39** |
+| everything else | 22 | **-9.93** |
+| by sleeve: WILDCARD | 11 | +7.42 |
+| by sleeve: SQUEEZE | 6 | -2.05 |
+| by sleeve: TREND (remainder) | 14 | ~+15.1 |
+
+Mean **+0.660R** per blocked candidate, SD 1.891, **SE 0.340** — the interval
+straddles zero at two standard errors. And the entire surplus is nine paper
+trades that ran cleanly to a synthetic +3R/+5R target with no slippage, no
+retention trail and no early stop. **Strip those nine and the other 22 blocked
+candidates lose 9.93R.** Per the standing reporting rule, a total whose sign
+depends on nine of the least trustworthy rows in the file is not evidence.
+**The slot lock is not demonstrably costing money. No slot proposal.**
+
+Separately, the wildcard slot lock is not even binding right now:
+`FUTURES_WILDCARD_MAX_POSITIONS=3` with two positions held.
+
+**(d) Scan telemetry** — wildcard scanning ~51 movers per cycle, **candidates=0
+on every cycle in the window**. Dominant rejection is `roc_below_min` at 45-49
+of ~51, with 1-3 on `no_pullback_resume` and singletons on `low_volume_z`,
+`climax_wick`, `vertical_blowoff`. That is a quiet tape, not a broken gate.
+**Correct dormancy — no loosening proposed.** No `[SIZE_TRIM]` line trimmed a
+winner in the window. No order rejects.
+
+**(e) Decision rule** — trial 19F, opened 09-08 18:18Z:
+
+| metric | value |
+|---|---|
+| convex trades closed | **11 / 30** |
+| net R | **-3.26** |
+| net R ex-best | -5.06 |
+| net $ | -$45.25 |
+| max drawdown in trial | -6.0% |
+| exits | TP 0, stop 5, other 6 |
+
+`USE_DRAWDOWN_KILL=1` and `DRAWDOWN_HALT_PCT=0.25` — the kill switch is armed,
+which is a change from the override flagged on 07-17. Equity drawdown from peak
+is well inside 20%.
+
+**On the standing TP watch item:** TP completions are 0/11 in trial and 10/114
+lifetime, and OTHER dominates. The old watch item said to propose scaling TP
+down when that happens. **It does not apply as written any more.** `OTHER` is
+now overwhelmingly `CONVEX_RETENTION_TRAIL`, which is a shipped, profitable exit
+path — **n=27, +19.22R, +$85.36 lifetime**, and it produced today's only winner.
+The trail is *supposed* to take profit before the TP. TREND already runs
+`FUTURES_TREND_TP_R=3.0`. The low TP-completion count is the design working, not
+a defect. No TP proposal.
+
+### 2. Champion vs shadow
+
+**Shadow stale, comparison suppressed pending resync.**
+
+### 3. Diagnose — the lever
+
+**No lever, and that is the finding.** The three candidates today all fail their
+own evidence bar:
+
+- **Preempt** is the most interesting result in the file and the swap plausibly
+  cost $22, but n=3 lifetime. Watch, do not touch.
+- **Slot expansion** looks supported at +20.46R and is not, once the nine paper
+  TP rows come out. Refused on arithmetic.
+- **`leverage>=7`** is OOS-consistent, contradicts the prior corpus finding, and
+  is confounded by stop width. Re-check at n=200.
+
+The 19F early stop is the only change with fresh supporting evidence, and it is
+already live. Let it run to the pre-registered 30.
+
+### 4. Validate
+
+Not run. No candidate reached the gate, so there was nothing to replay, stage or
+score.
+
+### 5. Deploy
+
+**None.** No commit, no redeploy, no env change. Two positions open.
+
+### 6. Track — changes deployed in the last 7 days
+
+| change | live since | verdict |
+|---|---|---|
+| Wildcard early stop (19F, -0.5R / 30min) | 09-08 | **Earning its keep.** 2 firings, both replay-confirmed, +$13.00 saved. n=2 — provisional. |
+| Regime size scaler | pre-window | **Earning its keep.** Trimmed both open positions 34% / 53%; saved $27.20 over 8 closes on 09-09. |
+| Retention trail | pre-window | **Earning its keep.** n=27, +19.22R, +$85.36 lifetime; produced today's only winner (SOPH +1.11R). |
+| Preempt path | pre-window | **Unproven and now suspect.** n=3, net -1.16R realized, and today's replay says the true cost is larger. Under watch. |
+
+### 7. Verdict
+
+A losing day in dollars that was mostly one ZEC stop, with the wildcard sleeve
+roughly flat and two open shorts carrying +$16.55. **The day's real content is
+that 19F's early stop was validated on its first two firings and the preempt
+path quietly cost more than it shows.** Nothing shipped. Nothing should have.
+
+---
+
 # Daily Audit — 2026-09-09
 
 ---
