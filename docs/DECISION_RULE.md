@@ -9413,3 +9413,272 @@ Pre-registration unchanged: **Spearman(scan-instant breadth, $ P&L), WILDCARD on
 breadth ONLY, deletion-matched null, review 2026-12-10 at ~100 rows.** A genuine forward test **cannot
 begin before 09-09T16:13** and currently has **five rows**. **Even at 60 fills a veto stays undecidable
 (projected MDE80 ~$320/month against a $10 bar). DO NOT RE-OPEN ON RECONSTRUCTED BREADTH AGAIN.**
+
+---
+
+## 2026-09-10 — OPEN-TRADE INTELLIGENCE: the static stack IS the Bayes rule. Build nothing.
+
+**Owner's intuition:** *"whenever a trade is open there is no intelligence about how it's doing... the
+bot doesn't really understand if the current trade is good or not. Opening a trade is rare. The bot has
+to provide a good amount of care into it."* 12 agents, 5 literatures, web-sourced, citation-audited.
+**Nothing was built. No repo file edited. 1R = $18.46 (WILDCARD median) throughout.**
+
+### 1. THE INTUITION IS HALF RIGHT, AND THE RIGHT HALF IS THE SURPRISING ONE
+
+**Where he is right.** The empty window is real and it holds the entire positive side of the book.
+Close in [1R, 5R) covers **3,275 of 19,591 in-trade minutes = 16.7%.** **19 of 50 fills enter it and
+realised +$112.28; the 31 that never did realised -$177.39.** His taxonomy is empirically clean:
+GREAT (peak >= arm) 22/50 at **+1.110R +/- 0.277**; BAD (peak < 0.3R and lost) 17/50 at
+**-0.955R +/- 0.046** — note that SE, **BAD trades are almost perfectly homogeneous. There is nothing
+to understand about one beyond "faster", which is what 19F already does.**
+
+**Where he is wrong, and it decides the question.** **Two of the three tail trades were never in the
+empty window at all.**
+
+| fill | $ | peak at | hold | max time-since-peak while armed |
+|---|---|---|---|---|
+| IOST | +$33.23 | min 301 | 305 min | **13 min** |
+| SOPH | +$24.68 | min 355 | 549 min | 193 min |
+| TUT | +$17.94 (5.53R) | min 447 | 448 min | **54 min** |
+
+**IOST and TUT were making NEW HIGHS at the instant they exited.** On a book where the top-3 are 108%
+of net R, **any policy built to act during stagnation is built for one trade in three and paid for by
+the other two.** The window is also rare: median armed trade spends 5-15% of its life there, six spend
+0-3%. **~5 trades a month, not 30.**
+
+**THE CEILING IS $517/MONTH** (armed fills: 43.85R of true minute peaks minus 25.31R the trail already
+guarantees = 18.55R). **50x the ship bar, so the programme is NOT closed by prize size.**
+**BUT: that is a PERFECT-FORESIGHT ceiling. Under the measured dynamics the expected capture by any
+non-anticipating rule is exactly zero — that is Doob restated. The size of the prize is not evidence
+that any part of it is reachable.** Execution loss below the mandated floor is only **0.89R = $25/mo**.
+
+**30-cell paired counterfactual replay: NOT ONE CELL POSITIVE AT 2 SE. Exactly one significant cell and
+it is negative** (3h clock, -$411/mo, 2.1 SE). Stagnation exits converge to zero **from below**:
+-$123 (30min), -$84 (60), -$9 (120), +$4 (240), -$4 (480) — **the only version that doesn't lose money
+is the one that never fires.** The live config sits at or adjacent to the maximum on every axis.
+
+### 2. THE MATHEMATICS — three independent closures of the own-path family
+
+1. **SUFFICIENCY, and it is exact.** For dX = mu dt + sigma dW, **X_T - X_0 is a COMPLETE SUFFICIENT
+   statistic for mu; the intermediate path is ANCILLARY.** So "run a Kalman/HMM/particle/BOCPD filter
+   on the open trade's price" **IS identically "read the current unrealised P&L."** Not approximately —
+   the same number. **Any trade-health score built from MFE/MAE/time-in-profit/drawdown-from-peak is a
+   re-parameterisation of a quantity the bot already has.**
+2. **SHIRYAEV'S DETECTOR COLLAPSES ALGEBRAICALLY.** The log-likelihood ratio is **affine in (current
+   price, elapsed time)** and the posterior is monotone in it, so *"exit when the posterior crosses A"*
+   **IS** *"exit on a linearly-tightening stop on own P&L"* — inside the closed class before pricing.
+3. **dt-INVARIANCE KILLS "WATCH IT EVERY SECOND."** KL information about drift per unit CLOCK time is
+   mu^2/(2 sigma^2), free of dt. **Going from 1-minute to 1-second sampling multiplies drift
+   information by EXACTLY 1.00** (Merton 1980). **The per-second loop is where to ACT and adds nothing
+   to what can be KNOWN about direction.**
+
+**THE COROLLARY THAT SETTLES IT.** At the measured post-trigger sigma_1h = 2.19%, rejecting "this trade
+has zero drift" at 2 SE requires the trade to already be up **2.69R at hour 12, or 3.81R at hour 24.**
+**The 5R take-profit becomes statistically distinguishable from a random walk at almost exactly the
+moment it fills. The static TP already IS the drift test, and it is faster than any filter because it
+does not wait for significance.**
+
+Detection delay agrees: Shiryaev-Roberts is **minimax optimal** for this problem (Banerjee &
+Moustakides, arXiv:1610.02680), so its delay table is a **FLOOR**. A 1%/h drift needs 44 hours to
+detect at ARL0=100 — longer than the 24h clock. And the measured **VR <= 1.014** caps the KL rate at
+0.028/tau, forcing Wald delay **D >= 107 tau: the regime is over a hundred times before you can see it.
+You would need VR ~ 2.5.**
+
+**EVERYTHING BEHIND THE NON-PRICE-PATH DOOR CAME BACK NULL:** BTC beta (best |t|=1.89, signs flip);
+alt breadth intra-trade (corr -0.060, CI [-0.428, +0.279] — **the cross-trade gradient was calendar
+time**); index-leads-last (contemporaneous dominates on all 8 alts); basis (a per-symbol constant);
+funding (**the median trade sees ZERO funding updates** — 8h cycle vs 16-minute median hold); slot
+scarcity (11-17% utilisation, zero events in 36 days); hour-of-day (1.7 SE, one of ~20 cuts); open
+interest (**wrong-signed against its own hypothesis**); taker flow (**collinear with own-path 60-min
+return at median 0.539**, and unit-converted at a superseded sl_frac — 0.108R not 0.181R).
+
+> **THE CAVEAT THAT MATTERS MOST, AND IT IS NEW. The whole programme has used "is it a function of the
+> trade's own price path?" as the closure test. THAT TEST IS ONLY VALID CONDITIONAL ON THE
+> VARIANCE-RATIO NULL. The theorem does not forbid own-path rules; it forbids them WHEN DRIFT IS NOT
+> STATE-DEPENDENT. MEAN REVERSION IS STATE-DEPENDENCE IN THE OWN PATH.** If VR != 1 at the holding
+> horizon on the **entry-conditioned** population, the shortcut fails and **the entire interior class,
+> ladders included, reopens.** **That measurement has been named twice and never made.**
+
+**CITATIONS:** two independent audits checked ~15 sources against primary records. **No fabrications,
+no misattributions.** Verified including numerics: Cont/Kukanov/Stoikov *JFE* 12(1):47-88; Andersen &
+Bondarenko *JFM* 17(1):1-46; Frazzini *JF* 61:2017-2046; Ekstrom & Lindberg *JAP* 50(2):374-387;
+Henderson & Muscat *F&S* 24(2):335-357; Banerjee & Moustakides arXiv:1610.02680; Leung & Zhang
+arXiv:1701.03960; Kitron & Wengrowicz arXiv:2608.21888; Merton *JFE* 8(4):323-361; Weitzman
+*Econometrica* 47(3):641-654. **FLAGGED, do not quote onward without opening:** the "Eksi & Schreiti"
+co-author name (unverified, MDPI 403; no figure rests on it); Bieganowski & Slepaczuk's "3-second"
+precision (single-source — **"seconds not hours" is safe**); **Kim & Hansen is OVER-TRANSFERRED** (it
+measures quarter-hour-opening effects on six liquid Binance majors, used to underwrite continuous
+imbalance on microcaps).
+
+### 3. A LIVE DEFECT — outranks every strategy. VERIFIED IN THE CODE, not taken on report.
+
+**19F does not do what the pre-registration says.** `runtime.py:2243-2245`:
+
+    if elapsed_min > window: return False      # fires INSIDE the first 30 min, not after
+    if r_now > -arm:         return False      # at or below -0.5R
+
+**There is NO PEAK GATE.** `peak_r` is read at line 2250, **after** the fire decision, for telemetry
+only. `r_now` comes from the once-per-second polled price, so over 1,800 seconds it approximates the
+**continuous running minimum**, not a minute close.
+
+**THE MONITOR CANNOT SEE THE RULE'S WORST FAILURE.** `DECISION_RULE.md:90` kills on *"two cut trades
+whose peak before the cut was >= 1.0R."* **That is very nearly inoperative — but NOT for the reason
+first reported.** There is no peak gate; the real reason is that **a trade whose peak reached 1.0R has
+ARMED the retention trail, whose floor sits at 0.5 x peak = +0.5R. Price cannot travel from +1.0R to
+-0.5R without crossing +0.5R, where the trail exits it first.** So the criterion is intercepted by
+another rule, not blocked by this one. **Either way the real damage — cutting a trade that had not yet
+armed but would have run to 2-5R — is exactly what it is blind to.** `DECISION_RULE.md:394` carries the
+correct forward-looking wording (*"unmanaged path would have reached +1.5R"*); **line 90 must be
+restored to match.**
+
+**THE UNKNOWN DENOMINATOR.** `runtime.py:2221` silently disables the rule whenever
+`risk_pct < 0.5 * entry_sl`. **Nobody has counted how often that guard trips. Until they do, every 19F
+figure in circulation — the 78% in-sample save rate, the +$77/month, the two observed fires — has an
+unknown denominator.**
+
+**Replayed on intrabar lows the rule fires on 30 of 50 fills including TUT (+5.5R), IOST (+2.24R),
+SOPH (+2.31R), MAGMA (+4.42R), USELESS (+3.5R) — the entire right tail — turning +$2.43 into
+-$140.34. On minute closes it fires far less. Reality fired it twice. Nobody knows which price the
+live rule actually reads.** Under the correct specification: 17 of 50 fires, 14 rescues at ~+0.5R,
+**3 damage cases (VIRTUAL -1.01R, BLESS -1.23R, SOPH -1.61R), net +2.76R = +$77/mo with SE $78.**
+
+**DO, IN ORDER (read-only, none touches the live rule):** count the guard trips and fix line 90 plus
+the brief **by 2026-09-12**; add a 24h post-cut counterfactual logger **by 09-17**; verdict at ~30
+fires **2026-10-10** — PASS if cumulative counterfactual is negative and at most one fire exceeded
++1.5R; KILL at cumulative >= +3.0R or two fires above +1.5R.
+
+### 4. THE THREE STRATEGIES — none clears $10/month today; all three are gated on a cheap measurement
+
+**Every one deletes zero fills.**
+
+**#1 ADVERSE EXTERNAL-EVENT EXIT.** Re-read the listing/cross-venue/announcement feed once a minute
+while a position is open and flatten on an adverse event. Fail-open, capped at 2 firings/month.
+**The bot already fetches all three feeds at entry (`runtime.py:8006`) and then discards them for up to
+24 hours.** Bybit covers **50/50 fills**. **NOT own-path** — a dated exogenous announcement.
+**It escapes the theorem by leaving its domain: the trichotomy is about stopping a diffusion; a dated
+point mass with a sign known ex ante is not that process. The correct formalism is an insurance
+premium, which is why this is the only candidate whose decision rule is not a p-value.**
+Prior: the **entry-side** veto is the only p<0.01 signal the sleeve has ever produced (n=35,
+-0.489R, t=-2.96, ~$237/mo already saved). Measured support: the 23 stop-outs realised -1.0408R, of
+which **0.0243R is pure gap overshoot (SE 0.0046, t=5.3)**. **Dollars: A GUESS, $0-15/mo, most likely
+$0.** **TAIL: structurally the right shape and its best property — it fires on adverse news, which
+almost never coincides with a trade making new highs. Every other candidate buys small saves by selling
+tail participation; this one does not.** **GATE 1 by 2026-09-17: count events landing inside an open
+position's life. KILL IMMEDIATELY IF < 5. This check has been deferred by three separate phases and is
+hours of work.**
+
+**#2 MEASURE C4 — bounce-corrected VR on the entry-conditioned population.** **There is no rule yet;
+the deliverable is one number that either reopens the entire interior class or closes this programme
+permanently.** Min1 klines, free, replayed from each fill's entry through +24h; VR at 15/60/240 min,
+Roll-corrected. **Own-path: YES, and that is exactly why it matters** — see the caveat in section 2.
+Leung & Zhang (arXiv:1701.03960) prove a trailing stop **plus a sell limit** optimal under exponential
+OU, i.e. powered by kappa > 0. **If VR is materially below 1 after bounce correction, the trail floor's
+expected value falls below its martingale value and THE CROSSOVER RULE RE-PRICES: a rung at L can pay
+even when L < F. Every ladder cell (-$70/-$25/-$4) was computed under a martingale.** The earlier
+dismissal of VR(15)=0.845 as Roll bounce was **by assertion**; Kitron & Wengrowicz (arXiv:2608.21888,
+2026-08-22) is a matched cross-market design built to be that control — **15-minute reversal
+significant in 90% of 183 Binance pairs vs 2.7% of 187 US equities/ETFs.**
+**MDE ~0.08-0.16 on VR — THE ONLY ADEQUATELY POWERED TEST ANYWHERE IN THIS PROGRAMME.** Everything else
+needs decades. **By 2026-09-24. PASS: VR(60) or VR(240) outside [0.90, 1.10] with CI excluding 1, sign
+stable across halves by date, index and single-name agreeing. KILL: inside [0.90, 1.10], or the effect
+exists only pre-correction — then all six conditions for interior optimality have failed on this book
+and the programme closes permanently.** **TAIL WARNING: the rule it would license truncates the right
+tail by construction. Do not let a passing VR become a ladder by momentum.**
+
+**#3 TREND SLOT DISPLACEMENT.** Displace an **unarmed** incumbent when a strictly better qualified
+candidate arrives. **Deliverable today is the measurement, not the rule.** The scanner already writes
+un-takeable candidates to `shadow_ledger.py` with `resolve_outcome`/`net_r`/`net_usd` — **the data is
+on the container today and the measurement needs zero new code.** **NOT own-path, uniquely so: a
+candidate on a DIFFERENT symbol is not in the incumbent's filtration at all.** Weitzman (1979)
+reservation-value: the crossover analysis explicitly assumed zero slot scarcity, **correct for WILDCARD
+(11-17% utilisation) but never tested on TREND** (2 slots, 3 symbols, long-only). **THE HONEST HISTORY
+IS THE POINT: the raw ledger read gave +1.079R x 27.9 events/mo = $466/month gross. De-duplicating by
+(symbol, side) within 6h collapses 14 rows to 4 episodes at +0.582R — a 6.5x DUPLICATION ARTIFACT.
+Grouping by consecutive runs instead gives 6 episodes at -0.017R. SAME DATA, SIGN FLIPS.** MDE
+$210-434/mo against $72 +/- $75. **MANDATORY GUARD: never evict a position whose peak has passed the
+1.0R arm** — `CONVEX_PREEMPTED` already appears twice in the corpus, so eviction is live in this
+codebase. **Set the prior honestly: "slot_occupied" on TREND means the THIRD symbol qualified, and
+there is no reason the third is better than the incumbent. Expected paired net is zero minus a round
+trip, i.e. NEGATIVE. Run the join to close the number, not to find a rule.**
+
+### 5. REFUSED — the measurements that overturn earlier estimates
+
+- **PASSIVE-FIRST EXIT EXECUTION — the previously top-ranked door, DEAD BY A FACTOR OF TEN.** Sized at
+  $53-105/mo on an **assumed** sl_frac of 1-4%. **Measured median sl_frac on live fills is 9.41%.**
+  A $330 market order walks **0.00 bp** beyond top-of-book on the median corpus symbol (p90 2.89bp);
+  median half-spread 1.3bp. **The most a resting limit can EVER recover is the half-spread = 0.0014R
+  ~ $0.03/fill ~ $1/month.** Total fees across 50 fills: **$5.50.**
+  **KEEP THE AUDIT HALF AS A BUG HUNT:** the 17 trail exits are **bimodal** — twelve gave back
+  0.025-0.071R, **five gave back 0.276-0.539R (TUT, GALA, VIRTUAL, MOVR, MAGMA) = 60-115x the spread,
+  which no order placement produces.** Latency, contract quantisation at $30-100 notional, a config-era
+  artifact, or a floor-semantics bug. **Binary correctness question. Read the actual trail-floor
+  computation in code first — the 0.50/0.75 floor was reconstructed from a brief, not from source.**
+- **VOLATILITY-TRIGGERED STOP ADJUSTMENT — the tempting exception, and a complete closure.** Volatility
+  **is** estimable where drift is not (log-vol persistence +0.272, t=2.31). **But the retention
+  invariant forbids widening on a vol fall, and tightening on a vol rise cuts exactly the high-vol
+  trades that ARE the tail. The one estimable latent state has no admissible action attached.**
+- **THE 24h CLOCK IS ON A PLATEAU, in both directions.** Only 3 of 50 reach it. Shortening is
+  destructive (3h -$411/mo; -3.12R on IOST, -2.65R on TUT); lengthening is flat-to-negative (36h -$21,
+  48h -$53, 72h -$49, none above 1.6 SE). Holding every fill 24h past its exit returns -0.231R +/-
+  0.277. **Stop treating it as the arbitrary parameter.**
+- **LIVE A/B TESTING OF ANY EXIT POLICY — refused as a METHODOLOGY.** Unpaired MDE is $280/mo at n=50,
+  $198 at n=100, **$99 at n=400 (13 months). Detecting $10/month unpaired needs ~1,300 months. Any
+  proposal ending "ship it and measure for a month" is arithmetically incoherent here.**
+- Also refused: cross-venue basis ($39/mo perfect-foresight ceiling, half wrong-signed); MEXC
+  liquidations + openInterest (**HTTP 403, confirmed twice — impossible**); holdVol at 1Hz (**zero
+  changes in 22s on PEPE/DOGE/WIF, worst on the thin names this sleeve trades**); OI exhaustion
+  (wrong-signed; **retire `oi_signal.py`'s dormant scoring rather than leave a wrong-signed hypothesis
+  for the next reader**); aggressor flow (**its Gate 1 pass bar was set ABOVE its own expected
+  effect**); risk-weight normalisation (**variance-reduction claim fails its own >=15% criterion:
+  0.89 on the equity-stable tail**); Kelly re-sizing (**k* = 2.97x, 95% CI [-10x, +16x] — the sign is
+  not identified**); VPIN/PIN/Kyle's lambda (**6.6 prints/minute; ~106 prints per median trade, so
+  lambda's SE exceeds its coefficient**); a stop-limit for the 0.0243R overshoot (**leaves the position
+  naked past its stop — violates the retention invariant**).
+
+### 6. TWO ARITHMETIC CORRECTIONS TO PROPAGATE — they change no verdict here, but will change borderline ones
+
+1. **Per-fill R sd is 1.457, NOT 1.279** (52 WILDCARD fills, mean +0.038) → per-fill dollar sd
+   **$26.9, not $23.** **Every MDE in circulation is ~17% optimistic and every required sample size
+   ~37% larger than quoted. Nobody in five phases checked the number the whole arithmetic divides by.**
+2. At the measured 9.41% sl_frac, `cost_r` = 0.190%/sl_frac = **0.020R = $0.37/fill**, not the
+   0.095-0.19R that produced the "$53-105/month per extra round trip" kill. **Ladders still die on the
+   measured grid, but that kill's stated magnitude was 5-10x too strong.**
+3. Separately: `runtime.py::_entry_margin` documents risk-targeted sizing at **CV 4.8% / p95-p5 1.17x**;
+   the realised corpus shows **CV 39.1% / 4.06x.** Costs nothing in P&L, but **a live sizing path
+   behaving 8x worse than its own docstring is a correctness defect worth an hour.**
+
+### 7. THE BOTTOM LINE
+
+**Nothing clears $10/month. Build nothing. Change no exit parameter.**
+
+> **Both of his observations are correct: the window exists and holds the whole positive side of the
+> book, and the stack is entirely static. WHAT IS FALSE IS THE INFERENCE BETWEEN THEM. The static stack
+> is not a gap where intelligence should go — it is what intelligence COLLAPSES TO when the standard
+> error on drift exceeds the drift. Under an unknown constant drift at this signal-to-noise, the
+> Bayes-optimal policy is to act on your prior, because the data will not move the posterior before the
+> horizon expires. A fixed TP, a fixed 3-ATR stop, a fixed 1.0R arm and a fixed 24h clock ARE the Bayes
+> rule for a prior that never updates.** Thirty paired cells confirm it: the live configuration is at
+> or adjacent to the maximum on every axis.
+
+**The care is warranted; the direction is wrong.** The BAD branch is already solved — 19F is a
+time-normalised drift test on the loss side, sitting where tail risk is smallest, and it is the half
+the disposition literature endorses. **The GOOD/GREAT branches ask the bot to act on an open winner,
+which is the half humans get wrong in the other direction:** Odean's investors are 1.5-2x more likely
+to sell a winner than a loser, and Frazzini shows the market pays **>200bp/month** to whoever trades
+against that reflex. **Coding "the bot should do something about a good open trade" is the disposition
+effect with a scheduler.**
+
+**CLOSED PERMANENTLY:** every function of the trade's own price path as a source of expectation —
+by sufficiency, by dt-invariance, and by 30 measured cells with none positive at 2 SE. Live A/B
+validation of any exit policy at this book size. Passive-first exit execution. Cross-venue basis. MEXC
+liquidations. Funding as a within-trade signal. WILDCARD slot scarcity. BTC beta and alt breadth as
+intra-trade conditioners.
+
+**If the event count comes back under 5 and VR comes back inside [0.90, 1.10], then every one of the
+six named conditions under which an interior stopping rule is provably optimal has failed on this book,
+and the question is closed for good. That is worth more than the $517/month ceiling, because it is the
+difference between a door you have shut and a door that regenerates a proposal every few weeks.**
+
+**The measurement apparatus is not the bottleneck and neither is the prize. The prize is 50x the bar
+and the paired instrument resolves $2-78/month. THE PREDICTOR is the bottleneck, and this bot's own
+data does not contain one.**
