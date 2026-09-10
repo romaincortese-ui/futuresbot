@@ -9248,3 +9248,168 @@ the next doubling does not exist: the exchange wall is 2026-06-14.**
   any future market-wide regressor to 88 days on day one instead of waiting six weeks for fills.**
   That, the dissolved date confound, and the fact that `trade_history` now logs breadth at scan time
   are the three assets from this exercise. **None of them is the gate.**
+
+---
+
+## 2026-09-10 — IOST PINNED AT 0.23. The cell is NOT DECIDABLE. "Refuted" is withdrawn.
+
+**Question:** what was alt breadth when the bot opened IOST_USDT, and how does a breadth gate price on
+WILDCARD alone? 12 agents, 6 independent reconstructions, 3 adversarial verifiers.
+
+### 1. IOST = 0.23, interval [0.20, 0.28]. It did NOT clear 0.30.
+
+    six reconstructions, raw:  0.2241  0.2281  0.2281  0.2281  0.2321  0.2414
+    bias-corrected:            0.229 - 0.250          ATOM: 0.246 - 0.259 (ABOVE IOST)
+
+**No reconstruction ever produced by anyone, under any parameterisation, grid cell or Monte Carlo
+draw, has put IOST above 0.30.** One line swept **300 cells** (scan offset -900s..+30s, floor
+$1.8-2.2M, majors 22-26, deflator on/off): full range **0.1970-0.2364, zero cells above 0.30.** The
+most hostile assembly on record — the highest disputed value (0.2632) plus the full legacy +0.020 bias
+correction — reaches **0.283.** P(IOST > 0.30) is **under 5%**.
+
+**THE LOAD-BEARING ARGUMENT IS STRUCTURAL, NOT STATISTICAL.** Clearing 0.30 at n=56-58 requires
+**4-5 band symbols to flip sign**, with the marginal name sitting **0.6-0.7% below its 16:00Z open**
+against measured per-symbol rate errors of **0.005-0.05% — two to three orders of magnitude short.**
+The denominator escape is closed and points the wrong way: **nine of the ten symbols within 15% of the
+$2M floor are NEGATIVE, so loosening the floor LOWERS breadth**, and the floor required to force IOST
+over 0.30 (~$2.97M) provably breaks the exact payload reproduction.
+
+**LIVE CONFIG VERIFIED against the deployed environment (the one unread variable, now read):**
+`FUTURES_WILDCARD_MIN_TURNOVER_USDT = 2000000` by env override — **the `wildcard.py:87` source default
+of $3,000,000 is NOT in force.** `FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER` is unset, so the default 24
+applies. **Both reconstruction assumptions are correct.**
+
+> **A VERIFIED FACT RETIRES THIS QUESTION PERMANENTLY: IOST's live breadth was NEVER RECORDED.** The
+> corpus carries `breadth_24h = null` for ATOM, IOST and the 09-09T13:41 ZEC row, and real values for
+> all five later fills — **the telemetry deployed between 09-09T13:41 and 16:13Z.** There is nothing
+> on the container to go and read. **Reconstruction is the only route, forever.**
+
+### 2. THE TRANSPOSITION: real in ordering, UNRESOLVED in mechanism
+
+**Truth: ATOM (~0.25) is ABOVE IOST (~0.23) by 0.02-0.03.** Five of six runs agree on that ordering.
+**`IOST 0.2632` is the outlier and is discarded** — no method reproduces it for IOST.
+
+**But the mechanism is NOT certified, and that is the important part.** The five phase-1 agents gave
+**five mutually incompatible forensic accounts** — memoised up-count, exchanged labels, +2/+5min
+bar-forward rounding, one misassigned value, and no swap at all. **Four of them must be wrong, and each
+was asserted with "negligible probability of coincidence" or "I can prove which."**
+
+> **THAT IS A CALIBRATION WARNING ABOUT THE CONFIDENCE LANGUAGE THROUGHOUT THIS PROGRAMME, and it is
+> why IOST is reported as an interval with no certified fourth decimal.**
+
+Materially it never mattered: **all six disputed values are below 0.30, so no attribution error could
+have moved the verdict.**
+
+### 3. THE 0.26 CORRECTION — I told the owner 0.26 "spares IOST". IT DOES NOT.
+
+**That claim was built on the contaminated 0.2632 figure.** At a true 0.23, **a 0.26 gate blocks IOST
+just as a 0.30 gate does.** The interval's upper bound (0.268) still straddles 0.26, so 0.26 is not
+*resolvable* either way — but the point estimate places IOST below it and **the earlier framing
+inverted the practical consequence.** Withdrawn.
+
+### 4. THE GATE ON WILDCARD-OOS — and why n=6 could never have answered it
+
+Base **-$73.72**, netR ~-3.4, per-fill sd **$22.96**, **one winner in six fills.**
+
+| branch | keeps | deletes | created | total | delta |
+|---|---|---|---|---|---|
+| **IOST below 0.30 (EVIDENCED)** | 4 of 6 | ATOM -$23.68, **IOST +$33.23** | 0 | -$83.27 | **-$9.55** |
+| IOST above 0.30 (counterfactual) | 5 of 6 | ATOM only | 0 | -$50.04 | +$23.68 |
+
+**1R CORRECTED: the WILDCARD-only median is $18.46, not the $19.49 used earlier — that figure was
+TREND-contaminated** (the $28.33 max is a ZEC fill). At $18.46 the evidenced delta is **-$13.65.**
+
+> **-$9.55 CARRIES A STANDARD ERROR OF $26.5-$32.5 — 2.8 to 3.4x ITS OWN MAGNITUDE. Per the standing
+> reporting rule it must NEVER be headlined, and "the gate loses money" MUST NOT BE SAID.**
+
+**THE DELETION-MATCHED NULL IS DEGENERATE AND CANNOT BEAR THE WEIGHT TWO LINES PUT ON IT.** With one
+winner in six fills the k=2 null splits perfectly: **all 5 subsets containing IOST score -$21.58 to
+-$6.78; all 10 without it score +$31.06 to +$52.21 — a $37.84 gap with ZERO overlap.** The null's
+output is a deterministic function of **one bit: did the rule delete the winner.** "20th percentile",
+"p=0.867" and "worse than 80% of coin flips" are **three re-encodings of that bit, not three pieces of
+evidence. A statistic with two distinguishable outcomes cannot separate 'no information' from
+'information'.**
+
+**SELECTION FLOORS.** Fill-level 1/C(6,1) = 0.1667; binding day-block 1/C(6,2) = 0.0667; on the
+realised four-block partition 1/C(4,1) = 0.250. **ONE CORRECTION TO THE RECORD: the claim "no breadth
+rule of any construction can reach nominal significance" is FALSE as stated — at k=3 the floor is
+exactly 0.05.** The conclusion survives on the observed p and on family-wise correction over ~100 cells
+(Bonferroni alpha ~0.0005, every adjusted p = 1.000), **not on that absolute claim.**
+
+**MDE: the three lines disagree by 4.5x and it was NOT adjudicated. MDE80 lands between ~$230 and
+~$1,050/month** depending on whether the fill rate is 30, 57.8 or 97/month. **Every value in that range
+is 20-100x the $10/month bar. Report the range, not a point.**
+
+**COULD n=6 EVER HAVE ANSWERED IT? No — and it is worse than two decisions.** ATOM and IOST opened
+**57 minutes apart inside one unbroken 09:35-12:35Z sub-0.30 block on one day.** Out of sample the gate
+keeps the **identical set** as the pure calendar rule "stop after 2026-09-08T16:00Z".
+
+> **n_effective is ONE day-block decision on a window containing ONE winner. That is one bit. The IOST
+> reconstruction fixed the SIGN of a quantity this window cannot MEASURE.**
+
+### 5. THE SIGN IS ONE OBSERVATION IN BOTH DIRECTIONS — the mirror I missed
+
+    OOS six:   Pearson(breadth, $) = -0.575  ->  DROP IOST  ->  +0.331
+    all eleven:                      -0.123  ->  DROP IOST  ->  +0.112
+
+**The "wrong sign" headline is ONE observation: the OOS block's only winner happened to have the lowest
+breadth.** That is **the exact mirror image of the +0.836 discovery cell this study correctly rejected.**
+**Two winners in eleven fills pointing opposite ways is not a finding in either direction.**
+
+### 6. THE SIZE-SCALER DOES NOT ESCAPE THE VOLUME KILLER — a one-line general result
+
+> **For ANY threshold-form size-scaler: `delta_scaler = (1 - f) x delta_veto` IDENTICALLY.** Same sign,
+> same t, same p (0.867), at exactly half the dollars. **It halves the money at risk without changing
+> anything that matters.**
+
+**"Don't veto, just size down" on a market-wide variable can now be REFUSED IN ONE LINE without a
+study.** (A *continuous* tilt is a different object and was not priced; at n=6 it is equally
+undecidable, and this is not an invitation to go looking.)
+
+### 7. FINAL RULING: NOT DECIDABLE — CELL REFUSED. **"REFUTED" IS WITHDRAWN.**
+
+**Nothing about a breadth gate was refuted, because this window cannot refute anything.** Eleven
+candidates have died this month; that is a real prior AND a real bias risk.
+
+> **A negative claim built on one winner and one day-block is exactly as overclaimed as the positive
+> one the five discovery rows suggested.** The honest sentence: ***unresolvable on this window, and it
+> does not point the way the five discovery rows suggested.***
+
+| # | action | OOS-6 $ | deleted | created | MDE80/mo | env or code |
+|---|---|---|---|---|---|---|
+| **1** | **DO NOTHING — no gate, no scaler, either direction** | **$0.00** | **0** | 0 | n/a | **already the live config** |
+| 2 | keep telemetry recording, gate nothing | $0.00 | 0 | 0 | n/a | already shipping, zero cost |
+| 3 | half-size below 0.30 — priced and REFUSED | -$4.77 | 0 | 0 | ~$115 | code + env |
+| 4 | breadth > 0.30 veto — priced and REFUSED | -$9.55 / +$23.68 | 2 / 1 | 0 | $230-$1,050 | new code + new flag |
+
+**#1 wins on grounds that need no p-value:** the gate deletes 33% of OOS fills and 45% of all fills
+from a **volume-limited** sleeve with `fills_created = 0` by construction; the threshold surface is
+sawtooth on both testable cells and monotone **only** on the five discovery rows (the overfit
+signature), with **0.25 through 0.539 forming ONE cell** so the 0.30 constant does no work; **breadth
+is partly a clock** (resets 16:00Z, Pearson vs entry time -0.651, ~49% between-day variance) — **one
+fact, not the three separate controls it was counted as**; and it is new code on a live trial, where
+`runtime.py` says *"Recorded, never read as a gate"* and `tests/test_alt_breadth.py` asserts exactly that.
+
+### 8. STRIKE FROM THE RECORD
+
+- **THE WALK-FORWARD.** Contaminated (**5 of its 8 decisions sit on the discovery rows**) and
+  double-counted (fills 5-6 ARE the -$9.55 OOS result, re-presented as independent evidence).
+  **On 6 fills with 1 winner NO VALID FOLD EXISTS.** The correct statement is *"not computable"*, not a
+  fabricated -$32.30 twelfth death. **The "twelfth consecutive walk-forward death" claim is withdrawn.**
+- **THE NULL PERCENTILES.** Drop them rather than defend them (see section 4).
+
+### 9. TWO NEW HAZARDS FOR THE RECORD
+
+1. **THE LATER-PAYLOAD BAND TRAP.** Reconstructing a past breadth using a **later** payload's band
+   composition biases it **UP by ~0.06** — a verifier hit 0.2881, one symbol from the gate — because
+   **post-fill rallies manufacture turnover.** **This is exactly how the next agent gets 0.29 and
+   reopens a closed question.**
+2. **THE SPLIT RUNS BACKWARDS IN TIME.** The "discovery five" are not a cherry-pick — they are *every
+   row that exists post-deploy*. **The fit is on the future and the test is on the past.**
+
+### 10. RE-TEST CONDITION — do not open this at n=6 a third time
+
+Pre-registration unchanged: **Spearman(scan-instant breadth, $ P&L), WILDCARD only, LIVE-recorded
+breadth ONLY, deletion-matched null, review 2026-12-10 at ~100 rows.** A genuine forward test **cannot
+begin before 09-09T16:13** and currently has **five rows**. **Even at 60 fills a veto stays undecidable
+(projected MDE80 ~$320/month against a $10 bar). DO NOT RE-OPEN ON RECONSTRUCTED BREADTH AGAIN.**
