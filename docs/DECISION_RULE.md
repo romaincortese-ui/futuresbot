@@ -10485,3 +10485,166 @@ median hold  8–11 minutes  (live: 245 minutes)
 **Caution on the obvious next step:** "lower the arm to 0.6–0.8R, keep the 50% retention and keep the cost floor" is the right shape, but one line priced it and it is a null — the funded book improves from −$80 to −$42 at arm 0.8R, costs −4.8R pre-funding, and pools to −0.002R/fill, t = −0.03. No arm level between 0.5R and 1.0R clears zero pooled. **0.6R is fitted to three trades.** If you want to pursue it, run it through the displaced-entry placebo harness with the slippage haircut switched on before it goes anywhere near live — do not spend a trial on it on this evidence.
 
 **Trial 19F is live and nothing here clears the bar to touch it. Change nothing today.** Everything in this run was read-only: no repo edit, no env change, no deploy, no orders.
+---
+
+## 2026-09-11 - ARM x GIVEBACK GRID (0.2-1.0% equity x 20/25/30%): all 15 cells REFUTED.
+
+**Owner asked to sweep his own spec across a higher arm and a wider giveback.** 15 cells, 24 funded
+fills, three independent engines, three verifiers. **All three verdicts REFUTED; all three verifiers
+confirmed.** Read-only: no repo edit, no env change, no deploy, no orders.
+
+### THE SURFACE (total $ over 24 funded fills; LIVE BASELINE -$133.43)
+
+    giveback   arm0.2%     arm0.4%     arm0.6%     arm0.8%     arm1.0%
+    20%        +$21/+$13   -$89/-$75   -$67/-$94   -$76/-$84   -$84/-$88
+    25%        +$17/+$10   -$92/-$81   -$74/-$100  -$81/-$92   -$60/-$65
+    30%        +$12/+$5    -$70/-$86   -$81/-$106  -$59/-$69   -$60/-$64
+
+**Three positive cells, ALL at the grid's left edge adjacent to the already-refuted 0.1% run, with a
+$100+ cliff behind them.** Everything from 0.4% to 1.0% is a ragged field with no monotone direction
+in either axis and **no agreement between engines on the ranking. Every paired SE is $79-$117, four
+to six times its own total.**
+
+### THE FINDING THAT CLOSES THE FAMILY
+
+> **THE GRID SWEPT ONLY THE TIGHT SIDE OF LIVE. The live trail retains 0.50 of peak, i.e. a 50%
+> giveback. He asked for 20/25/30%. EVERY CELL IN THIS GRID IS A TIGHTER TRAIL THAN WHAT THE BOT
+> ALREADY RUNS. The grid does not contain the live setting, and the live setting beat all fifteen
+> cells out of sample.**
+
+**And the ZEC damage is the giveback WIDTH, which lies OUTSIDE the grid, in the direction of live:**
+at arm 0.6%, gb30% books $29.98, **gb50% books $60.42, gb70% books $93.57.**
+
+**THE ANSWER — 0.2-1.0% arm x 20/25/30% giveback, 15 cells, 24 funded fills**
+
+Three lines ran the grid independently. Three verifiers re-ran them from scratch. **All three verdicts: REFUTED. All three verifiers: survives.** Nothing in the grid ships.
+
+---
+
+## 1. ENGINE CHECK
+
+**Passes, three times, on three independently written engines.** Funded n=22 (MANUAL_CLOSE and CONVEX_PREEMPTED excluded): 91-100% of fills within 0.15R, median |err| 0.017-0.050R, book within 2.2-5.5% of live once the one declared knife-edge is set aside. Pre-funding n=57: 89-91% within 0.15R. No engine reads `pnl_usdt`, `exit_price` or `exit_reason` in any decision path — verified by reading the code, not by assertion. **BTR 09-10T05:20 is held correctly in every run**: `t_adverse_50` is NULL, 19F is withheld, it exits CLOCK at +0.26R against live +0.26R. No engine fired 19F on it.
+
+One honest defect, stated up front: **PONS 09-07T15:42 cannot be placed by a single global lambda** (recorded peak 0.9653R sits between the 0.856R raw-close and 1.097R raw-wick path-max). Two of three lines book it as already-saved by the *live* rule, a +$29 per-fill error. That fill is one of the three motivating near-misses, so **roughly $22-29 of the headline "rescue" is engine error, not rule benefit** — about 15-20% of the best cell's entire gain.
+
+---
+
+## 2. THE 5x3 SURFACE — total $ over the 24 funded fills
+
+**LIVE BASELINE −$133.43.** Where the lines disagree the range is shown (engine A = two independent implementations agreeing to the cent; engine B = a third with a poll-clamp).
+
+| giveback | arm 0.2% | arm 0.4% | arm 0.6% | arm 0.8% | arm 1.0% |
+|---|---|---|---|---|---|
+| **20%** | **+$21 / +$13** | −$89 / −$75 | −$67 / −$94 | −$76 / −$84 | −$84 / −$88 |
+| **25%** | **+$17 / +$10** | −$92 / −$81 | −$74 / −$100 | −$81 / −$92 | −$60 / −$65 |
+| **30%** | **+$12 / +$5** | −$70 / −$86 | −$81 / −$106 | −$59 / −$69 | −$60 / −$64 |
+
+**Read the shape, not the numbers.** Three positive cells, all at the grid's left edge, adjacent to the already-refuted 0.1% run, with a $100+ cliff behind them. Everything from 0.4% to 1.0% is a ragged field between −$59 and −$106 with no monotone direction in either axis and no agreement between engines on the ranking. **Every cell's paired standard error is $79-$117 — four to six times its own total.** Per your own reporting standard, not one number in that table may be headlined as a signed figure.
+
+**Three things the surface settles cleanly:**
+- **The 7R TP is a total no-op in all 15 cells.** Zero fills reach 3R, 5R or 7R anywhere in the grid. Two lines ran the counterfactual — substituting the *live* 3R TREND / 5R WILDCARD TP into all 15 cells produces **totals identical to the cent**. The giveback always exits first. TP is a free parameter on this corpus.
+- **The missing cost floor is harmless at 0.4% and above** — exactly $0 difference in twelve of fifteen cells, zero net-negative banked exits anywhere. The giveback floor sits an order of magnitude above the cost floor. Your spec's omission only bites at 0.2%.
+- **The grid searched only the tight side of live.** Live retains 0.50 of peak — a 50% giveback. You asked for 20/25/30%. **Every cell in this grid is a tighter trail than what the bot already runs.** The grid does not contain the live setting.
+
+---
+
+## 3. ZEC 09-06T01:07 — where the +$75.37 starts surviving
+
+**It never survives. The crux was half right.**
+
+| arm | arms at | books (gb 20/25/30) | vs live |
+|---|---|---|---|
+| 0.2% | minute 2-3 | +$2.4 to +$2.9 | −$73 |
+| 0.4% | minute 3-4 | +$4.1 to +$4.7 | −$71 |
+| 0.6% | min 216 *or* min 3 — **lines disagree** | +$30-34 *or* +$3.5-4.2 | −$41 to −$71 |
+| 0.8% | minute 216 | +$29.3 to +$33.8 | −$41 to −$46 |
+| 1.0% | minute 216 | +$29.3 to +$33.8 | −$41 to −$46 |
+
+**Your mechanism is confirmed: an arm above the trade's ~$7 first-minutes high does not fire, and the trade survives three hours underwater and arms on the ramp itself at minute 216.** That is exactly what you predicted.
+
+**Then the giveback kills it two minutes later.** It arms at minute 216, the peak-tracker starts from the ramp, and a 20-30% retrace off a $42.83 running peak fires at minute 217. The 3R take-profit that actually paid printed at roughly minute 219. **Best case anywhere in the grid: +$34.27. It hands back $41 of the $75.**
+
+And the cliff's *location* is not solid — it sits between 0.6% and 0.8% at the measured poll-visibility constant, and between 0.2% and 0.4% at raw close, because that trade's first-20-minute high is $4.26 / $7.57 / $8.67 across the three conventions. With $1.20 of headroom at the primary convention, the cliff is measurement, not mechanism. Since this one fill is 56% of the live book's magnitude, the whole surface inherits that instability.
+
+---
+
+## 4. THE BEST CELL — arm 0.2% / giveback 20%, full 24 rows
+
+Two independent engines produce this table to the cent.
+
+| # | entry | symbol | 1R$ | arm$ | LIVE$ | REPLAY$ | DIFF | why | min | equity |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 09-04T16:55 | ZEC | 12.87 | 2.20 | −2.66 | +2.43 | +5.08 | TRAIL | 18 | 1101.40 |
+| 2 | 09-06T01:07 | ZEC | 24.99 | 2.20 | **+75.37** | **+2.86** | **−72.50** | TRAIL | 3 | 1104.27 |
+| 3 | 09-06T04:59 | ZEC | 28.33 | 2.21 | +11.88 | +5.36 | −6.52 | TRAIL | 10 | 1109.62 |
+| 4 | 09-06T09:26 | ZEC | 27.87 | 2.22 | −28.49 | +2.17 | +30.66 | TRAIL | 241 | 1111.79 |
+| 5 | 09-06T17:38 | ZEC | 19.53 | 2.22 | −20.38 | +1.82 | +22.20 | TRAIL | 48 | 1113.61 |
+| 6 | 09-06T19:58 | MAGMA | 25.16 | 2.23 | −26.45 | −27.17 | −0.72 | STOP | 23 | 1086.44 |
+| 7 | 09-07T15:42 | PONS | 18.46 | 2.17 | −19.41 | +3.12 | +22.53 | TRAIL | 30 | 1089.56 |
+| 8 | 09-08T08:11 | FORM | 25.27 | 2.18 | −25.76 | +1.84 | +27.60 | TRAIL | 4 | 1091.40 |
+| 9 | 09-08T11:12 | MARSCOIN | 11.28 | 2.18 | −11.65 | +1.88 | +13.53 | TRAIL | 4 | 1093.28 |
+| 10 | 09-08T16:38 | ZEC | 19.42 | 2.19 | −20.35 | −21.26 | −0.92 | STOP | 131 | 1072.02 |
+| 11 | 09-09T04:39 | ZEC | 25.21 | 2.14 | −27.25 | +7.29 | +34.54 | TRAIL | 12 | 1079.31 |
+| 12 | 09-09T09:03 | ZEC | 22.37 | 2.16 | +10.07 | +9.83 | −0.24 | TRAIL | 141 | 1089.14 |
+| 13 | 09-09T09:43 | ATOM | 22.21 | 2.18 | −23.68 | +3.24 | +26.93 | TRAIL | 19 | 1092.38 |
+| 14 | 09-09T10:40 | IOST | 18.40 | 2.18 | +33.23 | +6.29 | −26.94 | TRAIL | 99 | 1098.67 |
+| 15 | 09-09T13:41 | ZEC | 13.40 | 2.20 | −14.14 | +2.38 | +16.53 | TRAIL | 38 | 1101.05 |
+| 16 | 09-09T16:13 | SOPH | 22.72 | 2.20 | +24.68 | +5.06 | −19.62 | TRAIL | 150 | 1106.11 |
+| 17 | 09-09T19:15 | PONS | 16.92 | 2.21 | −1.93 | +4.57 | +6.50 | TRAIL | 63 | 1110.69 |
+| 18 | 09-09T22:14 | MARSCOIN | 19.01 | 2.22 | −10.29 | +2.41 | +12.69 | TRAIL | 8 | 1113.09 |
+| 19 | 09-10T04:25 | UAI | 13.96 | 2.23 | +7.56 | +2.45 | −5.11 | TRAIL | 39 | 1115.55 |
+| 20 | 09-10T04:41 | BTR | 9.73 | 2.23 | −10.79 | −10.36 | +0.44 | STOP | 37 | 1105.19 |
+| 21 | 09-10T05:20 | BTR | 11.87 | 2.21 | +2.53 | +1.93 | −0.60 | TRAIL | 42 | 1107.12 |
+| 22 | 09-10T05:59 | MARSCOIN | 9.07 | 2.21 | −4.79 | −4.73 | +0.06 | 19F | 16 | 1102.38 |
+| 23 | 09-11T08:58 | IOST | 23.66 | 2.20 | −25.93 | +12.21 | +38.14 | TRAIL | 5 | 1114.59 |
+| 24 | 09-11T14:02 | ETH | 23.54 | 2.23 | −24.78 | +5.37 | +30.15 | TRAIL | 2 | 1119.97 |
+| | **TOTAL** | | | | **−133.43** | **+20.99** | **+154.42** | | | **SE $116.98, t=1.32** |
+
+Live final equity $965.55 → replay $1,119.97.
+
+**This is not a better trail. It is a machine for turning every trade into a $3 scalp.** Nineteen of 24 exits are TRAIL at a median $2.99. It rescues 15 small losers for +$287 and pays with −$119 off the three largest winners of the era. It arms ZEC 09-06 at **minute 3** — the identical failure the 0.1% run produced.
+
+**The decomposition that decides it:** +$95 to +$97 on the three outcome-selected near-misses, **−$25 to −$28 on the other 21 fills**. Subtract the ~$22-29 of PONS that is engine error and the unselected residual is ~$30-37 against a $117 standard error.
+
+*(The third line preferred arm 1.0% / giveback 30% as the convention-stable pick: total −$64.19, delta +$69.24, SE $81.86, t=0.85. Same decomposition — +$97 on the selected three, −$28 on the other 21. It loses money against live once the three are stripped.)*
+
+---
+
+## 5. THE THREE THINGS THAT DECIDE IT
+
+**(a) Best-of-15 null — the only honest p-value.** 20k-200k draws, one sign vector applied across all 15 correlated cells, max taken. Null best-of-15: median +$55, p75 +$121, p90 +$178, p95 +$214. **Observed best +$154.42 → p = 0.15 to 0.23.** It sits between the null's 75th and 90th percentile. Not one cell is nominally significant even *before* paying for the search (best single-cell p = 0.069-0.110). **Strip the three outcome-selected fills and p = 0.465-0.564 — indistinguishable from noise.** Pooled over all 82 fills the best of fifteen cells is *negative*: t = −0.30, p = 0.78.
+
+One correction that makes this worse, not better: two lines measured deltas against the live column rather than against the engine running the live rule on the same bars. That baseline carries +$53 of engine optimism on the funded week. **Differenced correctly, five of fifteen cells sign-flip to negative, the best cell falls to +$101, and the best-of-15 p rises to 0.315.**
+
+**(b) Out-of-sample — this is the finding.** 58 pre-funding post-censoring fills, 2026-08-21 → 09-04. **Live: +10.011 netR. A profitable period.**
+
+**All fifteen cells reverse it. Every arm, every giveback, every engine.** Replays land between −0.81 and −7.36 netR (engine A) or −1.55 and −6.90 netR (engine B). Corrected against the engine-live baseline the deltas shrink to −3.89 to −10.44 netR — **still negative in all fifteen.** With the measured slippage haircut, further negative. This is the same reversal the 0.1% run produced, now confirmed across the entire new region. No single cell's reversal clears 2 SE on its own; the unanimity across 15 cells, 5 arms, 3 givebacks, 58 fills and 3 engines is what carries it.
+
+**(c) Slippage — and here you were right.** Measured trail floor-miss 0.056R mean / 0.207R worst, ~$1.10 on a $19.60 1R.
+
+**Median trade rises from $1.67 at 0.1% → $2.99 at 0.2% → $13.17 at 1.0%.** Execution error falls from ~66% of the median trade to ~8-12%. At 1.0%, even the *worst-case* 0.207R haircut leaves the replay ahead of live. **The brief's hypothesis is vindicated: raising the arm genuinely buys execution headroom, and slippage stops being decisive at 0.8%.**
+
+**It buys that headroom on cells that are already $59-$106 underwater.** And the one place it still matters is the one place it kills: **all three positive cells flip sign under the mean haircut** (+$20.99 → −$1.51; +$17.47 → −$5.03; +$12.07 → −$10.43). **No cell in the grid is positive after the bot's own measured execution error.**
+
+---
+
+## 6. THE VERDICT
+
+**No cell survives. Do not set any of the fifteen. Trial 19F stays exactly as it is.**
+
+Five independent kills, each sufficient alone: out-of-sample reversal 15/15 on a period that made +10.0R; best-of-15 p = 0.15-0.32, and 0.47-0.56 once the outcome-selected trades are removed; every positive cell dies to the bot's own measured slippage; the same cells swing $80 across price conventions; every paired SE is 4-6x its own total.
+
+**And to be blunt about section 5 of your own brief: you selected PONS 09-07, ZEC 09-09T04:39 and IOST 09-11T08:58 by asking for peak > $15 and pnl ≤ −$10 — a filter on the realised path.** Any rule that arms below $15 rescues all three, in all fifteen cells, for +$92 to +$113. That rescue is identical across the grid, so it carries no information about which cell is better. **It is also the entire edge: remove those three and thirteen of fifteen cells go negative.**
+
+**Is the best cell the live configuration rediscovered? No — and that is worse for the grid, not better.** The grid's right edge *converges* on live behaviour (17 of 24 exits identical at arm 1.0%, mostly stop-outs no rule can touch) but never reaches the live *parameters*: at 1.0% the arm is a median 0.54R against live's 1.0R, and the retention band is 70-80% against live's 50%. **The whole grid is a strictly tighter trail than what you already run — you swept only the tight side of your own setting. The live 1.0R / 0.50 config beat all fifteen cells out of sample.** On the evidence available, your exit stack is already at or near the optimum of this family, and the money is elsewhere.
+
+**Two corrections to carry forward, because both would cost you a cycle:**
+
+1. **Do not run a TP sweep.** The 7R TP is a proven free parameter — substituting the live 3R/5R TP into all 15 cells changes nothing to the cent, because the giveback always exits first. Nothing in 82 fills reaches 3R under any of these rules.
+2. **The ZEC damage is the giveback WIDTH, and it is outside your grid.** At arm 0.6%: gb30% books $29.98, **gb50% books $60.42, gb70% books $93.57**. The trade is recoverable by *loosening* past 30% — which is where live already sits.
+
+**The only pre-registerable hypothesis this sweep points to:** a giveback-width sweep **above** 30% at the live arm. It is a single hypothesis, it must be pre-registered before measurement, and you should know now that it was already spot-checked and **still fails out-of-sample** (gb50%: −5.43 to +3.24 netR; gb70%: −1.00 to +5.59 netR, against live +10.011). **I would not spend the cycle.**
+
+If you want one more cut of any kind, it should be the displaced-entry placebo harness with the 0.056R haircut on, run on two named cells over all 82 fills, with a stated kill criterion and date — not another surface. **A sixteenth cell on these 24 fills cannot produce information; it can only produce a larger best-of-N null.**
+
+Read-only throughout. Nothing in the repo, the environment or production was touched.
