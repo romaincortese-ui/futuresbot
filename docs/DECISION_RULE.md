@@ -9937,3 +9937,209 @@ rare proposal that structurally cannot violate the owner's hardest rule. It just
 
 > **STOP SWEEPING OWN-PATH EXIT PARAMETERS. Three sweeps this month have landed flat within noise
 > against a ~$90/month MDE. Each one costs more than it can possibly find.**
+
+---
+
+## 2026-09-11 — IDLE BALANCE AS TREASURY: mechanism REFUTED, but two real findings. Plus the UAI trail leak.
+
+**Owner's idea:** *"the idle balance could be placed in a reasonably secure symbol that returns steady %
+(let's say SOL)... whenever the bot triggers a trade, it sells the required margin from the placement.
+Or even better, just buys the trade with SOL if possible on MEXC."* **Read-only: no trade, no transfer,
+no Earn subscription, no repo edit, no deploy.** All rates retrieved 2026-09-11.
+
+### 1. THE MECHANISM IS BLOCKED THREE WAYS
+
+1. **MULTI-ASSET COLLATERAL EXISTS AND SOL IS ELIGIBLE — the instinct was not fantasy.** MEXC launched
+   Multi-Asset Margin Mode 2025-08-25; eligible collateral is USDT, USDC, USDE, BTC, ETH, XRP, **SOL**,
+   DOGE, ADA, BNB, TRX, with tiered haircuts on non-stables.
+   **THE BLOCKER, verbatim from MEXC:** *"Multi-Asset Margin mode supports cross margin only. Isolated
+   Margin... not supported."* **This bot is isolated top to bottom** (`config.py:390` `open_type: int = 1`,
+   passed on every leverage-set and order call; `realistic_costs.py` computes liquidation on explicitly
+   isolated semantics). **Enabling it converts all five slots to pooled cross margin and silently
+   invalidates the liquidation math the exit stack depends on. That is a risk-model rewrite.**
+2. **THERE IS NO MEXC EARN API.** The spot v3 wallet surface has universal transfer, dust transfer,
+   withdrawals and deposit addresses — **no savings subscribe or redeem endpoint.** The phrase *"the bot
+   would come and pick margins"* describes an API call that **does not exist to be made.**
+3. **THE BOT HAS NO TRANSFER PRIMITIVE.** `grep -n "transfer" futuresbot/marketdata.py` returns
+   **nothing**. Earn redemption lands in **Spot**, not Futures, and there is no code path that moves it.
+
+**Latency was the wrong worry.** Flexible savings redeems "within seconds" and the real scan cadence is
+450s (WILDCARD) / 900s (TREND), not 45s. **Destination, not speed, is the blocker.**
+
+### 2. THE SIZING INTERACTION — the headline, and it is worse than "smaller trades"
+
+`runtime.py:1769`: `margin = risk_pct * available_balance * 100.0 / sl_margin_pct`, capped at
+`0.25 * available_balance`, then scaled. **There is no equity term anywhere in the entry path**, and the
+bot sees exactly one field: `get_account_asset("USDT").availableBalance` (`runtime.py:1032,1038`).
+**Anything in Spot, Earn or SOL is invisible.** Model reproduces the live fill: $188.05 x 0.6578 =
+$123.72 against UAI's actual $124.27.
+
+    available   margin opened   1R      outcome
+    $1,016.88   $123.70        ~$12.50  today
+    $500        $60.82         ~$6.15   half scale
+    $200        $24.33         ~$2.46   one-fifth scale
+    $50         $6.08          ~$0.62   trades, barely
+    $0          --             --       NO TRADE AND NO SHADOW LOG
+
+**At zero it is not "small trades", it is NO trades.** Four guards fire ahead of the scan loop —
+`runtime.py:6287` (WILDCARD), `:6641` (TREND), `:6735` (SQUEEZE), `:7684` (sniper) — each
+`if available <= 0: return`. **The counterfactual ledger stops too, so you would not even accumulate the
+untaken-signal record. Given that time-to-verdict is the only thing that pays, that is the expensive part.**
+
+**TWO CLAIMS THAT CIRCULATED IN THIS STUDY AND ARE FALSE — named so they are not quoted later:** there is
+**no** "phantom $75 budget firing 31 unfundable orders" (that fallback lives in the decommissioned PMT
+`_enter_trade` path the live sleeves never touch), and there is **no** silent-stop band at $41-$81 (the $5
+min-entry floor sits in an exchange-rejection handler, not the sizing path). **Degradation is smooth and
+linear all the way down; the cliff is only at exactly zero.**
+
+### 3. THE FINDING IN THE OWNER'S FAVOUR — nobody had named this before
+
+> **Because `available` is RE-READ as each slot fills, sizing cascades: $123.72 -> $108.67 -> $95.45 ->
+> $83.84 -> $73.64. AT A FULL FIVE-SLOT BOOK THE BOT DEPLOYS $485 AND LEAVES $532 (52%) UNTOUCHED,
+> PERMANENTLY, BY CONSTRUCTION. His premise that the balance is idle is CORRECT even when every slot is
+> occupied.**
+
+**The trap: you cannot harvest it.** Removing $532 lowers `available`, which lowers slot 1, which lowers
+everything downstream. **Parking is not carving out a reserve — it is turning the sizing dial down.**
+
+### 4. THE ARITHMETIC — $10/mo on $1,016.88 is 11.8% APY NET
+
+| instrument | $/month | price risk | clears $10? |
+|---|---|---|---|
+| USDT Flexible Savings @ published tiers, **100% parked** | $10.97 | none | yes — **but the bot stops** |
+| park $717 | **$8.47** | none | no |
+| park $500 | $6.67 | none | no |
+| park $300 (the 20% bracket) | $5.00 | none | no |
+| **MEXC Futures Earn, in place, no transfer** | **$2.03-$4.74** | none | no |
+| SOL staking ~5.26% | $4.46 | **+/- $190/mo** | no |
+| do nothing | $0.00 | none | no |
+
+**A CORRECTION ONE LINE MADE AND THE VERIFIER CAUGHT: parking $717 yields $8.47, not $10.97.** The
+$10.97 is the yield on the WHOLE balance ($300 @ 20% + $716.88 @ 10%); applying it to a partial
+subscription overstates by 30%.
+
+> **NO CONFIGURATION THAT LEAVES THE BOT TRADING CLEARS THE $10 BAR. The bar is reachable only by
+> parking 100%, which is "stop trading and put the money in savings" — a legitimate choice, but it
+> should be named honestly.**
+
+### 5. SOL, REJECTED ON FIVE INDEPENDENT GATES
+
+**The single most useful number: SOL's coupon is $4.46/month; SOL's one-sigma month on $1,016.88 is
++/- $190. That is 1 : 42.** The yield is 2.4% of the position's monthly variance; the other 97.6% is an
+unhedged directional crypto bet.
+
+Measured independently by the verifier from 366 daily closes (`api.mexc.com/api/v3/klines`), reproducing
+every figure to the reported decimal: **SOL trailing 365 days -56.3% (-$573), max drawdown -74.9%, worst
+30-day window -46.1% = -$469 — one bad month erasing about EIGHT YEARS of its own staking yield.**
+
+**And the book's entire monthly P&L envelope is +/- $60. A SOL treasury bolts +/- $190/month onto it —
+three times the noise of the business it is meant to quietly support, destroying the ability to measure
+whether the bot works at all.**
+
+**Correlation makes it worse, not better: SOL/ETH +0.83, SOL/XRP +0.78 (180d), and TREND is LONG-ONLY on
+ETH/XRP/ZEC.** A $1,016 spot SOL position is **the same trade already held, unlevered, permanently on,
+and 8x the size of a single TREND slot.** The mechanism is also **procyclical**: it sells collateral into
+weakness, de-sizing the bot exactly when post-crash volatility makes the detector fire most.
+
+### 6. THE SELECTION METHOD — gates, not a score, because a score lets a big yield outvote a hard constraint
+
+    Gate 0  MECHANICAL REACHABILITY. Does it raise `availableBalance` within one scan cycle with no
+            human in the loop?  -> reduces the set to USDT-denominated instruments settling in the
+            FUTURES wallet. SOL fails. Multi-asset fails (cross-only). Spot Earn fails (no primitive).
+    Gate 1  Redemption latency < entry latency. Fixed-term fails; flexible passes on speed, dies on Gate 0.
+    Gate 2  Yield >= bar, net, AT THE FEASIBLE ALLOCATION -- not at 100%. **Yield is linear in the parked
+            amount, but SO IS THE DAMAGE to position size. THIS GATE CAN NEVER BE PASSED BY SCALING UP.**
+    Gate 3  Yield-to-noise >= 1:1 (expected monthly $ vs 1-sigma monthly $). SOL 1:42, BTC ~1:80,
+            ETH ~1:80, XRP ~1:150. **Below 1:1 the yield is not why you hold it, and calling it
+            treasury is a category error.**
+    Gate 4  Correlation to the live book <= +0.3. Collateral must not be the same bet as the positions.
+    Gate 5  Tail survivability: worst historical 30-day loss <= ~2x the annual coupon.
+            SOL: -$469 against +$54/yr = 8.7:1 AGAINST.
+    Gate 6  Counterparty. Earn principal becomes an unsecured claim on MEXC's lending book.
+            **"Zero price risk" is NOT "zero risk", and a sigma-based screen is blind to peg and credit.**
+
+**Applied: every crypto candidate fails Gates 0, 2, 3, 4 and 5. USDT fails ONLY Gate 0 — and Gate 0 is
+the one a human can satisfy manually.**
+
+> **THE METHOD'S REAL OUTPUT: THE SYMBOL WAS NEVER THE FREE VARIABLE.** Volatile assets die on Gate 3 —
+> their yield is unobservable against their noise. **Measuring whether SOL's 6% beats zero at 69% annual
+> vol would need ~529 years.** That is the same measurement wall that killed the other ~35 candidates,
+> pointed at a treasury asset. **USDT dies on Gate 0 — on this bot's plumbing, not on markets.**
+
+### 7. RANKED RECOMMENDATION
+
+**1. DO NOTHING WITH THE FUTURES WALLET. $0/month, $0 risk. THE RULING.**
+
+**2. CHECK WHETHER MEXC FUTURES EARN IS ON. ~$2-5/month, free, no fund movement. TAKE IT.**
+**This is the one product that walks through Gate 0** — it pays daily interest on USDT sitting **in the
+futures wallet**, principal still serving as margin, including funds locked in pending orders. No
+transfer, no redemption, no code change, reversible toggle. **All three research lines missed it; the
+verifier found it.** Documented base rate under $100k net position value is **3% APR**; a 2026-04-03
+upgrade reportedly widened the bottom tier toward 7%, unverified (client-rendered page).
+**ONE CHECK BEFORE TRUSTING IT: after enabling, read `availableBalance` off the container and confirm it
+is UNCHANGED. If enrolled principal were excluded from that field, every position shrinks by the
+enrolled amount and the lever inverts.** Sixty seconds, read-only.
+
+**3. IF YOU WANT THE 20% BRACKET, FUND IT FROM CAPITAL THAT IS NOT THE SIZING BASE.** $300 of OUTSIDE
+money in USDT Flexible Savings pays $5.00/month, zero price risk, seconds to redeem, and **costs nothing
+in position size, fill count, or edge measurement.** Funded that way it is unambiguously positive.
+
+**4. PARK $300 *FROM* THE FUTURES WALLET: SIGN UNDETERMINED. NOT RECOMMENDED.** +$5.00/month against a
+29.5% cut to every position. **Breakeven is at E[book] = $16.95/month.** At the book's own point estimate
+(~31 fills x +0.077R x $15.49 ~ $37/mo) it is **-$5.9/month**; if the edge is truly zero it is +$5.00.
+**Funding this is arithmetically a bet that the bot's edge is worth less than 10-20% a year. That may be
+true — WILDCARD is on record as a coin flip — but make it knowingly, as a statement about the trading
+system, not about SOL.**
+
+**5. SOL, ANY SIZE: REJECT AS TREASURY. Close the file.** If there is a genuine directional view on SOL,
+**the yield is incidental and it is a conviction-sized funded bet in a separate account with its own
+thesis and stop. Routing it through the trading balance would bury the edge measurement under its noise.**
+
+### 8. COULD NOT VERIFY — read before acting
+
+1. **The live USDT flexible APR.** The 20%/10% tiers are a 2026-02-18 press release explicitly labelled
+   **limited-time**, seven months stale. MEXC publishes flexible APRs as variable-daily with a
+   non-promotional historical range of **2-16%**. **The honest range on $300 is $0.50-$5.00/month.**
+2. **The live Futures Earn tier.** 3% documented; 7% plausible-unverified.
+3. **Every non-USDT yield here is an anchor, not a MEXC quote.** SOL's ~5.26% is protocol-level; exchange
+   rates typically sit below. **No APY was invented to fill a gap — verified across the whole study.**
+4. SOL's collateral haircut under multi-asset mode (rate table returns "No data" unauthenticated). Moot.
+5. Whether `FUTURES_OPEN_TYPE` is overridden in the live Railway env (read from source default).
+
+### 9. SAME DAY — THE UAI TRAIL LEAK, measured
+
+Owner asked how UAI ended at +$7 with a $20 peak and a $10 floor. **He was right and the framing was
+right.**
+
+    UAI_USDT SHORT  entry 0.7101 -> exit 0.6658, 20.08h, lev 1, sl_frac 11.88%
+    peak_r 1.4337 x risk $13.9638  = $20.02   <- his "$20"
+    floor  0.50 x 1.4337 = 0.7169R = $10.01   <- his "$10" (this is the FLOOR, not the arm)
+    actual r_multiple 0.51         = $7.56
+    MISSED ITS OWN FLOOR BY 0.207R = $2.89. Price ran 2.5% past the floor before the trail acted.
+
+**THIS IS NOT A PARAMETER PROBLEM. The parameter was correct; the implementation did not hold it.**
+
+**BUT THE HONEST SCALE, era-aware** (retain was 0.30 before 2026-08-29T00:37Z, 0.50 after; the 3R ratchet
+was added 2026-08-22T20:12Z in `ea5b92a`):
+
+    CURRENT ERA (retain 0.50), n=16 trail exits:  mean gap 0.0562R, median 0.0521R, max 0.1280R,
+                                                  total $6.84  (~$0.43/exit, ~$4/month)
+    OLD ERA (retain 0.30), n=12:                  mean 0.1291R, median 0.0951R, max 0.5130R
+
+**UAI's 0.207R gap is 3.7x the current-era mean and 1.6x the previous maximum — the worst floor miss of
+the era by a wide margin.** The routine leak sits under the $10 bar; **UAI is an outlier, not a
+systemic bleed.**
+
+**WHY UAI SPECIFICALLY IS NOT DETERMINABLE**, and the reason is exactly the item already queued as *"the
+cheapest thing on the page"* at `DECISION_RULE.md:293-297`: **the per-position `r_now` poll series is not
+persisted.** One log line would answer it. **This is the SECOND question in two days to die for want of
+it. It should now outrank everything else on the queue.**
+
+**TWO CORRECTIONS TO THE LOOP MODEL, verified in source and against the live logs:**
+- The main cycle sleeps **45s**, but `_sleep_until_next_cycle` (`runtime.py:5778`) enters a
+  position-monitor branch when positions are open. `USE_OPEN_POSITION_GUARD` defaults **on** and
+  `FUTURES_OPEN_POSITION_MONITOR_SECONDS` defaults to **1.0s**, **neither overridden in the live env.**
+  **So "the trail evaluates once per second" is correct.**
+- **The container is NOT asleep.** It was running cycle 979 at 07:26Z with equity **$1,016.88** and flat.
+  `railway ssh` intermittently reports "scaled to zero" and then succeeds with
+  `--service Futures-bot --environment production`; **use the explicit flags.**
