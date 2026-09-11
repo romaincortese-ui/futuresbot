@@ -10143,3 +10143,191 @@ it. It should now outrank everything else on the queue.**
 - **The container is NOT asleep.** It was running cycle 979 at 07:26Z with equity **$1,016.88** and flat.
   `railway ssh` intermittently reports "scaled to zero" and then succeeds with
   `--service Futures-bot --environment production`; **use the explicit flags.**
+
+---
+
+## 2026-09-11 — BELOW THE ARM: the gap is REAL, the remedy is INVERTED. Ship nothing on exits.
+
+**Owner:** *"IOST, peak at around +$18 and it LOST $25. That's the cleanest example of the exact
+scenario I want to avoid. This is why I say the bot isn't intelligent when trades are open."*
+**Read-only. No repo edit, no deploy, no env change.**
+
+### 1. THE TWO TRADES — MEASURED from the container, not derived
+
+    IOST  WILDCARD  peak_r 0.7885 x risk_usdt $23.663 = PEAK +$18.66   closed -$25.93
+          exit_reason EXCHANGE_CLOSE (the resting 3xATR stop), mae_r -0.9925, 1R = $23.66.
+          NEVER ARMED -- nothing in the exit stack ever looked at it.
+    ETH   TREND     peak 0.3043R = +$7.16 on $23.54 risk, stopped -$24.78.
+          NOT the giveback scenario: it never built meaningful profit. Also a TREND fill, and the
+          corpus is WILDCARD, so nothing measured here transfers to it.
+
+**His recollection was exact to the dollar.** Together -$50.71 against the -$50.88 equity move
+($1,016.88 at 07:26Z -> $966.00 at 17:17Z). **No unexplained residual.**
+
+### 2. HE IS RIGHT, LITERALLY AND STRUCTURALLY
+
+`runtime.py:2338` — `if peak_r < arm_r: return False`. **Below 1.0R there is no floor, no giveback cap,
+no retention logic of any kind. The retention invariant is enforced perfectly above the arm and not at
+all below it.** The boundary is exactly where he said it was.
+
+On 53 WILDCARD fills over 21 days, from **recorded** `peak_r` (zero replay error):
+
+| region | n | net |
+|---|---|---|
+| peak < 0.25R | 18 | **-$132.85** |
+| 0.25-0.50R | 5 | -$15.96 |
+| 0.50-0.75R | 4 | -$6.01 |
+| **0.75-1.00R** | **4** | **-$49.79** |
+| armed >= 1.00R | 22 | **+$123.66** |
+
+**31 of 53 fills live below the arm and lose -$204.61. Eleven gave back more than 100% of built profit,
+$133.48 of giveback. ZERO armed fills did.**
+
+### 3. THE DECIDING NUMBER — IT USUALLY ARMS. The remedy is inverted.
+
+> **P(reaches 1.0R | touched 0.75R) = 85% (22/26).** Base rate 42%. **Touching 0.75R DOUBLES the odds
+> of arming.** Reproduced four ways — recorded peaks, replayed paths, WILDCARD-only, all-sleeve n=94 —
+> all within one percentage point.
+
+    touched >=0.25R  n=35  P(arm) 63%  P(full stop) 29%
+    touched >=0.50R  n=30  P(arm) 73%  P(full stop) 20%
+    touched >=0.75R  n=26  P(arm) 85%  P(full stop) 15%
+    touched >=0.90R  n=24  P(arm) 92%  P(full stop)  8%
+
+**Showing profit below the arm is evidence the trade is WORKING, not that it is about to fail. A floor
+there fires on a population that is 85% winners to rescue the 15% that are not.** IOST was, at the
+moment it showed +$18.66, an **85%-to-arm trade. It landed in the 15%.**
+
+**THE MECHANISM: 17 of 50 fills went to or below BREAKEVEN after building 0.30-2.48R, then recovered —
+and that set contains every large winner in the window.**
+
+    TUT     08-22  peak 0.36R -> trough -0.19R @66min  -> 5.00R, +$16.14
+    IOST    09-09  peak 0.45R -> trough -0.19R @104min -> 2.29R, +$41.83
+    MAGMA   08-28  peak 0.53R -> trough -0.01R @142min -> 3.37R, +$8.13
+    PONS    09-09  peak 0.44R -> trough +0.01R @84min  -> 1.04R, +$17.20
+    USELESS 09-04  peak 0.34R -> trough -0.02R @91min  -> 2.62R, +$5.16   (+ 12 more)
+
+**A breakeven stop armed at 0.3R deletes every one of them. That is the whole of the -$82.59.**
+
+**THE ASYMMETRY THAT IS THE STUDY'S REAL FINDING:** the ADVERSE-side conditional (already on file)
+separates **11% vs 92% — an 8.4x lift.** The FAVOURABLE-side conditional separates 63% vs 92% across
+its whole range — **a 1.5x lift, pointing the wrong way for the purpose. The adverse-side signal is a
+genuine classifier; the favourable-side one is not.** Never measured before.
+
+### 4. WHERE THE MONEY ACTUALLY IS — three quarters of it is unreachable
+
+> **Of the -$204.61 lost below the arm, $132.85 sits in 18 fills whose peak NEVER EXCEEDED 0.25R.**
+> Those trades never showed anything. **No floor, giveback cap or breakeven stop of any shape can reach
+> them — there was nothing to retain.** That is an ENTRY and STOP-GEOMETRY problem, not an exit one.
+
+The genuinely addressable pot (built >=0.25R then closed negative) is **11 fills containing $16.29 of
+built peak profit.** **Oracle ceiling ~$16/month against a paired MDE of $57-$105/month.**
+
+### 5. THE REAL CAUSE OF TODAY — THE STAKE GREW 8x, THE FAILURE RATE DID NOT
+
+    chronological thirds:  +$7.72  /  +$3.43  /  -$76.26
+    median risk_usdt:      $1.66   /  $3.07   /  $14.10
+
+**ONG did a WORSE round trip than IOST (1.93R vs 1.89R) for -$1.46.** Seven of the eight worst round
+trips in the book cost **$1.02-$3.65**; the identical shapes post-deposit cost **$11.28, $19.41 and
+$25.93.** **The same 12 post-deposit fills at the pre-deposit risk scale would have lost $8.30 instead
+of $46.83.**
+
+> **The rules that would have saved today's two trades LOSE $33-$50/month across the corpus.
+> Today is the selection event; the corpus is the out-of-sample answer to it.**
+
+### 6. EVERY CANDIDATE PRICED AND REFUSED
+
+**24 + 22 + 93 parameter cells across three lines. NOT ONE has |total| > its own SE.** Ex-top-1 flips
+10 of 15 positive cells in one sweep and reverses the largest apparent gain in another. **Family-wise
+Sidak p = 0.996.** The best cell in the whole study sits **0.077R above TUT's worst tick — a coin on
+its rim.** Best of 93 cells +$8.88/mo, falling to **+$3.68 ex-top-1**, p=0.057 raw / 0.996 adjusted.
+
+**DO NOT BUILD THE PEAK-AWARE 19F VARIANT SPECIFICALLY:** twelve of twelve cells negative, **-$66/month,
+and it RAISES invariant violations from 10 fills to 15.**
+
+**A 0.9R gate cuts zero winners and returns ~+$2/month — but the protectable population is TWO FILLS,
+one of which (PONS, recorded peak 0.9653R) the replay classifies as ABOVE the arm and cannot see.
+A gate fitted to PONS's third decimal place is not a rule.**
+
+### 7. THE RESTART HYPOTHESIS — DEAD, and cheap to have checked
+
+**IOST closed 10:11:35Z, ETH closed 15:54:37Z, the deploy landed 16:16Z.** Both flat hours before it.
+The container gap measured **~3 minutes** (PID 1 elapsed puts process start at 16:19:06Z).
+
+**And structurally a restart CANNOT produce this scenario.** `convex_peak_r` and `convex_trough_r` are
+persisted to the Railway volume on every new peak (`runtime.py:2332-2336`; `:2289` documents that
+positions open across a deploy keep their peak). **Below the arm the only live exit is the
+exchange-resting 3xATR stop, which a process restart does not touch — IOST's `EXCHANGE_CLOSE` IS that
+stop firing.**
+
+> **THE ONE THING TO CARRY FORWARD: the 1-second monitor is IN-PROCESS and therefore deploy-blind,
+> while the exchange-resting stop it would replace is not. ANY below-arm rule that ever ships must REST
+> ON THE EXCHANGE — and of the shapes priced, only a fixed-price breakeven stop could.**
+
+### 8. RANKED
+
+**0 — SHIP NOTHING ON EXITS. $0/month.** Fourth consecutive own-path exit sweep to land flat. Neither
+env nor code.
+
+**1 — SIZE, NOT EXITS.** The only lever whose effect exceeds its own noise, and it needs **no new rule**
+— only the existing scaler applied to the funded-era regime that produced IOST ($23.66) and PONS
+($18.46). Same lever as the standing *"shrink dials pay"* finding. Env, not code. Shrinks winners
+proportionally, cuts nothing. **CAVEAT NOT DRESSED UP: 12 fills over 3 days. No annualised rate quoted.**
+
+**2 — TWO LINES OF INSTRUMENTATION.** Log `convex_trough_r` and `trail_migrated` into `trade_history`.
+**`convex_trough_r` is currently populated on 0 of 50 closed fills, so NO giveback-shaped rule can be
+priced from telemetry at all** — every such cell here is replay-only and unverifiable, and the one
+disclosed engine error landed on exactly the fill that mattered (PONS). ~2 lines, $0/month, unblocks
+the next study. **This is now the third consecutive question to die for want of persisted poll state.**
+
+**3 — 19F: LIVE, FIRING, PAYING, MIS-SHAPED. DO NOT TOUCH YET.** It is the only below-arm rule in the
+bot and the only one with a measured mechanism (the 8.4x adverse-side lift). **Its 30-minute window is
+mis-specified against when damage actually arrives** — median `t_adverse_50` 38-41 min; **IOST matured
+at 43.6 min and ETH at 46.3, both outside the window.** **But every extension prices negative in-sample
+at every window tested (-$43 to -$49/month).** Pre-registration requires 30 fires; it has 2.
+
+**4 — `partial_bank.py`: DEAD AND OFF-TARGET. Document, do not resurrect.** Two independent gates
+(PMT-only call site, explicit wildcard exclusion) and decisively **its trigger is +1.0R — identical to
+the arm.** It has nothing to say about this region. Its 2026-06-10 calibration predates every validity
+boundary in the corpus. `breakeven_stop_price()` is a clean reusable primitive; nothing else is.
+
+### 9. DOES IT PAY vs DOES IT BEHAVE HIS WAY — they diverge and he is owed both
+
+**Does it pay: NO.** Flat-to-negative everywhere. Per-fill dollar sd ~$10 at this fill rate means
+detecting $10/month needs years. **This is not merely unanswered on 21 days — it is unanswerable on any
+window he will live through.**
+
+**Does it make the book behave his way: YES, and the price is on the table.** A breakeven stop armed at
+0.30R takes invariant violations from **10 fills to 2** and cuts per-fill sd by **30%** — for about
+**-$50/month.** Two independent constructions landed within $5 of that, and within $5 of his
+already-refused arm-0.50 option. **That is a risk-tolerance purchase, honestly priced. His standing
+directive is "$ P&L, always", which resolves against it — but it is his call, not a measurement.**
+
+**ONE CAUTION ON THE INVARIANT ITSELF:** applied below the arm it counts noise as giveback — **23 of 48
+"violations" are fills that built two cents and stopped out.** The honest narrow number is **peak >=0.5R
+followed by a full stop: 5-6 fills, -$11 to -$30 over the window. The literal 2R round trip he fears
+happened ONCE before today, for -$1.46.**
+
+### 10. TWO CORRECTIONS TO CLAIMS MADE INSIDE THIS STUDY
+
+1. **"The trail earned +$123.66" is wrong — the trail earned +$63.72.** The armed region's total
+   includes a manual close (+$33.23) and an exchange TP (+$17.94) that the trail did not produce.
+2. **One line claimed the "zero guard trips" figure is false. IT IS NOT — it conflated two different
+   quantities.** The 2026-09-11 measurement was of the `risk_pct < 0.5 * entry_sl` GUARD at
+   `runtime.py:2221`, which returned **zero trips in 10 of 10**. That is not a claim that 19F never
+   fires: **19F fired twice on MARSCOIN, converting two certain full stops into -0.53R cuts and saving
+   ~$13.00.** Both facts hold simultaneously. **Guard trips != rule fires. Do not propagate the
+   "correction".**
+
+### 11. THE ONE-PARAGRAPH ANSWER
+
+**His diagnosis is correct, his IOST numbers are exact, and the gap he found is real and had never been
+studied.** The answer is that the bot is not unintelligent below the arm — **it is correctly passive
+there, because holding through that region is right three to four times out of five, and 85% of the time
+once a trade shows 0.75R.** Three quarters of the money he is angry about is in trades that never showed
+him anything at all, which is an **entry and stop-geometry** problem. And the reason today hurt more than
+the identical shapes in August is that **1R went from $2.90 to $23.66 while the stop geometry stayed
+put.**
+
+> **DO NOT RUN A FIFTH OWN-PATH EXIT SWEEP ON THIS WINDOW.**
