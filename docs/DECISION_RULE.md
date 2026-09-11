@@ -10331,3 +10331,157 @@ the identical shapes in August is that **1R went from $2.90 to $23.66 while the 
 put.**
 
 > **DO NOT RUN A FIFTH OWN-PATH EXIT SWEEP ON THIS WINDOW.**
+
+---
+
+## 2026-09-11 - OWNER EXIT SPEC REPLAYED EXACTLY: works as an OFF SWITCH, not an exit edge. Do not set it.
+
+**Spec, run literally:** from funding (2026-09-04T16:55), keep the downside stack (3xATR stop, 19F,
+24h clock) unchanged; ARM when unrealised P&L >= 0.1% of running equity; then track peak P&L in USD
+and CLOSE at 0.80 x peak; TP moved to 7R; equity compounds after each close.
+**Read-only: no repo edit, no env change, no deploy, no orders.** Three independent engines, each
+adversarially re-computed.
+
+### THE HEADLINE
+
+**Live -$133.43 over 24 fills becomes about -$2.6. A +$131 improvement that is NOT statistically
+distinguishable from zero** (paired SE $116, t 1.1-1.6, permutation p 0.11-0.28, **MDE ~$325**),
+**goes NEGATIVE once charged the slippage the bot already measures, and REVERSES out of sample.**
+
+**It works by closing 21 of 24 trades within ten minutes for a dollar or two.** Win rate goes
+**29% -> ~90%** and the P&L goes nowhere. Median hold **245 minutes -> 10 minutes**.
+
+## 1. ENGINE CHECK
+
+**The live column reproduces.** Three independently built engines, each declaring its tolerance before pricing, reproduce the 24 realised exits to a median error of 0.02–0.05R, 86–95% of fills within 0.15R, mean signed error under 0.08R, and the realised book within 3–16%. Nothing is pinned to outcomes. **The replay column is meaningful.**
+
+**Two corrections to the brief, agreed by all three lines and all verifiers:**
+- **There were 24 fills since funding, not 22.** The brief omits UAI 09-10T04:25 (+$7.56) and BTR 09-10T05:20 (+$2.53) — both winners.
+- **The live baseline is −$133.43, not −$173.** (The 22 rows listed sum to −$143.5; the two omissions bring it to −$133.43. Cross-check: $1,098.98 − $133.43 = $965.55 against a recorded final equity of $966.00, the $0.45 being funding fees.)
+- **Starting equity $1,098.98**, derived from ZEC 09-04's `equity_at_close` $1,096.32 plus its $2.66 loss — not assumed.
+
+---
+
+## 2. THE TABLE
+
+Your rule exactly as specified: arm at 0.001 × current equity, track peak P&L in dollars, close at 0.80 × peak, TP 7R, downside untouched, equity compounds. λ = 0.75. Live position sizes. Start $1,098.98.
+
+| # | entry (UTC) | symbol | LIVE $ | REPLAY $ | DIFF $ | exit | equity after |
+|---|---|---|---:|---:|---:|---|---:|
+| 1 | 09-04T16:55 | ZEC | −2.66 | +0.67 | +3.33 | trail 12m | 1099.65 |
+| 2 | 09-06T01:07 | ZEC | **+75.37** | +3.07 | −72.30 | trail 2m | 1102.72 |
+| 3 | 09-06T04:59 | ZEC | +11.88 | **−0.13 … +5.26** ⚠ | −6.6 … −12.0 | trail 8m | 1102.79 |
+| 4 | 09-06T09:26 | ZEC | −28.49 | +1.78 | +30.27 | trail 241m | 1104.57 |
+| 5 | 09-06T17:38 | ZEC | −20.38 | +1.01 | +21.39 | trail 5m | 1105.58 |
+| 6 | 09-06T19:58 | MAGMA | −26.45 | **−25.96 … +1.18** ⚠ | +0.5 … +27.6 | stop 23m | 1080.09 |
+| 7 | 09-07T15:42 | PONS | −19.41 | +3.02 | +22.43 | trail 30m | 1083.11 |
+| 8 | 09-08T08:11 | FORM | −25.76 | +1.72 | +27.48 | trail 4m | 1084.83 |
+| 9 | 09-08T11:12 | MARSCOIN | −11.65 | +1.83 | +13.48 | trail 4m | 1086.66 |
+| 10 | 09-08T16:38 | ZEC | −20.35 | +0.50 | +20.85 | trail 3m | 1087.16 |
+| 11 | 09-09T04:39 | ZEC | −27.25 | **−0.30 … +7.14** ⚠ | +27.0 … +34.4 | trail 6–12m | 1087.26 |
+| 12 | 09-09T09:03 | ZEC | +10.07 | **−0.17 … +9.74** ⚠ | −0.3 … −10.2 | trail 2–141m | 1087.46 |
+| 13 | 09-09T09:43 | ATOM | −23.68 | +1.33 | +25.01 | trail 18m | 1088.79 |
+| 14 | 09-09T10:40 | IOST ᴹ | **+33.23** | +6.33 | −26.90 | trail 99m | 1095.12 |
+| 15 | 09-09T13:41 | ZEC | −14.14 | +0.31 | +14.45 | trail 26m | 1095.43 |
+| 16 | 09-09T16:13 | SOPH | **+24.68** | **+0.35 … +4.94** ⚠ | −19.7 … −24.3 | trail 150m | 1099.63 |
+| 17 | 09-09T19:15 | PONS ᴾ | −1.93 | +1.51 | +3.44 | trail 39m | 1101.14 |
+| 18 | 09-09T22:14 | MARSCOIN | −10.29 | +2.28 | +12.57 | trail 8m | 1103.42 |
+| 19 | 09-10T04:25 | UAI | +7.56 | +1.56 | −6.00 | trail 3m | 1104.98 |
+| 20 | 09-10T04:41 | BTR | −10.79 | −9.86 | +0.93 | stop 37m | 1095.12 |
+| 21 | 09-10T05:20 | BTR | +2.53 | **−6.49 … +1.61** ⚠ | −9.0 … −0.9 | 19F/trail | 1089.09 |
+| 22 | 09-10T05:59 | MARSCOIN | −4.79 | +1.30 | +6.09 | trail 4m | 1090.39 |
+| 23 | 09-11T08:58 | IOST | −25.93 | **+1.15 … +11.95** ⚠ | +27.1 … +37.9 | trail 1–5m | 1091.83 |
+| 24 | 09-11T14:02 | ETH | −24.78 | +4.57 | +29.35 | trail 2m | 1096.40 |
+| | **TOTAL (24)** | | **−133.43** | **≈ −$2.6** | **≈ +$131** | | **1096.40** |
+
+⚠ = **contested row**: the three independent engines disagree by more than $2, so the range is shown rather than a single number. Eight rows are contested; all eight turn on which minute inside a 1-minute bar the $1 floor was touched. ᴹ = owner's manual close. ᴾ = slot eviction.
+
+The REPLAY column and equity path use the median of the three engines. **Row 21 (BTR)** is likely +$1.6 rather than −$6: the bot's own `t_adverse_50` is null for that fill, so the per-second poll never saw −0.5R and 19F could not have fired — two engines fired it spuriously.
+
+---
+
+## 3. TOTALS AND FINAL EQUITY
+
+| | replay total | final equity |
+|---|---:|---:|
+| **Live (actual)** | −$133.43 | $965.55 |
+| **Your rule, live sizing** (the spec) | **≈ −$2.6** (band −$2.5 … +$57) | **$1,096** (band $1,096 … $1,156) |
+| **Your rule, fully compounded sizing** | ≈ −$5 … +$61 | $1,094 … $1,160 |
+| **Your rule, after the measured 0.056R exit slippage** | **−$25 … +$25, centre ≈ −$26** | $1,073 |
+
+**Fully compounding the position sizes changes the answer by under $5 in every line.** The replayed equity never moves more than 5% from its start, so there is nothing to compound. Your compounding instruction turned out to be a statement about the arm threshold only — it moved from $1.10 to $1.16 across the whole week and changed no exit decision.
+
+**Difference vs live: +$131 (band +$107 to +$191). Paired SE $116, t = 1.1–1.6, permutation p = 0.11–0.28. The study's own MDE at 80% power is ~$325.** The observed effect is under half of what 24 fills can resolve. I will not headline it, and neither should you.
+
+---
+
+## 4. WHAT ACTUALLY DROVE IT
+
+**One of your three changes did everything; one is negative; one does literally nothing.**
+
+| change, measured alone | effect |
+|---|---:|
+| the $1 arm (0.1% of equity) | **+$109 to +$135** |
+| the 20% giveback | **−$22 to −$41** |
+| the 7R TP | **$0.00 — bit-identical totals** |
+
+**The 7R TP is inert.** Under the replay the highest peak any of the 24 trades reaches is ~0.5R. Zero reach 3R, 5R or 7R. Across the whole 82-fill post-censoring corpus exactly one fill ever reached 5R and none reached 7R. Running the replay at 5R/3R returns the identical total to the cent.
+
+**The truncation — this is what you cannot see from the spec.** The arm ran $1.10–$1.16 against 1R values of $9–$28, i.e. an arm of **0.04R to 0.13R**, 8–26× below the live 1.0R arm. 21 of 24 trades arm. The floor then sits about **90 cents above breakeven**.
+
+Exit-size distribution, 24 replayed closes:
+
+```
+under $2   14–19 of 24   (58–79%)
+under $5   18–19 of 24
+under $10  23–24 of 24   nothing exits above $12
+mean  ≈ +$0.03 … +$2.40      median ≈ +$1.1 … +$1.8
+min   −$26 (MAGMA, never armed)   max +$12
+wins  19–23 of 24  (live: 7 of 24)
+median hold  8–11 minutes  (live: 245 minutes)
+```
+
+**The win rate goes 29% → ~90% and the P&L goes nowhere.** That is the signature of a rule that converts variance into a fee-paying scratch.
+
+**The three near-misses are rescued, and they are real** — PONS 09-07, ZEC 09-09T04:39, IOST 09-11, together worth **+$77 to +$87** of avoided loss. All three peaked between 0.57R and 0.97R, just under the live 1.0R arm, then round-tripped to a full stop-out. That is a genuine blind spot in the live trail and this test found it.
+
+**But they are rescued for pennies.** Their live peaks were $17.82 / $21.38 / $18.66. The replay banks **+$3.02, +$0.10…+$7.14, +$1.15…+$11.95** — a combined ~$12 against a combined live −$72.59. The gain is loss-avoidance, not profit capture. IOST 09-11 exits at **minute 1** and then goes on to build $18.66 it never sees.
+
+**The winners are the cost, and it is larger than the gain.** Live +$133.28 becomes +$14, a give-up of **−$119 to −$124** — 62–93% of the headline difference:
+
+- **ZEC 09-06T01:07, +$75.37 → +$3.07.** It arms one minute after entry, peaks at ~$6, gives back $1.20, and **closes at minute 3**. It then went underwater for three hours before ramping to +$155 unrealised and taking its 3R TP at +$75.37. Your rule was out of the single best trade of the funded era **216 minutes before the move that made it**. This is robust across every intrabar convention tested.
+- **IOST 09-09, +$33.23 → +$6.33.** Captures 15% of its available peak, 19% of what you took by hand.
+- **SOPH, +$24.68 → +$4.94.** Captures 9% of its peak.
+
+**The recovery tax:** 15 of 24 funded fills built ≥0.30R, dipped to or below breakeven, and then made a higher high. The replay cuts every one of them before the recovery.
+
+---
+
+## 5. THE HONEST CAVEATS
+
+- **Selection.** The three motivating trades were screened on their realised paths — peak high, P&L negative — after the fact, on a 24-fill sample. A rule built to rescue them is in-sample by construction, and they supply 44–65% of the measured swing.
+- **Out of sample it reverses.** Same rule, same engines, on the 58 pre-funding post-censoring fills: a period the bot actually **made** money becomes flat-to-negative (+10.0R → −1.5R in two lines; +$29.56 → +$3.85 in the third). Pooled across all 82 fills the rule is worth **−0.02R to −0.07R per fill, t ≈ −0.2 to −0.5, i.e. nothing.** The era difference is t ≈ 2.3–2.6. Two underpowered tests pointing opposite ways is not evidence for a rule; it is evidence the funded week is noise.
+- **Intrabar sensitivity.** The direction (replay beats live) survives every convention, +$107 to +$191. **The replay's own total does not**: raw closes give −$10 to −$24, and one line's asymmetric calibration gives −$2. "This rule makes money" is a measurement artifact; "this rule lost less than live did, in this week" is defensible.
+- **Slippage is the one thing none of the primary tables include, and it is decisive.** The bot's own measured trail floor-miss is 0.056R mean, 0.207R worst. On a mean 1R of ~$19.60 that is **$1.10 mean, $4.06 worst — larger than the rule's median trade of $1.67.** Apply the measured mean and the replay book goes to roughly **−$25**; apply the worst and it is −$39. A rule whose entire per-trade output fits inside its own measured execution error is not bankable.
+- **The two exogenous exits** were let run under the replay rule, not held at their live values — that answers "what would the rule have done", not "what would the rule plus you have done". Freezing both at live gives +$25 to +$80 instead, and that variant mixes counterfactuals.
+- **The entry set is held fixed, and that is the largest unmodelled term.** Median hold falls from 245 minutes to 10. The bot would free slots ~20× faster and would have taken more trades — at the live −0.3R/fill expectancy, probably to its cost. Unbounded, in an unknown direction.
+- **One real defect in the spec as written: no cost floor.** The live trail floors its exit at 1.5× the 0.19%/sl_frac round trip (`runtime.py:1944`). Your rule does not. A trade that arms at $1.00 and gives back 20% banks a **net loss by construction** — ZEC 09-09T04:39 exits gross-positive and realises −$0.30.
+
+---
+
+## 6. WHAT TO TAKE FROM IT
+
+**You executed the specification cleanly and it produced a clean answer: the rule works as an off switch, not as an exit edge.** It turns a −$133 week into roughly break-even by closing 21 of 24 trades within ten minutes for a dollar or two. The +$131 improvement is not statistically distinguishable from zero, it goes negative once you charge the slippage the bot already measures, and it reverses on the two weeks before. **No variant clears $10/month — the replay is flat over seven days, and negative after realistic fills.**
+
+**Do not set it.** Concretely:
+
+1. **Do not set the 0.1% dollar arm.** It is the only part that moves the number and it is the part that destroys the profitable period.
+2. **Do not set the 20% giveback.** Its standalone marginal is −$22 to −$41. It only looks harmless inside your spec because the $1 arm has already closed everything.
+3. **Do not raise the TP to 7R.** It cannot do anything until a trade is allowed to live long enough to reach 5R, and on 82 fills exactly one ever has. There is no data behind the change in either direction.
+4. **It also contradicts your own standing invariant.** You measured early banking as harmful and settled on floor-not-bank. This is maximal early banking taken to its limit — it does not give back built profit, it refuses to build any.
+
+**What is genuinely worth keeping is the observation, not the rule.** Three trades died at 0.57R–0.97R because the live arm sits at exactly 1.0R and they never quite touched it. That is a narrow, specific, testable gap, and this test located it.
+
+**Caution on the obvious next step:** "lower the arm to 0.6–0.8R, keep the 50% retention and keep the cost floor" is the right shape, but one line priced it and it is a null — the funded book improves from −$80 to −$42 at arm 0.8R, costs −4.8R pre-funding, and pools to −0.002R/fill, t = −0.03. No arm level between 0.5R and 1.0R clears zero pooled. **0.6R is fitted to three trades.** If you want to pursue it, run it through the displaced-entry placebo harness with the slippage haircut switched on before it goes anywhere near live — do not spend a trial on it on this evidence.
+
+**Trial 19F is live and nothing here clears the bar to touch it. Change nothing today.** Everything in this run was read-only: no repo edit, no env change, no deploy, no orders.
