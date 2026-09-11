@@ -1,3 +1,167 @@
+# Daily Audit — 2026-09-11
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Equity **$965.99** — all cash, **zero frozen margin, zero open positions, zero
+unrealized**. Yesterday's line was $1,023.19, of which $16.55 was open
+unrealized. Ex-unrealized that is $1,006.64, and $1,006.64 - $40.75 realized =
+**$965.89 against an actual $965.99**. The $0.10 is fee/funding rounding.
+**No deposit, no withdrawal — the -$57.20 headline is $40.75 of realized loss
+plus $16.45 of unwound open gain, not a flow.**
+
+`FUTURES_TRIAL_LABEL=19F`, `FUTURES_TRIAL_START_TS=1788891501`. Config unchanged
+since 09-08. **Nothing shipped today.** Feature store 154 -> **158** rows. No
+Traceback, no ERROR, no 5003/2015 order rejects, zero `[SIZE_TRIM]` lines. The
+only log warning is `Prophet prediction archive refresh failed: HTTP 422`,
+three times in the window — external endpoint, cosmetic, no trading path.
+
+### 1. Closed trades — 4 in 24h, 2 winners (50%), **-$40.75 / -1.31R**
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | mae R | risk% | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-11 00:30 | UAI | WILDCARD | SHORT | x1 | 20.1h | **+0.51** | **+7.56** | +1.43 | -0.37 | 1.37 | retention trail |
+| 09-11 05:20 | BTR | WILDCARD | SHORT | x1 | 24.0h | **+0.28** | **+2.53** | +0.40 | -0.46 | 1.17 | 24h time stop |
+| 09-11 10:11 | IOST | WILDCARD | LONG | x3 | 1.2h | -1.06 | -25.93 | +0.79 | -0.99 | 2.33 | stop |
+| 09-11 15:54 | ETH | TREND | LONG | x6 | 1.9h | -1.04 | -24.78 | +0.30 | -1.02 | 2.37 | stop |
+
+**Exchange reconcile: 4 exchange rows, 4 feature-store rows, matched on symbol,
+side, entry, close and timestamp.** Exchange realized -$40.75 vs feature-store
+-$40.62; $0.13 of fee/funding rounding. No censoring.
+
+**Both losses are clean full stops at design risk** — mae -0.99R and -1.02R,
+realized -1.06R and -1.04R, the overshoot being exit slippage on a market stop.
+Nothing to diagnose in the exits. Both winners exited exactly as designed.
+
+### 1a. THE 19F EARLY STOP DID NOT FIRE TODAY, AND WAS RIGHT NOT TO
+
+IOST is the only trade that could have qualified. Its shadow diagnostic reads
+`t_adverse_25 = 21.83`, `t_adverse_50 = **43.58**`. It reached -0.5R at minute
+43.6 — **outside the 30-minute window by 13.6 minutes** — so the rule was never
+eligible. ETH is TREND, where `FUTURES_TREND_EARLY_STOP_R=0.0`.
+
+Lifetime fires stay at **2 of the 20 the primary criterion needs**, both
+MARSCOIN on 09-10, both already replayed and both correct. Criterion 4 (zero
+`CONVEX_EARLY_STOP` on a TREND position) is **clean**.
+
+### 1-OPEN. Open positions: NONE
+
+Zero open, zero frozen margin, $965.99 fully available. Nothing to replay.
+
+### 2. THE LEVER I TESTED TODAY, AND REFUTED
+
+**The hypothesis was worth a look.** TREND's lifetime record is **+7.63R but
+-$17.08 over 32 fills**, and WILDCARD's 14-day record is **+2.35R but -$81.53**.
+R and dollars disagree in sign in both. The obvious reading is that the sizing
+stack puts more money behind losers than winners.
+
+**It does not. Measured across 93 fills carrying a risk column:**
+
+    winners  n=43  risk_pct 1.534% +- 0.081
+    losers   n=50  risk_pct 1.530% +- 0.091
+    gap      +0.003%   bootstrap 95% CI [-0.232, +0.242]   P(gap<0) = 0.481
+
+**And the counterfactual runs the wrong way.** Re-pricing every fill at a flat
+1.53% risk against its own entry equity gives **-$90.08 against the actual
+-$85.47 — flattening risk would have cost $4.62 more.** On the last 30 fills it
+is worse still, -$7.14.
+
+**The sign divergence is the equity ramp, not a defect.** The R-positive fills
+happened when the book was smaller, so 1R was worth fewer dollars; the losses
+landed at $1,000 equity where 1R is about $24. That is arithmetic, and there is
+no lever inside it. **Proposal dropped before it cost anything.** It also
+re-confirms the 09-09 finding that the shrink dials are already paying.
+
+### 3. Where the trial's damage actually sits
+
+| sleeve | fills | net $ | net R |
+|---|---|---|---|
+| TREND | 5 | **-76.45** | -3.79 |
+| WILDCARD | 10 | -9.43 | -0.80 |
+
+**All of trial 19F's drawdown is TREND**, four ZEC and one ETH, one winner among
+the five. **n=5 is not a verdict** and TREND's 32-fill lifetime R is still
+positive. No proposal; recorded so the next three TREND fills are read against it.
+
+### 4. Learning loop
+
+**Conditional expectancy (158 rows, n>=10 per group):**
+- `hold>=120min` FAVOR +$3.93 is **reverse causation** — winners run long by
+  construction. Do not propose a minimum-hold rule from it.
+- `side=SHORT` FAVOR (n=40, +$0.22/fill) vs `side=LONG` AVOID (n=118,
+  -$0.80/fill). **Consistent with the live config already**: TREND is long-only,
+  WILDCARD takes both sides, and the shadow ledger's `side_disabled` rows resolve
+  negative. Nothing to change.
+- `leverage>=7` now reads **FAVOR**, flipping the earlier AVOID. OOS is weak
+  (e=0.098). **Treat as unstable; act on neither direction.**
+
+**Shadow ledger, 241 rows, deduped by symbol+side+6h** (raw counts are inflated
+by the same signal logging up to five times inside an hour):
+
+| bucket | n | net R | reading |
+|---|---|---|---|
+| veto:ref_not_listed | 35 | **-12.65** | saving money |
+| side_disabled | 29 | **-5.30** | saving money |
+| slot_occupied | 21 | **+9.47** | see below |
+| calm_shock | 20 | -3.44 | saving money |
+| min_vol_skip | 14 | **+8.37** | costing money |
+
+**Slot cost: raw reads +27.47R over 31 rows; deduped it is +9.47R over 21.**
+**Quote the deduped figure only.** It is also stale — **no `slot_occupied` row
+has been logged since 09-04**, because WILDCARD now runs 3 slots and TREND's
+universe is 3 symbols. The blocked rows that do exist are majors, i.e. TREND
+blocks, and exactly one carries a deep-pullback lateness. **Not evidence for a
+slot change today.**
+
+**Scan telemetry:** WILDCARD sees 53-54 movers per cycle and rejects almost all
+on `roc_below_min` (49-50 of them), zero candidates. TREND scans 3 symbols,
+`roc_below_min` on 2, one symbol already open. **Dormancy is the gates working
+in a quiet tape. No loosening proposed.**
+
+### 5. Decision rule — trial 19F
+
+    day 2.9 of 45 | 15 closes of 30 | netR -4.59 | net$ -85.87
+    ex-best -6.38R / -$119.10 (best = IOST 09-09, +1.79R)
+    mean realised risk 1.781%  -> INSIDE the [1.6%, 2.2%] criterion
+    max drawdown from peak close 7.62%  -> under the 20% flag
+    early-stop fires 2 of 20 | cuts above 1R peak: 0 | TREND early stops: 0
+
+**Neither kill condition is tripped.**
+
+### 6. Exits, and the watch item that is already answered
+
+**Trial 19F: TP 0 (0%) | stop 7 | other 8.** Lifetime **TP 9 of 117 (7.7%)**.
+This meets the literal trigger of the standing TP-scaling watch item, and **the
+proposal is not made, because it has already been swept and refuted**:
+`DECISION_RULE.md:5892` prices TP_R 2.0 at -13.71R, 2.5 at -10.42R, 3.5 at
+-6.03R and 4.0 at -11.53R, all against the 3.0 baseline. The exit stack stays
+frozen. Treat the watch item as closed rather than pending.
+
+### 7. New watch item — one outlier entry fill
+
+BTR SHORT entered at 0.05341 against a signal price of 0.05628: **509.9 bps of
+adverse entry slippage**, on a book where the median is 12.5 bps and the previous
+worst was 89.3. That is 40x median and 5.7x the prior maximum, and it cost
+roughly $2.29 on a $44.86 notional — the trade still closed +$2.53. **n=1, no
+proposal.** If a second fill clears 200 bps, the signal-price-to-fill path needs
+opening up.
+
+### 8. Action items carried, not self-applied
+
+1. **Persist the per-position `r_now` poll series.** This morning's UAI study
+   made it the second question in two days to die for want of it. It remains the
+   cheapest item on the queue and now the highest-value one.
+2. **Resync Futures-shadow to champion HEAD** (`railway up --service
+   Futures-shadow`, paper, zero live risk). Until then: **shadow stale,
+   comparison suppressed.**
+
+### Verdict
+
+**No change. No deploy.** Four closes, two clean stops at design risk, two
+designed exits, a full exchange reconcile, and the one lever worth testing was
+measured and killed the same day.
+
 # Daily Audit — 2026-09-10
 
 ---
