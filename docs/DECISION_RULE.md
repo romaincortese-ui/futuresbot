@@ -10648,3 +10648,390 @@ Five independent kills, each sufficient alone: out-of-sample reversal 15/15 on a
 If you want one more cut of any kind, it should be the displaced-entry placebo harness with the 0.056R haircut on, run on two named cells over all 82 fills, with a stated kill criterion and date — not another surface. **A sixteenth cell on these 24 fills cannot produce information; it can only produce a larger best-of-N null.**
 
 Read-only throughout. Nothing in the repo, the environment or production was touched.
+---
+
+## 2026-09-12 - WIDE GIVEBACKS + TIME ARMING: both REFUTED. 83 cells searched, zero survive.
+
+**Owner asked for givebacks 40/50/60/70% and time-based arming at 15/30/45/200 min.**
+Grid A = 20 cells, Grid B = 24 cells (both readings = 48), on top of 15 already searched.
+Three engines, three verifiers. **Read-only throughout.**
+
+### THE FOUR FINDINGS THAT MATTER MORE THAN THE GRIDS
+
+**1. THE GIVEBACK AXIS IS INERT.** Median row range moving giveback 40->70%: **$20.75.** Median column
+range moving the arm: **$80.88.** Within the best row the ordering is 40 > 70 > 50 > 60 - non-monotonic.
+**He widened the dial that does not move the number.**
+
+**2. GRID A NEVER BRACKETED LIVE ON THE ARM AXIS.** Live's 1.0R arm equals **~1.8% of equity** at these
+sizes; the grid stops at 1.0% = **0.56R median**. Only 2 of 24 fills reach a 1.0R arm even at the widest
+setting. Run properly per-fill at arm = k x 1R with a flat 50% retain:
+
+    armR 0.60 -$16.22 | 0.80 -$41.64 | 1.00 -$80.19 (LIVE) | 1.20 -$101.16 | 1.50 -$129.73
+
+Smooth, monotone, passes through live. **That is the engine check passing, and it is the only clean
+axis in the whole exercise.**
+
+**3. THE TIME DIMENSION DOES NOT EXIST ON THE FILL THAT CARRIES THE BOOK.** ZEC 09-06 arms at
+**minute 215 in ALL 24 reading-(b) cells** - identical arm minute, peak and result at T=15, 30, 45 and
+200 - because it was underwater net-of-fees for its first 215 minutes, so the binding constraint is
+always "first positive P&L", never T. **Grid B is a one-dimensional giveback sweep wearing a second
+axis as decoration.**
+
+**4. THE MONEY ON ZEC IS IN THE TAKE-PROFIT, NOT THE TRAIL. This is the one line worth keeping.**
+
+    ZEC 09-06T01:07, same path, three ceilings:
+       live 3R TP   +$75.37 actual / +$73.31 replayed
+       plain 5R TP  **+$123.29**  (TP fires ~minute 800)
+       spec 7R TP   +$93.57       (never fires; exits on the 24h CLOCK at 1441m)
+
+> **An 83-cell search over TRAIL geometry extracted $93.57 from a path that a plain 5R ceiling takes
+> $123.29 from.**
+
+### THE COMPARATOR WAS CONTAMINATED - every delta in five sweeps was inflated
+
+The engine replaying the LIVE rule books **-$80.19**, not the recorded **-$133.43**. The $53.24 gap is
+three named rows, not drift: PONS 09-07 lambda defect +$28.52, PONS 09-09 CONVEX_PREEMPTED +$19.19
+(exogenous), IOST 09-09 MANUAL close +$8.61 (exogenous); the other 21 fills are -$3.08.
+
+> **PONS 09-07 CORRECTION TO THE STANDING RECORD.** The "$22-29 of spurious rescue" was MISLOCATED.
+> Within-cell lambda spread on PONS is **$0.00-$2.94**. The $28.52 is a flat error **in the live
+> baseline**: the engine books PONS at +$9.11 against an actual -$19.41. **At the best cell PONS looks
+> like a +$20.58 rescue but is -$7.94 against a faithful live. It has been contributing NEGATIVE
+> evidence dressed as POSITIVE for five sweeps.**
+
+# THE ANSWER — GRID A (wide givebacks) AND GRID B (time arming)
+
+**Three lines, three verifiers, 83 configurations priced. Verdict: REFUTED, both mechanisms.**
+
+---
+
+## 1. THE ENGINE CHECK — one line
+
+**PASSED at the R level, and the 50% column does reproduce live — but only once the arm is expressed in R, because Grid A's arm axis never reaches live.**
+
+Live-rule replay (arm 1.0R, retain 0.50, ratchet to 0.75 above 3R): **-$80.19 / netR -4.510** against actual live **-$133.43 / netR -7.587**. 21/24 fills within 0.15R, median |err| 0.044R. The $53.24 gap is **three named rows**, not engine drift:
+
+| fill | cause | $ |
+|---|---|---|
+| PONS 09-07T15:42 | the known lambda defect | +28.52 |
+| PONS 09-09T19:15 | CONVEX_PREEMPTED (exogenous) | +19.19 |
+| IOST 09-09T10:40 | MANUAL owner close (exogenous) | +8.61 |
+| other 21 fills | — | −3.08 |
+
+Ex those three: book error **−2.1%**, inside the established 2.2–5.5% band. The engine is sound; **the live column is a contaminated comparator.**
+
+**Why Grid A cannot perform your check as specified.** arm-% of equity is not arm-R. On this book (median 1R $19.47, equity ~$1,099):
+
+```
+0.2% = $2.20 = 0.11R    0.6% = $6.59 = 0.34R    1.0% = $10.99 = 0.56R
+0.4% = $4.40 = 0.23R    0.8% = $8.79 = 0.45R    [live 1.0R needs ~1.8%]
+```
+
+Only 2 of 24 fills reach a 1.0R arm even at the grid's widest setting. **Grid A brackets live on giveback and never on arm.** Run properly, per-fill at arm = k·1R with flat 50% retain:
+
+```
+armR 0.60 -$16.22 | 0.80 -$41.64 | 1.00 -$80.19 (LIVE) | 1.20 -$101.16 | 1.50 -$129.73
+```
+
+Smooth, monotone, passes through live. **Check passed. Proceed.**
+
+---
+
+## 2. GRID A — 5 arms × 4 wide givebacks, funded 24
+
+`d$LIVE` = vs the live column; `d$REP` = vs the live-rule replay (the honest one).
+
+```
+CELL              TOTAL$   d$LIVE   d$REP    netR   pairSE$  armed  3R 5R 7R
+LIVE (actual)    -133.43     0.00  -53.24  -7.587      --     --    --  -- --
+LIVE (replayed)   -80.19   +53.24    0.00  -4.510   34.85      8     2   0  0
+------------------------------------------------------------------------------
+arm0.2%/gb40%       1.84  +135.27  +82.03  -0.541  116.37     20     0   0  0
+arm0.4%/gb40%     -80.57   +52.86   -0.38  -4.529  110.18     15     0   0  0
+arm0.6%/gb40%     -95.44   +37.99  -15.25  -5.718   92.71     12     0   0  0
+arm0.8%/gb40%     -76.33   +57.10   +3.86  -4.696   85.11     11     0   0  0
+arm1.0%/gb40%     -77.67   +55.76   +2.52  -4.729   86.80     10     0   0  0
+arm0.2%/gb50%      -7.76  +125.67  +72.43  -1.019  116.04     20     0   0  0
+arm0.4%/gb50%     -88.55   +44.88   -8.35  -4.903  109.89     15     0   0  0
+arm0.6%/gb50%     -68.55   +64.88  +11.65  -4.707   77.08     12     1   0  0
+arm0.8%/gb50%     -82.64   +50.79   -2.45  -5.373   62.99     10     1   0  0
+arm1.0%/gb50%     -26.55  +106.88  +53.64  -2.362   60.31     10     2   0  0
+arm0.2%/gb60%     -18.91  +114.52  +61.28  -1.567  115.88     20     0   0  0
+arm0.4%/gb60%     -99.90   +33.53  -19.71  -5.464  109.53     15     0   0  0
+arm0.6%/gb60%     -91.11   +42.32  -10.92  -5.696   79.77     12     1   0  0
+arm0.8%/gb60%     -86.98   +46.45   -6.79  -5.395   70.29     11     1   0  0
+arm1.0%/gb60%     -66.98   +66.45  +13.22  -4.259   62.75     10     2   0  0
+arm0.2%/gb70%      -4.92  +128.51  +75.27  -1.062  111.98     20     0   0  0
+arm0.4%/gb70%     -84.83   +48.60   -4.64  -4.864  106.01     15     0   0  0
+arm0.6%/gb70%     -31.21  +102.22  +48.98  -3.338   69.09     12     1   1  0
+arm0.8%/gb70%     -66.53   +66.90  +13.67  -4.575   61.55     10     1   1  0
+arm1.0%/gb70%     -32.87  +100.56  +47.32  -2.768   55.26     10     2   1  0
+```
+
+**One of twenty cells makes money: +$1.84, on a standard error of $116.37.** That is 0.016 SE. Eight of twenty are negative against the replay. All twenty are negative in netR.
+
+**The giveback axis is inert. The arm axis is not.** Median row range (moving giveback 40→70%) **$20.75**; median column range (moving the arm) **$80.88**. Within the best row the ordering is 40 > 70 > 50 > 60 — non-monotonic. You widened the dial that doesn't move the number.
+
+**Lambda band:** no cell is positive under both conventions. arm0.2%/gb40%, the one positive cell, is **−$76.45 at raw-close**. Cells swing up to $71 between conventions.
+
+---
+
+## 3. GRID B — time arming. Both readings. (b) leads.
+
+### (b) WAIT until T, then arm at the first moment P&L turns positive — the natural reading
+
+```
+CELL            TOTAL$   d$LIVE   d$REP    netR   pairSE$  armed  3R 5R 7R
+LIVE (replayed) -80.19   +53.24    0.00  -4.510   34.85      8     2  0  0
+LIVE (actual)  -133.43     0.00  -53.24  -7.587      --     --    -- -- --
+---------------------------------------------------------------------------
+T15b/gb20%      -25.59  +107.84  +54.60  -1.969   95.09     18     0  0  0
+T30b/gb20%      -81.73   +51.70   -1.54  -4.574   84.49     16     0  0  0
+T45b/gb20%      -82.81   +50.62   -2.61  -4.548   83.67     15     0  0  0
+T200b/gb20%     -91.56   +41.87  -11.37  -4.849   73.23     14     0  0  0
+T15b/gb30%      -36.88   +96.55  +43.31  -2.461   96.38     18     0  0  0
+T30b/gb30%      -76.93   +56.50   +3.27  -4.472   86.59     16     0  0  0
+T45b/gb30%      -94.06   +39.37  -13.87  -5.041   85.61     15     0  0  0
+T200b/gb30%    -101.43   +32.00  -21.24  -5.231   73.28     14     0  0  0
+T15b/gb40%      -44.58   +88.85  +35.62  -2.812   97.88     18     0  0  0
+T30b/gb40%      -87.20   +46.23   -7.01  -4.897   88.99     16     0  0  0
+T45b/gb40%     -105.31   +28.12  -25.12  -5.519   87.55     15     0  0  0
+T200b/gb40%    -100.27   +33.16  -20.08  -5.316   76.81     14     0  0  0
+T15b/gb50%       -3.42  +130.01  +76.77  -1.240   82.11     18     1  0  0
+T30b/gb50%      -54.46   +78.97  +25.73  -3.604   74.08     16     1  0  0
+T45b/gb50%      -76.53   +56.90   +3.66  -4.394   71.57     15     1  0  0
+T200b/gb50%     -42.57   +90.86  +37.63  -2.544   49.29     14     2  0  0
+T15b/gb60%      -24.69  +108.74  +55.51  -2.107   85.41     18     1  0  0
+T30b/gb60%      -73.06   +60.37   +7.13  -4.347   78.04     16     1  0  0
+T45b/gb60%      -96.26   +37.17  -16.06  -5.230   75.32     15     1  0  0
+T200b/gb60%     -74.37   +59.06   +5.82  -3.941   54.83     14     2  0  0
+T15b/gb70%        9.70  +143.13  +89.89  -0.769   79.12     18     1  1  0  <- BEST NEW
+T30b/gb70%      -35.11   +98.32  +45.08  -2.852   73.54     16     1  1  0
+T45b/gb70%      -58.10   +75.33  +22.09  -3.724   71.05     15     1  1  0
+T200b/gb70%     -44.51   +88.92  +35.68  -2.876   49.03     14     2  1  0
+```
+
+**One of twenty-four makes money: +$9.70 on an SE of $79.12.** 0.12 SE. All twenty-four negative in netR. It goes to **−$8.67** under the mean slippage haircut and **−$21.55** under raw-close visibility. It exists at one convention and one haircut.
+
+**T=15 dominates T=30/45 on every giveback row.** The clock adds no information — it is a slower route to the same "arm as early as possible" corner Grid A found.
+
+### (a) CHECK ONCE at T; if P&L ≤ 0, never arm — fall back to live
+
+```
+TOTAL $                          netR
+gb    T15     T30     T45    T200      T15     T30     T45    T200
+20% -20.77  -86.44  -40.70 -109.66   -2.001  -5.105  -2.718  -6.217
+30% -24.54  -74.57  -45.20 -114.85   -2.162  -4.696  -2.918  -6.408
+40% -26.24  -77.92  -50.17 -109.01   -2.250  -4.821  -3.137  -6.301
+50% -17.60  -78.38  -54.84  -85.62   -1.955  -4.839  -3.334  -4.899
+60% -23.03  -81.83  -59.68 -105.49   -2.155  -4.951  -3.547  -5.834
+70% -30.12  -86.04  -63.94 -120.33   -2.444  -5.117  -3.712  -6.549
+LIVE  replayed -80.19 / -4.510      actual -133.43 / -7.587
+```
+
+**Zero of 24 makes money.** (a) arms only 4–7 of 24 fills; 16–20 of its exits match the live stack within 0.15R. **It is live with a perturbation, not a mechanism** — which is exactly why it is the only thing in the sweep that survives out of sample, and exactly why that survival means nothing.
+
+### THE MECHANISM CLAIM FAILS ON ITS OWN TERMS
+
+**ZEC 09-06 arms at minute 215 in ALL 24 reading-(b) cells.** T=15, 30, 45 and 200 produce the identical arm minute, identical peak, identical booked result. The fill was underwater net-of-fees for its first 215 minutes, so the binding constraint is "first positive P&L", never T. **On the fill carrying 56% of the book, the time dimension does not exist.** Grid B is a one-dimensional giveback sweep wearing a second axis as decoration.
+
+And reading (a) **destroys** that fill: underwater at every checkpoint, never arms, books +$59.00 against the replay's +$73.31 — a −$14.31 hit in all 24 (a) cells.
+
+---
+
+## 4. ZEC 09-06T01:07 — where the +$75.37 gets beaten
+
+```
+CELL                books$   vs live   peak$ watched  arm@   why
+arm0.2%/gb40-70%     1.07-2.15  -74     3.58            2m   TRAIL
+arm0.4%/gb40-70%     1.77-3.54  -72     5.90            3m   TRAIL
+arm0.6-1.0%/gb40%   25.70      -49.67   42.83         216m   TRAIL
+arm0.6-1.0%/gb50%   60.42      -14.95  120.83         216m   TRAIL
+arm0.6-1.0%/gb60%   48.33      -27.04  120.83         216m   TRAIL
+arm0.6-1.0%/gb70%   93.57      +18.20  153.96         216m   CLOCK   <- BEATS LIVE
+T{15,30,45,200}b/gb20%  34.27  -41.10   42.83         215m   TRAIL
+                  /gb30%  29.98  -45.39  42.83         215m   TRAIL
+                  /gb40%  25.70  -49.67  42.83         215m   TRAIL
+                  /gb50%  60.42  -14.95 120.83         215m   TRAIL
+                  /gb60%  48.33  -27.04 120.83         215m   TRAIL
+                  /gb70%  93.57  +18.20 153.96         215m   CLOCK   <- BEATS LIVE
+LIVE-rule replay    73.31    -2.06      79.22           --   TP (3R)
+LIVE actual         75.37        --        --           --   TP (3R)
+```
+
+**Your figures reproduce to the cent** ($29.98 / $60.42 / $93.57 at 30/50/70%). **Seven cells beat live, all at 70% giveback, all by exactly +$18.20.**
+
+**But read the WHY column.** At 70% the trade never trails out — it exits on the **24-hour clock**. The floor never binds. The $93.57 is not the rule harvesting the move; it is the rule **switching itself off** and the clock doing the exiting. The rule watches $153.96 of open profit and books $93.57 — it gives back $60.39 by construction. Live took its 3R TP and gave back $5.91.
+
+**And here is the correction that matters most in this report.** Two of three lines attributed the 7R-vs-5R difference to IOST; the fill-by-fill diff on three separate cells says it is **ZEC 09-06**, and the arithmetic closes exactly:
+
+```
+ZEC 09-06T01:07, same path, three ceilings:
+   live 3R TP     +$75.37   (actual)  / +$73.31 replayed
+   plain 5R TP   +$123.29   TP fires at minute ~800
+   spec 7R        +$93.57   never fires; CLOCK at 1441m
+```
+
+**The money on the trade that motivated this entire sweep is in the TAKE-PROFIT, not the trail.** An 83-cell search over trail geometry extracted $93.57 from a path that a plain 5R ceiling takes $123.29 from. That is the one line of this work worth keeping.
+
+---
+
+## 5. THE THREE DECIDING STATISTICS
+
+### (i) BEST-OF-N NULL — the statistic that comes before any cell is called good
+
+Sign-permutation on the 24 paired per-fill deltas, **one common sign vector per draw** so cell correlation is preserved, 40–60k draws.
+
+```
+FAMILY                            null best: med     p90     p95 | OBSERVED     p
+best-of-15 (prior grid)                +55.69  +178.22 +214.18 | +154.42   0.155
+best-of-20 (GRID A)                    +75.48  +177.93 +210.26 | +135.27   0.224
+best-of-24 (GRID B reading b)          +67.27  +157.30 +182.95 | +143.13   0.139
+best-of-44 (the cells you asked for)   +90.96  +187.62 +214.98 | +143.13   0.239
+best-of-59 (FULL HISTORY, vs live)     +92.47  +190.66 +220.13 | +154.42   0.206
+best-of-83 (incl. reading a)           +95.04  +189.95 +218.56 | +154.42   0.206
+best-of-59, vs the REPLAY comparator   +92.86  +193.02 +222.82 | +101.18   0.457
+best-of-59, after 0.056R slippage      +91.20  +187.08      -- | +131.92   0.289
+best-of-59, ex the 3 near-misses       +86.25  +173.71      -- |  +42.78   0.747
+```
+
+**ZERO of 83 cells clears the p90 bar.** Not one reaches half of it.
+
+**The best cell of all 59 is still `arm0.2%/gb20%` — a cell from the PREVIOUS grid. Not one of the 44 new cells beat it.** The null's median rose from +$55.69 at N=15 to +$92.47 at N=59 while the observed best did not move at all. **Searching 44 more cells bought zero improvement and cost 5 percentage points of significance.**
+
+And against the comparator that shares the engine's own error — the only symmetric one — **the best of 59 is +$101.18 against a null median of +$92.86. p = 0.457. Eight dollars of coin flip on an $1,099 book.**
+
+### (ii) OUT OF SAMPLE — 58 pre-funding fills, 2026-08-21 → 09-04, netR
+
+**Live there: +10.011 netR. Replay there: +3.080 netR.**
+
+```
+GRID A (live +10.011)                    GRID B (b)
+gb   a0.2%   a0.4%   a0.6%   a0.8%  a1.0%   gb    T15     T30     T45    T200
+40% -2.666  -6.943  -6.049  -7.185 -2.197   20% -3.171  -0.007  -3.586  -3.848
+50% -2.856  -5.434  -3.103  -3.775 +3.240   30% -2.866  -1.601  -2.587  +2.867
+60% +2.519  +0.023  +0.640  +2.031 +7.179   40% -3.588  -2.704  -3.134  +0.386
+70% +0.936  -1.002  -0.736  -0.001 +5.594   50% -1.649  -1.829  -2.397  +7.417
+                                            60% +3.822  +3.513  +2.709  +4.856
+                                            70% +2.789  +2.396  +2.532  +2.676
+```
+
+**0 of 44. 59 of 59 across the full search history.**
+
+**Your spot-check is confirmed to the third decimal.** gb50% spans −5.434 to +3.240 (you quoted −5.43 to +3.24); gb70% spans −1.002 to +5.594 (you quoted −1.00 to +5.59). It was not a lucky draw — it was the whole column.
+
+**One honest correction against my own verdict.** The "0 of 44" uses the live column as the OOS bar while using the replay in-sample — asymmetric, and it flatters the refusal. Symmetric (replay vs replay in both samples): **25 of 83 beat live OOS, and 19 of 83 beat it in both samples**, all of them reading-(a) time cells. What kills them is the OOS multiplicity null, which nobody had run:
+
+```
+OOS best-of-83 vs replay:  observed +10.316 netR | null median +12.003 | p = 0.592
+OOS best-of-59 vs replay:  observed  +4.337     | null median +10.707 | p = 0.779
+OOS best-of-83 vs live:    observed  +3.385     | null median +12.080 | p = 0.891
+```
+
+**Out of sample the family performs worse than random sign-flips of its own deltas.** Every one of the 19 also loses money in-sample (−$17.60 to −$85.62) and every one gets worse under slippage.
+
+### (iii) SLIPPAGE — 0.056R mean, 0.207R worst, TRAIL exits only
+
+```
+                        raw      0.056R     0.207R
+arm0.2%/gb40%         +$1.84    -$20.67    -$81.35    SIGN FLIP
+T15b/gb70%            +$9.70     -$8.67    -$58.21    SIGN FLIP
+```
+
+**Both positive cells in the 44 flip sign under the mean haircut. Zero of 44 survives it with positive dollars.** Same as the last grid, where all three positive cells flipped.
+
+The reason is structural: these rules take 7–20 trail exits per cell against live's 7. **Widening the giveback does not reduce trail frequency** — at gb70% Grid A still trails 7–19 times. The wide-giveback family is *more* slippage-exposed per dollar of edge, not less. Re-running the best-of-59 null on haircut deltas: observed falls +154.42 → +131.92, null barely moves, **p = 0.289**.
+
+**Cost floor: confirmed harmless.** $0.00 difference in every Grid A cell at arms ≥ 0.4%; zero net-negative banked exits across all 1,632 fill-cells.
+
+**Near-miss quarantine (the three you selected on outcome):** 26 of the 44 new cells go negative without them. Best new cell T15b/gb70% is +$143.13 = **+$84.92 from the three selected fills (59%)** + $58.21 from the other 21. Best of all 59 is +$154.42 = **+$95.21 selected (62%)** + $59.21.
+
+**PONS 09-07 — correction to the standing record.** The "$22–29 of spurious rescue" was mislocated. Within-cell lambda spread on PONS in this grid is **$0.00–$2.94**, not $22–29. The $28.52 is a flat error **in the live baseline**: the engine replaying the live rule books PONS at +$9.11 against an actual −$19.41. So at the best cell, PONS looks like a +$20.58 rescue against live but is **−$7.94 against a faithful live**. **PONS has been contributing negative evidence dressed as positive evidence, for five sweeps.**
+
+---
+
+## 6. THE FULL 24-ROW TABLE — best new cell, T15b/gb70%
+
+λ=0.75, no cost floor, no slippage, equity compounds, live position sizes.
+
+```
+ #  ENTRY             SYMBOL    SLV      1R$    LIVE$  REPLAY$    DIFF$   peak$   WHY   arm@   EQUITY
+ 1  2026-09-04T16:55  ZEC       TRD    12.87    -2.66     0.91    +3.57    3.03 TRAIL    15m  1099.89
+ 2  2026-09-06T01:07  ZEC       TRD    24.99   +75.37   +93.57   +18.20  153.96 CLOCK   215m  1193.45
+ 3  2026-09-06T04:59  ZEC       TRD    28.33   +11.88    +8.68    -3.19   28.94 TRAIL    16m  1202.13
+ 4  2026-09-06T09:26  ZEC       TRD    27.87   -28.49     0.81   +29.31    2.71 TRAIL   240m  1202.95
+ 5  2026-09-06T17:38  ZEC       TRD    19.53   -20.38     0.15   +20.53    0.49 TRAIL    39m  1203.09
+ 6  2026-09-06T19:58  MAGMA     WLD    25.16   -26.45   -27.17    -0.72    1.50  STOP  never  1175.93
+ 7  2026-09-07T15:42  PONS      WLD    18.46   -19.41     1.17   +20.58    3.90 TRAIL    28m  1177.10  <- LAMBDA DEFECT
+ 8  2026-09-08T08:11  FORM      WLD    25.27   -25.76   -26.83    -1.07    2.30  STOP  never  1150.26
+ 9  2026-09-08T11:12  MARSCOIN  WLD    11.28   -11.65     0.02   +11.67    0.08 TRAIL    60m  1150.29
+10  2026-09-08T16:38  ZEC       TRD    19.42   -20.35   -21.26    -0.92    1.46  STOP  never  1129.02
+11  2026-09-09T04:39  ZEC       TRD    25.21   -27.25    +6.71   +33.96   22.37 TRAIL    16m  1135.73  <- NEAR-MISS
+12  2026-09-09T09:03  ZEC       TRD    22.37   +10.07    +4.39    -5.68   14.62 TRAIL   140m  1140.12
+13  2026-09-09T09:43  ATOM      WLD    22.21   -23.68    +1.22   +24.90    4.06 TRAIL    17m  1141.34
+14  2026-09-09T10:40  IOST      WLD    18.40   +33.23    +2.43   -30.80    8.10 TRAIL    98m  1143.77  <- MANUAL, exogenous
+15  2026-09-09T13:41  ZEC       TRD    13.40   -14.14     0.20   +14.34    0.68 TRAIL    25m  1143.97
+16  2026-09-09T16:13  SOPH      WLD    22.72   +24.68     0.20   -24.47    0.68 TRAIL   130m  1144.17
+17  2026-09-09T19:15  PONS      WLD    16.92    -1.93     0.61    +2.54    2.04 TRAIL    38m  1144.79  <- PREEMPTED, exogenous
+18  2026-09-09T22:14  MARSCOIN  WLD    19.01   -10.29     0.12   +10.41    0.41 TRAIL    15m  1144.91
+19  2026-09-10T04:25  UAI       WLD    13.96    +7.56     0.40    -7.16    1.33 TRAIL    15m  1145.31
+20  2026-09-10T04:41  BTR       WLD     9.73   -10.79   -10.36    +0.44    0.44  STOP  never  1134.95
+21  2026-09-10T05:20  BTR       WLD    11.87    +2.53     0.05    -2.47    0.17 TRAIL    36m  1135.00  <- 19F correctly NOT fired
+22  2026-09-10T05:59  MARSCOIN  WLD     9.07    -4.79    -4.73    +0.06    1.69   19F  never  1130.27
+23  2026-09-11T08:58  IOST      WLD    23.66   -25.93    +4.46   +30.39   14.85 TRAIL    15m  1134.73  <- NEAR-MISS
+24  2026-09-11T14:02  ETH       TRD    23.54   -24.78   -26.05    -1.27    6.72  STOP  never  1108.67
+    TOTAL n=24                       -133.43    +9.70  +143.13   (+89.89 vs replay)
+    LIVE final equity $965.55   |   REPLAY final equity $1,108.67
+    paired SE $79.12  |  after 0.056R slip -$8.67  |  after 0.207R -$58.21
+    ex the 3 outcome-selected fills: +$58.21 (-59%)  |  at raw-close λ: -$21.55
+```
+
+**Read rows 1, 5, 9, 15, 18, 21.** The cell books $0.02, $0.05, $0.12, $0.15, $0.20, $0.20, $0.40, $0.91. Eighteen fills arm, seventeen exit on the trail, median non-stop exit is **under one dollar**. **This is not a 70% giveback rule.** It is "wait fifteen minutes, then flatten on the first flicker of green" — the 70% floor almost never binds because the peak it measures from is $0.08.
+
+**And it pays for that.** Row 14 (IOST +$33.23 → +$2.43) and row 16 (SOPH +$24.68 → +$0.20): two of the book's three biggest winners, taken out at twenty cents on the dollar. It gives up $55.27 there to collect on the losers. **Row 2 is the entire honest gain** — and row 2 exits on the clock.
+
+MAGMA never arms anywhere. BTR 09-10T05:20 never fires 19F in any of the 83 cells (t_adverse_50 NULL respected, verified in the engine source).
+
+---
+
+## 7. THE VERDICT
+
+**SHIP NOTHING. Keep arm 1.0R + retain 0.50. Trial 19F untouched.**
+
+Nothing survives all three. The three gates, in order of weight:
+
+1. **Multiplicity.** Zero of 83 cells clears the best-of-83 p90 ($193.90). The best cell anywhere across five sweeps is p=0.206 against the live column, **p=0.457 against a comparator that shares its own engine error**, and **p=0.747** once your three outcome-selected fills are removed — at which point the best of 83 is *below* the null median.
+2. **Out of sample.** 0 of 44 under the readings you asked for; 59 of 59 across the history. Symmetrically comparated, 19 of 83 survive the levels test and then die on the OOS null at p=0.59.
+3. **Slippage.** Both positive cells flip sign at the mean measured floor-miss. Zero of 44 survives.
+
+### On your first point — be straight
+
+**The optimum is not at 50% with a high arm. It is worse than that.** Across all 83 cells the maximum sits at the **search boundary, twice, in two opposite corners**: `arm0.2%/gb20%` (tightest arm, tightest giveback) and `T15b/gb70%` (shortest clock, widest giveback). In five sweeps the "optimum" has moved to whichever face of the box was most recently extended, and **the peak value has not risen: +$154.42 after 15 cells, +$154.42 after 59.** Meanwhile the cells that most resemble live (arm 0.8–1.0% / gb50%, 17–19 of 24 exits matching within 0.15R) sit mid-table.
+
+So the finding is stronger than "live is the optimum." It is: **this family has no optimum that survives measurement.** Live is not provably best — it is the only member of the family that has never been selected on this data, which after five sweeps is the most valuable property any configuration can have. **The money is elsewhere. That is a final answer.**
+
+### On your second point — be straight
+
+**The time arm got a fair test, led with reading (b) as you specified, and it did not survive.** Reading (b): one profitable cell of 24, at 0.12 SE, sign-flipping under both slippage and both visibility conventions, 24 of 24 reversing out of sample. Reading (a) is the only thing in the sweep that clears live out of sample — and it does so in 5 of 24 cells, every one of which loses money in sample, tops out at 0.46 SE, and scores **p=0.59 against its own multiplicity null**. And the mechanism itself is inert where it counts: T is not a parameter on ZEC 09-06.
+
+**It is not a refusal reflex. Under the corrected symmetric comparator the time arm looks *better* than the raw tables show — the joint survivor list is dominated by reading-(a) time cells. They still don't clear the null and they still lose money on the funded book. The arithmetic did the work, not the habit.**
+
+### PRE-REGISTRATION — none. Declare the family closed.
+
+Write it into the rejected-with-measurements list beside the convex drawdown brake:
+
+> *Arm-and-giveback exits — 83 cells: %-of-equity arms 0.2–1.0%, R-arms 0.6–1.5R, givebacks 20–70%, clock arms 15/30/45/200 min under both readings. **REFUTED.** Best-of-N p=0.21 vs live column, 0.46 vs replay, 0.75 ex-selected-fills; 0/59 survive out of sample; 0/44 survive the mean slippage haircut. 2026-09-12.*
+
+A sixth sweep raises the null bar again and cannot lower it. **The search itself is now the adversary.**
+
+### THREE THINGS TO RECORD (none is an exit change)
+
+1. **The 7R TP is NOT a free parameter and is actively harmful at wide givebacks.** It never fires (0 fills reach 7R in any of 83 cells) but it blocks the 5R TP. On **ZEC 09-06** that is worth **$29.72** — $123.29 at 5R against $93.57 at 7R. The previous record ("proven free parameter") is **wrong above gb50%** and must be amended. Nothing changes live today (live runs 3R/5R), but the "7R is free, leave it" reasoning is dead for any long-hold variant.
+2. **Every future replay must compare against the live-rule REPLAY, not the live column.** The column is contaminated by three named rows worth $53.24. Using it has inflated every cell's apparent edge by ~$53 for five sweeps. The engine's OOS bias runs the *opposite* way (−6.9 netR), so the asymmetry has been flattering in-sample and punishing out-of-sample simultaneously.
+3. **Specify arm sweeps in R, never in % of equity.** A 1.0%-of-equity arm is 0.56R. Three sweeps have searched only *below* live and kept rediscovering the same degenerate scalp at the tight end.
+
+### WHAT ACTUALLY MOVES THE NUMBER
+
+Every configuration tested improves the book by cutting losers faster and pays for it by destroying the three winners that carry it — IOST −$30.80, SOPH −$24.47, and ZEC capped at 76% of what a plain 5R ceiling would have taken. **That trade is a wash by construction.** The two observations in this data with real information content are both outside the exit trail: live's 3R TP captured 97% of what an 83-cell trail search could extract from the big winner, and a 5R TP would have captured 132% of it. **That is a take-profit and an entry-selection question — which fills deserve to be held at all — not a trail question. The trail has now been measured to death.**
+
+**Honest summary sentence, no dollar figure attached, because every SE in this sweep is 6× to 60× its own total: no configuration tested is distinguishable from what you already run.**
