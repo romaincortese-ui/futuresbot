@@ -12787,3 +12787,245 @@ The strongest argument the short case has left cannot move the point estimate by
 **The one thing left worth spending effort on:** get a historical per-symbol funding series onto disk. It is the only short mechanism nobody could test, it is the only one with a genuine carry story, it is a data-acquisition task with zero live risk — and everything price-shaped has now been tested and killed. Everything else on this sleeve is unfalsifiable for the next eight to forty-five years, and the binding constraint is no longer the search. It is that **the sleeve cannot generate the evidence needed to justify changing it.** That is a stronger argument for leaving it alone than any p-value in this report.
 
 *Process notes, on the record: two headline computations (longgrid's alpha/beta regression, shorttest's carry identity) had no script saved to disk and were rebuilt by verifiers — both reproduced, but a headline behind an unsaved computation came within one reproduction of being fatal. Save them before either number is quoted again. Read-only throughout; no repo file, config, env or order was touched.*
+---
+
+## 2026-09-12 - RELATIVE-WEAKNESS SHORTS IN A RISING MARKET: REFUTED. The weakness is real; it is the size of the fee.
+
+**Owner: *"What about shorting in an up market but with strong individual indicators?"*** The cleanest
+short-alpha test available: in a rising tape a short fights beta, so any profit must be idiosyncratic.
+**PRE-REGISTERED** (hypothesis, primary statistic, kill criteria written to file before any result) across
+four lines, 80 cells, 5-year hourly corpus, 100-104 symbols. **Read-only.**
+
+### THE ANSWER IN ONE LINE
+
+> **THE WEAKNESS IS REAL AND IT IS EXACTLY THE SIZE OF THE FEE.** Over 72h, 30-day laggards trail a random
+> name in the same up tape by **-0.40% +/- 0.08%**, and 7-day laggards by **-0.29% +/- 0.07%**. The round
+> trip costs **~0.285%**. Before fees the idiosyncratic alpha is zero to ~+0.04R; after fees it is gone.
+
+### LOOK-AHEAD: CLEAN, PROVEN TWO WAYS
+
+Every regime definition used only data up to the entry bar. **Poison/truncation test: bit-identical on all
+4 lines. Lag-1 test: moves alpha by <= 0.01R. Deliberately leaky versions look completely different
+(-0.40 to -0.59R)**, so no look-ahead hides in these numbers. *(Yesterday's shorts were killed by a
+hold-window regime; this study was built to avoid exactly that, and did.)*
+
+### PRE-REGISTERED PRIMARY CELLS - alpha net of beta over the realised hold, fees booked, AS RUN
+
+| line | primary cell | net alpha (R/fill) | 95% CI |
+|---|---|---|---|
+| relative weakness | RS14 bottom decile / 24h / UP30 | -0.083 +/- 0.021 | [-0.123, -0.042] |
+| adversary | RS7 bottom quintile / 24h / trailing 30d up | -0.086 +/- 0.014 | [-0.113, -0.059], **gross -0.0006** |
+| deviation z | 4h z / 24h / R1 | -0.093 +/- 0.012 | entirely negative |
+| lower-high, out of sample | P0 / sl4_tp3 / R1 | -0.052 +/- 0.014 | [-0.079, -0.026] |
+
+**All 80 cells: 0 positive. Best -0.0073 against a null p95 of +0.093, p=1.0.**
+
+### THE PRICING CAVEAT - the headlines are too harsh, and the fair reading is ZERO EDGE, not a loss
+
+**The shared walker (SH/hrun) books a stop at the CLOSE of any hourly bar that closes beyond it - too harsh
+- and every line charged fees at 1.5x the 0.19% round trip.** Together that takes ~0.03-0.045R off every
+fill plus the extra fee. **With stops priced from the bar OPEN and a 0.19% fee, the best cell becomes
++0.037 +/- 0.021R and 9 of 20 cells turn positive.**
+
+> **SO "negative in all 80 cells" and "-$28 to -$32/month" OVERSTATE THE LOSS. The fair reading is ZERO
+> EDGE. Whether it is a loss depends on pricing, and the truth is between the two rules - I do not know
+> where, because real stop slippage in a squeeze was not measured.**
+
+**It is refuted under BOTH pricing rules**, on kill criteria (a), (b) and (c): corrected best cell CI
+includes zero, **best-of-20 p=0.455**, walk-forward pooled **-0.002 +/- 0.024**. Even the corrected best
+cell's point estimate is **~$5/month** at 8.6 fills/month and 1R $15.49 - under the $10 bar before any
+discount for having picked it from 20 cells.
+
+**The walker-independent test - picked weak shorts vs RANDOM shorts on the same walker:**
+adversary +0.008 +/- 0.010 | relative weakness +0.011 +/- 0.014 | lower-high vs random below-trend short
++0.024 +/- 0.018 | best selected cell +0.044 +/- 0.020 (picked from 20). **Picking weakness adds between
+nothing and a bit under a fee's worth.**
+
+### ROTATION WAS NOT THE KILLER - but one sub-signal DOES rip
+
+**Laggards do NOT catch up more than random names:** they beat the index 42-45% of the time vs 44-46% for
+random shorts, and large catch-ups are RARER for them (1.8% vs 2.4%).
+
+**EXCEPTION - sharp cross-sectional drops DO rip.** P(beating the index by >20% within 7 days):
+
+    random short                 4.8%
+    4h deviation z (IOST-style)  6.7-8.7%     -> 23.8% for z below -10
+    volume-confirmed distribution ~12%
+
+**The idiosyncratic-deviation signal is ANTI-INFORMATIVE as a short entry - its gross alpha is BELOW random
+(-0.027 +/- 0.014). It is the worst short entry tested.** Consistent with the IOST study, where the same
+signal fired 2.5x harder on the winner: **a sharp drop against the cross-section precedes a bounce more
+often than a collapse.**
+
+**The tail comes from the rising TAPE, not from picking laggards:** P(< -5R) is 2-4x the mirror short's
+rate, but a random short in the same tape is already ~3x. Worst single fill -10 to -16R (smaller than the
+mirror's -22.27R). Squeezes cluster: IOTA 2023-11-28, **XRP 2023-07-13 (the court ruling)**, UNI -13.65R.
+**What kills the trade is a steady fee-sized bleed in the middle of the distribution, not the squeeze.**
+
+### THE LOWER-HIGH LEAD (+0.3158R): RETIRED
+
+- **NO hold-window leak** - "UP" was the trailing 7-day index return at the entry bar; a one-bar lag gives
+  +0.311.
+- **BUT TWO REAL DEFECTS: the tercile cutpoints came from the WHOLE SAMPLE** (look-ahead in the THRESHOLDS,
+  not the regime) - with past-only cutpoints the cell drops to +0.166-0.194. **And it booked NO FEES
+  (0.116R/fill) and removed NO BETA.**
+- **The profit was INDEX TIMING.** Realised-hold beta **+1.03 to +1.06**: the pattern fires on market-wide
+  bounces and the index then fell during the hold. Net of beta and fees its own in-sample alpha is
+  **-0.083 to -0.090 +/- 0.052-0.056.**
+- **The t=4.05 was overstated: 219 fills on only 54 days. Day-clustered t ~ 2.2.**
+- **Out of sample on 4 years with no calendar overlap: -0.052 +/- 0.014, negative in 4 of 4 folds and 20 of
+  20 cells.**
+- *Still open: the "+0.050 +/- 0.018 beta-neutral lower-high" from yesterday's second line was never found
+  or retested. Status unknown.*
+
+### THE STRUCTURAL POINT
+
+> **This was the cleanest short-alpha test available and it failed. Before fees, idiosyncratic alpha is
+> zero to ~+0.04R depending on pricing; not significant after selection, does not survive walk-forward, and
+> about one round trip in size. That is strong evidence there is NO EXPLOITABLE SHORT EDGE AT A 24-72h HOLD
+> ON THIS UNIVERSE AT THIS FEE LEVEL. The owner's framing was right. The answer is no.**
+
+**Two confounds noted:** the best pre-fee edge leans on **PAXG, which is GOLD** - it lags in every crypto
+bull run for reasons unrelated to weak alts. And names above the $2M floor are no better (adversary
+primary -0.081 +/- 0.016 there).
+
+### CORRECTIONS TO THE STANDING RECORD - including one that affects every walker study
+
+1. **YESTERDAY'S -0.0135 +/- 0.0049 MIRROR-SHORT ALPHA WAS GROSS, NOT NET.** Net of fees it is
+   **-0.074 +/- 0.005** - but that uses the harsh walker and the 1.5x fee, so it too is overstated. **The
+   "95% CI [-$8.95, -$1.51]/month, entirely negative" I reported was mislabelled as net.** The conclusion
+   (do not short) is unchanged.
+2. **THE SH/hrun CLOSE-BEYOND-STOP RULE BIASES EVERY ABSOLUTE R FIGURE FROM THAT WALKER DOWN BY
+   ~0.03-0.045R PER FILL - LONGS INCLUDED.** Only matched differences on the same walker are clean. **Past
+   "every cell negative net" short refutations should be read as "NULL", not "reliable loss".**
+3. **Retire the +0.3158 lower-high hint.**
+
+### DECISION
+
+**1. DO NOTHING (recommended).** No short sleeve, no slot pool, no shadow arm. TREND stays long-only; trial
+19F unchanged.
+
+**2. Revisit ONLY IF COSTS CHANGE.** If maker execution ever brings the round trip to ~0.1%, the 72h drift
+of 30-day laggards (-0.40% +/- 0.08%) is worth re-studying **on the corpus, as a beta-hedged pair - not as
+a live trial.**
+
+**3. A shadow trial is not recommended:** 600 shadow fills, kill if below zero at 300, pass if the lower CI
+bound exceeds +0.031R at 600 - **2.5-4 years for an effect the corpus already puts at zero or below.**
+
+### POWER: CAN THIS ACCOUNT EVER ANSWER A SHORT QUESTION? NO.
+
+- $10/month needs +0.026 to +0.031R/fill at 21-25 fills and 1R $15.49 (at 1R $2.66 it needs ~0.15R).
+- Detection at 80% power: **2,500-5,200 fills = 8-21+ years** at 13-25 fills/month. Fills cluster on the
+  same days (design effect ~3.9), so longer.
+- **A trailing up tape is active only 15-25% of hours**, so a short sleeve would sit idle and bunch its
+  fills into bull runs.
+- **Any such sleeve would need its own slot pool.** Sharing TREND's halves TREND's fill rate, and TREND is
+  the only hypothesis this account can resolve.
+- **Only the corpus can answer it - and on this question it says no.**
+
+Pre-registration files: `wc/RW/PREREG.txt`, `wc/LHX/PREREG.txt`, `wc/XSS/PREREG.md`, and the adversary's
+under the session scratchpad `RW/PREREG.md`. Corrected-pricing rerun: scratchpad `sens.py`.
+# Short weakness in a rising market: does it work?
+
+## The Council
+
+**The Opposer.** Two of the headlines are too harsh. Three lines (RW, LHX, adversary) used the SH/hrun walker, and the XSS verifier checked it. When an hourly bar closes past the stop, the walker books the fill at that close, which is too harsh. Every line also charges fees at 1.5x the real 0.19% round trip. Together these take about 0.03 to 0.045R off every fill, plus the extra fee. With stops priced from the bar open and a 0.19% fee, the best cell becomes **+0.037 +/- 0.021R**, and 9 of 20 cells turn positive. So "negative in all 80 cells" and "-$28 to -$32 a month" overstate the loss. The fair reading is **zero edge**. Whether it is a loss depends on pricing. The truth is somewhere between the two pricing rules; I don't know where, because real stop slippage in a squeeze was not measured.
+
+**First Principles Thinker.** The real question is whether picking weak coins earns anything beyond simply being short in a rising tape. The cleanest answer compares the picked shorts with random shorts on the same walker. That comparison does not depend on how stops are priced. Across the three lines that ran it:
+- Adversary primary: **+0.008 +/- 0.010R**
+- RW primary: **+0.011 +/- 0.014R**
+- LHX, pattern vs a random below-trend short: **+0.024 +/- 0.018R**
+- Best selected cell: +0.044 +/- 0.020R (RW RS7_D10 / 72h hold, picked from 20 cells)
+
+Picking weakness adds between nothing and a bit under a fee's worth. Under both pricing rules, the best cell fails the best-of-N null (p=0.455 corrected) and walk-forward (pooled out-of-sample -0.002 +/- 0.024 corrected, -0.051 to -0.066 as run).
+
+**The Expander.** The weakness does show up in price, before any stops or exits. Over 72h, 30-day laggards trail a random name in the same tape by **-0.40% +/- 0.08%**, and 7-day laggards by -0.29% +/- 0.07%. The rotation fear did not show up either. Laggards beat the index 44-45% of the time, the same as random names, and large catch-ups are rarer for them (1.8% vs 2.4%). The effect is real but about the size of the fee. That is useful to know if costs ever change. The traded versions with stops still fail selection and walk-forward.
+
+**The Outsider.** Two points.
+- The 5-year corpus holds 13,000 to 278,000 fills per cell and still finds nothing. This account would take 8 to 21+ years of live fills to see an effect the size of the ship bar, so live trading can never settle a short question.
+- The best edge before fees leans on **PAXG, which is gold**. It lags in every crypto bull run for reasons that have nothing to do with weak alts.
+
+**The Implementer.** Nothing to build or deploy. Trial 19F is untouched. The only follow-up is correcting the record (listed below).
+
+---
+
+## Final ruling
+
+### 1. Does it work? No.
+
+Every regime definition used only data up to the entry bar. Two tests proved it:
+- **Poison/truncation test:** bit-identical results on all 4 lines.
+- **Lag-1 test:** moves alpha by 0.01R or less.
+
+Leaky versions look completely different (-0.40 to -0.59R), so no look-ahead is hiding in these numbers.
+
+Pre-registered primary cells, measured as alpha after beta over the realised hold, fees booked, as run:
+
+| Line | Primary cell | Net alpha (R per fill) | 95% CI |
+|---|---|---|---|
+| Relative weakness (RW) | RS14 bottom decile / 24h / UP30 | -0.083 +/- 0.021 | [-0.123, -0.042] |
+| Adversary | RS7 bottom quintile / 24h / trailing 30d up | -0.086 +/- 0.014 | [-0.113, -0.059] (gross -0.0006) |
+| Deviation z (XSS) | S1 4h z / 24h / R1 | -0.093 +/- 0.012 | entirely negative |
+| Lower-high, out of sample (LHX) | P0 / sl4_tp3 / R1 | -0.052 +/- 0.014 | [-0.079, -0.026] |
+
+- **All 4 families together (80 cells):** 0 positive. Best -0.0073; the null's p95 is +0.093, so p=1.0.
+- **Corrected pricing** (XSS verifier: stops priced from the bar open, 0.19% fee): best cell +0.037 +/- 0.021 with a CI that includes zero, best-of-20 p=0.455, walk-forward pooled -0.002 +/- 0.024.
+- **Verdict:** refuted under both pricing rules, on kill criteria (a), (b) and (c).
+- **Liquidity:** names above the $2M floor are no better. The adversary primary is -0.081 +/- 0.016 there.
+- **Dollars:** the as-run figure is about -$30 a month. With corrected pricing the result is centred on zero. Even the corrected best cell's point estimate is about **$5 a month** at 8.6 fills/month and 1R=$15.49, under the $10 bar before any discount for having picked it from 20 cells.
+
+### 2. The lower-high lead (+0.3158R): retire it
+
+- **No hold-window leak.** "UP" was the trailing 7-day index return at the entry bar. A one-bar lag gives +0.311.
+- **Two real problems:**
+  - The tercile cutpoints came from the whole sample. With past-only cutpoints the cell drops to +0.166 to +0.194.
+  - The number was raw R minus a matched random short. It booked no fees (0.116R per fill) and removed no beta.
+- **The profit was index timing.** Realised-hold beta was +1.03 to +1.06: the pattern fires on market-wide bounces, and the index then fell during the hold. Net of beta and fees, the cell's own in-sample alpha is **-0.083 to -0.090 +/- 0.052 to 0.056**.
+- **The t of 4.05 was overstated.** The 219 fills fall on only 54 days, and the day-clustered SE puts t at about 2.2.
+- **It did not hold on data the search never touched.** Over 4 years with no calendar overlap: -0.052 +/- 0.014, negative in 4 of 4 folds and 20 of 20 cells.
+- **Still open:** the "+0.050 +/- 0.018 beta-neutral lower-high" from the second line was never found or retested. I don't know its status.
+
+### 3. Rotation and the tail
+
+- **Laggards do not catch up more than random names.** They beat the index 42-45% of the time, against 44-46% for random shorts.
+- **One exception:** sharp cross-sectional drops (the IOST-style deviation z) and volume-confirmed distribution **do** rip. The chance of beating the index by more than 20% within 7 days is:
+  - random short: 4.8%
+  - 4h deviation z: 6.7-8.7%
+  - distribution signal: about 12%
+
+  The more extreme the z, the higher the rip rate (23.8% for z below -10). It is the worst short entry tested.
+- **The tail comes from the rising tape, not from picking laggards:**
+  - P(< -5R) is 2 to 4x the mirror short's rate, and a random short in the same tape is already about 3x.
+  - The worst single fill is smaller than the mirror's -22.27R: between -10 and -16R.
+  - Losses cluster in single squeezes: IOTA 2023-11-28, XRP 2023-07-13 (the court ruling), UNI -13.65R.
+- **What kills the trade** is a steady fee-sized bleed in the middle of the distribution, not the squeeze.
+
+### 4. The structural point
+
+This was the cleanest short-alpha test available: in a rising tape the short cannot hide behind beta. It failed. Before fees, idiosyncratic alpha is zero to about +0.04R depending on pricing. It is not significant after selection, it does not survive walk-forward, and it is about one round trip of fees in size. That is strong evidence there is **no exploitable short edge at a 24-72h hold on this universe at this fee level**. The owner's framing was right. The answer is no.
+
+### 5. Ranked decision
+
+1. **Do nothing (recommended).** No short sleeve, no slot pool, no shadow arm. TREND stays long-only, and trial 19F is unchanged.
+2. **Correct the record.** Three corrections:
+   - Yesterday's -0.0135 +/- 0.0049 mirror alpha is **gross**. Net it is -0.074 +/- 0.005, but that uses the harsh walker and the 1.5x fee, so it too is overstated.
+   - Retire the +0.3158 lower-high hint.
+   - The SH/hrun close-beyond-stop rule biases every absolute R figure from that walker down by about 0.03-0.045R per fill, **longs included**. Only matched differences on the same walker are clean. Past "every cell negative net" short refutations should be read as "null", not "reliable loss".
+3. **Revisit only if costs change.** If maker execution ever brings the round trip to about 0.1%, the 72h drift of 30-day laggards (-0.40% +/- 0.08%) is worth re-studying on the corpus as a beta-hedged pair. Not as a live trial.
+4. **Shadow trial (not recommended).** The adversary's version is 600 shadow fills; kill if the estimate is below zero at 300; pass if the lower CI bound is above +0.031R at 600. That takes 2.5-4 years for an effect the corpus already puts at zero or below.
+
+### 6. Power: can this account ever answer a short question?
+
+No.
+- **What the ship bar needs:** $10 a month requires +0.026 to +0.031R per fill at 21-25 fills and 1R=$15.49. At 1R=$2.66 it needs about 0.15R, which is implausible.
+- **How long detection takes:** at 80% power, 2,500 to 5,200 fills, or **8 to 21+ years** at 13-25 fills a month. Fills cluster on the same days (design effect about 3.9), so the real wait is longer.
+- **Fill supply:** a trailing up tape is active only 15-25% of hours, so a short sleeve would sit idle and bunch its fills into bull runs.
+- **Slots:** any such sleeve would need its own slot pool. Sharing TREND's slots would halve TREND's fill rate, and TREND is the only hypothesis this account can resolve.
+- **Where the answer can come from:** only the corpus, and on this question it says no.
+
+Files from the four lines, all under `C:/Users/Rocot/AppData/Local/Temp/`:
+- Relative weakness: `wc/RW/PREREG.txt`
+- Lower-high: `wc/LHX/PREREG.txt`
+- Deviation z: `wc/XSS/PREREG.md`
+- Adversary: `claude/C--Users-Rocot-Claude-session/8c93b1ba-3446-4dcb-9618-2245bc04ca42/scratchpad/RW/PREREG.md`
+- XSS verifier's corrected-pricing rerun: `claude/C--Users-Rocot-Claude-session/8c93b1ba-3446-4dcb-9618-2245bc04ca42/scratchpad/sens.py`
