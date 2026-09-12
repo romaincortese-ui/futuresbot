@@ -11268,3 +11268,171 @@ Three caveats before anyone builds it, stated as kill criteria for that engineer
 - A resting stop fills at market on trigger, so the measured 0.056R mean / 0.207R worst floor-miss is a **lower bound** on its cost.
 
 **Finally, the search cost.** These cells took the history from 83 to 117 and widened the null's own best from ~$58 to ~$106. This family of questions is now expensive to ask and has returned nothing in 59+ attempts. **The binding constraint is the fill count, not the rule space — the next idea should be tested on new fills, not on these 24.**
+---
+
+## 2026-09-12 - /arm SHIPPED (not deployed) + the resting-floor stop-slot belief is REFUTED.
+
+Two jobs. **Job 2 built and committed (e82650b + 7473c20, 1248 tests pass). NOT PUSHED, NOT DEPLOYED,
+no exchange call made. Job 1 is a read-only study: buildable, safe, worth about zero.**
+
+### JOB 2 - /arm SYMBOL
+
+**What it is: a gate bypass and nothing else.** `_convex_runner_trail_exit` refuses to trail at all
+while `peak_r < arm_r`, so a trade at +0.6R has NO floor - only the -1R stop, the TP and the clock.
+`/arm` stamps `manual_arm` and the gate becomes `peak_r < arm_r and not manual_armed`. **Retain, the
+3R ratchet, the cost floor and the disable-if-floor-above-peak branch are untouched**, which is what
+*"follows the same giveback rules"* means.
+
+**A BLOCKING DEFECT WAS FOUND IN REVIEW AND FIXED.** The command validated the floor against the
+**PEAK** and never against **where the trade is now**. A position that had already retraced - stored
+peak 0.80R, price back to 0.20R - passed `exit_level >= peak_r` and armed, and **the next one-second
+poll closed it at 0.20R.** That is `/arm` banking a giveback, the exact thing the refusals exist to
+prevent. The boundary matters too: the exit path holds only while `r_now > exit_level`, so floor ==
+current must refuse. **An existing test asserted the defective boundary and was re-pointed.**
+
+**A second refusal added:** with `retain <= 0` the legacy giveback branch subtracts a fixed R and
+applies **no cost floor**, so at +0.60R with the default 2.0R giveback the "floor" is **-1.40R**,
+below entry. The automatic path never reaches it under the 1.0R gate; `/arm` would. Dormant at the
+deployed 0.50, one env change from live.
+
+**THE OWNER'S TWO EXAMPLES, THROUGH THE REAL CODE:**
+
+1. **Up $15, auto-arm at $18 -> SUCCEEDS.** But **arming at $15 locks $7.50, not $15** - half the
+   peak, because that is what the same giveback rules mean. **If he expected the floor AT $15, his
+   sentence and the build disagree, and the build followed his sentence.**
+2. **Up $32, already armed -> REFUSES, and correctly.** The floor already tracks the running peak, so
+   it was $16 before he typed anything. **His second example is already the bot's behaviour.**
+   **The command buys exactly one thing: a floor below 1.0R, where today there is none.**
+
+**Verified:** automatic path bit-identical when the command is never typed (three guarded edits, all
+reading `manual_armed`, plus a test asserting position metadata JSON is byte-identical); survives a
+restart (a test rebuilds the runtime from the state file on disk); only the owner's chat id reaches
+it; no exchange call but one read-only price fetch. **Telemetry stamps `manual_arm_decisive` on the
+closed trade so the decision is measurable later - nothing in this programme has been measurable
+without it.**
+
+### JOB 1 - THE RESTING FLOOR: the recorded belief is WRONG, and the idea is still worth ~$0
+
+> **IT DOES NOT COST THE -1R DISASTER STOP SLOT. There is no single slot.** Proven READ-ONLY from the
+> account's own order history, not from documentation: 200 finished stop rows across 193 positions,
+> and **6-7 positions carried TWO live stop orders simultaneously.** BEAT_USDT position 1426831539
+> held the fill-anchored SL+TP order alongside a raised SL-only floor - **and the FLOOR is the one
+> that executed** (state 3, triggerSide 1). VELVET_USDT 1421529964, BLESS_USDT 1425483761 and
+> BNB_USDT 1439041411 show the same pattern. The bot's own shipped
+> `_place_pmt_exchange_profit_lock_stop` already places a second stop with no cancel at all.
+
+**`cancel_all_tpsl` being all-or-nothing is a limitation of THE BOT'S CLIENT, not of the exchange.**
+
+> **THREE PLACES IN THE RECORD ASSERT THE OPPOSITE AND ARE REFUTED: `DECISION_RULE.md:11266`,
+> `DECISION_RULE.md:408`, and the docstring at `runtime.py:2185`. The pre-registered kill criterion
+> attached to them ("kill if the client cannot amend in place") is also refuted.**
+> **A whole class of restart-safe exits was shelved on a false constraint.**
+
+**AND IT IS STILL WORTH ABOUT NOTHING:**
+
+- **Restart prize: $0.00 MEASURED.** The one deploy on record (09-11T16:16Z, ~3-minute gap) landed
+  with the account flat, and `convex_peak_r` persists on every new peak, so a restart costs
+  observation, not state. Not one of the 24 corpus fills shows a gap-delayed exit.
+- **Floor-miss prize: $4.87 +/- $2.26 over 6.96 days = $21.31/month GROSS upper bound**, and
+  **$9.58-$11.19/month ex-top-1 - below the bar before any haircut.**
+- **THE HAIRCUT THAT MATTERS, and it corrects my own claim from yesterday: a triggered MEXC stop
+  fills at MARKET, it does not execute at the level.** So only the sub-second detection gap is
+  recoverable, and the 1 Hz monitor already leaves very little. Public klines show **two-thirds of
+  the total occurred inside vertical spikes** (UAI 436bps, SOPH 179bps) where a market-filled trigger
+  captures nothing. **Recoverable ~$7/month on n=1.**
+- **UNMEASURED AND POTENTIALLY LARGER THAN THE PRIZE: a resting floor triggers on LAST price while
+  the trail measures FAIR.** Already measured on the stop side as **7 of 38 stop-outs filling at a
+  price fair never printed.** On a profit floor that is a premature-exit generator on exactly the
+  runners that carry the book - **one wick-tripped floor on a ZEC-09-06-sized trade (+$75.37) costs
+  more than the entire annual prize.**
+
+**VERDICT: buildable, safe, cheaper than the record said, and worth about zero. Do not build it.**
+**The $0 next step if it is ever reopened: a shadow counter logging whether LAST crossed the
+fair-price floor when FAIR did not. That prices the only unmeasured term, and until it exists no
+resting floor can be honestly signed.**
+
+### TWO PRE-EXISTING DEFECTS FOUND IN PASSING (independent of everything above)
+
+1. **`_resting_stop_for` (`runtime.py:6217`) returns the FIRST row matching a `positionId`** and can
+   report the wrong stop to `/reconcile` when two exist - which, per Job 1, does happen.
+2. **Bank-protect's `cancel_all_tpsl`-then-place (`runtime.py:1458-1466`) is genuinely NAKED for up
+   to 47.25 seconds worst case, with no re-place logic anywhere.**
+# THE COUNCIL
+
+**The Opposer.** One defect can lose money and it is not exotic. `/arm` validates the floor against the **peak**, never against **where the trade is now**. Arm a position that has already retraced — stored peak 0.90R, price now +0.20R — and `_manual_arm` returns `ok=True` with "Floor: +0.45R", then the very next 1-second poll sees `r_now (0.20) < exit_level (0.45)` and closes. At +0.05R it also closes, and +0.05R gross is below the sleeve's own breakeven. That is `/arm` banking a net loss: the exact thing refusal 9 was written to prevent, missed because refusal 9 tests `exit_level >= peak_r` and not `exit_level >= r_now`. Confirmed in the source at `runtime.py:4475`.
+
+**First Principles.** He asked for one thing: *start the trail before the trail would start itself.* The gate is the only thing between the trade and a floor, and the gate is the only thing bypassed — two lines. That reduction is correct and the code is it. The defect is not in the design; it is one missing guard on an input the design assumed was always fresh.
+
+**The Expander.** Job 1 came back with something worth more than its verdict: the belief recorded three times in `DECISION_RULE.md` that a resting profit floor must **replace** the -1R disaster stop is factually wrong. Six positions in this account's own order history carried two live stop orders simultaneously (BEAT_USDT 1426831539: the floor created 5 seconds before the fill-anchored SL+TP was cancelled, and the **floor** is the one that executed). The bot's own shipped `_place_pmt_exchange_profit_lock_stop` places a second stop with no cancel at all. A whole class of restart-safe exits was shelved on a false constraint.
+
+**The Outsider.** The success message tells him the floor in R and in dollars but **not in price**. At 3am on a phone he is looking at a chart, not an R-multiple. One line — `Exits at 1,163.03` — is the only number he can act on.
+
+**The Implementer.** Three small fixes, none architectural: refusal 10 (floor vs current level), refuse when `retain <= 0`, `html.escape(arg)` in the activity log. Then deploy. Job 1 needs no code.
+
+---
+
+## 1. IS `/arm` SAFE AND CORRECT?
+
+**One defect can lose money, and it must be fixed before deploy: `/arm` on a position that has already retraced below its floor succeeds and then closes the trade on the next poll — potentially at a net loss.** Everything else is clean.
+
+`python -m pytest`: **1244 passed in 24.86s** (1218 baseline + 26 new) — re-run just now, not taken on trust.
+
+**The automatic path is untouched.** Three edits touch shared code and each is guarded by `manual_armed`, which is False for every position the command never touched: the exit gate (`runtime.py:2346`), the `/status` mirror (`runtime.py:1932`), the void stamp (`runtime.py:2368`). `_close_history_trade` adds columns that read `None`/`0.0` on unarmed trades. No entry path, stop, TP, clock, sizing or env default moved. `shadow_ledger.py` untouched — correct, a manual arm is not replayable. A test walks an unarmed position on both sides of the gate and asserts today's exact behaviour; another runs `/status` and `/help` through the real dispatcher and asserts the position metadata JSON is byte-identical.
+
+**What `/arm` provably cannot do:** widen a stop (it writes only `manual_arm*` keys and `convex_peak_r`, makes no exchange call but one read-only price fetch), un-arm anything (setting `manual_armed` can only make the gate's conjunction False, i.e. only ever *let* the trail proceed), or lower a floor in the deployed configuration. It survives a restart — verified by a test that builds a fresh runtime from the state file on disk and fires the trail on the reloaded object. Only the owner's chat reaches it: a `/arm` from a foreign chat id was tested and produced no reply and no write.
+
+**The three fixes, in order:**
+
+1. **BLOCKING — refusal 10.** Compare the floor against the current level, not only the peak:
+```python
+if exit_level >= r_now:
+    return False, (f"{sym} has already given back past that floor: now {r_now:+.2f}R, "
+                   f"floor would be {exit_level:+.2f}R. Arming would close it immediately.")
+```
+2. **BLOCKING-IF-ROLLED-BACK — refuse when `retain <= 0`.** The legacy giveback branch (`runtime.py:4474`) applies **no cost floor** and can produce a negative floor. With `FUTURES_CONVEX_TRAIL_RETAIN_FRAC=0` — the rollback `runtime.py:2381` deliberately preserves — `/arm` at +0.60R returns success with "Floor: -1.40R … keeps -233% of the peak, never falls". Dormant today (0.50 is deployed), one env change from live.
+3. **Minor** — `html.escape(arg)` at `runtime.py:4620`; unescaped user text reaches the HTML-rendered `/logs` and can break that command until the entry ages out. `/close` has the same hole, so it is a pattern, not a regression.
+
+Also worth one line: `_manual_arm` reads `client.get_fair_price` while the exit path uses `_open_position_guard_price` (WebSocket-preferred). Different feeds, and `peak_r` only ratchets up — use the guard price for parity.
+
+## 2. HIS TWO EXAMPLES, THROUGH THE REAL CODE
+
+**Example 1 — up $15, auto-arm at $18** (1R = $18, gate 1.0R, `r_now` = 0.83R). `/arm` **succeeds**:
+
+```
+ZEC_USDT LONG armed at +0.83R (+15.00 USDT)
+Peak: +0.83R (+15.00) · 1R = 18.00
+Floor: +0.42R (+7.50)
+Auto-arm gate was +1.00R (+18.00) — bypassed
+Exit rule: CONVEX_RETENTION_TRAIL — keeps 50% of the peak, ratchets to 75% above +3.00R, never falls
+```
+
+**Say this plainly: arming at $15 does not lock $15. It locks $7.50** — half the peak, because that is what "follows the same giveback rules" means. If he expected the floor at $15, his sentence and the build disagree, and the build followed his sentence.
+
+**Example 2 — up $32, armed at $18, 5R ≈ $95** (1R = $19, `r_now` = 1.68R). `/arm` **refuses**:
+
+> `ZEC_USDT is already armed: peak +1.68R (+32.00), floor +0.84R (+16.00), keeps 50%. The floor already tracks the running peak — /arm would change nothing.`
+
+**His second example is already the bot's behaviour.** Above the gate the floor is recomputed from the running peak on every poll, so "the arm moves to $32" happened by itself — the floor was $16 before he typed anything. The command reports that floor rather than faking a success. **So the command buys exactly one thing: a floor below 1.0R, where today there is none.**
+
+## 3. WHAT HE HAS TO DO TO USE IT
+
+**It is committed, not running.** Commit `e82650b` on `main`, **not pushed, not deployed**, no exchange call of any kind made. Trial 19F is live with the old binary and is behaving exactly as it did yesterday. To use `/arm` he must apply the three fixes above, push, and deploy — and a deploy costs a ~3-minute process gap, so do it while flat.
+
+## 4. JOB 1 — THE RESTING FLOOR
+
+**Safe, buildable, cheaper than the record said — and worth roughly nothing in dollars. Do not build it.**
+
+- **It does NOT cost the -1R stop slot.** Proven read-only from the account's own history, not from docs: 200 finished stop rows across 193 positions, **6 positions carried two live stop orders at once**, overlaps of 1–59 seconds. The right shape is a second SL-only order stacked above the untouched -1R+TP order. **`DECISION_RULE.md:11266`, `:408` and the docstring at `runtime.py:2185` are wrong and should be corrected regardless of what ships.**
+- **Fail-safe by construction** — because the -1R order is never touched, not because amend exists. (`stoporder/change_price` cannot address a position-based floor: all seven such rows carry `orderId: '0'`, and that endpoint's only mandatory parameter is `orderId`.) Failed place → no floor, full protection. Failed amend/replace → previous, lower floor persists. The one open engineering risk is that MEXC marks `/stoporder/cancel` "Under maintenance"; if per-order cancel is unusable, removing a stale floor means `cancel_all`, which is naked.
+- **Restart prize: $0.00 measured.** The one deploy on record (09-11T16:16Z) landed with the account flat, and `convex_peak_r` is persisted on every new peak, so a restart costs 3 minutes of observation, not state.
+- **Floor-miss prize: $4.87 ± $2.26 over 6.96 days = $21.31/month gross upper bound**, $9.58–$11.19/month ex-top-1. But a MEXC stop triggers at the level and fills at **market**, so only the ≤1-second detection gap is recoverable — and public 1-minute klines show two-thirds of the total occurred inside vertical spikes (UAI 436 bps, SOPH 179 bps) where a market-filled trigger captures nothing. **Recoverable ≈ $7/month on n=1**, before an unmeasured last-price wick cost that on a ZEC-09-06-sized runner (+$75.37) exceeds a year of the prize in one fire.
+
+The restart-safety *property* is now known to be available at a cost the programme had priced as prohibitive. Record that. Do not spend on it.
+
+## 5. ANYTHING THAT CLEARS $10/MONTH?
+
+**No.** The resting floor's honest recoverable number is ~$7/month on a single observation, and its gross ex-top-1 figure ($9.58–$11.19) is indistinguishable from the bar on $2.19 ± $1.21. `/arm` is not a P&L play at all — it is an operator control, and `manual_arm_decisive` is the column that will price it later.
+
+**Two $0 items worth doing anyway:** `_resting_stop_for` (`runtime.py:6217`) returns the *first* row matching a `positionId` and can report the wrong stop to `/reconcile` when two exist; and bank-protect's `cancel_all_tpsl`-then-place (`runtime.py:1458-1466`) is genuinely naked for **up to 47.25 seconds** worst case, with no re-place logic anywhere — a pre-existing defect independent of everything above.
+
+**Constraints honoured across both jobs:** no deploy, no push, no order placed/amended/cancelled, nothing written to `/data`; all exchange interaction was signed read-only GETs and public endpoints.
