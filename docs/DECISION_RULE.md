@@ -12270,3 +12270,520 @@ You were right that the gate has no edge — four independent replays confirm th
 **The thing that got worse in August was not the strategy. It was the stake.** Your wins came at $2 risk and your losses at $22, the era difference in R is +0.744 ± 0.535, and the sleeve now swings a quarter of the account per month at t=+0.86. Cutting the stake costs nothing measurable in expectancy, costs **nothing at all** in time-to-verdict, and buys back your ability to be wrong for another year.
 
 And keep the condition you asked me to kill. It is not an edge — it is a free throttle that deletes 85% of the flow, and in a world where twins book no fees and you do, that is worth more than the thesis it was supposed to prove.
+---
+
+## 2026-09-12 - IOST/ETH IMPROVEMENTS + TREND LONG SWEEP + SHORTS: all three REFUTED.
+
+Two workflows, 18 agents, ~15,000 searched cells, corpora of 70d / 358d / 360d Min15 plus 5y hourly.
+**Read-only throughout. Ship nothing.**
+
+### A. COULD IOST HAVE BEEN CLOSED BEFORE THE STOP? Yes - and it is a clean kill anyway.
+
+**The saving was real:** closeable at -0.15R at t+21min instead of -1.06R, **$22.38 saved on that fill.**
+
+**THE DECISIVE TEST - the signal fires 2.5x HARDER on the IOST that WON two days earlier.**
+
+    most-adverse cross-sectional z while open    k=5     k=10    k=15    k=30
+    IOST 09-09  WIN  +$33.23                     -125.2  -76.0   -97.3   -69.1
+    IOST 09-11  LOSS -$25.93                      -50.3  -52.1   -32.7   -16.2
+    MAGMA 08-30 WIN                              -233.5  (most extreme reading in the book)
+
+**At every k the winner's reading is strictly more extreme than the loser's. That is arithmetic on
+measured paths and n does not enter it. No threshold fires on 09-11 without firing on 09-09.** The best
+cell takes the 82-fill book **+1.64R -> -2.17R** (TUT 5.09 -> 1.87, IOST 09-09 1.79 -> -0.14).
+
+**CORRECTION TO THE POST-MORTEM: the "9-10 sigma" volume bars do not reproduce.** On the longest
+trailing Min1 baseline the data supports they are **+4.30 and +2.57 sigma**. And at that intensity an
+adverse volume bar occurs in **69 of 82 holds (84%) and 29 of 37 WINNERS (78%)** - ZEC +$75.37, SOPH,
+TUT and IOST 09-09 all contain bars that look like IOST 09-11's.
+
+**THE ORACLE CEILING IS NOT SMALL, and that is the interesting part.**
+
+    WILDCARD family-constrained   ceiling +0.509R/trade   best causal +0.028 +/- 0.038   captured  5%
+    TREND                         ceiling +0.531R/trade   best causal +0.003 +/- 0.010   captured  0.6%
+    WILDCARD not-armed, dollars   ceiling ~$805/month     best causal ~$11 +/- $11      captured  1.4%
+
+**The family is expressive enough to reach essentially all the money (0.51 of an available 0.57). The
+entire ceiling is set by KNOWING WHICH TRADE IS THE LOSER.** The 2% who win below the arm are
+indistinguishable from the 98% who do not, and they carry the sleeve's convexity.
+> **A microcap dying and a microcap running produce the same reading. On a -1R/+5R design you cannot
+> sell that option.**
+
+### B. ARE ETH'S ENTRY-TIMING ELEMENTS INSUFFICIENT? Only in the sense that the sleeve buys breakouts.
+
+**POSITION-IN-WINDOW IS PURE LOOK-AHEAD.** Measured naturally: **+0.572 +/- 0.031R (18 sigma)**, exactly
+the hypothesis. That needs the window's LENGTH, a future quantity. Using only what is known at the scan
+instant: **+0.025 +/- 0.024R. The entire effect is the look-ahead.** A window stays open only while
+price keeps making new highs, so "the last minute of the window" is a synonym for "the minute after
+which it stopped working" - you cannot know you are on it. A second corpus finds forward R FLAT in
+window position; a third finds entering EARLIER actively worse (first bar +0.418R vs second +1.052R).
+
+**The implementable version - refuse anything but the first qualifying bar - deletes 47.8% of fills,
+3,584 armed fills and 1,139 fills of >=2R, and costs -$72.7 +/- $4.8/month.**
+
+**ETH WAS UNDER-EXTENDED, NOT OVER-EXTENDED.** The 14:00 bar sat at the **5th percentile of extension**
+and the 0th percentile of distance above the old 24h close-high. An extension cap does not describe it.
+"Clear the prior max by >= X ATR" is negative at every threshold from 0.05 to 1.00 ATR.
+
+**Both constructive alternatives are worse than doing nothing:** bidding a pullback 0.5 ATR below is
++0.194R per filled trade of which **+0.167 is the mechanical price gift** (net +0.027 +/- 0.008), and the
+5,192 signals that never pull back are the ones that RUN (+0.639R) - cost **-$60/month**. Waiting for
+follow-through costs **-$93/month**.
+> **The entry-timing axis is the carry identity in both directions: enter lower and the runners never
+> fill; enter higher and you pay the carry. THE BOT IS ALREADY AT THE ONLY NEUTRAL POINT ON THAT AXIS.**
+
+### C. THE TREND LONG PARAMETER SWEEP - null, and tuning is measurably NEGATIVE
+
+| family | cells | null median | null p90 | observed best | p |
+|---|---|---|---|---|---|
+| slot-constrained portfolio | 6,144 | +141.7R | +206.9R | +207.3R | **0.099** |
+| matched long | 5,760 | +0.359 | +0.530 | +0.549 | **0.082** |
+| combined adversary | 1,872 | +0.265 | +0.421 | +0.462 | **0.050 (ZEC-only)** |
+| adversary ex-ZEC | 396 | +0.171 | +0.383 | +0.263 | **0.313** |
+
+**ZERO cells in any family clear p90.** A verifier re-ran under studentised max-t, the variant most
+favourable to the candidate: longs fw-p 0.220. **The live values sit at the 41st-58th percentile of
+every family** - an unremarkable interior point on a FLAT surface. Every one-at-a-time move off them is
+nominally better (ROC 8% +0.307, TP5 +0.183, slots 3 +0.196) and **not one clears 1.6 SE.**
+
+> **WALK-FORWARD: the UNTOUCHED live config posts +0.205R OOS across five chronological folds; the
+> FITTED argmax posts +0.181R on one-fifth the fills. The incumbent beats the search out of sample.
+> Honest tuning carries a SEARCH PREMIUM OF -0.043R/fill = -$28.64/month. You are paid to leave it alone.**
+
+**WHY THERE IS NOTHING TO TUNE: 68% of the gate's raw edge is the carry identity `ROC96/(3*ATR)`.** The
+monotone ROC axis (2%: +0.066 -> 8%: +0.195) IS that identity seen end-on. Raise ROC and per-fill edge
+rises while dollars fall ($1,454 -> $1,178) because fills collapse 612 -> 206/yr.
+
+### D. SHORTS - null, and one step worse than inverse beta
+
+**THE PREMISE AND THE LOOK-AHEAD TRAP.** Split the mirror short by the tape DURING THE HOLD and it looks
+superb: **+0.248 +/- 0.076R in down tape, -0.443 +/- 0.047 in up tape.** That conditions on the future.
+**Split by the TRAILING 30-day tape at entry - the only tradeable version - and over five years containing
+four bear quarters (2022Q2 -67%, 2022Q4 -34%, 2025Q1 -43%, 2025Q4 -42%) the best gross cell is +0.003R
+and NOT ONE CELL IS POSITIVE NET OF FEES.**
+
+**IT IS WORSE THAN INVERSE BETA: the mirror short LOSES in down tape** (-0.050 +/- 0.031 on the four
+names, -0.062 +/- 0.012 band-wide) on a corpus where the alt index fell 59%. **A new 24h closing low in a
+persistently falling market IS the bounce point, and a 24h clock with a 3xATR stop books the bounce.**
+
+**ALPHA NET OF BETA, the decisive number:**
+
+    mirror, 5y hourly, 195,887 fills   alpha -0.0135 +/- 0.0049 (t -2.8)   beta +1.004
+    95% CI [-$8.95, -$1.51]/month at 25 fills and 1R $15.49.  ENTIRELY NEGATIVE.
+
+*(Verifier caught the spec error: the index window was fixed at 24h on trades that mostly exit early,
+attenuating beta to +0.72. Corrected to the realised holding window, beta snaps to 1.004 - the diagnostic
+that the spec is right.)*
+
+**Best-of-N on shorts: best cell +0.147 sits BELOW its own null's MEDIAN (+0.187), p=0.698; on a second
+family p=0.982 - worse than 98% of what pure noise produces from the same search.**
+
+**Both structural facts meant to favour shorts point backwards:**
+- **Funding pays a 24h short +0.0019R to +0.0050R against a round trip of 0.036R to 0.095R - 5-13% of what
+  it must beat.** The live counterexample: PONS short received +$0.544 of funding (~1%/day, a textbook
+  crowded-long reading) and closed **-1.08R, -$18.87**, the worst live short.
+- **Crowded-long names short the SAME or WORSE** on every mechanism. Shorting into weak breadth is the
+  worst cell (-0.274 +/- 0.080), not the best.
+
+**THE TAIL - the second-strongest reason not to ship:**
+
+    5y hourly, gap-through priced     n         worst      P(< -5R)
+    long gate                         181,957   -5.14R     0.0005%
+    MIRROR SHORT                      195,887   -22.27R    0.0133%   -> 27x
+    failed-breakout short             182,911   -17.64R    0.0169%
+
+**Three of the five worst shorts are the same symbol on the same day (FLOKI, 2023-05-05).** Squeezes
+cluster in time AND name - on a 2-slot sleeve that is the whole book in one instrument on one afternoon.
+**At 1R $15.49 a -22.27R fill is -$345.** *(Min15 lines reporting a -1.00R floor on every short are a
+bar-resolution artifact - the bar cannot see a squeeze's intrabar path.)*
+
+**SURVIVORSHIP RUNS IN FAVOUR OF SHORTS, and it is bounded.** Observed delist rate on the 109 traded
+symbols ~7%/yr (20%/yr pessimistic). **Transmission measured: regressing each symbol's mirror-short meanR
+on its own 360-day return gives slope +0.0022 +/- 0.0042 (R^2 0.01) - zero.** SUI -80%, STORJ -79%, ENA
+-78% did NOT produce better 24h shorts. **A 24h clock with a 3xATR stop cannot capture a slow grind to
+zero - it gets chopped out.** Upper bound even assuming a +20R fill per delisting: **+0.005R/fill against
+an SE of 0.037.**
+
+**POWER - the argument that settles it operationally:**
+
+    resolve TREND long's own existence       312-604 fills    7.3-14 months
+    detect a +0.05R short alpha              7,064 fills      13.7 years
+    detect a $10/month short at 25 fills/mo  5,792 fills      19.3 years
+
+> **Adding shorts DOUBLES the hypothesis space of a sleeve that cannot resolve the one it already has, and
+> if both arms share 2 global slots it HALVES the per-hypothesis fill rate, pushing the one question that
+> could resolve from 7.3 months past a year. THE COST OF TESTING SHORTS IS NOT THEIR EXPECTED LOSS - IT IS
+> THE DELAY IMPOSED ON THE ONLY QUESTION THAT COULD HAVE BEEN ANSWERED.**
+
+### E. THE PREMISE DOES NOT MATCH THE LIVE BOOK, AND THE LIVE SHORTS CANNOT TRANSFER
+
+- **Live WILDCARD fills by regime at entry: 47 UP / 32 FLAT / 21 DOWN** (book-wide 100/60/30). **The live
+  window was predominantly UP tape and both sides lost in it.** "The longs lost because the tape fell" is
+  true of the replay corpus and NOT of the live book.
+- **All 32 live WILDCARD shorts are microcaps** (SOPH, PONS, MARSCOIN, NIL, TUT, MAGMA, SIREN). **Not one
+  is ETH, XRP, ZEC or SOL.** The live short record says nothing about adding shorts to TREND.
+- **THE LIVE SHORT LEDGER DOES NOT RECONCILE.** Three reads gave **-$9.86 (32 shorts), +$7.89 (27), +$0.32
+  (18; a verifier found 19 at -$10.87)**. SOPH is cited at +$24.68, +$24.54, and absent from a third
+  ledger. **The only defensible statement: long minus short -$0.38 +/- $1.55 (n=100). No measurable side
+  difference.** The reconciliation failure is itself a data-hygiene finding.
+
+### F. WHAT IS GENUINELY GOOD - unrequested
+
+**THE LONG GATE HAS REAL ALPHA NET OF THE TAPE, AND THE RECENT LOSSES ARE BETA, NOT DECAY.**
+
+    longgrid       358d, 2,442 fills        +0.199 +/- 0.061 (t +3.25)   beta +10.0
+    adversary      360d, block-bootstrap    +0.192 +/- 0.065 (t +2.94)   beta +8.9
+    shortdesign    360d, vol+regime-matched +0.165 +/- 0.069 (t +2.40)
+
+**All three measured in a window where the alt index fell 59%. The sleeve lost because it is long ~10
+beta into a bear tape, and it still cleared it.**
+
+> **THE CAVEAT I WILL NOT SMOOTH OVER: on a 5-year hourly corpus with fees booked the same gate is
+> ZERO-TO-NEGATIVE, and under the hardest same-week/same-ATR/same-carry null the 360-day alpha shrinks from
+> +0.17 to +0.040 +/- 0.031. Two readings are positive; the hardest two are not. I DO NOT KNOW which regime
+> the book is in, and neither does the book at 128 fills/year.**
+
+The one statistically solid effect in 15,000 cells: **the exhaustion short at -0.108 +/- 0.013R (t -8.3).
+Fading strength on crypto perps loses reliably** - the long-only design's own thesis, confirmed from the
+other side with a t-stat nothing on the long side matches.
+
+### G. CORRECTIONS TO THE STANDING RECORD
+
+1. **SUPERSEDED: yesterday's long-only +0.2215 +/- 0.0391 was a one-regime read.** On **238,789 matched
+   bar-pairs over five years, long-minus-short is -0.0437 +/- 0.0272 - OPPOSITE SIGN, five of six years
+   negative.** **KEEP LONG-ONLY, but for the TAIL reason: 27x fatter -5R quantile, worst -22.27R against a
+   +/-$60/month envelope, squeezes clustering in one name on one afternoon. LONG-ONLY IS A RISK DECISION,
+   NOT AN EDGE CLAIM.**
+2. **THE MEASURED EDGE IS ZEC.** Drop it and the long family goes from p=0.032 to **p=0.313**; the
+   ETH/XRP/SOL leg has top-3 concentration above 100%. **Two corpora now say ZEC is the BEST name, four
+   earlier ones say the WORST, and the conflict is unresolvable inside a window containing ZEC's +2,111%
+   run. Do not act on either reading. Hold it as the largest concentration risk.**
+3. **The "9-10 sigma" IOST volume bars do not reproduce** - +4.30 and +2.57 sigma on a longer baseline.
+4. **Process note: two headline computations (a longgrid alpha regression and a shorttest carry identity)
+   had no script saved to disk and were rebuilt by verifiers.** Both reproduced, but a headline behind an
+   unsaved computation should not be quoted until it is on disk.
+
+### H. RANKED DECISION
+
+| # | action | $/month | env/code | cost of being wrong |
+|---|---|---|---|---|
+| **1** | **DO NOTHING to the TREND gate or exit stack** | ~+$40 live scale | neither | forgo an effect nobody could measure |
+| **2** | **Halve the TREND stake** (standing, unaffected by these results) | halves variance | env | cheap insurance against an invisible tail |
+| **3** | **Fix `_drop_incomplete_klines`** | unmeasurable | code | a correctness bug; **every twin here runs the corrected convention, so the live bot trades a differently-priced signal than anything measured** |
+| **4** | **Acquire historical per-symbol funding series to disk** | $0 | data | **the only short mechanism nobody could test** |
+| 5 | slots 2 -> 3 | +$3-6 | env | below the bar; a book-level allocation, not a TREND dial |
+| 6 | retune to the grid argmax | **-$28.64 OOS** | env | **measured negative, and resets trial 19** |
+| 7 | stop 2.0xATR | unpriced | env | most exposed to the twins booking zero fees |
+| 8 | **add shorts to TREND, any mechanism** | **[-$8.95, -$1.51]** | code | negative alpha, 27x tail, doubles an unresolvable hypothesis space |
+
+**Leave the WILDCARD short arm exactly as it is** - not bleeding (-$0.31/fill vs -$0.69 for longs,
+difference -$0.38 +/- $1.55), kill condition not met, and turning it off deletes fills without creating any.
+
+> **THE BINDING CONSTRAINT IS NO LONGER THE SEARCH. IT IS THAT THE SLEEVE CANNOT GENERATE THE EVIDENCE
+> NEEDED TO JUSTIFY CHANGING IT. That is a stronger argument for leaving it alone than any p-value here.**
+**Four independent lines, each with an adversarial verifier, all four returned REFUTED.** Below is the answer to the two questions, then what to do.
+
+---
+
+# 1. COULD IOST HAVE BEEN CLOSED BEFORE THE STOP?
+
+**Yes. You read the tape correctly. And it is a clean kill anyway, because the same signal fires HARDER on the IOST that WON two days earlier.**
+
+**The saving was real.** On completed bars after the 09:00 entry the trade was closeable at −0.15R at t+21min instead of −1.06R — **$22.38 saved on that fill, 73 minutes before the stop.** Three lines put the reachable number between **+$6.14** (best completed Min15 close) and **+$23.17** (best completed Min1 close). The trade was killable.
+
+**The decisive test — does it fire on the 09-09 winner? It fires 2.5x harder.** Most-adverse cross-sectional z reached while the position was open, on the real fills:
+
+```
+  IOST 09-09  WIN  +$33.23   k=5/10/15/30:  -125.2  -76.0  -97.3  -69.1
+  IOST 09-11  LOSS -$25.93                   -50.3  -52.1  -32.7  -16.2
+  MAGMA 08-30 WIN                            -233.5   (the most extreme reading in the book)
+  TUT   08-22 WIN  +5.09R    own-vol scale:   -6.70  (the most extreme on that scale)
+```
+
+At **every k, the winner's reading is strictly more extreme than the loser's.** That is arithmetic on measured paths — n does not enter it. No threshold can fire on 09-11 without also firing on 09-09. Applied to the 82 post-censoring fills, the best cell takes the book **+1.64R → −2.17R** (TUT 5.09→1.87, IOST 09-09 1.79→−0.14). It also sells 42% of sumR on twins that reached 1R.
+
+One knife-edge escape exists and is closed: on the own-vol scale at k=5 the loser (−3.51) is marginally more extreme than the winner (−3.30). A threshold in that 0.21-wide band does spare 09-09 — and exits 09-11 at only −0.76R (**~$7, not $22**), still sells TUT 5.09→2.32, and measures **−0.027 ± 0.022 (WILDCARD) / −0.017 ± 0.012 (TREND)** on 2,497 twins.
+
+**Independently, on a fourth corpus: the signature is ubiquitous.** At its measured intensity an adverse volume bar occurs in **69 of 82 holds (84%) and in 29 of 37 WINNERS (78%)** — ZEC +$75.37, SOPH, TUT, IOST 09-09 all contain bars that look like IOST 09-11's. And the "9–10 sigma" figure does not reproduce: on the longest trailing Min1 window the retained data supports, those bars are **+4.30 and +2.57 sigma.** (Caveat, stated: the Min1 file begins two minutes before entry, so a longer pre-move baseline is untestable — but the 84%/78% ubiquity uses the *same* estimator on all 82 fills, which is the comparison that matters.)
+
+**THE ORACLE CEILING — the number you asked for.** Give perfect foresight the best exit on every trade that fails to arm:
+
+| | ceiling | best causal rule | fraction captured |
+|---|---|---|---|
+| WILDCARD, family-constrained | **+0.509R/trade** | +0.028 ± 0.038 | **5%** |
+| WILDCARD, unrestricted foresight | +0.571R/trade | — | — |
+| TREND | +0.531R/trade | +0.003 ± 0.010 | 0.6% |
+| WILDCARD not-armed, in dollars | **~$805/month** | ~$11 ± $11/month | 1.4% |
+
+**The ceiling is NOT small — that is the interesting part.** The family constraint costs almost nothing against perfect foresight (0.51 of an available 0.57). The signal family is expressive enough to reach essentially all the available money. **The entire ceiling is set by knowing which trade is a loser.** Below the arm the population is −0.885R at 2–6% win, so there genuinely is ~0.5R/trade sitting there. The 2% who win up there are indistinguishable from the 98% who don't by anything this family can see — and they carry the sleeve's whole convexity.
+
+**A microcap dying and a microcap running produce the same reading. On a −1R/+5R design you cannot sell that option.**
+
+---
+
+# 2. ARE THE ETH ENTRY-TIMING ELEMENTS INSUFFICIENT?
+
+**Partly yes — and the part that is true is about the sleeve's premise, not a tuning parameter.**
+
+**Say the uncomfortable thing first: TREND's gate REQUIRES a new 24h closing extreme. It is a late-in-move gate BY CONSTRUCTION — it is designed to buy extension.** "We took the last and highest minute of the open window" is a restatement of what the sleeve is for. There is no setting of the entry-timing dials that makes a breakout gate stop buying breakouts. That question — *do we want a sleeve that buys extremes at all* — is answered by the sleeve's own expectancy, not by entry tuning.
+
+**Now the tunable parts, all net of carry:**
+
+**Position-in-window is look-ahead.** Measured the natural way — fraction of the way through the window — the effect is **+0.572 ± 0.031R (18 sigma)**, exactly your hypothesis. That computation needs the window's *length*, a future quantity. Using only what is known at the scan instant: **+0.025 ± 0.024R.** **The entire effect is the look-ahead.** The mechanism is circular: a window stays open only while price keeps making new highs, so "the last minute of the window" is a synonym for "the minute after which it stopped working" — you cannot know you are on it. A second corpus gets the same answer differently: forward R is **flat** in window position (+0.159 / +0.184 / +0.173 / +0.198 / +0.241). A third corpus found entering earlier is actively *worse* (first bar +0.418R vs second +1.052R, 1.8–2.6 sigma).
+
+The implementable version — refuse anything that is not the first qualifying bar — **deletes 47.8% of fills, 3,584 armed fills, 1,139 fills of ≥2R, and costs −$72.7 ± $4.8/month.** A 48% volume tax for a negative quality change.
+
+**The extension cap does not even describe ETH.** The 09-11 14:00 bar sat at the **5th percentile of extension and the 0th percentile of distance above the old 24h close-high** — at 15-minute resolution the fill was *below* the prior close-high. ETH was an **under-extended** entry by corpus standards. Independently: "clear the prior max by ≥ X ATR" is negative at **every** threshold (−0.0009 at 0.05 ATR through −0.0482 at 1.00 ATR, deleting 77% of fills and 80% of the tail). The one nominally strong cap costs −$13.9 ± $2.2/month and refuses ZEC +$75.37.
+
+**Both constructive alternatives are worse than doing nothing.** Bidding a pullback 0.5 ATR below the signal is worth +0.194R per filled trade — of which **+0.167 is the mechanical price gift**; net of carry **+0.027 ± 0.008**, and the 5,192 signals that never pull back are the ones that *run* (+0.639R). Cost: **−$60/month.** Waiting for follow-through costs **−0.299R matched, −$93/month.** The entry-timing axis is the same carry identity in both directions: **enter lower and the runners never fill; enter higher and you pay the carry. The bot is already at the only neutral point on that axis.**
+
+**The 900s cadence is NOT MEASURABLE either way, and I am correcting my own line here.** 60s takes 2.08x the fills at −0.146R lower mean for slightly fewer net dollars — but that rests on n=127 fills from 10 symbols, **four of which are tokenized equities and oil (24% of fills), with no majors and no ETH in the sample.** More decisively: **zero of 1,645 qualifying minutes reached window-minute 12. ETH was at minute 14.** The minute-resolution test contains **no instance of the ETH configuration** and cannot speak to it. Pre-register it; do not decide it on this.
+
+**The OOS ceiling for the entire entry-instant family is BELOW ZERO.** A 13-feature model fitted on the first half of the corpus and tested on the second **anti-generalises**: the trades it refuses out of sample average +0.351 to +0.377R against an OOS base of +0.316R. It systematically throws away the better half. Perfect foresight would lift meanR from +0.279 to +1.528; the realisable OOS ceiling is slightly negative. **Whatever is left in this sleeve is not in the entry conditions.**
+
+---
+
+# 3. RANKED — DOLLARS, FILLS DELETED, MDE, ENV-OR-CODE
+
+Dollars at 1R = $23.60 (these two fills' own 1R) and live fill rates. **At the book's lifetime 1R of $15.49 every figure scales down ~34%** — which shrinks the insignificant candidates, never grows them. Ship bar **$10/month**.
+
+| # | candidate | $/month (±SE) | fills deleted | MDE (2σ) | env/code | verdict |
+|---|---|---|---|---|---|---|
+| 1 | **DO NOTHING** | $0 | 0 | — | — | **SHIP** |
+| 2 | **settled-bar fix** (`_drop_incomplete_klines`) | TREND −$4.9 ± $4.1 · WC +$56 ± $154 | TREND 0 net (7,561 shift one bar); WILDCARD count *rises* | $8 / $308 | **CODE**, 2 call sites | **SHIP as correctness, book $0** |
+| 3 | drop `FUTURES_WILDCARD_REQUIRE_PULLBACK` | **+$141 ± $180** (0.8σ, p=0.46 vs best-of-6 null) | **adds** 107% | $360 | ENV (flag exists) | **SHADOW ARM ONLY — do not flip** |
+| 4 | TREND 60s cadence | **not measurable** | adds ~108% | — | ENV | **PRE-REGISTER** |
+| 5 | 2-bar confirmation of extreme | +$18 ± $18 (1.0σ) | −50% | $36 | CODE | NO — refuses the ETH 13:30 winner, takes the 13:45 loser |
+| 6 | cross-sectional idiosyncratic exit | +$51…78 ± $70…106 | 0 (exit) | **$210** | CODE | NO — book +1.64R → −2.17R |
+| 7 | in-trade volume/give-back exit | +$11.1 ± $11.3 | 0 (exit) | $23 | CODE | NO — placebo −0.024 ± 0.018 |
+| 8 | extension cap (ext_pm > 0.50R) | **−$13.9 ± $2.2** | −10.9% | $4.4 | CODE | NO |
+| 9 | pullback limit on TREND entry | **−$60** | −36% | — | CODE | NO |
+| 10 | first-bar-of-window only | **−$72.7 ± $4.8** | −47.8% (−50% of tail) | $10 | CODE | NO |
+| 11 | follow-through confirmation | **−$93** | −53% | — | CODE | NO |
+| 12 | add pullback filter to TREND | netR 2,631 → 617 | **−78%** (tail ≥3R: 1,295 → 285) | — | ENV/CODE | NO — the hardest kill in the set |
+| 13 | peak-so-far bail | −0.22 to −0.26R, 12–15σ negative | 0 (exit) | — | CODE | NO |
+
+**Two notes on how to read this.** The *negative* rows (8–12) are genuinely well-determined — deleting a positive-expectancy population is a precise cost even when the meanR difference is noise; they are 6–15 sigma in the wrong direction. The *positive* rows are not: row 6's own MDE is **$210/month against a $10 bar** — that instrument is 20x too coarse to answer the question in either direction. **Row 6 is killed by the deterministic path fact on the real book, not by its t-statistic.** Row 3 is killed by nothing at all; it is simply unmeasured.
+
+**Best-of-6 multiplicity null on the top candidates: p50 $131/mo, p95 $332. Observed best $141. p = 0.46.**
+
+---
+
+# 4. CORRECTNESS ITEMS — SEPARATE FROM P&L
+
+**These are worth fixing at zero dollars. None of them is an edge. Do not let any of them be sold internally as the ETH fix.**
+
+**(a) The in-progress-bar read. REAL, FIX IT.** Neither `_maybe_scan_wildcard` (6622) nor `_maybe_scan_trend` (6965) calls `_drop_incomplete_klines`. Today's entry therefore depends on **where the 450s/900s scan clock happens to land inside a 900s bar** — the sleeve is non-deterministic, un-replayable and un-auditable, and `trend.py`'s docstring claims a property the code does not have. **Fix it because it is wrong, not because it pays** (−$4.9 ± $4.1/mo on TREND; three separate corpora built entirely on settled bars still book zero expectancy).
+
+Two honest complications, neither of which changes the recommendation:
+- **On ETH specifically the fix may point the opposite way to the original post-mortem.** The settled 13:45 bar fires (making the live fill only 0.076R ≈ $1.78 worse) — but the settled **13:30** bar *also* fires, at scan instant 13:45:00, entry 2522.94, and that twin resolves **+1.437R.** On n=1 the in-progress read looks like it **suppressed a winner** and delivered the loser. That matches the population mechanism (the partial candle *suppresses* signals rather than inventing them, because partial-bar volume is measured against a full-bar baseline). It is n=1. Do not price it.
+- The effect is **resolution-dependent** — at Min15 the settled prior bar qualifies and the fix does not delete the ETH trade at all. That dependence is itself evidence this is a reshuffle, not an edge.
+- On WILDCARD the fix is a **capacity** change, not a quality one. Pre-register the fill-count change before shipping.
+
+**(b) The ARMED mean +1.813R / 94.5% win does not reproduce, and is internally impossible.** Two independent rebuilds measure **+1.06R and +1.13R with a 100% armed win rate.** The 100% is structural: a floor at 0.50 × peak with peak ≥ 1.0R **cannot book a loss.** Any engine reporting armed losers is crediting peak from the bar that stopped it, or using a different R denominator. **The binary split is solid (+1.06 vs −0.89, 100% vs 2–6%). The magnitude is not — anything scaled off +1.813R is ~1.7x too large.** The post-mortem's scratch is gone, so the gap cannot be diagnosed, only flagged.
+
+**(c) Adopt the PEEK PLACEBO as standing practice.** Giving an in-trade rule **one bar (5 minutes) of future sight is worth +0.10 to +0.19R per trade** — four to seven times the entire causal effect — and flips every cell from negative to t = 5–9 positive. **Any future in-trade result landing near +0.10R should be assumed to be a bar-alignment bug until the peek control is run.** This is the cheapest guardrail in the toolkit and it is the single most valuable thing produced this week.
+
+**(d) Three overstated numbers, corrected before they propagate.** IOST's volume bars are **+4.30 / +2.57 sigma** on the only estimator the data supports, not 9–10. The first-touch result is **1.8–2.6 sigma (big-3) / 1.2–1.3 (band-wide)**, not 4.2 — that came from a 3-cluster bootstrap. And one winner-kill row (ENA) was a **silent false negative**: a missing Min1 file rendered as "never fires."
+
+**(e) The calm-score direction is contested and nobody should build on it.** The "high calm measured better" finding was computed on the TREND population, where `calm_ratio` is **not a gate and is never computed by the live detector.** On the WILDCARD population, where the calm-shock veto actually lives, the sign **inverts** (+0.356 ± 0.144 low vs −0.123 ± 0.094 high). Neither was pre-registered. Note only that the WILDCARD direction *supports* the existing live veto, so it implies no change.
+
+**(f) The missing instrumentation is the real cost.** Log the **per-scan detector-reject funnel**, and persist **breadth on every SCAN** rather than only on fills. Both are decision-free and cost nothing. **Backfill is impossible, so every day of delay is permanent.**
+
+---
+
+# 5. WHAT WOULD SETTLE ANYTHING STILL OPEN
+
+| open question | statistic | n needed | realistic date |
+|---|---|---|---|
+| **P(arm \| touched 0.75R) = 86%** — five independent samples now (84.6 / 87 / 85.9 / 88.9 / 86.3) | realised arm rate on WILDCARD fills that touch 0.75R | **30 WILDCARD fills**, pre-registered at 86% | ~Nov 2026. **If it holds, IOST needs no explanation at all.** |
+| **`FUTURES_WILDCARD_REQUIRE_PULLBACK` = off** (+$141 ± $180, the only positive point estimate anywhere) | netR/fill, shadow arm vs live default | 0.8σ → **~6x the current 62 days** | **~13 months of shadow accrual.** The flag already exists — run it as a shadow arm. Do NOT flip a live sleeve's fill rate on 0.8 sigma. |
+| **60s TREND cadence** | netR **per fill**, 60s population vs 900s population, TREND only | **30 fires**, pre-registered *before anyone looks again* | ~2 months once armed |
+| **ETH 13:30 vs 13:45 settled counterfactual** | which bar fires under the fix, logged forward | n=1 today | settled by shipping (a) and logging, not by replay |
+| **the +1.813R armed mean** | realised R on live armed fills | the post-mortem engine is gone; only the live book can settle it | ongoing |
+| **in-trade exit family (both branches)** | best surviving cell vs zero | **789 fills to separate from zero; 989 to clear $10/mo** | **26 and 33 months.** This is the arithmetic that ends the discussion. |
+
+---
+
+# FINAL RULING
+
+**Both of your intuitions are correct as descriptions of what happened. Neither is actionable, and the numbers say so cleanly rather than ambiguously.**
+
+**IOST:** you read the tape right. The move was real, it was identifiable in near-real-time at t+21min, 73 minutes before the stop, and closing there books −0.15R instead of −1.06R. **It is not separable, because the IOST that WON two days earlier produced a signature 2.5x stronger, and the strongest reading in the entire book belongs to a winner.** There is ~0.5R/trade of hindsight money below the arm; this family recovers 5% of it, indistinguishably from zero, while destroying 42% of the right tail.
+
+**ETH:** you are right that the sampler took the last and highest minute. **You are right that the entry-timing elements are insufficient — and that is a statement about the sleeve's premise, because TREND's gate requires a new 24h closing extreme and is designed to buy extension.** The specific mechanism you named is a look-ahead artefact: +0.572R contaminated, +0.025R causal. And ETH was, by corpus standards, an *under*-extended entry — the "we bought it too extended" story does not describe the trade.
+
+**Ship: nothing, except the two `_drop_incomplete_klines` calls, as a correctness fix booked at zero dollars, and the peek-placebo audit as standing practice.** Do not touch `FUTURES_TREND_SCAN_INTERVAL_SECONDS`. Do not flip the WILDCARD pullback flag — shadow-arm it. **Stop mining the entry instant: the out-of-sample ceiling for that entire feature family is negative.**
+
+**This is roughly the 35th to 40th candidate priced this month and the outcome is the same one. The binding constraint is not filter quality or exit logic — it is that 2 slots × 62 days is ~107 WILDCARD fills, the whole envelope is ±$60/month, and there is not $10/month of recoverable dispersion inside it. The only changes that can still pay are the ones that buy time-to-verdict: the reject funnel, per-scan breadth, and the shadow arm.**# THE COUNCIL — VERDICT ON BOTH REQUESTS
+
+Four independent lines, four verifiers, ~15,000 searched cells, four corpora (358d/360d/70d Min15 + 5y hourly). **Both requests come back null. Neither is close.** The reasoning below is why, and the parts where the lines disagree are flagged rather than averaged.
+
+---
+
+## THE OPPOSER — where your thinking is weakest
+
+Your short argument has a hidden premise you did not state: *that the tape falling is something you could have known at entry.* Everything turns on that.
+
+Split the mirror short by the tape **during the hold** — condition on the future — and it looks superb: **+0.248 ±0.076 R in down tape, -0.443 ±0.047 in up tape**, perfectly monotone, the long gate's exact mirror image. Split it by the **trailing 30-day tape at entry** — the only version you can trade — and over **five years containing four bear quarters (2022Q2 -67%, 2022Q4 -34%, 2025Q1 -43%, 2025Q4 -42%)**, the best gross cell in the entire table is **+0.003R**, and **not one cell is positive net of fees**. That gap is the whole answer.
+
+And it is worse than the brief anticipated. The adversary line found that on a 360-day corpus in which the alt index fell 59%, the mirror short **loses money in down tape** (-0.050 ±0.031 on the four names, -0.062 ±0.012 band-wide) and makes its entire — still zero — return in flat tape. Mechanism: a new 24h closing low in a persistently falling market *is the bounce point*; a 24h clock with a 3×ATR stop books that bounce against you. The short is not merely inverse beta. It is not even that.
+
+Second weak point, and it is yours rather than the shorts': you asked to refine parameters on a sleeve whose live record is t=+0.86. At 128 fills/year the smallest effect you could detect with 80% power is **+0.247 R/fill**. The largest honest effect anywhere in 15,000 cells is about half that. Any parameter you ship today is unfalsifiable until roughly 2030.
+
+## FIRST PRINCIPLES — what you actually asked
+
+Not "which parameters" but *"is there anything left in this sleeve, and can I get at it from the short side."*
+
+Reframed that way the sweep answers itself. **The live values sit mid-pack in every single family**: 58th percentile of 6,144; rank 1,641 of 5,760; rank 179 of 357; rank 1,103 of 1,872 (41st). Every one-at-a-time move off them is nominally better — ROC 8% +0.307, ext192 +0.167, TP5 +0.183, arm1.25 +0.169, slots 3 +0.196, SL4.0 +0.174 — and **not one clears 1.6 SE**. Improvement available in every direction, none of it significant, is the signature of a flat likelihood surface, not a mis-set dial.
+
+And the deeper reason there is nothing to tune: **68% of the gate's raw edge is the carry identity** `ROC96/(3×ATR)` — the momentum you are already extended into, handed to you mechanically. The monotone ROC axis (2%: +0.066 → 8%: +0.195) *is* that identity seen end-on. Raise ROC and per-fill edge rises while dollars fall ($1,454 → $1,178) because fills collapse 612 → 206/yr. You buy edge-per-fill and give it straight back in turnover.
+
+The parameters are not where the return lives, so no setting of them changes the return.
+
+## THE EXPANDER — what is genuinely good here, and it is not small
+
+**The long gate has real alpha, and the recent losses are beta, not decay.** Two lines, independently, on different corpora, with different regression specs:
+
+| | alpha, net of alt index | beta |
+|---|---|---|
+| longgrid (358d, 2,442 fills) | **+0.199 ±0.061** (t +3.25) | +10.0 |
+| adversary (360d, block-bootstrap) | **+0.192 ±0.065** (t +2.94) | +8.9 |
+| shortdesign (360d, vol+regime-matched) | **+0.165 ±0.069** (t +2.40) | — |
+
+All three measured in a window where the tape fell **59%**. That is the correct answer to "the longs have been losing." They lost because they are long ~10 beta into a bear tape, and they *still* cleared it.
+
+Second: the walk-forward is the most encouraging object in the study, in a way you did not ask for. The **untouched live config** posts +0.205R across five chronological OOS folds while the **fitted argmax** posts +0.181R on one-fifth the fills. The incumbent beats the search out of sample. The adversary priced the same thing in dollars: honest tuning carries a **search premium of −0.043 R/fill = −$28.64/month**. Refining is not a neutral experiment with an unclear payoff — the measured payoff is negative. You are being paid to leave it alone.
+
+Third, offered because you asked for opportunity: **the only statistically solid effect in 15,000 cells** is the exhaustion short at **−0.108 ±0.013 R (t = −8.3)**. Fading strength on crypto perps loses reliably. That is not a new trade — it is the long-only design's own thesis, confirmed from the other side with a t-stat nothing on the long side can match.
+
+## THE OUTSIDER — the obvious things
+
+**1. Your live short evidence is on different instruments.** All 32 live WILDCARD shorts are micro-caps — SOPH, PONS, MARSCOIN, NIL, TUT, MAGMA, SIREN. **Not one is ETH, XRP, ZEC or SOL.** The live short record says literally nothing about adding shorts to TREND. The two never overlap in universe, liquidity or spread.
+
+**2. The ledger does not reconcile, and you should know that before anything else.** Three lines read the live short record and got three different answers:
+
+| line | window | shorts | total |
+|---|---|---|---|
+| shortdesign | 06-14 → 09-10, 190 unique positionIds | 32 | **−$9.86** |
+| adversary | 06-15 → 09-06, 90 closes | 27 | **+$7.89** |
+| shorttest | 08-08 → 09-10 | 18 | **+$0.32** (verifier found 19 at −$10.87) |
+
+Different windows explain some of it; **the sign of the short arm's dollar total does not survive the choice of file**. SOPH is cited at +$24.68 in one place, +$24.54 in another, and is absent from a third ledger entirely. Per the reporting standard the honest statement is the one all three agree on: **long minus short is −$0.38 ±$1.55 (n=100) / −0.231R ±0.472 (n=80). No measurable side difference.** The reconciliation failure is itself a finding and it is a data-hygiene job, not an analysis one.
+
+**3. The sleeve is a ZEC bet.** The entire top-12 cells by meanR in the adversary's 1,872 are **ZEC-only**. Drop ZEC and the long family's best-of-N goes from p=0.032 to **p=0.313** — from the one sub-0.05 number in the study to nothing. Ex-ZEC (ETH/XRP/SOL) runs +0.048 to +0.096 R/fill with a **top-3 concentration above 100%** — the leg is three trades wearing a trench coat. ZEC ran **+2,111%** inside these windows. Two corpora now say ZEC is the best of the four; four earlier corpora say it is the worst. **That conflict is unresolved and unresolvable inside a window that contains ZEC's defining run.** Do not act on either reading. Do hold it as your largest concentration risk.
+
+**4. Your premise does not match your own live record.** Live WILDCARD fills by regime at entry: **47 UP / 32 FLAT / 21 DOWN**; book-wide 100/60/30. The live window was *predominantly up tape*, and both sides lost in it. "The longs lost because the tape fell" is true of the replay corpus and **not** of your live book.
+
+## THE IMPLEMENTER — the numbers that decide it, then the step
+
+### Best-of-N nulls, reported before any cell is called good
+
+| family | cells | null median | null p90 | observed best | **p** |
+|---|---|---|---|---|---|
+| longgrid, slot-constrained | 6,144 | +141.7R | +206.9R | +207.3R | **0.099** |
+| shortdesign, long | 5,760 | +0.359 | +0.530 | +0.549 | **0.082** |
+| shorttest, long | 576 (357 adm.) | +0.441 | +0.764 | +0.599 | **0.321** |
+| adversary, all | 1,872 | +0.265 | +0.421 | +0.462 | **0.050** ← ZEC-only |
+| adversary, long ex-ZEC | 396 | +0.171 | +0.383 | +0.263 | **0.313** |
+| **shortdesign, short** | 180 | **+0.187** | +0.318 | **+0.147** | **0.698** |
+| shortdesign, short × regime | 504 | +0.376 | +0.561 | +0.316 | **0.718** |
+| shorttest, short | 156 (150 adm.) | +0.190 | +0.458 | +0.019 | **0.982** |
+
+**Zero cells in any family clear p90. Zero clear p95.** The best short cell anywhere sits **below its own null's median** — the search found less than noise produces from the same search. A verifier re-ran both families under the studentised max-t statistic, the variant *most* favourable to the candidate: shorts fw-p 0.321, longs fw-p 0.220, live long fw-p 0.890. The verdict is not an artefact of the chosen statistic.
+
+### Short alpha net of the alt index — the decisive number, with its SE
+
+| mechanism | corpus | alpha | beta |
+|---|---|---|---|
+| mirror, TREND-4 | 358d | −0.036 ±0.050 | −11.9 |
+| mirror, TREND-4 | 360d | −0.003 ±0.051 | −10.4 |
+| mirror, 24-name band | 360d | +0.014 ±0.037 | −9.7 |
+| **mirror, 5y hourly, 195,887 fills** | **5y** | **−0.0135 ±0.0049 (t −2.8)** | **+1.00** |
+| failed breakout | 5y | −0.033 ±0.004 | +1.00 |
+| lower-high | 360d, beta-neutral | +0.050 ±0.018 | +0.91 |
+
+The 5-year figure is the one to hold. Its verifier caught the spec error — the index window was fixed at 24h on trades that mostly exit early, attenuating beta to +0.72. Corrected to the **realised** holding window, beta snaps to **1.004** (the diagnostic that the spec is now right) and the alpha becomes **−0.0135 ±0.0049**. The 95% CI is **[−$8.95, −$1.51]/month** at 25 fills and 1R=$15.49. **Entirely negative.** Shorts do not fail to clear the ship bar; they lose money net of their own beta, measured on 196,000 fills across five years.
+
+The two structural facts that were meant to favour shorts both point backwards:
+- **Funding** pays a 24h short **+0.0019R to +0.0050R** against a round-trip cost of **0.036R to 0.095R** — **5–13% of what it must beat**. Live: +$0.0127 per short position. Real, directional, economically irrelevant at this holding period. The sharpest counterexample is live: PONS short received **+$0.544** of funding over 23.6h (~1%/day, a textbook crowded-long reading) and closed **−1.08R, −$18.87** — the worst live short.
+- **Crowded-long names short the SAME or WORSE** than uncrowded ones on every mechanism tested. Breadth-conditioning inverts too: shorting into weak breadth is the worst cell (−0.274 ±0.080), not the best.
+
+### The tail and the asymmetry
+
+Structural fact 3 is confirmed and it is the second-strongest reason not to ship. Priced with gap-through (a bar closing beyond the stop fills no better than that close), 5y hourly:
+
+| | n | worst | P(< −5R) |
+|---|---|---|---|
+| long gate | 181,957 | −5.14R | 0.0005% |
+| **mirror short** | 195,887 | **−22.27R** | **0.0133% — 27×** |
+| failed breakout short | 182,911 | −17.64R | 0.0169% |
+
+On the **matched identical-bar** set: short worst −18.82R vs long −9.19R, 3.6×. **Three of the five worst shorts are the same symbol on the same day** (FLOKI, 2023-05-05). Squeezes cluster in time *and* in name — on a 2-global-slot sleeve that is the whole book in one instrument on one afternoon. At 1R=$15.49 a −22.27R fill is **−$345** against a total measured envelope of **±$60/month**: one squeeze erases roughly six months of your best case, arriving about once in 7,500 shorts — i.e. once in a career at your fill rate. That rarity is not comfort. It means shipping on a mean you can never verify and being destroyed by a tail you cannot observe until it lands.
+
+*(Two lines report a −1.00R floor in every short cell. That is a Min15 bar-resolution artifact — the bar cannot see the intrabar path of a squeeze. It is not evidence the stop is safe.)*
+
+### Survivorship — stated honestly, it runs in favour of shorts
+
+Every line agrees on direction: today's-liquid-names corpora are missing exactly the collapses a short harvests, so **every negative short number here is conservative-against-shorts**. Three lines refused to size it. The adversary bounded it two ways and this is the most useful thing anyone did with the objection:
+
+- Observed delist rate on the 109 symbols the bot actually traded: **1.8% over ~3 months ≈ 7%/yr**; 20%/yr as a pessimistic ceiling.
+- **Transmission, measured**: regressing each symbol's mirror-short meanR on that symbol's own 360-day return gives slope **+0.0022 ±0.0042 (t +0.52, R² 0.01)** — zero, and if anything the wrong sign. SUI −80%, STORJ −79%, ENA −78%, ADA −77% did **not** produce better 24h shorts; STORJ scored −0.036R. The mechanism is simple: **a 24h clock with a 3×ATR stop cannot capture a slow grind to zero — it gets chopped out.**
+- Upper bound via the collapse day itself: assume every delisted name delivered one +20R fill at a 20%/yr delist rate → **+0.005 R/fill**, against a cluster-robust SE of 0.037.
+
+The strongest argument the short case has left cannot move the point estimate by a seventh of its own error bar.
+
+### Power — and what adding shorts costs you
+
+| question | fills needed | time at live cadence |
+|---|---|---|
+| resolve TREND long's own existence | 312–604 | 7.3–14 months |
+| detect the best searched cell beating live | 4,265 | **8.3 years** |
+| detect the tuned-long gap (+0.039) | 23,222 | **45 years** |
+| detect a +0.05R short alpha | 7,064 | **13.7 years** |
+| detect a $10/month short at 25 fills/mo | 5,792 | **19.3 years** |
+
+**This is the argument that settles it operationally.** Adding shorts doubles the hypothesis space of a sleeve that cannot resolve the hypothesis it already has at t=+0.86 — and if both arms share the 2 global slots it **halves the per-hypothesis fill rate**, pushing the one question that was ever going to resolve from 7.3 months out past a year. **The cost of testing shorts is not the shorts' expected loss. It is the delay imposed on the only question that could have been answered.**
+
+---
+
+## RANKED DECISION — including do-nothing
+
+1R = **$15.49** (allocation-verdict constant; one line quoted dollars at $22.95, divide accordingly). Ship bar $10/month.
+
+| # | action | R/fill | $/month | fills | MDE | env/code | cost of being wrong |
+|---|---|---|---|---|---|---|---|
+| **1** | **DO NOTHING on TREND — gate and exit stack unchanged** | +0.16 to +0.20 alpha | ~+$40/mo live scale | 128/yr | +0.247R | **neither** | You forgo an effect nobody could measure. Zero. |
+| **2** | **Halve the stake, keep the sleeve** *(yesterday's standing rec — unaffected by either result)* | unchanged | halves variance | unchanged | — | env | If the sleeve is live, you earn half. Cheap insurance against a tail you cannot see. |
+| **3** | **Fix `_drop_incomplete_klines`** (gate fires intrabar) | unmeasurable | unknown, signed | — | — | **code** | A correctness bug with a known sign. Does not need a grid to justify. *Note: every twin in this study runs the corrected convention — the live bot is trading a differently-priced signal than anything measured here.* |
+| **4** | **Acquire historical per-symbol funding series to disk** | — | $0 | — | — | neither (data) | The only untested short hypothesis. Data acquisition, not analysis. Costs nothing live. |
+| **5** | Slots 2 → 3 | +0.036 | +$3–6/mo | +50% | never detectable live | env | Below ship bar; book-level allocation shared with WILDCARD, not a TREND dial. Route it, don't ship it here. |
+| **6** | Retune the long gate to the grid argmax | **−0.043 OOS** | **−$28.64/mo** | −80% | 8.3 yrs | env | **Measured negative**, and a config change **resets trial 19**. That reset is the expensive part. |
+| **7** | Tighten stop to 2.0×ATR | +$580/yr replay | unpriced | +100% | — | env | Largest apparent gain in the study and the single result most exposed to the twins booking **zero fees** — it runs a ~50% larger position at constant risk. |
+| **8** | **Add shorts to TREND (any mechanism)** | **−0.0135 ±0.0049** | **[−$8.95, −$1.51]/mo** | doubles | 19.3 yrs | code | Negative alpha, 27× fatter −5R tail, doubles an unresolvable hypothesis space, halves the fill rate on the one question that resolves. |
+
+**Leave the WILDCARD short arm exactly as it is.** It is not bleeding (−$0.31/fill vs −$0.69 for longs; difference −$0.38 ±$1.55), the pre-registered kill condition is not met, and turning it off deletes fills without creating any.
+
+---
+
+# FINAL RULING
+
+**Both requests are null. Ship nothing.**
+
+**Request 1 — the sweep.** No parameter combination beats the live one after paying for the search. Fifteen thousand cells across four corpora; zero clear any best-of-N null's p90; the single sub-0.05 cell is a one-symbol ZEC universe. The live values sit at the **41st–58th percentile of every family** — not a plateau peak, not a mis-set dial, an unremarkable interior point on a **flat** surface where every direction is nominally better and nothing is significant. **The surface is flat and the live values are as good as anything.** Better than that: honest walk-forward tuning is **measurably negative, −$28.64/month**, the argmax never repeats across folds, and the untouched incumbent beats the search out of sample (+0.205 vs +0.181). The reason there is nothing to find is that **68% of the gate's raw edge is carry you already own for free** — the parameters are not tuning the thing that produces the return.
+
+**Request 2 — the shorts.** Your premise was sound and your inference fails, in exactly the way the trap predicted and then one step worse. Shorts return +0.248R in down tape and −0.443R in up tape **only when "down tape" is defined by the next 24 hours.** Define it by the trailing 30 days — the only version you can trade — and across five years containing four bear quarters there is **not one positive cell net of fees anywhere in the table.** Beta is −10 to −12; alpha is **−0.0135 ±0.0049 R/fill on 196,000 fills, a 95% CI that is entirely negative.** That is inverse beta, which is a 24-hour market-timing bet, and market-timing gates are refuted across 83 prior cells on this book plus every cell in this one. Worse: the mirror short **loses money in down tape** — selling a new 24h low in a falling market is selling the bounce. Funding pays 5–13% of the round trip it must beat; crowded-long names short *worse*; breadth-conditioning inverts. And the survivorship bias, which runs in your favour, is bounded at **+0.005 R/fill** against an SE of 0.037 — because a 24h clock with a 3×ATR stop cannot capture a grind to zero.
+
+**The live short record cannot settle it either way, and it does not reconcile.** Three reads of your own ledger produce −$9.86, +$7.89 and +$0.32. All agree on the only defensible statement: **no measurable side difference** (−$0.38 ±$1.55). And **not one of the 32 live shorts is ETH, XRP, ZEC or SOL** — the evidence is on micro-caps and cannot transfer. Fix the ledger reconciliation; it is a data job, not a research job.
+
+**What is genuinely good, and you did not ask for it:** the long gate's alpha net of the tape is **+0.17 to +0.20 R/fill**, confirmed by three lines on two corpora, earned in a window where the alt index fell **59%**. The sleeve is not broken and the recent losses are **beta, not decay.** One caveat I will not smooth over: on a 5-year hourly corpus with fees booked, the same gate is **zero-to-negative**, and under the hardest same-week/same-ATR/same-carry null the 360-day alpha shrinks from +0.17 to **+0.040 ±0.031**. Two of those three readings are positive, the hardest two are not. **I do not know which regime you are in**, and neither does this book at 128 fills/year.
+
+**Two risk disclosures to carry, neither of them an improvement:**
+1. **The measured edge is ZEC.** Drop it and the long family goes from p=0.032 to p=0.313 and the ETH/XRP/SOL leg has a top-3 concentration above 100%. Two corpora say ZEC is your best name, four say it is your worst, and the conflict is unresolvable inside a window containing a +2,111% run.
+2. **Yesterday's long-only +0.2215 ±0.0391 is a one-regime read and should carry a "superseded" flag** the way the retracted 2026-08 short figure does. On 238,789 matched bar-pairs over five years long-minus-short is **−0.0437 ±0.0272** — opposite sign, five of six years negative. **Keep long-only, but keep it for the tail reason**: 27× fatter −5R quantile, worst −22.27R ≈ −$345 against a ±$60/month envelope, squeezes clustering in one name on one afternoon on a 2-slot book. **Long-only is a risk decision, not an edge claim.**
+
+**Yesterday's standing recommendation — halve the stake, keep the sleeve — is unaffected by either result and remains the right move.**
+
+**The one thing left worth spending effort on:** get a historical per-symbol funding series onto disk. It is the only short mechanism nobody could test, it is the only one with a genuine carry story, it is a data-acquisition task with zero live risk — and everything price-shaped has now been tested and killed. Everything else on this sleeve is unfalsifiable for the next eight to forty-five years, and the binding constraint is no longer the search. It is that **the sleeve cannot generate the evidence needed to justify changing it.** That is a stronger argument for leaving it alone than any p-value in this report.
+
+*Process notes, on the record: two headline computations (longgrid's alpha/beta regression, shorttest's carry identity) had no script saved to disk and were rebuilt by verifiers — both reproduced, but a headline behind an unsaved computation came within one reproduction of being fatal. Save them before either number is quoted again. Read-only throughout; no repo file, config, env or order was touched.*
