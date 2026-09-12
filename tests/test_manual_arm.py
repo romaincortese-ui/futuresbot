@@ -127,37 +127,42 @@ def test_arms_below_the_gate_and_the_trail_then_fires(tmp_path, monkeypatch):
     assert closed["reason"] == "CONVEX_RETENTION_TRAIL"
 
 
-def test_arm_uses_the_running_peak_not_the_current_r(tmp_path):
-    """Armed at +0.6R after a +0.8R peak: the floor is off the PEAK, exactly as
-    the automatic rule would compute it, and it still sits below the current level."""
-    runtime = _runtime(tmp_path, _Client(price=106.0))   # +0.60R
+def test_arm_anchors_on_the_current_value_not_the_peak(tmp_path):
+    """THE OWNER'S REQUIREMENT. Armed at +0.6R after a +0.8R peak, the floor derives
+    from the CURRENT +0.6R (-> +0.30R), not the +0.8R peak (-> +0.40R). A floor off a
+    peak the trade has fallen away from may never be reached again, so it secures
+    nothing; the point is to lock in something reachable by construction."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))   # +0.60R, peak +0.80R
     position = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
     ok, message = _armed(runtime, position)
     assert ok is True
-    assert position.metadata["manual_arm_peak_r"] == pytest.approx(0.80)
-    assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.40)
-    assert "+0.40R" in message
+    assert position.metadata["manual_arm_peak_r"] == pytest.approx(0.60)   # the anchor
+    assert position.metadata["manual_arm_true_peak_r"] == pytest.approx(0.80)
+    assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.30)
+    assert "+0.30R" in message
 
 
-def test_refusal_10_retraced_past_the_floor_would_close_immediately(tmp_path):
-    """THE DEFECT THIS GUARD EXISTS FOR. Peak +0.80R puts the floor at +0.40R, but
-    price has already fallen back to +0.20R. The old check only compared the floor
-    to the PEAK, so this armed successfully and the next one-second poll closed the
-    trade - /arm banking a giveback it was written to prevent."""
-    runtime = _runtime(tmp_path, _Client(price=102.0))   # +0.20R, below the 0.40R floor
+def test_a_deeply_retraced_position_is_armable_from_where_it_is(tmp_path):
+    """Peak +0.80R, price back to +0.20R. Anchoring on the peak would put the floor
+    at +0.40R - above the current value, an instant close. Anchoring on the current
+    value gives +0.10R, which is reachable and better than the nothing in force
+    below the gate."""
+    runtime = _runtime(tmp_path, _Client(price=102.0))   # +0.20R
     position = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
-    runtime.open_positions["ZEC_USDT"] = position
-    _refuses(runtime, position, "ZEC", "already given back past that floor")
-    assert "manual_arm" not in position.metadata
+    ok, message = _armed(runtime, position)
+    assert ok is True
+    assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.10)
+    assert "+0.10R" in message
 
 
-def test_refusal_10_boundary_floor_equal_to_current_is_refused(tmp_path):
-    """At r_now == exit_level the exit path closes (it holds only while
-    r_now > exit_level), so the boundary must refuse, not arm."""
-    runtime = _runtime(tmp_path, _Client(price=104.0))   # +0.40R == the 0.40R floor
-    position = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
+def test_cost_floor_above_the_current_level_still_refuses(tmp_path, monkeypatch):
+    """The floor can only be below the current value by construction now (retain < 1),
+    EXCEPT when the breakeven cost floor dominates. That case must still refuse."""
+    monkeypatch.setenv("FUTURES_CONVEX_COST_PCT", "9.0")     # a punitive round trip
+    runtime = _runtime(tmp_path, _Client(price=101.0))       # +0.10R
+    position = _pos()
     runtime.open_positions["ZEC_USDT"] = position
-    _refuses(runtime, position, "ZEC", "already given back past that floor")
+    _refuses(runtime, position, "ZEC", "cannot be trailed profitably from here")
 
 
 def test_refusal_11_legacy_giveback_mode_has_no_breakeven_floor(tmp_path, monkeypatch):
@@ -256,14 +261,17 @@ def test_refusal_7_not_in_profit(tmp_path):
 
 
 def test_refusal_8_already_armed_automatically(tmp_path):
-    """The owner's SECOND example. The floor already tracks the running peak, so
-    /arm would change nothing — say so with the real numbers instead of acting."""
-    runtime = _runtime(tmp_path, _Client(price=123.0))      # +2.30R
+    """The owner's SECOND example, at a new high. The live floor is already
+    0.50 x 2.30R and arming from the same value reproduces it exactly, so there is
+    nothing to gain — say so with the real numbers and point at the giveback form."""
+    runtime = _runtime(tmp_path, _Client(price=123.0))      # +2.30R, at its peak
     position = _pos()
     runtime.open_positions["ZEC_USDT"] = position
-    _refuses(runtime, position, "ZEC", "is already armed: peak +2.30R")
+    _refuses(runtime, position, "ZEC", "already has a floor at +1.15R")
     ok, message = runtime._manual_arm("ZEC")
-    assert "floor +1.15R" in message and "keeps 50%" in message
+    assert ok is False
+    assert "+1.15R" in message and "50% of its +2.30R peak" in message
+    assert "A giveback under 0.50 would beat it" in message
 
 
 def test_refusal_9_floor_below_the_cost_floor(tmp_path, monkeypatch):
@@ -512,14 +520,15 @@ def test_giveback_that_would_lower_the_floor_is_refused(tmp_path):
     before = json.dumps(position.metadata, sort_keys=True, default=str)
     ok, message = runtime._manual_arm("ZEC", "0.70")          # would floor at +0.60R
     assert ok is False
-    assert "less protected" in message or "never lowers a floor" in message, message
-    assert "+0.60R" in message and "+1.00R" in message, message
+    assert "less protected than not arming it at all" in message, message
+    assert "0.50 or less" in message, message
     assert json.dumps(position.metadata, sort_keys=True, default=str) == before
 
-    # And the exact-equality case, which is the branch the above-gate guard holds.
-    ok, message = runtime._manual_arm("ZEC", "0.50")          # identical to the auto floor
+    # And the exact-equality case: at a new high, 0.50 reproduces the live floor
+    # exactly, so there is nothing to gain and the command says so.
+    ok, message = runtime._manual_arm("ZEC", "0.50")
     assert ok is False
-    assert "never lowers a floor" in message, message
+    assert "no better" in message, message
     assert json.dumps(position.metadata, sort_keys=True, default=str) == before
 
 
@@ -529,8 +538,10 @@ def test_already_armed_without_a_giveback_still_reports_and_refuses(tmp_path):
     runtime.open_positions["ZEC_USDT"] = position
     ok, message = runtime._manual_arm("ZEC")
     assert ok is False
-    assert "would change nothing" in message
-    assert "Pass a giveback to tighten it" in message
+    # At a new high the bare command cannot beat the live floor: same anchor, same
+    # retention, same number. The message names both and suggests the giveback form.
+    assert "no better" in message or "would change nothing" in message, message
+    assert "+1.00R" in message
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -659,3 +670,47 @@ def test_close_record_carries_the_operator_giveback(tmp_path, monkeypatch):
     trade = runtime.trade_history[-1]
     assert trade["manual_arm_retain"] == pytest.approx(0.80)
     assert trade["manual_arm_giveback"] == pytest.approx(0.20)
+
+
+def test_owner_scenario_peak_34_now_23_floors_at_18_40(tmp_path):
+    """His exact scenario. 1R = $20. Peak was +$34 (1.70R), price is back at +$23
+    (1.15R), the automatic trail already holds +$17. /arm ZEC 0.20 must floor at
+    0.80 x $23 = $18.40 - derived from where the trade IS, not from a $34 peak it
+    may never revisit - and then ratchet upward on any new high."""
+    pos = FuturesPosition(
+        symbol="ZEC_USDT", side="LONG", entry_price=100.0, contracts=2,
+        contract_size=1.0, leverage=10, margin_usdt=20.0, tp_price=150.0, sl_price=90.0,
+        position_id="1", order_id="1",
+        opened_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        score=96.0, certainty=0.9, entry_signal="WILDCARD_LONG",
+        metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 1.70})
+    runtime = _runtime(tmp_path, _Client(price=111.5))       # +1.15R = +$23
+    runtime.open_positions["ZEC_USDT"] = pos
+    one_r = runtime._position_stop_risk_usdt(pos)
+    assert one_r == pytest.approx(20.0)
+
+    ok, message = runtime._manual_arm("ZEC", "0.20")
+    assert ok is True, message
+    assert pos.metadata["manual_arm_floor_r"] * one_r == pytest.approx(18.40, abs=0.01)
+    assert "+18.40" in message
+    # Anchored on the current value; the true peak is kept only as telemetry.
+    assert pos.metadata["manual_arm_peak_r"] == pytest.approx(1.15)
+    assert pos.metadata["manual_arm_true_peak_r"] == pytest.approx(1.70)
+    # Strictly better than the $17.00 the automatic rule was holding.
+    assert pos.metadata["manual_arm_floor_r"] * one_r > 0.50 * 1.70 * one_r
+
+    # It ratchets on the SAME poll that records a new high, not one cycle later.
+    runtime._convex_runner_trail_exit(pos, 120.0)            # +2.00R = +$40
+    assert pos.metadata["manual_arm_peak_r"] == pytest.approx(2.00)
+    assert 0.80 * pos.metadata["manual_arm_peak_r"] * one_r == pytest.approx(32.00)
+
+
+def test_the_anchor_never_falls_when_price_does(tmp_path):
+    pos = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
+    runtime = _runtime(tmp_path, _Client(price=106.0))       # +0.60R
+    runtime.open_positions["ZEC_USDT"] = pos
+    assert runtime._manual_arm("ZEC", "0.20")[0] is True
+    assert pos.metadata["manual_arm_peak_r"] == pytest.approx(0.60)
+    for price in (105.0, 104.0, 103.0, 101.0, 100.5):
+        runtime._convex_runner_trail_exit(pos, price)
+        assert pos.metadata["manual_arm_peak_r"] >= 0.60 - 1e-9

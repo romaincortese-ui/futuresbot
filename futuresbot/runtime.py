@@ -2341,6 +2341,12 @@ class FuturesRuntime:
             position.metadata["convex_trough_r"] = round(r_now, 4)
         if r_now > peak_r:
             position.metadata["convex_peak_r"] = round(r_now, 4)
+            # The manual anchor ratchets on the same poll. This branch returns early,
+            # so without it the anchor would lag a new high by one cycle.
+            if (position.metadata or {}).get("manual_arm"):
+                anchor_now = self._metadata_float(position.metadata, "manual_arm_peak_r")
+                if anchor_now is not None and r_now > anchor_now:
+                    position.metadata["manual_arm_peak_r"] = round(r_now, 4)
             try:
                 self._maybe_record_peak_notify(position, r_now)
             except Exception as exc:  # notification must never break the trail
@@ -2355,19 +2361,30 @@ class FuturesRuntime:
         manual_armed = bool((position.metadata or {}).get("manual_arm"))
         if peak_r < arm_r and not manual_armed:
             return False
-        # A manual arm may carry its own retention, chosen by the operator at the
-        # moment of arming (`/arm SYM 0.20` -> keep 0.80 of the peak). It is stamped
-        # once and never re-read from the environment, so the floor a human was shown
-        # is the floor that fires. `_manual_arm` refuses any value that would sit
-        # BELOW the floor already in force, so this can only ever tighten.
+        # A MANUAL ARM ANCHORS ON THE VALUE WHEN IT WAS TYPED, NOT THE HISTORICAL
+        # PEAK, and ratchets up from there. A floor derived from a peak the trade has
+        # already fallen away from secures nothing - the trade may never revisit it,
+        # and if that floor sits above the current value it closes on the next poll.
+        # Anchoring on the value at arm time locks in something reachable by
+        # construction. `manual_arm_peak_r` starts there and only ever rises, so the
+        # floor still cannot fall. The operator's own retention, if they chose one, is
+        # stamped once and never re-read from the environment, so the floor a human
+        # was shown is the floor that fires.
+        floor_peak_r = peak_r
         if manual_armed:
+            anchor = self._metadata_float(md, "manual_arm_peak_r")
+            if anchor is not None and anchor > 0:
+                if r_now > anchor:
+                    anchor = round(r_now, 4)
+                    position.metadata["manual_arm_peak_r"] = anchor
+                floor_peak_r = anchor
             override = self._metadata_float(md, "manual_arm_retain")
             if override and override > 0:
                 retain = override
         if retain > 0:
             # trial 7: retention floor. Ratchet-only by construction (retain is
             # constant and peak only rises), and always >= retain x arm > 0.
-            exit_level = self._trail_retain_for(peak_r, retain) * peak_r
+            exit_level = self._trail_retain_for(floor_peak_r, retain) * floor_peak_r
             # ...but "above zero in R" is not "above zero in DOLLARS". Cost drag
             # is 0.190%/sl_frac, so a sleeve with a 0.37% stop pays 0.52R per
             # round trip and a 0.30 floor nets -0.22R BY CONSTRUCTION. That is
@@ -2378,7 +2395,7 @@ class FuturesRuntime:
             if sl_frac > 0:
                 cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
                 exit_level = max(exit_level, cost_r * self._env_float("FUTURES_CONVEX_COST_FLOOR_MULT", 1.5))
-                if exit_level >= peak_r:
+                if exit_level >= floor_peak_r:
                     # Cannot trail this sleeve profitably at all — leave the
                     # position to its stop / TP / clock rather than close it at
                     # a level that banks a loss.
@@ -4539,67 +4556,64 @@ class FuturesRuntime:
             cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
             cost_floor_r = cost_r * self._env_float("FUTURES_CONVEX_COST_FLOOR_MULT", 1.5)
 
-        def _floor_for(base: float) -> float:
-            level = self._trail_retain_for(peak_r, base) * peak_r
+        def _floor_for(anchor: float, base: float) -> float:
+            level = self._trail_retain_for(anchor, base) * anchor
             return max(level, cost_floor_r) if cost_floor_r > 0 else level
 
-        auto_floor = _floor_for(retain)
+        # THE FLOOR IN FORCE RIGHT NOW, from the true peak under the configured rule.
+        # Below the arm gate there is none: that is what /arm exists to fix.
+        live_floor = _floor_for(peak_r, retain) if peak_r >= arm_r else 0.0
         if want_giveback is not None:
+            # THE RETENTION ITSELF MUST NEVER BE LOOSER THAN THE CONFIGURED ONE, in
+            # any state. Below the gate `live_floor` is 0 so a floor comparison alone
+            # cannot catch this - but the stamped retention is PERMANENT and governs
+            # the trade after the peak crosses the gate too, where the configured rule
+            # would otherwise have taken over. A looser one therefore leaves the trade
+            # LESS protected than typing nothing at all. Refuse, and name the limit.
+            if 1.0 - want_giveback < retain - 1e-12:
+                return False, (f"{sym}: a {want_giveback:.0%} giveback keeps only "
+                               f"{1.0 - want_giveback:.0%} of the peak, looser than the "
+                               f"{retain:.0%} the automatic rule holds. That would leave the "
+                               "trade less protected than not arming it at all. /arm only "
+                               f"tightens — use {max(0.0, 1.0 - retain):.2f} or less.")
             retain = 1.0 - want_giveback
-        exit_level = _floor_for(retain)
-        # THE INVARIANT, ENFORCED IN EVERY STATE - NOT ONLY ABOVE THE GATE.
-        # Below the gate there is no floor in force yet, so there is nothing to
-        # "lower" in wall-clock terms; but the retention stamped here is PERMANENT
-        # and governs the trade after the peak crosses the gate too, where the
-        # configured rule would otherwise have taken over. A giveback looser than
-        # the configured one therefore leaves the trade LESS protected than typing
-        # nothing at all - the command written to enforce the invariant breaking it.
-        # Refuse rather than clamp, so the operator sees the real limit.
-        if want_giveback is not None and exit_level < auto_floor - 1e-12:
-            auto_pct = int(round(auto_floor / peak_r * 100)) if peak_r > 0 else 0
-            max_giveback = max(0.0, 1.0 - self._env_float(
-                "FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30))
-            return False, (f"{sym}: a {want_giveback:.0%} giveback floors at "
-                           f"{exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT), BELOW the "
-                           f"{auto_pct}% the automatic rule would hold "
-                           f"({auto_floor:+.2f}R / {auto_floor * one_r:+.2f} USDT). That would "
-                           "leave the trade less protected than not arming it at all. "
-                           f"/arm only tightens — use {max_giveback:.2f} or less.")
-        if peak_r >= arm_r:
-            # Already armed automatically, so a floor is ALREADY in force at
-            # `auto_floor` and it already tracks the running peak. Without a giveback
-            # there is nothing to do; with one, the only admissible move is TIGHTER.
-            auto_pct = int(round(auto_floor / peak_r * 100)) if peak_r > 0 else 0
-            if want_giveback is None:
-                return False, (f"{sym} is already armed: peak {peak_r:+.2f}R "
-                               f"({peak_r * one_r:+.2f} USDT), floor {auto_floor:+.2f}R "
-                               f"({auto_floor * one_r:+.2f} USDT), keeps {auto_pct}%. The floor "
-                               "already tracks the running peak — /arm would change nothing. "
-                               "Pass a giveback to tighten it, e.g. /arm "
-                               f"{raw.replace('_USDT', '')} 0.20.")
-            if exit_level <= auto_floor:
-                return False, (f"{sym} already has a floor at {auto_floor:+.2f}R "
-                               f"({auto_floor * one_r:+.2f} USDT, keeps {auto_pct}%). A "
-                               f"{want_giveback:.0%} giveback would put it at "
-                               f"{exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT) — the same "
-                               "or lower. /arm never lowers a floor. Use a smaller giveback.")
-        if exit_level >= peak_r:
-            return False, (f"{sym} cannot be trailed profitably: the breakeven floor "
-                           f"({exit_level:+.2f}R / {exit_level * one_r:+.2f} USDT) sits above "
-                           f"the peak ({peak_r:+.2f}R / {peak_r * one_r:+.2f} USDT), so arming "
-                           "would bank a net loss. Left to SL / TP / clock.")
-        # THE FLOOR IS DERIVED FROM THE PEAK, BUT IT BINDS AGAINST THE PRICE NOW.
-        # A position that has already retraced (stored peak 0.90R, now +0.20R) passes
-        # the check above - 0.45R floor is below the 0.90R peak - and then the next
-        # one-second poll sees r_now <= exit_level and closes it immediately, possibly
-        # under breakeven. That is /arm banking a loss, which is exactly what the
-        # refusals exist to prevent. Compare against the CURRENT level, not only the peak.
+        # THE NEW FLOOR ANCHORS ON THE CURRENT VALUE, NOT THE HISTORICAL PEAK.
+        # A floor derived from a peak the trade has already fallen away from secures
+        # nothing, because the trade may never revisit it - and if that floor sits
+        # above the current value it would close on the next poll. Anchoring here
+        # locks in something reachable by construction, which is the whole point.
+        exit_level = _floor_for(r_now, retain)
+        # THE INVARIANT: the new floor must beat the one already in force, in every
+        # state. Below the gate `live_floor` is 0, so any positive floor qualifies;
+        # above it, the command may only tighten. Refuse rather than clamp.
+        if exit_level <= live_floor + 1e-12 and live_floor > 0:
+            live_pct = int(round(live_floor / peak_r * 100)) if peak_r > 0 else 0
+            need = (live_floor / r_now) if r_now > 0 else 1.0
+            hint = (f" A giveback under {max(0.0, 1.0 - need):.2f} would beat it."
+                    if need < 1.0 else
+                    " No giveback can beat it from here — the trade has retraced too far.")
+            return False, (f"{sym} already has a floor at {live_floor:+.2f}R "
+                           f"({live_floor * one_r:+.2f} USDT, {live_pct}% of its "
+                           f"{peak_r:+.2f}R peak). Arming from the current {r_now:+.2f}R "
+                           f"({r_now * one_r:+.2f} USDT) would put it at {exit_level:+.2f}R "
+                           f"({exit_level * one_r:+.2f} USDT) — no better. /arm only "
+                           f"tightens.{hint}")
+        if peak_r >= arm_r and want_giveback is None:
+            # Already armed and the configured floor already tracks the running peak,
+            # so the bare command has nothing to add. A giveback still can: it anchors
+            # on the current value and must beat the live floor, which is checked above.
+            live_pct = int(round(live_floor / peak_r * 100)) if peak_r > 0 else 0
+            return False, (f"{sym} is already armed: peak {peak_r:+.2f}R "
+                           f"({peak_r * one_r:+.2f} USDT), floor {live_floor:+.2f}R "
+                           f"({live_floor * one_r:+.2f} USDT), keeps {live_pct}%. The floor "
+                           "already tracks the running peak — /arm would change nothing. "
+                           "Pass a giveback to lock in more from the current level, e.g. "
+                           f"/arm {raw.replace('_USDT', '')} 0.20.")
         if exit_level >= r_now:
-            return False, (f"{sym} has already given back past that floor: now "
-                           f"{r_now:+.2f}R ({r_now * one_r:+.2f} USDT) against a floor of "
-                           f"{exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT) off its "
-                           f"{peak_r:+.2f}R peak. Arming would close it on the next poll. "
-                           "Nothing changed.")
+            return False, (f"{sym} cannot be trailed profitably from here: the breakeven "
+                           f"floor ({exit_level:+.2f}R / {exit_level * one_r:+.2f} USDT) is at "
+                           f"or above the current {r_now:+.2f}R ({r_now * one_r:+.2f} USDT), so "
+                           "arming would close it at a net loss. Left to SL / TP / clock.")
         md["manual_arm"] = 1.0
         # Stamped ONCE. The exit path reads this instead of the env, so the floor a
         # human was shown is the floor that fires, even if the env changes later.
@@ -4607,7 +4621,10 @@ class FuturesRuntime:
             md["manual_arm_retain"] = round(retain, 6)
             md["manual_arm_giveback"] = round(want_giveback, 6)
         md["manual_arm_at_r"] = round(r_now, 4)
-        md["manual_arm_peak_r"] = round(peak_r, 4)
+        # The anchor the floor is derived from: the value when armed, NOT the
+        # historical peak. The exit path ratchets it upward and never down.
+        md["manual_arm_peak_r"] = round(r_now, 4)
+        md["manual_arm_true_peak_r"] = round(peak_r, 4)
         md["manual_arm_floor_r"] = round(exit_level, 4)
         # The gate that was bypassed, so the counterfactual stays recoverable.
         md["manual_arm_arm_r"] = round(arm_r, 4)
@@ -4618,11 +4635,11 @@ class FuturesRuntime:
         self._record_activity(f"Telegram: /arm {sym} (armed {r_now:+.2f}R, floor {exit_level:+.2f}R)")
         log.warning("[MANUAL_ARM] symbol=%s side=%s now=%.2fR peak=%.2fR floor=%.2fR arm_gate=%.2fR",
                     sym, position.side, r_now, peak_r, exit_level, arm_r)
-        pct = int(round(exit_level / peak_r * 100)) if peak_r > 0 else 0
+        pct = int(round(exit_level / r_now * 100)) if r_now > 0 else 0
         ratchet_r = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0)
         ratchet_retain = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN", 0.75)
         source = "your giveback" if want_giveback is not None else "the automatic rule"
-        rules = [f"keeps {pct}% of the peak ({source})"]
+        rules = [f"keeps {pct}% of the value when armed ({source}), and of any new high"]
         if retain > 0 and cost_floor_r > 0 and exit_level <= cost_floor_r + 1e-9:
             rules.append("bound by the breakeven cost floor")
         if retain > 0 and ratchet_r > 0 and ratchet_retain > retain:
