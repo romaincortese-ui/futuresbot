@@ -11035,3 +11035,236 @@ A sixth sweep raises the null bar again and cannot lower it. **The search itself
 Every configuration tested improves the book by cutting losers faster and pays for it by destroying the three winners that carry it — IOST −$30.80, SOPH −$24.47, and ZEC capped at 76% of what a plain 5R ceiling would have taken. **That trade is a wash by construction.** The two observations in this data with real information content are both outside the exit trail: live's 3R TP captured 97% of what an 83-cell trail search could extract from the big winner, and a 5R TP would have captured 132% of it. **That is a take-profit and an entry-selection question — which fills deserve to be held at all — not a trail question. The trail has now been measured to death.**
 
 **Honest summary sentence, no dollar figure attached, because every SE in this sweep is 6× to 60× its own total: no configuration tested is distinguishable from what you already run.**
+---
+
+## 2026-09-12 - SCHEDULED FLOOR JOB (30/45/60/120 min, $2 arm, TP 5R): REFUTED. And it CORRECTS my last answer.
+
+**Owner's spec:** a job every T minutes on any open trade; if P&L > $2, set floor = 0.80 x P&L;
+TP at 5R; trades from 18F onwards. Four cadences. **Read-only throughout.**
+
+### 0. THE CORRECTION THAT MATTERS MOST - I TOLD HIM THE MONEY WAS IN THE TAKE-PROFIT. IT IS NOT.
+
+Yesterday's record said *"the money on ZEC is in the TP, not the trail"* on the strength of a plain 5R
+ceiling booking **+$123.29** against live's +$75.37. **That figure is real and reproduces to the cent,
+but it belongs to a DIFFERENT ARM: 5R with the TRAIL REMOVED.**
+
+**Raising TREND's TP from 3R to 5R with the live trail left ON is NEGATIVE: -$14.31, and it touches
+exactly ONE fill in 24.** The live 3R TP fired at minute 220 **at the exact path high of that leg**.
+Delete it and the retention trail takes over, and because peak 3.026R crosses the 3R ratchet the floor
+sits at 0.75 x 3.026 = 2.269R and catches **one minute later**. ZEC goes **+$73.31 -> +$59.00**.
+
+**And the trail-removed variant loses money overall:** -$137.86 book, **-$57.67 vs replay**. It wins
++$49.98 on ZEC and loses **-$131.83** across IOST 09-09 (-$61.45), ZEC 09-09T09:03 (-$36.07) and
+PONS 09-07 (-$28.93). **THE TRAIL IS EARNING ITS KEEP. The 5R recommendation is WITHDRAWN.**
+
+### 1. THE FOUR-ARM DECOMPOSITION - both halves lose independently
+
+vs the REPLAY comparator (-$80.19), 24 fills, ratchet-only, $2 threshold. Reproduced three times.
+
+    arm                          30min     45min     60min    120min
+    (i)   live baseline (replay)  $0.00     $0.00     $0.00     $0.00
+    (ii)  TP 5R only, trail ON   -$14.31   -$14.31   -$14.31   -$14.31
+    (iii) job only, live TP      -$24.58   -$10.59   -$37.53   -$40.75
+    (iv)  BOTH (his spec)        -$28.18   -$14.19   -$41.12   -$44.34
+    SE of (iv)                    $65.36    $56.70    $45.82    $38.67
+
+**Residual once the TP is subtracted exactly: -$13.87 / +$0.12 / -$26.81 / -$30.03. The job
+contributes nothing positive at any cadence.**
+
+> **THE TWO CHANGES FIGHT EACH OTHER. On ZEC the scheduled floor exits at minute 367; 5R is not touched
+> until minute 987. THE JOB IS A STRICT VETO ON THE TAKE-PROFIT HE ASKED FOR.**
+
+**SCOPE NOTE: the 18F boundary adds nothing.** 18F opened 09-04T10:57:13Z and the bot was flat for
+**15h04m** across it (last prior fill 09-04T01:55; first at/after 09-04T16:55). **The 18F set is
+byte-identical to the 24 funded-era fills.**
+
+### 2. THE LAG TRAP IS CONFIRMED AND MONOTONE
+
+    cadence   spec total   vs replay      SE   floors set   NEVER floored*   median exit
+    30 min     -$108.37     -$28.18   $65.36       12          10 / 24        122 min
+    45 min      -$94.38     -$14.19   $56.70       11          11 / 24        122 min
+    60 min     -$121.31     -$41.12   $45.82       10          12 / 24        122 min
+    120 min    -$124.54     -$44.34   $38.67        9          13 / 24        259 min
+
+*profitable past $2 at some point and never had a floor set.* **At 120 min, 54% of the fills that were
+ever meaningfully profitable are outside the rule's reach entirely.** IOST 09-11 peaked at **+$15.94
+and never got a floor at ANY cadence** - the whole excursion happened between checks.
+
+**The looseness the brief hoped for is real (floor lags peak by $5.15-$6.60 mean) and it DOES NOT PAY:
+0.80 retention caps the RATIO, not the LEVEL, so the rule arms at $2.50 and exits at $2.00 on a trade
+that later runs to $40.**
+
+**ALL FOUR CADENCES PRODUCE AN IDENTICAL ZEC EXIT: +$69.71 at minute 367.** The floor ladder converges
+to the same rung however often you look. **Cadence is irrelevant on the fill carrying 56% of the book.**
+
+### 3. HIS THRESHOLD INSTINCT WAS WELL CALIBRATED
+
+**The true fee-based minimum is fee/0.80** (the FLOOR, not the peak, must clear the round trip):
+median **$0.64**, p90 $1.64, **max $2.08**. **So $2 is almost exactly the worst-case-fee breakeven** -
+a defensible conservative constant, about 3x too high on the median fill. Sweeping $0.50/$1/$2/$3/$5
+gives a $9 spread at 30 min (**plateau, no cliff**). **The threshold is not the defect. The defect is
+that $2 is 0.10R on a $20 risk unit.**
+
+### 4. THE ONE GENUINE KEEPER
+
+> **A FIXED-PRICE FLOOR UPDATED ON A SCHEDULE CAN REST ON THE EXCHANGE AND SURVIVE A RESTART.** Unlike
+> a continuously-updating peak trail, it is a single price changed once per T. **The code path already
+> exists. This is the FIRST RESTART-SAFE EXIT CANDIDATE IN THE ENTIRE PROGRAMME** - everything else
+> tested is poll-driven and blind through a deploy. **The cost: it consumes the -1R stop slot. The
+> dollars do not clear, but the PROPERTY is worth recording.**
+
+# THE ANSWER — scheduled profit floor, 18F onwards
+
+## 1. THE DECOMPOSITION, FIRST AND PLAINLY
+
+**It is not the take-profit, and it is not the job. Both halves lose money independently, and neither is worth shipping.**
+
+The brief's premise was that a 5R ceiling alone takes ~$48 more out of ZEC 09-06 and might carry the whole result. **It does not.** Arm (ii) as specified — TP raised 3R→5R with the live trail left on — is **negative, -$14.31**, and it touches exactly one fill in 24. Raising the TREND ceiling does not release the winner: it deletes the clean 3R exit at minute 220, and the live 0.75-at-3R retention ratchet fires one minute later at 2.43R. ZEC 09-06 goes **+$73.31 → +$59.00**.
+
+The +$123.29 figure in the brief is real and reproduces to the cent — but it belongs to a different arm, **5R with the trail removed**, firing at minute 987. That variant books **-$137.86** across the 24 fills (-$57.67 vs replay): it wins +$49.98 on ZEC and loses -$131.83 across IOST 09-09, ZEC 09-09T09:03 and PONS 09-07. The trail is earning its keep.
+
+Four arms, 24 fills, ratchet-only, $2 threshold, vs the **replay** comparator (-$80.19). Reproduced independently three times.
+
+| arm | 30 min | 45 min | 60 min | 120 min |
+|---|---|---|---|---|
+| (i) live baseline (replay) | $0.00 | $0.00 | $0.00 | $0.00 |
+| (ii) TP 5R only, trail on | **-$14.31** | -$14.31 | -$14.31 | -$14.31 |
+| (iii) job only, live TP | -$24.58 | -$10.59 | -$37.53 | -$40.75 |
+| (iv) **BOTH (his spec)** | **-$28.18** | **-$14.19** | **-$41.12** | **-$44.34** |
+| SE of (iv) | $65.36 | $56.70 | $45.82 | $38.67 |
+
+Because (ii) moves one fill, the TP effect subtracts **exactly**, no regression needed. The residual — the job stripped of the TP change — is **-$13.87 / +$0.12 / -$26.81 / -$30.03**. The job contributes nothing positive at any cadence once the TP is removed.
+
+The two changes also **fight each other**: on ZEC the scheduled floor exits at minute 367; 5R is not touched until minute 987. **The job is a strict veto on the take-profit he asked for.**
+
+A fifth arm the spec arguably implies — job floor **additive** to the live trail rather than replacing it — was also run: -$24.58 / -$10.59 / -$35.09 / -$43.83 in sample, and -0.670 / +0.186 / -2.631 / -2.228 netR out of sample. Negative everywhere. The conclusion is robust to that ambiguity.
+
+**Scope:** 18F opened 2026-09-04T10:57:13Z. **The wider scope adds nothing.** The bot was flat for 15h04m across the boundary (last prior fill USELESS 09-04T01:55, first at/after ZEC 09-04T16:55). The 18F set is byte-identical to the 24 funded-era fills already tabulated.
+
+## 2. THE CADENCE TABLE
+
+| cadence | spec total | vs replay | SE | netR | floors set | never floored* | median exit |
+|---|---|---|---|---|---|---|---|
+| 30 min | -$108.37 | -$28.18 | $65.36 | -5.881 | 12 | **10 / 24** | 122 min |
+| **45 min** | **-$94.38** | **-$14.19** | $56.70 | -5.688 | 11 | **11 / 24** | 122 min |
+| 60 min | -$121.31 | -$41.12 | $45.82 | -6.368 | 10 | **12 / 24** | 122 min |
+| 120 min | -$124.54 | -$44.34 | $38.67 | -7.063 | 9 | **13 / 24** | 259 min |
+
+\*fills that were profitable past $2 at some point and **never had a floor set** — the cost of the lag.
+
+**The trap is confirmed and it is monotone.** At 120 minutes, 54% of the fills that were ever meaningfully profitable are outside the rule's reach entirely. IOST 09-11T08:58 peaked at +$15.94 and never got a floor at *any* cadence — the whole excursion happened between checks.
+
+The lag the brief hoped for is real (floor lags peak by $5.15–$6.60 mean) and **it does not pay**. Looseness is not the binding problem: 0.80 retention caps the *ratio*, not the *level*, so the rule arms at $2.50 and exits at $2.00 on a trade that later runs to $40.
+
+Ordering is not a curve — 45 < 30 < 60 < 120 is four draws from the same noise, and the 45-min "best" is driven by one outcome-selected near-miss (+$31.20). Every cell is negative on every visibility convention (close-only, 0.75-poll, full-wick); the convention band is $16–$34 and never flips a sign.
+
+**Ratchet vs re-set:** re-set is worse or identical at every cadence (-$0.43 / -$1.95 / -$2.04 / $0.00), never better, 0–5 lowering events. Flagged as instructed, **not recommended** — but it is not load-bearing. The rule fails upstream of it.
+
+## 3. ZEC 09-06T01:07 PER CADENCE
+
+Risk $24.99, fee $1.665, live +$75.37 (3R TP, min 220), replay +$73.31. True 24h path max 6.23R ≈ $155 at minute 1240.
+
+| cadence | checks | arms | ladder (check-min → floor $) | exit |
+|---|---|---|---|---|
+| 30 | 12 | 5 | 240→$53, 270→$68, 330→$68, **360→$71.38** | FLOOR **+$69.71 @ min 367** |
+| 45 | 8 | 4 | 225→$47, 270→$68, 315→$68, **360→$71.38** | FLOOR **+$69.71 @ min 367** |
+| 60 | 6 | 3 | 240→$53, 300→$62, **360→$71.38** | FLOOR **+$69.71 @ min 367** |
+| 120 | 3 | 2 | 240→$53, **360→$71.38** | FLOOR **+$69.71 @ min 367** |
+
+**All four cadences produce the identical exit.** Below live, below replay, and $53.58 below the 5R-no-trail figure. The floor ladder converges to the same rung regardless of how often you look, so cadence is irrelevant on the fill that carries 56% of the book.
+
+**No cadence reaches the 5R ceiling.** The floor set at minute 360 is taken out seven minutes later — 620 minutes before 5R is first touched, 875 before the trade's actual top.
+
+## 4. FULL PER-TRADE TABLE — best cadence (45 min, $2, ratchet, TP 5R)
+
+Equity compounding from $1,098.98.
+
+| # | entry | symbol | LIVE$ | REPLAY$ | SPEC$ | Δ | why | floor$ | true peak$ | equity |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 09-04T16:55 | ZEC | -2.66 | -2.75 | -2.75 | 0.00 | CLOCK | — | 3.45 | 1096.23 |
+| 2 | 09-06T01:07 | ZEC | +75.37 | +73.31 | +69.71 | **-3.60** | FLOOR | 71.38 | 101.29 | 1165.94 |
+| 3 | 09-06T04:59 | ZEC | +11.88 | +13.95 | +18.04 | +4.09 | FLOOR | 19.09 | 29.99 | 1183.97 |
+| 4 | 09-06T09:26 | ZEC | -28.49 | -30.36 | -30.36 | 0.00 | STOP | — | 3.68 | 1153.62 |
+| 5 | 09-06T17:38 | ZEC | -20.38 | -21.24 | -21.24 | 0.00 | STOP | — | 9.73 | 1132.38 |
+| 6 | 09-06T19:58 | MAGMA | -26.45 | -27.17 | -27.17 | 0.00 | STOP | — | 2.15 | 1105.22 |
+| 7 | 09-07T15:42 | PONS | -19.41 | *+9.11* | +2.73 | -6.38 | FLOOR | 3.09 | 13.01 | 1107.94 |
+| 8 | 09-08T08:11 | FORM | -25.76 | -26.83 | -26.83 | 0.00 | STOP | — | 2.50 | 1081.11 |
+| 9 | 09-08T11:12 | MARSCOIN | -11.65 | -12.06 | -12.06 | 0.00 | STOP | — | 3.60 | 1069.05 |
+| 10 | 09-08T16:38 | ZEC | -20.35 | -21.26 | -21.26 | 0.00 | STOP | — | 2.25 | 1047.78 |
+| 11 | 09-09T04:39 | ZEC | -27.25 | -28.15 | +3.05 | **+31.20** | FLOOR | 4.63 | 23.95 | 1050.83 |
+| 12 | 09-09T09:03 | ZEC | +10.07 | +11.18 | +5.47 | -5.71 | FLOOR | 6.79 | 15.94 | 1056.30 |
+| 13 | 09-09T09:43 | ATOM | -23.68 | -24.31 | -24.31 | 0.00 | STOP | — | 4.95 | 1031.99 |
+| 14 | 09-09T10:40 | IOST | +33.23 | *+41.83* | +4.81 | **-37.02** | FLOOR | 5.03 | 9.68 | 1036.81 |
+| 15 | 09-09T13:41 | ZEC | -14.14 | -14.73 | +1.30 | +16.03 | FLOOR | 1.91 | 5.31 | 1038.11 |
+| 16 | 09-09T16:13 | SOPH | +24.68 | +26.33 | +36.22 | +9.89 | FLOOR | 36.64 | 53.50 | 1074.33 |
+| 17 | 09-09T19:15 | PONS | -1.93 | *+17.26* | +2.19 | -15.08 | FLOOR | 2.50 | 7.46 | 1076.51 |
+| 18 | 09-09T22:14 | MARSCOIN | -10.29 | -9.80 | -9.80 | 0.00 | 19F | — | 4.24 | 1066.71 |
+| 19 | 09-10T04:25 | UAI | +7.56 | +9.28 | +1.54 | -7.74 | FLOOR | 1.73 | 3.26 | 1068.25 |
+| 20 | 09-10T04:41 | BTR | -10.79 | -10.36 | -10.36 | 0.00 | STOP | — | 0.55 | 1057.90 |
+| 21 | 09-10T05:20 | BTR | +2.53 | +2.99 | +3.10 | +0.12 | FLOOR | 3.17 | 4.58 | 1061.00 |
+| 22 | 09-10T05:59 | MARSCOIN | -4.79 | -4.73 | -4.73 | 0.00 | 19F | — | 1.89 | 1056.27 |
+| 23 | 09-11T08:58 | IOST | -25.93 | -25.62 | -25.62 | 0.00 | STOP | — | 15.94 | 1030.65 |
+| 24 | 09-11T14:02 | ETH | -24.78 | -26.05 | -26.05 | 0.00 | STOP | — | 7.96 | 1004.60 |
+| | **TOTAL** | | **-133.43** | **-80.19** | **-94.38** | **-14.19** | | | | |
+
+*Italics = the three named contaminated/exogenous rows.* Helped: 5 fills, +$61.33. Hurt: 6 fills, -$75.53.
+
+**Read rows 14, 17, 19, 7, 12 together — that is the rule's signature.** IOST floored at $5.03 against a $41.83 baseline. PONS 09-09 floored at $2.50. UAI floored at $1.73. Averaged over the fills that set a floor, it banks **55% of the peak that existed**. It is a scratch machine: it trades a handful of ~$3 rescues for five- and tenfold amputations of the winners. And its two best rescues (rows 11, 15) are outcome-selected near-misses.
+
+**Threshold.** The true fee-based minimum is **fee/0.80** (the *floor*, not the peak, must clear the round trip): median **$0.64**, p90 $1.64, **max $2.08**. So **$2 is almost exactly the worst-case-fee breakeven** — a defensible conservative constant, about 3× too high on the median fill. Sweeping $0.50/$1/$2/$3/$5 gives a $9 spread at 30 min (**plateau, no cliff**) and a $33 spread, non-monotone in both directions, at 60/120 min — which is one or two fills flipping, not sensitivity. The threshold is not the fix. **The actual defect is that $2 is 0.10R on a $20 risk unit.**
+
+## 5. THE THREE DECIDING STATISTICS
+
+**Best-of-N null** (sign-permutation, one common sign vector per draw, 60k draws; 83 prior cells + 34 new = 117):
+
+| | best cell | null best-of-N median | p |
+|---|---|---|---|
+| new cells only (N=34) | +$16.50 | +$58.16 | **0.730** |
+| full history (N=117) | +$101.18 (a prior cell) | +$106.08 | **0.535** |
+| near-misses removed (n=21) | best new cell **-$8.32** | +$97.13 | 0.793 |
+
+**Zero of 34 new cells clear even the null's median.** The best would need to be ~6× larger. Adding these cells widened the null's own best from ~$58 to ~$106 — the multiplicity got strictly worse and bought nothing.
+
+**Out of sample** (58 pre-funding post-censoring fills, netR; **live +10.011**, replay +3.080):
+
+Every job cell lands between **-9.13 and +4.24 netR**. **Not one comes within 5.7 netR of live. Eight of sixteen cells are outright negative.** The in-sample best cell (45 min, fee-derived threshold, the only cell in the whole grid to beat the replay) lands at **-0.543 netR** out of sample — a clean sign reversal on the exact cell selected. That is now **59 of 59 prior cells plus these**. Unbroken.
+
+There is a structural reason it cannot travel: pre-funding median risk was $2.40/fill; 18F-era median is $19.48. **A flat $2 arm is 83% of median risk in one era and 10% in the other.** Any rule stated in absolute dollars re-tunes itself every time a compounding account changes size. That is a specification problem, not a parameter problem.
+
+**Slippage haircut** (0.056R mean / 0.207R worst, applied to floor exits):
+
+| cadence | raw | mean haircut | worst haircut |
+|---|---|---|---|
+| 30 | -$28.18 | -$41.40 | -$77.06 |
+| 45 | -$14.19 | -$26.32 | -$59.03 |
+| 60 | -$41.12 | -$51.84 | -$80.75 |
+| 120 | -$44.34 | -$54.31 | -$81.19 |
+
+This rule produces 9–12 floor exits against the live stack's 7, so it is unusually exposed. The only two readings in the entire study that were non-negative (a PONS-patched baseline at 30/45 min: +$0.34, +$14.33) both go clearly negative under the mean haircut. **It happened again.**
+
+**Removing the three outcome-selected near-misses** (n=21): -$51.27 / -$39.01 / -$33.26 / -$37.49. Every cell doubles or triples its loss.
+
+**PONS 09-07, handled explicitly:** the baseline books it +$9.11 against an actual -$19.41. The job changes the fill, so the defect flows into the delta. Patching the baseline to the live actual gives +$0.34 / +$14.33 / -$12.60 / -$15.83 — every one inside a fifth of a standard error, and the patch only moves the rule from "clearly negative" to "indistinguishable from zero" before OOS and the null kill it. Neutralising the fill in *both* arms instead gives -$20.31 / -$7.81 / -$33.26 / -$37.49. No treatment rescues it.
+
+**One honest caveat on robustness.** A second independent line, running a different engine (n=22 with the two exogenous rows frozen, 19F gated off the recorded `t_adverse_50`), got **in-sample positives** of +$33 to +$65 for the job. Its own out-of-sample test was **24 of 24 negative** and its null failed at p≈0.70 with the best cell below the null median. **The in-sample sign of this rule depends on engine bookkeeping choices; the out-of-sample verdict does not.** That is itself a reason not to ship it.
+
+## 6. THE VERDICT
+
+**Do not build the scheduled floor. Do not raise the TREND take-profit to 5R. Change nothing.**
+
+Nothing survives, so there is **no pre-registration** — the headline number at the best cadence is **-$14.19 with a standard error of $56.70** and must not be reported as a dollar figure at all. Say it as **netR -1.179 ± 2.973**: the in-sample book cannot resolve this rule either way, and the verdict comes from out-of-sample and the null, where it is unambiguous.
+
+**On the take-profit, be precise rather than final.** The -$14.31 is one fill and one mechanism: the live 3R TP fired at 3.026R, the exact high of that leg, with the 0.75 ratchet waiting 0.73R below. Out of sample the same change is **+2.136 netR**. So the honest line is: *raising the TREND ceiling in isolation is harmful only because the incumbent ratchet immediately reclaims the trade.* Whether the pair should move together is unresolved — and is not worth another sweep against a 117-cell multiplicity burden and a ±$60 monthly envelope.
+
+**THE ONE THING WORTH TAKING FORWARD — and it is genuinely new.**
+
+Between checks, a scheduled floor is a **fixed dollar level, hence a fixed price** (ZEC 09-06: floor $71.38 → resting price 1158.37). **It can rest on the exchange as a real stop order.** Every exit rule tested in this entire programme is poll-driven and blind through a restart, a redeploy, a websocket drop or a Railway cold start — the bot's history contains exactly those failures. This is the first candidate with a structurally new property.
+
+**And that property is separable from the exit rule.** Mirror the *existing* 0.50/0.75 trail's current floor to the exchange as a resting stop, re-priced on a timer. Same exits, same P&L, better survivability, no new search cell, nothing to validate out of sample. The code shape already exists (`_place_pmt_exchange_profit_lock_stop` in `futuresbot/runtime.py` — server-side `stopLossPrice`, already monotone-guarded with a minimum tick step).
+
+Three caveats before anyone builds it, stated as kill criteria for that engineering item:
+- **MEXC exposes a singular `stopLossPrice` and `cancel_all_tpsl` is all-or-nothing** — a resting profit floor *replaces* the -1R catastrophic stop rather than sitting beside it. Each re-price opens a window with no protection resting. **Kill if the client cannot amend in place rather than cancel-and-replace.**
+- That inverts the cadence preference: for restart safety you want the **longest** interval (12 amendments/day at T=120, not 48 at T=30).
+- A resting stop fills at market on trigger, so the measured 0.056R mean / 0.207R worst floor-miss is a **lower bound** on its cost.
+
+**Finally, the search cost.** These cells took the history from 83 to 117 and widened the null's own best from ~$58 to ~$106. This family of questions is now expensive to ask and has returned nothing in 59+ attempts. **The binding constraint is the fill count, not the rule space — the next idea should be tested on new fills, not on these 24.**
