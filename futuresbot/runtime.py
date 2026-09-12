@@ -1935,6 +1935,14 @@ class FuturesRuntime:
         if peak_r < arm_r and not manual_armed:
             return ("  🔒 Trail: peak <b>${:+.2f}</b> · arms at "
                     "<b>${:+.2f}</b>".format(peak_usd, arm_r * one_r))
+        # The operator's own retention, if they set one. The exit path reads this;
+        # without it /status prints the CONFIGURED floor for a position governed by
+        # a different one - the surface actually read at 3am disagreeing with the
+        # rule that fires, which is worse than no line at all.
+        if manual_armed:
+            override = self._metadata_float(md, "manual_arm_retain")
+            if override and override > 0:
+                retain = override
         if retain > 0:
             frac = self._trail_retain_for(peak_r, retain)
             floor_r = frac * peak_r
@@ -3316,9 +3324,15 @@ class FuturesRuntime:
         best = self._best_weekly_close_usd()
         if best is None or peak_usd <= best:
             return
-        retain = self._trail_retain_for(
-            r_now, self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30))
-        floor_usd = max(0.0, retain * r_now) * one_r_usd if r_now >= 1.0 else 0.0
+        base_retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
+        md_peak = position.metadata or {}
+        if md_peak.get("manual_arm"):
+            override = self._metadata_float(md_peak, "manual_arm_retain")
+            if override and override > 0:
+                base_retain = override
+        retain = self._trail_retain_for(r_now, base_retain)
+        armed_now = r_now >= 1.0 or bool(md_peak.get("manual_arm"))
+        floor_usd = max(0.0, retain * r_now) * one_r_usd if armed_now else 0.0
         position.metadata["record_peak_notified"] = 1.0
         self._notify(
             f"🏆 <b>{html.escape(position.symbol)}</b> unrealized <b>${peak_usd:+.2f}</b> "
@@ -4533,6 +4547,24 @@ class FuturesRuntime:
         if want_giveback is not None:
             retain = 1.0 - want_giveback
         exit_level = _floor_for(retain)
+        # THE INVARIANT, ENFORCED IN EVERY STATE - NOT ONLY ABOVE THE GATE.
+        # Below the gate there is no floor in force yet, so there is nothing to
+        # "lower" in wall-clock terms; but the retention stamped here is PERMANENT
+        # and governs the trade after the peak crosses the gate too, where the
+        # configured rule would otherwise have taken over. A giveback looser than
+        # the configured one therefore leaves the trade LESS protected than typing
+        # nothing at all - the command written to enforce the invariant breaking it.
+        # Refuse rather than clamp, so the operator sees the real limit.
+        if want_giveback is not None and exit_level < auto_floor - 1e-12:
+            auto_pct = int(round(auto_floor / peak_r * 100)) if peak_r > 0 else 0
+            max_giveback = max(0.0, 1.0 - self._env_float(
+                "FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30))
+            return False, (f"{sym}: a {want_giveback:.0%} giveback floors at "
+                           f"{exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT), BELOW the "
+                           f"{auto_pct}% the automatic rule would hold "
+                           f"({auto_floor:+.2f}R / {auto_floor * one_r:+.2f} USDT). That would "
+                           "leave the trade less protected than not arming it at all. "
+                           f"/arm only tightens — use {max_giveback:.2f} or less.")
         if peak_r >= arm_r:
             # Already armed automatically, so a floor is ALREADY in force at
             # `auto_floor` and it already tracks the running peak. Without a giveback
@@ -5519,6 +5551,10 @@ class FuturesRuntime:
                 "manual_arm_peak_r": (position.metadata or {}).get("manual_arm_peak_r"),
                 "manual_arm_floor_r": (position.metadata or {}).get("manual_arm_floor_r"),
                 "manual_arm_arm_r": (position.metadata or {}).get("manual_arm_arm_r"),
+                # The one free variable of this feature. Without it the operator's
+                # choice of giveback cannot be priced in dollars later.
+                "manual_arm_retain": (position.metadata or {}).get("manual_arm_retain"),
+                "manual_arm_giveback": (position.metadata or {}).get("manual_arm_giveback"),
                 "manual_arm_ts": (position.metadata or {}).get("manual_arm_ts"),
                 "manual_arm_voided_ts": (position.metadata or {}).get("manual_arm_voided_ts"),
                 # THE ROW FILTER FOR THE EVENTUAL VERDICT: trades where the trail

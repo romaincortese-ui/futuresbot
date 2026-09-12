@@ -512,6 +512,13 @@ def test_giveback_that_would_lower_the_floor_is_refused(tmp_path):
     before = json.dumps(position.metadata, sort_keys=True, default=str)
     ok, message = runtime._manual_arm("ZEC", "0.70")          # would floor at +0.60R
     assert ok is False
+    assert "less protected" in message or "never lowers a floor" in message, message
+    assert "+0.60R" in message and "+1.00R" in message, message
+    assert json.dumps(position.metadata, sort_keys=True, default=str) == before
+
+    # And the exact-equality case, which is the branch the above-gate guard holds.
+    ok, message = runtime._manual_arm("ZEC", "0.50")          # identical to the auto floor
+    assert ok is False
     assert "never lowers a floor" in message, message
     assert json.dumps(position.metadata, sort_keys=True, default=str) == before
 
@@ -572,3 +579,83 @@ def test_no_giveback_still_uses_the_configured_retention(tmp_path):
     assert "manual_arm_retain" not in position.metadata
     assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.30)
     assert "the automatic rule" in message
+
+
+# --- the invariant below the gate ------------------------------------------
+
+def test_a_looser_giveback_below_the_gate_is_refused(tmp_path):
+    """THE BLOCKING DEFECT. The tighten-check used to sit inside `peak_r >= arm_r`,
+    so below the gate - the only state /arm exists for - it never ran. A 0.70
+    giveback stamped retain 0.30 PERMANENTLY, governing the trade even after the
+    peak crossed 1.0R where the configured 0.50 would have taken over. Typing the
+    command left the trade LESS protected than not typing it."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))     # +0.60R, below the 1.0R gate
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    before = json.dumps(position.metadata, sort_keys=True, default=str)
+    ok, message = runtime._manual_arm("ZEC", "0.70")       # retain 0.30 < configured 0.50
+    assert ok is False
+    assert "less protected than not arming it at all" in message, message
+    assert "0.50 or less" in message
+    assert json.dumps(position.metadata, sort_keys=True, default=str) == before
+
+
+def test_the_configured_giveback_below_the_gate_is_allowed(tmp_path):
+    """Exactly the configured retention is the bare command's own behaviour, so it
+    must be accepted - the refusal is for LOOSER, not for equal."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    ok, _ = runtime._manual_arm("ZEC", "0.50")
+    assert ok is True
+    assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.30)
+
+
+def test_armed_position_never_ends_up_looser_than_the_control(tmp_path, monkeypatch):
+    """The end-to-end property the defect broke: for every accepted giveback, the
+    armed position must exit at or above where an unarmed one would."""
+    for giveback in ("0.05", "0.20", "0.35", "0.50"):
+        armed_rt = _runtime(tmp_path, _Client(price=106.0))
+        armed = _pos()
+        armed_rt.open_positions["ZEC_USDT"] = armed
+        assert armed_rt._manual_arm("ZEC", giveback)[0] is True
+        control_rt = _runtime(tmp_path, _Client(price=106.0))
+        control = _pos()
+        control_rt.open_positions["ZEC_USDT"] = control
+        for rt, pos in ((armed_rt, armed), (control_rt, control)):
+            monkeypatch.setattr(rt, "_close_position_for_exit", lambda p, **kw: True)
+            rt._convex_runner_trail_exit(pos, 129.0)        # run both to a +2.90R peak
+        # Walk down together; the armed one must never survive past the control.
+        for price in (125.0, 120.0, 115.0, 112.0, 110.0, 108.0, 106.0, 103.0, 101.0):
+            a = armed_rt._convex_runner_trail_exit(armed, price)
+            c = control_rt._convex_runner_trail_exit(control, price)
+            assert not (c and not a), (
+                f"giveback {giveback}: control exited at {price} and the armed "
+                "position did not - /arm made it looser than doing nothing")
+            if a or c:
+                break
+
+
+def test_status_line_shows_the_operator_floor_not_the_configured_one(tmp_path):
+    """/status is the surface actually read at 3am. It used to print the CONFIGURED
+    floor for a position governed by a different one."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    assert runtime._manual_arm("ZEC", "0.20")[0] is True    # floor +0.48R = $4.80
+    line = runtime._trail_line(position)
+    assert line is not None
+    assert "4.80" in line, line
+    assert "3.00" not in line, line                         # the configured-0.50 floor
+
+
+def test_close_record_carries_the_operator_giveback(tmp_path, monkeypatch):
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    assert runtime._manual_arm("ZEC", "0.20")[0] is True
+    monkeypatch.setattr(runtime, "_notify", lambda *a, **k: None)
+    runtime._close_history_trade(position, exit_price=104.8, reason="CONVEX_RETENTION_TRAIL")
+    trade = runtime.trade_history[-1]
+    assert trade["manual_arm_retain"] == pytest.approx(0.80)
+    assert trade["manual_arm_giveback"] == pytest.approx(0.20)
