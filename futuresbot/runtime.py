@@ -1929,7 +1929,10 @@ class FuturesRuntime:
         arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
         retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
         peak_usd = peak_r * one_r
-        if peak_r < arm_r:
+        # Mirrors the exit path's manual-arm bypass. Without this the row would
+        # keep printing "arms at $X" for a position whose floor is already live.
+        manual_armed = bool((position.metadata or {}).get("manual_arm"))
+        if peak_r < arm_r and not manual_armed:
             return ("  🔒 Trail: peak <b>${:+.2f}</b> · arms at "
                     "<b>${:+.2f}</b>".format(peak_usd, arm_r * one_r))
         if retain > 0:
@@ -2336,7 +2339,13 @@ class FuturesRuntime:
                 log.debug("record-peak notify failed: %s", exc)
             self._save_state()
             return False
-        if peak_r < arm_r:
+        # /arm bypasses the ARM GATE and nothing else. Everything below - the
+        # retain fraction, the 3R ratchet, the cost floor, the disable branch -
+        # is untouched, which is what "follows the same giveback rules" means.
+        # The floor still derives from peak_r alone and peak_r only ratchets up,
+        # so a manual arm can never lower a floor.
+        manual_armed = bool((position.metadata or {}).get("manual_arm"))
+        if peak_r < arm_r and not manual_armed:
             return False
         if retain > 0:
             # trial 7: retention floor. Ratchet-only by construction (retain is
@@ -2356,6 +2365,17 @@ class FuturesRuntime:
                     # Cannot trail this sleeve profitably at all — leave the
                     # position to its stop / TP / clock rather than close it at
                     # a level that banks a loss.
+                    if manual_armed and "manual_arm_voided_ts" not in (position.metadata or {}):
+                        # A manual arm can be checked at arm time and still be
+                        # voided later: cost_r moves with the LIVE stop distance,
+                        # so a position that was armable can quietly become
+                        # un-trailable. No behaviour change, but "armed" must not
+                        # silently stop meaning "trailing".
+                        log.warning("[MANUAL_ARM_VOID] symbol=%s peak=%.2fR floor=%.2fR "
+                                    "— cost floor above peak, trail cannot fire",
+                                    position.symbol, peak_r, exit_level)
+                        position.metadata["manual_arm_voided_ts"] = time.time()
+                        self._save_state()
                     return False
         else:
             # legacy giveback, kept reachable for rollback via env
@@ -4241,7 +4261,7 @@ class FuturesRuntime:
         self._save_state()
 
     def _commands_hint(self) -> str:
-        return "/status /why /pnl /report /simulation /logs /reconcile /pause /resume /close [SYMBOL|all] /help"
+        return "/status /why /pnl /report /simulation /logs /reconcile /pause /resume /arm [SYMBOL] /close [SYMBOL|all] /help"
 
     def _build_help_message(self) -> str:
         return (
@@ -4254,6 +4274,8 @@ class FuturesRuntime:
             "/reconcile — Adopt any untracked MEXC open positions into bot state (orphan recovery)\n"
             "/pause — Pause new entries (open positions stay managed)\n"
             "/resume — Resume new entries\n"
+            "/arm SYMBOL — Arm the retention trail now, below the automatic arm "
+            "(e.g. /arm ZEC). Same giveback rules; never lowers a floor\n"
             "/close — Close the first open position\n"
             "/close SYMBOL — Close a specific position (e.g. /close ETH_USDT)\n"
             "/close all — Close every open position\n"
@@ -4349,6 +4371,147 @@ class FuturesRuntime:
         self._save_state()
         self._record_activity(f"Manual close: {position.side} {position.symbol} @ {exit_price:,.2f}")
         return True, f"Closed live {position.side} {position.symbol} at ${exit_price:,.2f}."
+
+    def _manual_arm(self, symbol: str) -> tuple[bool, str]:
+        """`/arm SYMBOL` — arm the retention trail below the automatic arm gate.
+
+        THE ONE THING THIS CHANGES is the arm gate. `_convex_runner_trail_exit`
+        refuses to trail at all while `peak_r < FUTURES_CONVEX_TRAIL_ARM_R`, so a
+        trade sitting at +0.6R against a 1.0R arm has NO floor: the only exits
+        left are the -1R stop, the TP and the clock. `/arm` stamps `manual_arm`
+        on the position and the gate reads `peak_r < arm_r and not manual_armed`.
+
+        EVERYTHING DOWNSTREAM IS UNTOUCHED — the retain fraction, the 3R ratchet,
+        the cost floor, the disable-if-floor-above-peak branch, the
+        CONVEX_RETENTION_TRAIL reason. That is what "follows the same giveback
+        rules" means, and it is why the retention invariant survives: the floor is
+        `retain(peak) x peak` floored at breakeven, `retain()` is a non-decreasing
+        step in peak, and `convex_peak_r` has exactly one other writer, the
+        `if r_now > peak_r` branch. Both only move up, so THE FLOOR CAN NEVER
+        FALL. This command cannot lower a floor, widen a stop or un-arm anything:
+        setting `manual_armed` can only make the gate's condition False, i.e. only
+        ever let the trail proceed.
+
+        The owner's second example — up $32, already above the arm — is refusal 8,
+        not an action: the floor already tracks the running peak continuously, so
+        it is ALREADY 0.50 x peak and `/arm` would change nothing. The report says
+        so rather than pretending to act.
+
+        No exchange call is made. State is persisted via `_save_state()`, and
+        `metadata` round-trips whole through `FuturesPosition.to_dict`/`from_dict`
+        (asdict / cls(**data)), so a manual arm survives a restart.
+        """
+        raw = (symbol or "").strip().upper()
+        if not raw:
+            return False, "Usage: /arm SYMBOL — e.g. /arm ZEC or /arm ZEC_USDT."
+        candidates = [raw] if raw.endswith("_USDT") else [raw, f"{raw}_USDT"]
+        position = None
+        for candidate in candidates:
+            position = self.open_positions.get(candidate)
+            if position is not None:
+                break
+        if position is None:
+            return False, f"No open position for {candidates[-1]}."
+        sym = position.symbol
+        if (not self._is_wildcard_convex(position)
+                or not self._flag("FUTURES_CONVEX_RUNNER_TRAIL", default=True)):
+            return False, (f"{sym} is not managed by the retention trail (sleeve "
+                           f"{self._sleeve_kind(position)}, or the trail is disabled). "
+                           "Arming would change nothing.")
+        if not isinstance(position.metadata, dict):
+            position.metadata = {}
+        md = position.metadata
+        if md.get("manual_arm"):
+            at_r = self._metadata_float(md, "manual_arm_at_r") or 0.0
+            floor_r = self._metadata_float(md, "manual_arm_floor_r") or 0.0
+            return False, (f"{sym} is already manually armed at {at_r:+.2f}R "
+                           f"(floor {floor_r:+.2f}R). /arm never re-arms and never "
+                           "lowers a floor.")
+        # Price. The fair feed is what the trail itself measures; there is no
+        # fallback to _get_reference_price for a non-config symbol, because that
+        # returns the CONFIG symbol's price and a wrong price here would stamp a
+        # wrong peak - which only ratchets up and would then bind immediately.
+        price = 0.0
+        try:
+            price = float(self.client.get_fair_price(sym) or 0.0)
+        except Exception as exc:
+            log.debug("Futures fair price fetch failed for %s: %s", sym, exc)
+        if not price and sym == self.config.symbol:
+            price = self._get_reference_price()
+        if not price or price <= 0:
+            return False, f"Could not read a price for {sym} right now. Nothing changed — try again."
+        risk_pct = self._position_stop_risk_pct_of_margin(position)
+        if not risk_pct or risk_pct <= 0:
+            risk_pct = self._metadata_float(md, "sl_margin_pct") or 0.0
+        if risk_pct <= 0:
+            return False, (f"{sym} has no usable stop distance, so R cannot be measured "
+                           "and no floor can be computed. Nothing changed.")
+        one_r = self._position_stop_risk_usdt(position)
+        if not one_r or one_r <= 0:
+            one_r = position.margin_usdt * risk_pct / 100.0
+        gross = self._position_pnl_pct(position, price)
+        if gross is None:
+            return False, f"Could not read a price for {sym} right now. Nothing changed — try again."
+        r_now = gross / risk_pct
+        if r_now <= 0:
+            return False, (f"{sym} is at {r_now:+.2f}R ({r_now * one_r:+.2f} USDT). "
+                           "/arm only arms a trade that is in profit.")
+        stored_peak = self._metadata_float(md, "convex_peak_r") or 0.0
+        peak_r = max(stored_peak, r_now)
+        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
+        retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
+        # The floor, computed with the SAME arithmetic as the exit path.
+        lev = float(getattr(position, "leverage", 0) or 0)
+        sl_frac = (risk_pct / (lev * 100.0)) if lev > 0 else 0.0
+        cost_floor_r = 0.0
+        if retain > 0:
+            exit_level = self._trail_retain_for(peak_r, retain) * peak_r
+            if sl_frac > 0:
+                cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
+                cost_floor_r = cost_r * self._env_float("FUTURES_CONVEX_COST_FLOOR_MULT", 1.5)
+                exit_level = max(exit_level, cost_floor_r)
+        else:
+            exit_level = peak_r - max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 2.0))
+        if peak_r >= arm_r:
+            pct = int(round(exit_level / peak_r * 100)) if peak_r > 0 else 0
+            return False, (f"{sym} is already armed: peak {peak_r:+.2f}R "
+                           f"({peak_r * one_r:+.2f} USDT), floor {exit_level:+.2f}R "
+                           f"({exit_level * one_r:+.2f} USDT), keeps {pct}%. The floor "
+                           "already tracks the running peak — /arm would change nothing.")
+        if exit_level >= peak_r:
+            return False, (f"{sym} cannot be trailed profitably: the breakeven floor "
+                           f"({exit_level:+.2f}R / {exit_level * one_r:+.2f} USDT) sits above "
+                           f"the peak ({peak_r:+.2f}R / {peak_r * one_r:+.2f} USDT), so arming "
+                           "would bank a net loss. Left to SL / TP / clock.")
+        md["manual_arm"] = 1.0
+        md["manual_arm_at_r"] = round(r_now, 4)
+        md["manual_arm_peak_r"] = round(peak_r, 4)
+        md["manual_arm_floor_r"] = round(exit_level, 4)
+        # The gate that was bypassed, so the counterfactual stays recoverable.
+        md["manual_arm_arm_r"] = round(arm_r, 4)
+        md["manual_arm_ts"] = time.time()
+        md["manual_arm_by"] = "telegram"
+        md["convex_peak_r"] = round(peak_r, 4)
+        self._save_state()
+        self._record_activity(f"Telegram: /arm {sym} (armed {r_now:+.2f}R, floor {exit_level:+.2f}R)")
+        log.warning("[MANUAL_ARM] symbol=%s side=%s now=%.2fR peak=%.2fR floor=%.2fR arm_gate=%.2fR",
+                    sym, position.side, r_now, peak_r, exit_level, arm_r)
+        pct = int(round(exit_level / peak_r * 100)) if peak_r > 0 else 0
+        ratchet_r = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0)
+        ratchet_retain = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN", 0.75)
+        rules = [f"keeps {pct}% of the peak"]
+        if retain > 0 and cost_floor_r > 0 and exit_level <= cost_floor_r + 1e-9:
+            rules.append("bound by the breakeven cost floor")
+        if retain > 0 and ratchet_r > 0 and ratchet_retain > retain:
+            rules.append(f"ratchets to {int(round(ratchet_retain * 100))}% above {ratchet_r:+.2f}R")
+        rules.append("never falls")
+        return True, (
+            f"{sym} {position.side} armed at {r_now:+.2f}R ({r_now * one_r:+.2f} USDT)\n"
+            f"Peak: {peak_r:+.2f}R ({peak_r * one_r:+.2f} USDT) · 1R = {one_r:,.2f} USDT\n"
+            f"Floor: {exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT)\n"
+            f"Auto-arm gate was {arm_r:+.2f}R ({arm_r * one_r:+.2f} USDT) — bypassed\n"
+            f"Exit rule: CONVEX_RETENTION_TRAIL — " + ", ".join(rules)
+        )
 
     def _handle_telegram_commands(self) -> None:
         if not self.telegram.configured:
@@ -4448,6 +4611,13 @@ class FuturesRuntime:
                             prefix = "🚨" if ok else "⚠️"
                             self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
                             self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
+                    elif command == "/arm":
+                        ok, message_text = self._manual_arm(arg)
+                        prefix = "🔒" if ok else "⚠️"
+                        self._notify(f"{prefix} <b>Manual Arm</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
+                        if not ok:
+                            # Success is recorded inside _manual_arm with the numbers.
+                            self._record_activity(f"Telegram: /arm {arg or ''} (refused)")
                     elif command in {"/help", "/start"}:
                         self._notify(self._build_help_message())
                         self._record_activity("Telegram: /help")
@@ -5229,6 +5399,28 @@ class FuturesRuntime:
                 # nowhere else. Positive = fill WORSE than the signal price.
                 "entry_slippage_bps": (position.metadata or {}).get("entry_slippage_bps"),
                 "signal_price": (position.metadata or {}).get("signal_price"),
+                # MANUAL ARM (/arm). Promoted explicitly for the same reason as
+                # everything above it: this record is built field by field and
+                # anything not named here is discarded at close. Without these
+                # columns the decision is unmeasurable, which is how every other
+                # rule in this programme shipped and why none of them can be priced.
+                "manual_arm": (position.metadata or {}).get("manual_arm"),
+                "manual_arm_at_r": (position.metadata or {}).get("manual_arm_at_r"),
+                "manual_arm_peak_r": (position.metadata or {}).get("manual_arm_peak_r"),
+                "manual_arm_floor_r": (position.metadata or {}).get("manual_arm_floor_r"),
+                "manual_arm_arm_r": (position.metadata or {}).get("manual_arm_arm_r"),
+                "manual_arm_ts": (position.metadata or {}).get("manual_arm_ts"),
+                "manual_arm_voided_ts": (position.metadata or {}).get("manual_arm_voided_ts"),
+                # THE ROW FILTER FOR THE EVENTUAL VERDICT: trades where the trail
+                # fired ONLY because a human armed it, i.e. the peak never reached
+                # the automatic gate. Everything else would have exited the same
+                # way with or without the command.
+                "manual_arm_decisive": 1.0 if (
+                    (position.metadata or {}).get("manual_arm")
+                    and reason == "CONVEX_RETENTION_TRAIL"
+                    and float((position.metadata or {}).get("convex_peak_r") or 0.0)
+                    < float((position.metadata or {}).get("manual_arm_arm_r") or 0.0)
+                ) else 0.0,
             }
         )
         # Fold in any +1R/+2R partial banks so the trade reflects TOTAL realized

@@ -30,12 +30,13 @@ VERBS: dict[str, str] = {
     "pause": "Pause new entries; open positions stay managed",
     "resume": "Resume new entries",
     "close": "Close a position, or all of them",
+    "arm": "Arm the retention trail on a position, below the automatic arm",
     "help": "Show available commands",
 }
 
 # Verbs that move money or change trading state. A web front end should confirm
 # these; an audit trail must record them; read-only actors may not issue them.
-MUTATING: frozenset[str] = frozenset({"pause", "resume", "close", "reconcile"})
+MUTATING: frozenset[str] = frozenset({"pause", "resume", "close", "reconcile", "arm"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +128,8 @@ def parse_command_text(text: str) -> tuple[str, dict[str, Any]] | None:
     args: dict[str, Any] = {}
     if verb == "close" and arg:
         args["target"] = "all" if arg.lower() == "all" else arg.upper()
+    elif verb == "arm" and arg:
+        args["target"] = arg.upper()
     elif arg:
         args["arg"] = arg
     return verb, args
