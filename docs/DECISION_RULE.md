@@ -11883,3 +11883,390 @@ The exit stack's measurable cost on 2026-09-11 was **$0.56 of slippage**. Nothin
 **ETH is the one with something to fix, and the fix is not worth dollars.** Its gate condition did not exist on a settled bar; its sampler took the worst minute of a fourteen-minute window. Both are real defects of *correctness and measurability*. On this trade, fixing either still loses.
 
 Two trades on one day, diagnosed to opposite causes, with every obvious remedy either refuted by replay or untestable on the data that exists. **The correct output of a two-trade post-mortem is usually a logging change and a "no."** That is what this is.
+---
+
+## 2026-09-12 - TREND SLEEVE CHALLENGED FROM SCRATCH. Verdict: KEEP, HALVE THE STAKE.
+
+**Owner: *"looking at the funded trials, it doesn't seem like this strategy has much of an edge. I
+allow you to challenge it from scratch."*** 4 lines, 4 adversarial verifiers, 9 agents, four
+independent twin replays (98-116 symbols, 62-360 days). **Read-only.**
+
+### 0. MY OWN TABLE WAS WRONG - the record I showed him omitted a row, and it was a loss
+
+**I pulled TREND's record from the local snapshot, which is dated 2026-09-10T21:16Z and therefore
+PREDATES the 09-11 ETH fill.** Corrected:
+
+    era            n    netR     meanR    SE      t     win     dollars    med risk
+    PRE-FUNDING   22  +10.360   +0.471  0.353  +1.33  13/22    +$23.65     $2.06
+    POST-FUNDING  10   -2.730   -0.273  0.402  -0.68   3/10    -$40.74    $22.95
+    ALL           32   +7.630   +0.238  0.277  +0.86  16/32    **-$17.08**  $2.79
+
+**The sleeve's lifetime dollar total is NEGATIVE, not +$7.70. The sign flipped on one omitted row.**
+**But it is not headline-able either way: SE $98.76, six times the number.**
+
+**THE CORRECTION IN HIS FAVOUR IS THE LARGER ONE.** In dollars the sleeve looks carried by one trade
+(strip the +$75.37 ZEC and it is -$92.45). **IN R IT IS NOT: strip the largest R and it is still
++4.650R over 31 fills.** Median pre-funding risk **$2.06**, post-funding **$22.95** - an ~11x step.
+**He won small and lost big because the STAKE stepped, not because the strategy changed.**
+
+**And the deterioration is not established: pre minus post = +0.744R +/- 0.535, t = +1.39.** Ten fills.
+**Neither "it stopped working" nor "it is fine" survives that.**
+
+### 1. DOES THE GATE BEAT ITS NULL? - NOBODY COULD ESTABLISH THAT IT DOES
+
+**Four lines built four independent replays and THE DISAGREEMENT IS LARGER THAN THE EFFECT:**
+
+| line | corpus | null | gate - null |
+|---|---|---|---|
+| premise | 98 sym x 81d | **carry-matched** random | **-0.017 +/- 0.042** |
+| shape (post-verification) | 110 sym x 62d | **volatility-matched** random | **+0.055, z~1.3** / **-0.334 on ZEC** |
+| decommission | 116 sym x 83d | random bar, same symbol | +0.008 to +0.110, none significant |
+| adversary | 4 sym x **360d** | random, same symbols | +0.168 +/- 0.026, but SEs on **OVERLAPPING** twins; corrected t ~ 1.6 |
+
+**THE HEADLINE THAT LOOKED STRONG WAS MEASURING THE DENOMINATOR.** The shape line's +0.563R / z=+4.70
+was the ATR denominator, not the gate: **gate bars sit at the 75th percentile of ATR, and with a 3xATR
+stop plus a 24h clock a LOW-ATR random entry is structurally doomed. Match the null on volatility and
+the edge collapses from +0.563 to +0.055.**
+
+> **The gate's true per-fill contribution lies somewhere in [-0.05, +0.15]R, its SIGN IS
+> CONSTRUCTION-DEPENDENT, and no construction that survived its own verifier cleared 1.6 SE.
+> At post-funding stake that is -$45 to +$140/month: too wide to clear the $10 bar and too wide to
+> fail it.**
+
+**ALL FOUR LINES AGREE UNPROMPTED ON ONE THING: the EXIT STACK, not the gate, is where the R goes.**
+At the gate's own entries a flat 24h hold returns +0.32R to +0.53R; the live stack delivers +0.02R to
++0.16R. **NOBODY COULD SHIP IT** - Min15 bars cannot see the intrabar paths a per-second trail acts on,
+and the corpus bias points precisely at the answer it produced. **Two lines found it and both refused
+to act. That refusal is correct.**
+
+### 2. THE NEW-24h-CLOSING-EXTREME CONDITION - HE WAS RIGHT. KEEP IT ANYWAY.
+
+His specific challenge, on the fair test (4% ROC fixed, the extreme as the only difference):
+
+    shape         +0.0015 +/- 0.0111  (n=94,742)   85% raw / 53% dedup entries deleted
+    premise       -0.0083 +/- 0.0364  (n=102,747)  85.1%
+    decommission  -0.0218 +/- 0.0449               55%
+    adversary     +0.077  +/- 0.048 after overlap correction (t 2.92 -> ~1.6)
+
+**Three of four say PRECISELY ZERO on the tightest samples anyone built.** The fourth is the only
+360-day read and the only one on the traded universe, but its corpus is not on disk and its SEs were
+computed on overlapping twins.
+
+> **RULING: the condition has NO MEASURED DETECTION VALUE, bounded above at ~+0.03R. The docstring's
+> claim that it confirms "the move is still being made, not being faded" is NOT SUPPORTED by 100,000+
+> twins. Retire the claim.**
+>
+> **BUT DO NOT REMOVE THE CODE. It deletes 53-86% of candidate bars AT ZERO SELECTION COST. The twins
+> book no fees; a real round trip costs ~0.06R at these stop widths. On a 2-slot sleeve, doubling the
+> flow at zero marginal edge is a STRICT LOSS. Reclassify it from THE THESIS to A FREE FILL-RATE
+> THROTTLE.** Documentation fix, not a code change.
+
+**He was right about the mechanism and wrong about the action.**
+
+*One unreplicated finding, logged not priced: the adversary measured the condition paying MOST in the
+window where a random 24h hold returned -0.61R (+0.242 +/- 0.069) and NEGATIVE in the melt-up window.
+If real, "buying extension" is INSURANCE, not risk-taking - the inverse of his premise.*
+
+### 3. THE SLEEVE IS A ZEC SLEEVE, AND ZEC IS ITS WORST NAME
+
+**Live: 21 of 32 fills are ZEC (66%). Post-funding: 9 of 10 (90%).**
+**Twins: ZEC is only ~42-45% of gate eligibility.** So the live concentration is a **SLOT-QUEUEING
+ARTIFACT** - higher firing rate x 2 global slots x one-position-per-symbol means ZEC crowds the other
+three out of the queue. **Nobody chose it.**
+
+**And ZEC is the WORST of the four for this gate, on all four corpora, by four different methods:**
+
+    premise       ZEC +0.161 over own null   vs +0.345 / +0.375 / +0.376 for the others
+    shape         ZEC -0.334 vs vol-matched null      (others positive)
+    decommission  ZEC -0.225 +/- 0.224, the ONLY negative arm
+    adversary     ZEC gate - buy-and-hold = -0.128    (others +0.127)
+
+**The adversary's version is sharpest: ZEC is the one name where the gate is a WORSE way to express
+the view than simply being long it. Two-thirds of the sleeve's capacity is spent there.**
+Every individual estimate is inside noise, but **four independent replays ranking the same name last
+is the best-replicated structural finding in the review.**
+
+### 4. THE DECOMMISSION CASE - AND MY BRIEF'S PREMISE WAS WRONG
+
+**(a) SLOTS: EXACTLY ZERO. A CODE FACT, NOT A STATISTIC.** `runtime.py:6992` gates TREND on
+`_convex_open_count("TREND")` and WILDCARD on its own count. **THE SLOT POOLS ARE PER-SLEEVE.**
+**Turning TREND off frees WILDCARD ZERO slots.** My brief said it "frees 2 slots and the margin they
+consume" - **half wrong, and it was the half carrying the argument.** Verified by reading source twice.
+
+**(b) MARGIN: real, small.** Three models converge: +1.59% aggregate = **+$5.94/mo +/- $8.48**;
+x1.041 time-averaged; x1.025 blended. **All below the $10 bar. And it is a multiplier on WILDCARD,
+which is -0.029R +/- 0.181 post-censor. Some percent of zero is zero.**
+
+**(c) P&L: UNQUOTABLE.** Book with TREND off minus on: **+$28.00, SE $98.89.**
+
+**(d) VARIANCE: THE ONLY ESTABLISHED EFFECT.** corr(daily TREND $, daily WILDCARD $) = **-0.021** -
+TREND neither hedges nor duplicates, it is pure additional long-alt variance. Book daily sd
+**$23.40 -> $14.92 (-36%)**. *Caveat: removing ANY uncorrelated sleeve of similar size does this.*
+
+### 5. THE RULING: KEEP THE SLEEVE, HALVE THE STAKE
+
+**#1 CUT TREND'S STAKE. ENV-ONLY. REVERSIBLE. THE ONLY ITEM WITH NO MEASUREMENT DISPUTE.**
+
+The ~11x stake step bought **no measurable expectancy**. What it bought is a monthly sd of **~$236 on
+a ~$966 account - 24% of equity per month, from a sleeve at t = +0.86.**
+**The memory line "the whole envelope is +/-$60/mo" is STALE: post-funding, TREND alone is a
++/-$236/month instrument.**
+
+> **Expected P&L change: zero within measurement. MEASUREMENT COST: NONE - time-to-verdict is computed
+> in R and R IS STAKE-INVARIANT. You lose no information.** Cost if wrong: if the true edge is the
+> pre-funding +0.471R, half stake forgoes ~$110/mo - **but you cannot detect that edge for 6+ months,
+> so you would be paying full variance for six months to find out.**
+> **This is not a P&L improvement. It is buying survivability at ZERO informational cost.**
+
+**#2 DO NOT DECOMMISSION.** The kill's three claimed benefits are slots (**exactly zero, by code**),
+margin (**+$6/mo +/- $8**) and P&L (**-$17 +/- $99**). The fourth, variance, is what #1 buys more
+cheaply while keeping the experiment alive. **Killing it forecloses the only instrument that can ever
+answer the question, in exchange for nothing quotable.**
+
+**#3 FIX THE IN-PROGRESS-KLINE DEFECT, BUDGET $0.** Resolved P&L effect **+0.036 +/- 0.054 and
+-0.003 +/- 0.107 - zero, twice.** The adversary's claim that the fix buys a 2.4x speed-up to verdict
+**was killed by its own verifier** (the post-fix arm was priced at an intrabar trigger the fix cannot
+obtain); correctly priced it **halves expected R/month and lengthens time-to-verdict from ~11 to ~18
+months.** **Fix it for AUDITABILITY: 2 of 32 live fills cannot be reproduced from settled klines, and
+un-auditable fills are how the ledger leak ran 67 days. Note the symmetry - the defect's one
+identifiable live contribution is the -$24.78 loss that was also the row missing from the record.**
+
+**#4 LOG, DO NOT SHIP MID-TRIAL: the ZEC queue crowd-out.** Best-replicated sign in the review, free to
+implement, moves capacity from the weakest name to three better ones. **But every per-symbol estimate
+is individually inside noise and changing symbol composition mid-trial invalidates the 19F baseline.
+Pre-register for trial 20.**
+
+**#5 CHANGE NOTHING ELSE.** Keep the extreme condition (as a throttle). **Keep LONG-ONLY - re-established
+on fresh evidence independent of the retracted -0.225R: +0.2215 +/- 0.0391 long-minus-short (n=3,308)
+and -0.079 +/- 0.031 for shorts (n=1,165)**, with the caveat that this is a one-regime up-window read.
+Keep TP 3R (null in both directions on three lines). Keep 19F off. **Do NOT widen the universe** -
+98 symbols drops the gate from +0.357 to +0.042 under 2 slots. *(Independently confirms the standing
+allocation verdict.)*
+
+### 6. IS THIS ANSWERABLE? NO - NOT THIS DECADE
+
+Per-fill sd **1.565R**, rate 43.2 fills/month, 80% power:
+
+    true mean    fills    months
+    +0.471R        86       2.0    (only if the pre-funding record is the truth)
+    +0.280R       244       5.7
+    +0.238R       338       7.9
+    +0.150R       853      19.8
+    +0.050R     7,680     178      (~15 years)
+
+**And optimistic: 21 of 32 fills are ZEC, so clustered on symbol the effective n is a fraction.**
+
+**The twin corpora do not rescue it.** They settle the WIDE population to +/-0.04R, **but the wide
+population is not the sleeve. On the four symbols actually traded the tightest matched interval anyone
+produced is +/-0.15 to +/-0.30R = +/-$130 to +/-$270/month. And the four replays disagree with each
+other (-0.017 to +0.168) BY MORE THAN THE EFFECT THEY ARE MEASURING. Method choice, not data, is the
+dominant source of variance.**
+
+> **No amount of analysis settles whether this sleeve has an edge this decade. The live record can rule
+> IN a large edge within two quarters. It can NEVER rule OUT a small one.**
+>
+> **So it is a variance-tolerance judgement and it is HIS:**
+> **- test "capital must justify itself" -> DECOMMISSION.** The thesis is refuted, nothing establishes
+>   a leak, nothing measurable is lost.
+> **- test "capital stays unless a leak is shown" -> KEEP.** Nothing here shows one.
+>
+> **Neither is more rigorous. The evidence is symmetric; the asymmetry has to come from him.**
+> **What the evidence DOES rule out is the middle: running an unproven sleeve at full post-funding
+> stake. Every line converged there independently. The gate is not what is expensive now - THE STAKE IS.**
+
+### 7. THE BY-PRODUCT THAT IS WORTH MORE THAN THE VERDICT
+
+**The replay tool now exists and is validated** - it re-discovered 27-32 of the live fills from klines
+alone. **Every future question about this sleeve - shorts, TP, 19F, the trail, the universe - is now a
+20-minute job instead of a 9-month trial.** That is worth more than TREND's entire P&L envelope.
+# VERDICT: THE TREND SLEEVE
+
+*Four analysis lines and four adversarial verifiers reported. I re-derived the live record myself from `live_th.json` before writing anything below.*
+
+---
+
+## 1. YOUR PREMISE, CORRECTED IN BOTH DIRECTIONS
+
+**The table you were given is missing a row, and the missing row is a loss.**
+
+```
+                n    netR    meanR     SE      t     win     dollars    med risk
+PRE-FUNDING    22  +10.360  +0.471   0.353  +1.33  13/22    +$23.65     $2.06
+POST-FUNDING   10   -2.730  -0.273   0.402  -0.68   3/10    -$40.74    $22.95
+ALL            32   +7.630  +0.238   0.277  +0.86  16/32    -$17.08     $2.79
+```
+
+The 32nd fill is **ETH 2026-09-11T14:02, −1.04R, −$24.78** — and it is the fill that only existed on an in-progress bar. Three independent agents and my own read agree. **The sleeve's lifetime dollar total is negative, not +$7.70.** I am not headlining −$17.08: its standard error is **$98.76**, six times the number. That is exactly why the sign flipped on one row.
+
+**Now the correction in your favour, which is the larger one.** In dollars the sleeve looks carried by one trade — strip the +$75.37 ZEC and it is −$92.45. **In R it does not**: strip the largest R and it is still **+4.650R over 31 fills**. The reason is arithmetic, not edge: the median pre-funding risk was **$2.06** and the median post-funding risk **$22.95**. You won small and lost big because the stake stepped ~11x between the two, not because the strategy changed.
+
+**And the deterioration you are reacting to is not established.** Pre minus post = **+0.744R ± 0.535, t = +1.39**. Ten fills. That is nine coin flips and a bad week. Neither "it stopped working" nor "it is fine" survives that number.
+
+**Net: your instinct about the dollars is right, your inference about the edge is not supported, and the record you were shown was flattered by one omitted row.**
+
+---
+
+## 2. DOES THE GATE BEAT ITS NULL? — **NO ONE COULD ESTABLISH THAT IT DOES**
+
+Four lines built four independent replays. They do not agree, and **the disagreement is larger than the effect**:
+
+| line | corpus | null construction | gate − null |
+|---|---|---|---|
+| premise | 98 sym × 81d | **carry-matched** random entry | **−0.017 ± 0.042** (wide) / −0.015 ± 0.164 (traded 4) |
+| shape *(post-verification)* | 110 sym × 62d | **volatility-matched** random entry | **+0.055, z≈1.3** (wide) / +0.066, z=0.27 (traded 4) / **−0.334 on ZEC** |
+| decommission | 116 sym × 83d | random bar, same symbol | +0.008 ± 0.034 claimed; verifier rebuilt it at **+0.008 to +0.110**, all positive, none significant |
+| adversary | 4 sym × **360d** | random entry, same symbols | +0.168 ± 0.026 — but SEs computed on **overlapping** twins; corrected t ≈ 1.6, and it beats buy-and-hold in only **3 of 6 windows** |
+
+**What killed the one headline that looked strong:** the shape line's +0.563R / z=+4.70 was measuring the ATR denominator, not the gate. Gate bars sit at the 75th percentile of ATR; with a 3×ATR stop and a 24h clock, a *low*-ATR random entry is structurally doomed. Match the null on volatility and the edge collapses from +0.563 to **+0.055**.
+
+**The honest reading:** the gate's true per-fill contribution over random entry on the same symbols lies somewhere in **[−0.05, +0.15]R**, its *sign is construction-dependent*, and no construction that survived its own verifier produced a difference clearing 1.6 SE. At post-funding stake that interval is **−$45 to +$140/month** — too wide to clear the $10/mo ship bar and too wide to fail it.
+
+**The one thing all four lines agree on unprompted:** the exit stack, not the gate, is where the R goes. At the gate's own entries a flat 24h hold returns +0.32R to +0.53R; the live stack delivers +0.02R to +0.16R. **Nobody could ship that finding** — Min15 bars cannot see the intrabar paths a per-second trail acts on, and the corpus bias points precisely at the answer it produced. Two lines found it and both refused to act on it. That refusal is correct.
+
+---
+
+## 3. DOES THE NEW-24h-CLOSING-EXTREME CONDITION EARN ITS KEEP? — **NO. KEEP IT ANYWAY.**
+
+Your specific challenge, held to the fair test (4% ROC fixed, extreme as the only difference):
+
+| line | contribution | SE | entries deleted |
+|---|---|---|---|
+| shape | **+0.0015** | ±0.0111 (n=94,742) | 85% raw / 53% dedup |
+| premise | **−0.0083** | ±0.0364 (n=102,747) | 85.1% |
+| decommission | **−0.0218** | ±0.0449 | 55% |
+| adversary | +0.077 | ±0.027 → **±0.048** after overlap correction | 86.6% |
+
+Three of four say **precisely zero on the tightest samples anyone built**. The fourth is the only 360-day read and the only one on the traded universe — a real advantage — but its corpus is not on disk, its SEs were computed on overlapping twins, and its t falls from 2.92 to ~1.6 when that is fixed.
+
+**Ruling: the condition has no measured detection value. Bounded above at ~+0.03R on the best-powered corpus. The docstring's claim that it confirms "the move is still being made, not being faded" is not supported by 100,000+ twins. Retire the claim.**
+
+**But do not remove the code.** It deletes **53–86% of candidate bars at zero selection cost**. The twins book no fees; a real round trip costs ~0.06R at these stop widths. On a 2-slot sleeve, doubling the flow at zero marginal edge is a **strict loss**. Reclassify it in the docs from *the thesis* to *a free fill-rate throttle*. Documentation fix, not a code change.
+
+**You were right about the mechanism and wrong about the action.** That is the most useful thing in this review.
+
+*One unreplicated finding worth logging, not acting on: the adversary line measured the condition paying **most** in the window where a random 24h hold returned −0.61R (+0.242 ± 0.069) and **negative** in the melt-up window. If real, "buying extension" is insurance, not risk-taking — the inverse of your premise. One corpus, one window, unreplicated by the other three. Do not price it.*
+
+---
+
+## 4. IS THE SLEEVE JUST ZEC? — **IN PRACTICE YES, AND THAT IS THE ONE FIXABLE DEFECT IN THE REVIEW**
+
+- **Live: 21 of 32 fills are ZEC (66%). Post-funding: 9 of 10 (90%).**
+- **Twins: ZEC is only ~42–45% of gate eligibility on the traded four.** The live concentration is therefore a **slot-queueing artifact** — higher firing rate × 2 global slots × one-position-per-symbol means ZEC crowds the other three out of the queue. Nobody chose it.
+- **And ZEC is the worst of the four for this gate, on all four corpora, by four different methods:**
+
+| line | ZEC | the other three |
+|---|---|---|
+| premise | +0.161 over own null | +0.345 / +0.375 / +0.376 |
+| shape | **−0.334** vs vol-matched null | positive |
+| decommission | **−0.225 ± 0.224** (only negative arm) | positive |
+| adversary | +0.273 absolute, but **gate − buy-and-hold = −0.128** | gate − B&H = **+0.127** |
+
+The adversary's version is the sharpest: **ZEC is the one name where the gate is a worse way to express the view than simply being long it.** Two-thirds of the sleeve's capacity is spent there.
+
+Every individual estimate is inside noise. But **four independent replays ranking the same name last is the best-replicated structural finding in this entire review** — with the caveat that the corpora share an overlapping window and are not fully independent draws.
+
+**"TREND" is a ZEC sleeve with three occasional alternates, and it is concentrated in its weakest name by accident of queue arrival.**
+
+---
+
+## 5. THE DECOMMISSION CASE, MODELLED PROPERLY — **THE BRIEF'S OWN PREMISE IS WRONG**
+
+Three channels, priced separately.
+
+**(a) SLOTS — EXACTLY ZERO. This is a code fact, not a statistic.** `runtime.py:6992` gates TREND on `_convex_open_count("TREND")` and WILDCARD on its own count. **The slot pools are per-sleeve.** Turning TREND off frees WILDCARD **zero** slots. The brief's framing — "it frees 2 slots and the margin they consume" — is half wrong, and it is the half that carried the argument. This was verified by reading the live source, twice.
+
+**(b) MARGIN — REAL, SMALL, AND A MULTIPLIER ON A COIN FLIP.** Three independent models converge:
+
+| model | uplift to WILDCARD sizing |
+|---|---|
+| decommission (sequential, 82 post-censor fills) | **+1.59%** aggregate → **+$5.94/mo ± $8.48** |
+| adversary (time-averaged margin, post-funding) | **×1.041** |
+| shape (per-15-min-slice, verifier-corrected) | ×1.11 on the 25% of WILDCARD fills that overlap → **×1.025 blended** |
+
+All below the $10/mo ship bar on their own. And it is a multiplier on WILDCARD, which is **−0.029R ± 0.181 post-censor** — a coin flip. **Some percent of zero is zero.**
+
+**(c) P&L — UNQUOTABLE.** Book with TREND off minus on, post-censor 21.3 days: **+$28.00, SE $98.89**. Per hard rule 7, that is not a number. In R: TREND +0.137 ± 0.291, WILDCARD −0.029 ± 0.181.
+
+**(d) VARIANCE — THE ONLY ESTABLISHED EFFECT.** corr(daily TREND $, daily WILDCARD $) = **−0.021**. TREND neither hedges nor duplicates; it is pure additional long-alt variance. Book daily P&L sd **$23.40 → $14.92 (−36%)**. *Caveat: removing any uncorrelated sleeve of similar size does this. It is arithmetic, not a finding about TREND.*
+
+**Conclusion: decommissioning ≈ "subtract TREND's P&L", which is subtracting −$17.08 ± $98.76. There is no P&L case in either direction. The only thing a kill buys is variance — and §6 buys most of that more cheaply and reversibly.**
+
+---
+
+## 6. RANKED DECISION
+
+**#1 — CUT TREND'S STAKE. ENV-ONLY. REVERSIBLE. THE ONLY ITEM WITH NO MEASUREMENT DISPUTE.**
+
+The era difference in R is **+0.744 ± 0.535**. The ~11x stake step (median risk $2.06 → $22.95) bought **no measurable expectancy**. What it bought is a monthly standard deviation of **~$236 on a ~$966 account — 24% of equity per month, from a sleeve at t = +0.86.**
+
+The memory line *"the whole envelope is ±$60/mo"* is **stale**. Post-funding, TREND alone is a **±$236/month instrument**.
+
+- **Dollars:** expected P&L change is zero *within measurement*; halving risk_pct halves the ~$236/mo sd.
+- **Measurement cost: none.** Time-to-verdict is computed in R and **R is stake-invariant.** You lose no information.
+- **Cost of being wrong:** if the true edge really is the pre-funding +0.471R, half stake forgoes ~$110/mo. But you cannot detect that edge for at least 2 months and realistically 6+ (§7) — you would be paying full variance for six months to find out.
+- **Honest label:** this is not a P&L improvement. It is buying survivability at zero informational cost, and it is only correct if you believe the edge is near zero — which is what every line in this review says.
+
+**#2 — DO NOT DECOMMISSION.** Not because the sleeve is proven — it is not — but because the kill's three claimed benefits are: slots (**exactly zero, by code**), margin (**+$6/mo ± $8**), and P&L (**−$17 ± $99**). The fourth, variance, is real and is what #1 buys more cheaply while keeping the experiment alive. **Killing it forecloses the only instrument that can ever answer the question, in exchange for nothing you can quote.**
+
+**#3 — FIX THE IN-PROGRESS-KLINE DEFECT, AND BUDGET $0 AGAINST IT.** Code change, `_drop_incomplete_klines` in the TREND scan. Its resolved P&L effect under the real 2-slot constraint is **+0.036 ± 0.054** and **−0.003 ± 0.107** — zero, twice. The adversary line claimed the fix buys a 2.4x speed-up to verdict; **its own verifier killed that**: the post-fix arm was priced at the intrabar trigger price the fix cannot obtain. Correctly priced, the fix roughly *halves* expected R per month and *lengthens* time-to-verdict from ~11 to ~18 months.
+
+Fix it for **auditability**: 2 of 32 live fills cannot be reproduced from settled klines. Un-auditable fills are how the ledger-censoring leak ran 67 days. Note the symmetry — **the defect's one identifiable live contribution is a −$24.78 loss that was also the row missing from the record you were shown.**
+
+**#4 — LOG, DO NOT SHIP MID-TRIAL: the ZEC queue crowd-out.** Best-replicated sign in the review, free to implement, and it moves capacity from the weakest name to three better ones. But every per-symbol estimate is individually inside noise, so **it does not clear the $10/mo ship bar on measurement**, and changing the sleeve's symbol composition mid-trial invalidates the trial-19 baseline. Pre-register it for the next trial.
+
+**#5 — CHANGE NOTHING ELSE.** Keep the extreme condition (§3). Keep long-only — re-established on fresh evidence independent of the retracted −0.225R: **+0.2215 ± 0.0391** (shape, n=3,308) and **−0.079 ± 0.031 for shorts** (decommission, n=1,165), both with the caveat that this is a **one-regime, up-window read**. Keep TP at 3R (three lines: null in both directions). Keep 19F off (negative or zero at every threshold on three corpora; X and T stay locked until 30 fires — this is evidence *for* that decision, not a reason to touch it now). **Do not widen the universe** — 98 symbols drops the gate from +0.357 to +0.042 under 2 slots, and 141 alts is no better and survivorship-selected. This independently confirms the standing allocation verdict.
+
+---
+
+## 7. IS THIS ANSWERABLE? — **NO. NOT THIS DECADE. AND THAT IS THE ANSWER, NOT A DODGE.**
+
+Per-fill sd = **1.565R**. Rate = **43.2 fills/month**. At 80% power, 5% two-sided:
+
+```
+true mean   fills needed   months
++0.471R           86         2.0     (only if the pre-funding record is the truth)
++0.280R          244         5.7
++0.238R          338         7.9
++0.150R          853        19.8
++0.100R        1,920        44.5
++0.050R        7,680       178      (~15 years)
+```
+
+And those are **optimistic**: 21 of 32 fills are ZEC, so clustered on symbol the effective independent n is a fraction of the nominal. Multiply every row.
+
+**The twin corpora do not rescue this either.** They settle the *wide* population to ±0.04R — but the wide population is not your sleeve. **On the four symbols you actually trade, the tightest matched interval anyone produced is ±0.15 to ±0.30R = ±$130 to ±$270/month.** Worse: **the four replays disagree with each other (−0.017 to +0.168) by more than the effect they are measuring.** Method choice, not data, is currently the dominant source of variance. No further replay on 60–360 days of Min15 fixes that.
+
+**So, in the words the brief asked for: no amount of analysis settles whether this sleeve has an edge this decade.** The live record can rule **in** a large edge within two quarters. It can never rule **out** a small one.
+
+**That makes this a variance-tolerance judgement, and it is yours, not a measurement. The framework:**
+
+- **If your test is "capital must justify itself"** → decommission. The gate's thesis is refuted, nothing establishes a leak, and you lose nothing measurable.
+- **If your test is "capital stays unless a leak is shown"** → keep. Nothing here shows one.
+
+**Neither test is more rigorous than the other. The evidence is symmetric; the asymmetry has to come from you.** What the evidence *does* rule out is the middle: **running an unproven sleeve at full post-funding stake.** Every line converged there independently. The gate is not what is expensive now — the stake is.
+
+---
+
+## THE COUNCIL
+
+**The Opposer** — The weakest point is that I am recommending a stake cut on a t=+1.39 era difference while refusing to act on a t=+2.92 extreme-condition finding. If +0.744 ± 0.535 is "noise", so is everything. **Answer:** the stake cut does not require the era difference to be real — it requires only that the edge be *unproven*, which is agreed on all sides. It is the one action whose correctness does not depend on which replay you believe.
+
+**First Principles** — The question is not "does the gate work". It is **"what is 2 slots of levered long alt-beta worth, entered at moments selected by a statistic that adds nothing?"** Once the detection argument is off the table — and all four lines put it there — TREND is an allocation decision wearing a strategy's clothes. Price it as allocation.
+
+**The Expander** — Nobody noticed the asymmetry you actually own: **the replay tool now exists and is validated** (it re-discovered 27–32 of your live fills from klines alone). You spent this week buying a permanent instrument. The sleeve verdict is a by-product. Every future question — shorts, TP, 19F, the trail — is now a 20-minute job instead of a 9-month trial. **That is worth more than TREND's entire P&L envelope.**
+
+**The Outsider** — You have a $966 account, one sleeve swinging $236/month, 66% of its fills in a single coin, and a 32-trade sample. Nothing else in this document matters next to that sentence.
+
+**The Implementer** — One env change today: halve TREND's risk_pct. One code change this week: `_drop_incomplete_klines` in the TREND scan, for auditability, budgeted at zero. One doc change: demote the extreme condition from thesis to throttle. Two items pre-registered for trial 20: the ZEC queue fairness rule, and the loose-exit candidate. **Then stop looking at this for 150 fills.**
+
+---
+
+## FINAL RULING
+
+**KEEP THE SLEEVE. HALVE THE STAKE. FIX THE DEFECT FOR AUDIT, NOT FOR MONEY. CHANGE NOTHING ELSE.**
+
+You were right that the gate has no edge — four independent replays confirm the new-24h-closing-extreme condition contributes nothing, and the gate as a whole cannot be distinguished from a volatility- or carry-matched random long. You were wrong that this means the sleeve should die: the kill frees zero slots (a code fact), $6/month of margin, and a P&L total whose standard error is six times its size.
+
+**The thing that got worse in August was not the strategy. It was the stake.** Your wins came at $2 risk and your losses at $22, the era difference in R is +0.744 ± 0.535, and the sleeve now swings a quarter of the account per month at t=+0.86. Cutting the stake costs nothing measurable in expectancy, costs **nothing at all** in time-to-verdict, and buys back your ability to be wrong for another year.
+
+And keep the condition you asked me to kill. It is not an edge — it is a free throttle that deletes 85% of the flow, and in a world where twins book no fees and you do, that is worth more than the thesis it was supposed to prove.
