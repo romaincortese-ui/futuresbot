@@ -128,15 +128,58 @@ def test_arms_below_the_gate_and_the_trail_then_fires(tmp_path, monkeypatch):
 
 
 def test_arm_uses_the_running_peak_not_the_current_r(tmp_path):
-    """Armed at +0.4R after a +0.8R peak: the floor is off the PEAK, exactly as
-    the automatic rule would compute it."""
-    runtime = _runtime(tmp_path, _Client(price=104.0))
+    """Armed at +0.6R after a +0.8R peak: the floor is off the PEAK, exactly as
+    the automatic rule would compute it, and it still sits below the current level."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))   # +0.60R
     position = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
     ok, message = _armed(runtime, position)
     assert ok is True
     assert position.metadata["manual_arm_peak_r"] == pytest.approx(0.80)
     assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.40)
     assert "+0.40R" in message
+
+
+def test_refusal_10_retraced_past_the_floor_would_close_immediately(tmp_path):
+    """THE DEFECT THIS GUARD EXISTS FOR. Peak +0.80R puts the floor at +0.40R, but
+    price has already fallen back to +0.20R. The old check only compared the floor
+    to the PEAK, so this armed successfully and the next one-second poll closed the
+    trade - /arm banking a giveback it was written to prevent."""
+    runtime = _runtime(tmp_path, _Client(price=102.0))   # +0.20R, below the 0.40R floor
+    position = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
+    runtime.open_positions["ZEC_USDT"] = position
+    _refuses(runtime, position, "ZEC", "already given back past that floor")
+    assert "manual_arm" not in position.metadata
+
+
+def test_refusal_10_boundary_floor_equal_to_current_is_refused(tmp_path):
+    """At r_now == exit_level the exit path closes (it holds only while
+    r_now > exit_level), so the boundary must refuse, not arm."""
+    runtime = _runtime(tmp_path, _Client(price=104.0))   # +0.40R == the 0.40R floor
+    position = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
+    runtime.open_positions["ZEC_USDT"] = position
+    _refuses(runtime, position, "ZEC", "already given back past that floor")
+
+
+def test_refusal_11_legacy_giveback_mode_has_no_breakeven_floor(tmp_path, monkeypatch):
+    """retain<=0 selects the legacy fixed-R giveback, which applies no cost floor:
+    at +0.60R with the default 2.0R giveback the 'floor' is -1.40R. The automatic
+    path never reaches it below the gate; /arm must refuse rather than arm into it."""
+    monkeypatch.setenv("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", "0")
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    _refuses(runtime, position, "ZEC", "legacy giveback mode")
+    assert "manual_arm" not in position.metadata
+
+
+def test_success_reports_the_floor_as_a_price(tmp_path):
+    """The only number that can be checked against a chart."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))   # +0.60R, floor +0.30R
+    ok, message = _armed(runtime, _pos())
+    assert ok is True
+    assert "Exits at" in message
+    # 10% stop at 10x -> sl_frac 0.10; floor 0.30R -> entry x (1 + 0.30 x 0.10) = 103.0
+    assert "103" in message
 
 
 def test_symbol_resolution_is_case_insensitive_and_suffix_optional(tmp_path):
@@ -282,7 +325,7 @@ def test_the_floor_never_falls_after_a_manual_arm(tmp_path, monkeypatch):
 
 
 def test_manual_arm_cannot_lower_an_existing_peak(tmp_path):
-    runtime = _runtime(tmp_path, _Client(price=104.0))      # +0.40R now
+    runtime = _runtime(tmp_path, _Client(price=106.0))      # +0.60R now
     position = _pos(metadata={"wildcard": 1.0, "sl_margin_pct": 100.0, "convex_peak_r": 0.80})
     runtime.open_positions["ZEC_USDT"] = position
     assert runtime._manual_arm("ZEC")[0] is True

@@ -4460,6 +4460,16 @@ class FuturesRuntime:
         peak_r = max(stored_peak, r_now)
         arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
         retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
+        # The legacy giveback branch (retain<=0, kept reachable for rollback) subtracts
+        # a FIXED R from the peak and applies NO cost floor, so at +0.60R with the
+        # default 2.0R giveback it yields a floor of -1.40R: a "floor" 233% below the
+        # peak, which the retention invariant forbids. The automatic path never reaches
+        # it below the 1.0R gate. /arm would, so it refuses instead.
+        if retain <= 0:
+            return False, (f"{sym}: the trail is in legacy giveback mode "
+                           f"(FUTURES_CONVEX_TRAIL_RETAIN_FRAC={retain:g}), which has no "
+                           "breakeven floor and can sit below entry. /arm refuses to arm "
+                           "into it. Set a retention fraction above 0 first.")
         # The floor, computed with the SAME arithmetic as the exit path.
         lev = float(getattr(position, "leverage", 0) or 0)
         sl_frac = (risk_pct / (lev * 100.0)) if lev > 0 else 0.0
@@ -4483,6 +4493,18 @@ class FuturesRuntime:
                            f"({exit_level:+.2f}R / {exit_level * one_r:+.2f} USDT) sits above "
                            f"the peak ({peak_r:+.2f}R / {peak_r * one_r:+.2f} USDT), so arming "
                            "would bank a net loss. Left to SL / TP / clock.")
+        # THE FLOOR IS DERIVED FROM THE PEAK, BUT IT BINDS AGAINST THE PRICE NOW.
+        # A position that has already retraced (stored peak 0.90R, now +0.20R) passes
+        # the check above - 0.45R floor is below the 0.90R peak - and then the next
+        # one-second poll sees r_now <= exit_level and closes it immediately, possibly
+        # under breakeven. That is /arm banking a loss, which is exactly what the
+        # refusals exist to prevent. Compare against the CURRENT level, not only the peak.
+        if exit_level >= r_now:
+            return False, (f"{sym} has already given back past that floor: now "
+                           f"{r_now:+.2f}R ({r_now * one_r:+.2f} USDT) against a floor of "
+                           f"{exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT) off its "
+                           f"{peak_r:+.2f}R peak. Arming would close it on the next poll. "
+                           "Nothing changed.")
         md["manual_arm"] = 1.0
         md["manual_arm_at_r"] = round(r_now, 4)
         md["manual_arm_peak_r"] = round(peak_r, 4)
@@ -4505,10 +4527,21 @@ class FuturesRuntime:
         if retain > 0 and ratchet_r > 0 and ratchet_retain > retain:
             rules.append(f"ratchets to {int(round(ratchet_retain * 100))}% above {ratchet_r:+.2f}R")
         rules.append("never falls")
+        # The floor as a PRICE. On a phone at 3am the R-multiple is not actionable and
+        # the chart is; this is the only number that can be checked against it.
+        # gross% of margin = r x risk_pct, and price move % = gross / leverage, so
+        # the move from entry is exactly exit_level x sl_frac.
+        floor_line = ""
+        if sl_frac > 0 and position.entry_price > 0:
+            sign = 1.0 if str(position.side).upper() == "LONG" else -1.0
+            floor_price = position.entry_price * (1.0 + sign * exit_level * sl_frac)
+            if floor_price > 0:
+                floor_line = f"Exits at {self._format_price(floor_price)}\n"
         return True, (
             f"{sym} {position.side} armed at {r_now:+.2f}R ({r_now * one_r:+.2f} USDT)\n"
             f"Peak: {peak_r:+.2f}R ({peak_r * one_r:+.2f} USDT) · 1R = {one_r:,.2f} USDT\n"
             f"Floor: {exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT)\n"
+            + floor_line +
             f"Auto-arm gate was {arm_r:+.2f}R ({arm_r * one_r:+.2f} USDT) — bypassed\n"
             f"Exit rule: CONVEX_RETENTION_TRAIL — " + ", ".join(rules)
         )
@@ -4617,7 +4650,10 @@ class FuturesRuntime:
                         self._notify(f"{prefix} <b>Manual Arm</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
                         if not ok:
                             # Success is recorded inside _manual_arm with the numbers.
-                            self._record_activity(f"Telegram: /arm {arg or ''} (refused)")
+                            # Escape: the activity log is rendered as HTML by /logs,
+                            # and `arg` is raw user text. /close has the same hole.
+                            self._record_activity(
+                                f"Telegram: /arm {html.escape(arg or '')} (refused)")
                     elif command in {"/help", "/start"}:
                         self._notify(self._build_help_message())
                         self._record_activity("Telegram: /help")
