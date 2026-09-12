@@ -2347,6 +2347,15 @@ class FuturesRuntime:
         manual_armed = bool((position.metadata or {}).get("manual_arm"))
         if peak_r < arm_r and not manual_armed:
             return False
+        # A manual arm may carry its own retention, chosen by the operator at the
+        # moment of arming (`/arm SYM 0.20` -> keep 0.80 of the peak). It is stamped
+        # once and never re-read from the environment, so the floor a human was shown
+        # is the floor that fires. `_manual_arm` refuses any value that would sit
+        # BELOW the floor already in force, so this can only ever tighten.
+        if manual_armed:
+            override = self._metadata_float(md, "manual_arm_retain")
+            if override and override > 0:
+                retain = override
         if retain > 0:
             # trial 7: retention floor. Ratchet-only by construction (retain is
             # constant and peak only rises), and always >= retain x arm > 0.
@@ -4276,6 +4285,8 @@ class FuturesRuntime:
             "/resume — Resume new entries\n"
             "/arm SYMBOL — Arm the retention trail now, below the automatic arm "
             "(e.g. /arm ZEC). Same giveback rules; never lowers a floor\n"
+            "/arm SYMBOL GIVEBACK — Arm with your own giveback (e.g. /arm ZEC 0.20 "
+            "keeps 80% of the peak). Tightens an already-armed trade too\n"
             "/close — Close the first open position\n"
             "/close SYMBOL — Close a specific position (e.g. /close ETH_USDT)\n"
             "/close all — Close every open position\n"
@@ -4372,7 +4383,37 @@ class FuturesRuntime:
         self._record_activity(f"Manual close: {position.side} {position.symbol} @ {exit_price:,.2f}")
         return True, f"Closed live {position.side} {position.symbol} at ${exit_price:,.2f}."
 
-    def _manual_arm(self, symbol: str) -> tuple[bool, str]:
+    @staticmethod
+    def _parse_giveback(raw: str) -> tuple[float | None, str | None]:
+        """`0.20`, `20`, `20%` -> a 0.20 giveback. Returns (value, error).
+
+        Forgiving about the form because it is typed on a phone, strict about the
+        range: a giveback of 0 is not a trail and a giveback of 1 hands back the
+        whole peak. Values in (0,1) are read as fractions, values in [1,100) as
+        percentages - there is no overlap to be ambiguous about.
+        """
+        text = (raw or "").strip().rstrip("%").replace(",", ".").strip()
+        if not text:
+            return None, None
+        try:
+            value = float(text)
+        except (TypeError, ValueError):
+            return None, (f"Could not read a giveback from {raw!r}. "
+                          "Use a fraction like 0.20 or a percentage like 20%.")
+        if value >= 1.0:
+            value = value / 100.0
+        # A giveback under 5% is not a trail, it is a market order with extra steps:
+        # the floor sits inside one bar of ordinary alt noise and fires on the next
+        # tick, and `/close` already exists for that. It is also where an ambiguous
+        # bare "1" lands, which is a typo far more often than it is an intent.
+        if not math.isfinite(value) or value < 0.05 or value >= 1.0:
+            return None, (f"Giveback must be between 0.05 and 1 - got {raw!r}. "
+                          "0.20 keeps 80% of the peak; 0.50 is the automatic rule. "
+                          "Anything tighter than 0.05 would close on the next tick; "
+                          "use /close for that.")
+        return value, None
+
+    def _manual_arm(self, symbol: str, giveback: str | None = None) -> tuple[bool, str]:
         """`/arm SYMBOL` — arm the retention trail below the automatic arm gate.
 
         THE ONE THING THIS CHANGES is the arm gate. `_convex_runner_trail_exit`
@@ -4401,9 +4442,14 @@ class FuturesRuntime:
         `metadata` round-trips whole through `FuturesPosition.to_dict`/`from_dict`
         (asdict / cls(**data)), so a manual arm survives a restart.
         """
-        raw = (symbol or "").strip().upper()
+        # Brackets because the owner writes the placeholder as /arm [IOST].
+        raw = (symbol or "").strip().strip("[]").strip().upper()
         if not raw:
-            return False, "Usage: /arm SYMBOL — e.g. /arm ZEC or /arm ZEC_USDT."
+            return False, ("Usage: /arm SYMBOL [GIVEBACK] — e.g. /arm ZEC, "
+                           "or /arm ZEC 0.20 to keep 80% of the peak.")
+        want_giveback, giveback_error = self._parse_giveback(giveback or "")
+        if giveback_error:
+            return False, giveback_error
         candidates = [raw] if raw.endswith("_USDT") else [raw, f"{raw}_USDT"]
         position = None
         for candidate in candidates:
@@ -4470,24 +4516,41 @@ class FuturesRuntime:
                            f"(FUTURES_CONVEX_TRAIL_RETAIN_FRAC={retain:g}), which has no "
                            "breakeven floor and can sit below entry. /arm refuses to arm "
                            "into it. Set a retention fraction above 0 first.")
-        # The floor, computed with the SAME arithmetic as the exit path.
+        # The floor, computed with the SAME arithmetic as the exit path. `_floor_for`
+        # is that arithmetic, so the number shown to a human is the number that fires.
         lev = float(getattr(position, "leverage", 0) or 0)
         sl_frac = (risk_pct / (lev * 100.0)) if lev > 0 else 0.0
         cost_floor_r = 0.0
-        if retain > 0:
-            exit_level = self._trail_retain_for(peak_r, retain) * peak_r
-            if sl_frac > 0:
-                cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
-                cost_floor_r = cost_r * self._env_float("FUTURES_CONVEX_COST_FLOOR_MULT", 1.5)
-                exit_level = max(exit_level, cost_floor_r)
-        else:
-            exit_level = peak_r - max(0.1, self._env_float("FUTURES_CONVEX_TRAIL_GIVEBACK_R", 2.0))
+        if sl_frac > 0:
+            cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
+            cost_floor_r = cost_r * self._env_float("FUTURES_CONVEX_COST_FLOOR_MULT", 1.5)
+
+        def _floor_for(base: float) -> float:
+            level = self._trail_retain_for(peak_r, base) * peak_r
+            return max(level, cost_floor_r) if cost_floor_r > 0 else level
+
+        auto_floor = _floor_for(retain)
+        if want_giveback is not None:
+            retain = 1.0 - want_giveback
+        exit_level = _floor_for(retain)
         if peak_r >= arm_r:
-            pct = int(round(exit_level / peak_r * 100)) if peak_r > 0 else 0
-            return False, (f"{sym} is already armed: peak {peak_r:+.2f}R "
-                           f"({peak_r * one_r:+.2f} USDT), floor {exit_level:+.2f}R "
-                           f"({exit_level * one_r:+.2f} USDT), keeps {pct}%. The floor "
-                           "already tracks the running peak — /arm would change nothing.")
+            # Already armed automatically, so a floor is ALREADY in force at
+            # `auto_floor` and it already tracks the running peak. Without a giveback
+            # there is nothing to do; with one, the only admissible move is TIGHTER.
+            auto_pct = int(round(auto_floor / peak_r * 100)) if peak_r > 0 else 0
+            if want_giveback is None:
+                return False, (f"{sym} is already armed: peak {peak_r:+.2f}R "
+                               f"({peak_r * one_r:+.2f} USDT), floor {auto_floor:+.2f}R "
+                               f"({auto_floor * one_r:+.2f} USDT), keeps {auto_pct}%. The floor "
+                               "already tracks the running peak — /arm would change nothing. "
+                               "Pass a giveback to tighten it, e.g. /arm "
+                               f"{raw.replace('_USDT', '')} 0.20.")
+            if exit_level <= auto_floor:
+                return False, (f"{sym} already has a floor at {auto_floor:+.2f}R "
+                               f"({auto_floor * one_r:+.2f} USDT, keeps {auto_pct}%). A "
+                               f"{want_giveback:.0%} giveback would put it at "
+                               f"{exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT) — the same "
+                               "or lower. /arm never lowers a floor. Use a smaller giveback.")
         if exit_level >= peak_r:
             return False, (f"{sym} cannot be trailed profitably: the breakeven floor "
                            f"({exit_level:+.2f}R / {exit_level * one_r:+.2f} USDT) sits above "
@@ -4506,6 +4569,11 @@ class FuturesRuntime:
                            f"{peak_r:+.2f}R peak. Arming would close it on the next poll. "
                            "Nothing changed.")
         md["manual_arm"] = 1.0
+        # Stamped ONCE. The exit path reads this instead of the env, so the floor a
+        # human was shown is the floor that fires, even if the env changes later.
+        if want_giveback is not None:
+            md["manual_arm_retain"] = round(retain, 6)
+            md["manual_arm_giveback"] = round(want_giveback, 6)
         md["manual_arm_at_r"] = round(r_now, 4)
         md["manual_arm_peak_r"] = round(peak_r, 4)
         md["manual_arm_floor_r"] = round(exit_level, 4)
@@ -4521,7 +4589,8 @@ class FuturesRuntime:
         pct = int(round(exit_level / peak_r * 100)) if peak_r > 0 else 0
         ratchet_r = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0)
         ratchet_retain = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN", 0.75)
-        rules = [f"keeps {pct}% of the peak"]
+        source = "your giveback" if want_giveback is not None else "the automatic rule"
+        rules = [f"keeps {pct}% of the peak ({source})"]
         if retain > 0 and cost_floor_r > 0 and exit_level <= cost_floor_r + 1e-9:
             rules.append("bound by the breakeven cost floor")
         if retain > 0 and ratchet_r > 0 and ratchet_retain > retain:
@@ -4645,7 +4714,12 @@ class FuturesRuntime:
                             self._notify(f"{prefix} <b>Futures Close</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
                             self._record_activity(f"Telegram: /close {target or ''} ({'ok' if ok else 'noop'})")
                     elif command == "/arm":
-                        ok, message_text = self._manual_arm(arg)
+                        # `/arm SYM` or `/arm SYM 0.20` - split on the first run of
+                        # whitespace so the symbol keeps working exactly as before.
+                        arm_parts = (arg or "").split(None, 1)
+                        ok, message_text = self._manual_arm(
+                            arm_parts[0] if arm_parts else "",
+                            arm_parts[1] if len(arm_parts) > 1 else None)
                         prefix = "🔒" if ok else "⚠️"
                         self._notify(f"{prefix} <b>Manual Arm</b>\n━━━━━━━━━━━━━━━\n{html.escape(message_text)}")
                         if not ok:

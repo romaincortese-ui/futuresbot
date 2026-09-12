@@ -466,3 +466,109 @@ def test_polling_other_commands_does_not_touch_position_metadata(tmp_path):
     ]
     runtime._handle_telegram_commands()
     assert json.dumps(position.metadata, sort_keys=True, default=str) == before
+
+
+# --- operator-chosen giveback ----------------------------------------------
+
+def test_giveback_sets_the_floor_and_the_trail_uses_it(tmp_path, monkeypatch):
+    """The owner's spec: /arm IOST 0.20 arms at the value now and floors at 0.8x it."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))        # +0.60R, 1R = $10
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    ok, message = runtime._manual_arm("ZEC", "0.20")
+    assert ok is True
+    # 0.20 giveback -> keep 0.80 of a +0.60R peak = +0.48R, not the config's 0.30R.
+    assert position.metadata["manual_arm_retain"] == pytest.approx(0.80)
+    assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.48)
+    assert "+0.48R" in message and "80%" in message and "your giveback" in message
+
+    # And the EXIT PATH honours it, not the 0.50 in the environment.
+    closed = {}
+    monkeypatch.setattr(runtime, "_close_position_for_exit",
+                        lambda p, **kw: closed.update(reason=kw.get("reason")) or True)
+    assert runtime._convex_runner_trail_exit(position, 105.0) is False   # +0.50R, above
+    assert runtime._convex_runner_trail_exit(position, 104.0) is True    # +0.40R, below
+    assert closed["reason"] == "CONVEX_RETENTION_TRAIL"
+
+
+def test_giveback_can_tighten_an_already_armed_trade(tmp_path):
+    """His second example, now meaningful: above the gate a custom giveback RAISES
+    the floor from the automatic 50% to 80% of the same peak."""
+    runtime = _runtime(tmp_path, _Client(price=120.0))        # +2.00R
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    ok, message = runtime._manual_arm("ZEC", "0.20")
+    assert ok is True
+    assert position.metadata["manual_arm_floor_r"] == pytest.approx(1.60)   # vs 1.00 auto
+    assert "+1.60R" in message
+
+
+def test_giveback_that_would_lower_the_floor_is_refused(tmp_path):
+    """THE INVARIANT. Above the gate the floor is already 0.50 x peak; a 0.70
+    giveback would put it at 0.30 x peak. That lowers a live floor, so it refuses."""
+    runtime = _runtime(tmp_path, _Client(price=120.0))        # +2.00R, auto floor +1.00R
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    before = json.dumps(position.metadata, sort_keys=True, default=str)
+    ok, message = runtime._manual_arm("ZEC", "0.70")          # would floor at +0.60R
+    assert ok is False
+    assert "never lowers a floor" in message, message
+    assert json.dumps(position.metadata, sort_keys=True, default=str) == before
+
+
+def test_already_armed_without_a_giveback_still_reports_and_refuses(tmp_path):
+    runtime = _runtime(tmp_path, _Client(price=120.0))
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    ok, message = runtime._manual_arm("ZEC")
+    assert ok is False
+    assert "would change nothing" in message
+    assert "Pass a giveback to tighten it" in message
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("0.20", 0.20), ("0.2", 0.20), ("20", 0.20), ("20%", 0.20),
+    (" 25 % ", 0.25), ("0,20", 0.20), ("0.05", 0.05), ("5", 0.05), ("99", 0.99),
+])
+def test_giveback_forms_are_accepted(text, expected):
+    value, error = FuturesRuntime._parse_giveback(text)
+    assert error is None, error
+    assert value == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("text", ["0", "0%", "1", "4", "4%", "0.04", "100", "100%",
+                                  "-0.2", "abc", "1.5e400"])
+def test_giveback_out_of_range_or_unreadable_is_rejected(text):
+    value, error = FuturesRuntime._parse_giveback(text)
+    assert value is None
+    assert error
+
+
+def test_bracketed_symbol_is_accepted(tmp_path):
+    """The owner writes the placeholder as /arm [IOST]."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    runtime.open_positions["ZEC_USDT"] = _pos()
+    ok, _ = runtime._manual_arm("[ZEC]", "0.20")
+    assert ok is True
+
+
+def test_bad_giveback_changes_nothing(tmp_path):
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    ok, message = runtime._manual_arm("ZEC", "banana")
+    assert ok is False
+    assert "Could not read a giveback" in message
+    assert "manual_arm" not in position.metadata
+
+
+def test_no_giveback_still_uses_the_configured_retention(tmp_path):
+    """Regression: the bare command must behave exactly as it did before."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos()
+    runtime.open_positions["ZEC_USDT"] = position
+    ok, message = runtime._manual_arm("ZEC")
+    assert ok is True
+    assert "manual_arm_retain" not in position.metadata
+    assert position.metadata["manual_arm_floor_r"] == pytest.approx(0.30)
+    assert "the automatic rule" in message
