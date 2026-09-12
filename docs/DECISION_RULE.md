@@ -11436,3 +11436,450 @@ The restart-safety *property* is now known to be available at a cost the program
 **Two $0 items worth doing anyway:** `_resting_stop_for` (`runtime.py:6217`) returns the *first* row matching a `positionId` and can report the wrong stop to `/reconcile` when two exist; and bank-protect's `cancel_all_tpsl`-then-place (`runtime.py:1458-1466`) is genuinely naked for **up to 47.25 seconds** worst case, with no re-place logic anywhere — a pre-existing defect independent of everything above.
 
 **Constraints honoured across both jobs:** no deploy, no push, no order placed/amended/cancelled, nothing written to `/data`; all exchange interaction was signed read-only GETs and public endpoints.
+---
+
+## 2026-09-12 - POST-MORTEM: IOST + ETH, 2026-09-11. The stack cost $0.56. The path was bad.
+
+**Owner asked for a deep forensic read of the two losses that were the whole day (-$50.71 against a
+-$50.88 equity move).** 5 angles, 5 verifiers, 11 agents. **Read-only. Every claim labelled MEASURED /
+RECONSTRUCTED / HYPOTHESIS.**
+
+### THE RULING
+
+> **The exit stack's entire measurable cost on the day was $0.56 of slippage. Nothing else in it was
+> reachable.** The trail needs a 1.0R arm and neither trade came within 0.21R or 0.70R of it. 19F
+> missed IOST on DEPTH by 0.02R and **is switched off on TREND**. Holding to the 24h clock was worse
+> on both. **The entry fills were a CREDIT (+$1.06), not a cost.**
+> **Replaying "no trail at all" books EXACTLY the same as live on both trades. The trail was never a
+> participant.**
+
+### THE TWO FAILED FOR OPPOSITE REASONS - do not pool them
+
+**IOST: idiosyncratic.** Built +$18.66, gave it all back. Peak 0.7885R at **09:17 (t+18.2min)**, then
+**-3.30% in ten minutes on two consecutive 9-10 sigma volume bars while the liquid alt complex moved
+-0.07% to -0.25% and BTC -0.12%. About 22x the median liquid alt.** A single-name liquidity event in a
+$10M-turnover microcap. **That is the risk the WILDCARD sleeve is paid to take; it is arguably not a
+mistake at all.** Filled 6.8 min and +0.18% after its gate opened, at a favourable price, with the
+external veto corroborating from a second venue. **There is no execution slack to recover.**
+
+**ETH: pure beta.** Peak +0.3043R at **t+0.8 min**, then 111 minutes of nothing. Entered at 14:02, one
+bar after ETH printed **its highest 1-minute close of the prior 24 hours**. Fell -3.80% against BTC
+-2.50%, beta ~1.5, entirely ordinary. **Nothing idiosyncratic happened to ETH.**
+
+**THE "CPI RISK-OFF DAY" NARRATIVE IS FALSE ON THE TIMESTAMPS.** CPI released 12:30Z. **IOST opened
+08:58Z and closed 10:11Z, entirely BEFORE it.** ETH opened 14:02Z, entirely after. **The day is two
+unrelated events that landed on the same date.**
+
+### THE COUNTERFACTUAL TABLE - the stop was the best outcome the machine can produce, twice
+
+| variant | IOST | ETH | total |
+|---|---|---|---|
+| **LIVE (actual)** | -$25.93 | -$24.78 | **-$50.71** |
+| no trail at all | -$25.26 | -$24.46 | -$49.72 |
+| 45-min breakeven floor job | -$25.26 | -$24.46 | -$49.72 |
+| stop 4.0xATR | -$24.86 | -$24.23 | -$49.09 |
+| 19F window 30 -> 60 min | -$12.51 | -$24.46 | -$36.97 |
+| **hold to the 24h clock** | **-$63.34** | **-$29.91** | **-$93.25** |
+| perfect foresight (ceiling) | +$15.26 | +$6.72 | +$21.98 |
+
+**The stop SAVED $37.41 and $5.13.** The 45-min floor is structurally dead: both positions were far
+underwater at minute 45 (-0.73R, -0.35R) - **you cannot place a floor below the market.**
+
+### A REAL CORRECTNESS DEFECT - ETH's gate condition did not exist on a settled bar
+
+**MEASURED.** `detect_trend_signal` requires the current close to exceed the prior 96 closes.
+`marketdata.get_klines` **does not trim the in-progress bar**, so `cur` at 14:02 was a **live unsettled
+tick** (2635.58) clearing the prior max close (2628.50) by $7.08. **Replay the same detector on the
+settled 14:00 bar (close 2611.06) and it returns `no_new_extreme`.** Independently reproduced.
+
+`trend.py`'s docstring says *"all on completed bars, no look-ahead."* **That is not what runs.**
+Neither `_maybe_scan_wildcard` (6622) nor `_maybe_scan_trend` (6965) calls `_drop_incomplete_klines`;
+only the two PMT sites do, so the wildcard's exhaustion and blow-off guards are also evaluated on an
+incomplete candle. **Cost on this trade ~0.076R (~$1.80). Fix it for correctness, not for dollars:**
+on the settled-close rule ETH enters 0.23% better and still loses.
+
+**The gate was open in three disjoint runs (12:50-12:53, 13:44, 13:48-14:02) and the 900s sampler took
+the LAST AND HIGHEST minute of the open window.** *(Deliberately not headlining that the prior scan
+missed the 4.000% gate by 0.030pp - a near-miss threshold is a coin flip dressed as a cause.)*
+
+### 19F: BOTH MISSED ON DEPTH, NOT TIME - AND IT IS DISABLED ON TREND
+
+Deepest excursion inside the 30-min window: **-0.4771R (IOST)** and **-0.4795R raw (ETH)** against a
+-0.50R trigger. **Both missed by ~0.02R of DEPTH.** They crossed -0.50R at 43.6 and 46.3 min.
+**Poll blindness explains nothing: raw wicks and poll-visible prices agree.**
+
+> **`FUTURES_TREND_EARLY_STOP_R=0.0` in the live container, locked by a regression test named
+> `test_trend_is_off_even_when_the_shared_default_is_on`. 19F IS DISABLED ON TREND. No value of T
+> would ever have touched the ETH fill.**
+
+**DO NOT REFIT T.** Extending to 50-60 min books -$12.51 on IOST and is the most tempting bad idea in
+the set: it would fit T to a trade that just lost, outside the 5-35 min range the original sweep
+validated. **Both missed on depth, so this is not even evidence about T.**
+
+### THE TWIN STUDY WORKED - and it is why this post-mortem can REFUSE things
+
+**RECONSTRUCTED.** Full replay of the live detectors and exit stack over **113 symbols x 6,003 Min15
+bars (~62 days)**: **n=101 WILDCARD and n=14,479 TREND synthetic twins.**
+
+**Its validation is the strongest thing in the exercise: the engine RE-DISCOVERED the IOST fill from
+klines alone** - IOST_USDT, 09-11 08:45 bar, roc +9.1% (live 9.2%), calm 0.31 (live 0.308), atr 1.86%
+(live 1.8604%) - and resolved it to a stop. *(Disclosed bias: Min15 understates peaks and twin stops
+book -1.00R with no fees, so only MATCHED DIFFERENCES are trustworthy.)*
+
+> **THE EXIT STACK IS BINARY AND THERE IS NO THIRD STATE.**
+> **ARMED (peak >= 1.0R): n=55, mean +1.813R, 94.5% win.**
+> **NOT ARMED: n=46, mean -0.944R, 2.2% win.** Bucketed: [0.25,0.50) -1.000 | [0.50,0.75) -1.000 |
+> [0.75,1.00) -0.883. **Below the arm the trade is a coin that has already landed.**
+> **IOST missed the state change by 0.21R.**
+
+**AND IT KILLS THE SUB-ARM FLOOR ON A NUMBER, NOT A STORY.** Direct expectancy sweep on 14,580
+replayed setups: **arm@0.75R = +0.0012 +/- 0.0040 (TREND) and +0.0599 +/- 0.0558 (WILDCARD). ZERO.**
+Lowering the arm raises win rate 49.9% -> 54.9% and moves expectancy by nothing: **the 14% it rescues
+is paid for by capping the 86% that run.** P(arm | touched 0.75R) replicates at 84.6% / 87% / 85.9%
+across three independent samples.
+
+> **IOST IS THE MOST SYMPATHETIC CASE THAT RULE WILL EVER GET, AND IT STILL MEASURES ZERO. If it is
+> proposed again it needs a number that beats +0.001 +/- 0.004, not a story about this trade.**
+
+**AND THE TWIN STUDY'S OWN HEADLINE WAS KILLED, CORRECTLY.** The "entry geometry gradient" (same setup
+bought 60 min earlier returns +1.123R vs +0.279R) is an **ARITHMETIC IDENTITY**: the pure mechanical
+carry `(C[i] - C[i-k]) / (C[i-k] * 3*ATR)` reproduces it at every horizon in both sleeves. Net of
+carry the earlier entry is worth **zero or slightly negative**. It says only *"a trigger requiring an
+X% move fills X% above where the move began"*, it is positive on winners too, and it explains neither
+trade. **Struck.**
+
+### CORRECTIONS TO THE STANDING RECORD
+
+1. **The live WILDCARD 24h range gate is 3%, not 7%.** (Quoted as 7% in the brief and earlier docs.)
+2. **There is no 92.5 SIMPLE score floor on either live sleeve** - `score=96.0` and `certainty=0.9`
+   are HARD-CODED (`runtime.py:6450/8548/8631`). The 92.5 floor belongs to the retired PMT path.
+   **So there is no scorer to blame: each decision was binary, take this or trade nothing.**
+3. **IOST's peak was at 09:17 (t+18.2min), NOT 09:02 (t+3.2min).** The 09:02 high is 0.7721R; the
+   09:17 high is 0.7885R, matching the record to four decimals. **The corrected sequence is a
+   successful marginal new high followed within two minutes by the 9-10 sigma sell bars - a different
+   story from a "failed retest", and getting it backwards is the exact failure mode guarded against.**
+4. **The denominator finding, and it affects every future replay.** IOST's recorded 0.7885R exceeds
+   every price the feed printed under the DESIGNED sl_frac (max 0.7661R). Two readers converged: a
+   **live sl_frac of 0.05423 ~ risk_usdt/notional** reproduces 0.7885R exactly with zero feed
+   divergence. **CONSEQUENCE: every replay in this book that divides by the designed stop fraction
+   UNDERSTATES R by ~2.9%.** Worth knowing before the next exit rule is priced.
+5. **`entry_lateness` is unusable** - 1.000 by construction on WILDCARD (the current bar is inside its
+   own range) and null by design on TREND. **`conditional_expectancy.py` buckets on it in five
+   predicates, i.e. on noise.**
+6. The ETH TREND row carries `tags.is_wildcard = true`. Cosmetic, but any sleeve split off that tag is
+   silently wrong.
+
+### WHAT IS NOT THE ANSWER - each tested and refused
+
+19F's window (unreachable on both, disabled on TREND) | the 16:16Z deploy (both closed hours earlier) |
+entry slippage (**favourable +$1.06**) | funding/fees (ETH paid zero, **IOST RECEIVED +$0.56**) |
+stale breadth on ETH (72.3s, fresh) | MEXC thin book (Bybit correlation 0.996/0.9998, the stop fires
+there too) | widening IOST's stop (**converts -1.06R into -2.54R held for 9 hours**) | the calm_score
+story (**across 14,479 twins high calm measured BETTER**, +0.529 vs +0.282) | an in-trade exhaustion
+exit (**-0.166R +/- 0.009, fires on 57% of trades**) | a sub-1.0R floor (refused three ways).
+
+**Beta decomposition produced NOTHING and was demoted to descriptive:** it says IOST's loss was 95.5%
+idiosyncratic, but the same method says the **09-09 IOST WINNER was 98.2% idiosyncratic.** The split
+is determined by which sleeve the trade came from, not by why it lost.
+
+**The matched pair corroborates from a fourth direction:** IOST 09-09 (+$33.23) vs 09-11 (-$25.93) had
+breadth 57.0 vs 59.7%, alt median +0.17 vs +0.14%, BTC +0.50 vs +0.18%, and near-identical forward
+paths. **Any market-state gate tuned to refuse the loser refuses the winner.**
+
+### ADDRESSABLE - and every one is a MEASUREMENT, not a behaviour change
+
+1. **The in-progress-bar read** (above). Correctness, ~$1.80.
+2. **The 900s TREND cadence** against instruments that moved 5% in fourteen minutes. **Offline-testable
+   today. Do NOT change it live off one trade - a faster sampler enters a DIFFERENT population.**
+3. **DETECTOR-LEVEL REJECTS ARE NEVER LOGGED.** `roc_below_min` and `no_pullback_resume` die before the
+   candidate list and never reach the shadow ledger - **30 of 31 candidates at IOST's instant and 48 of
+   48 at ETH's. The whole day produced four shadow rows.** The book's largest refusal population is
+   **structurally unmeasurable**, which is precisely why the direction-blindness question cannot be
+   settled. **Logging the per-scan funnel histogram costs nothing and cannot affect a decision.**
+4. **Breadth is on 9 of 200 rows (1 of 32 TREND).** Already computed, already written on fills.
+   **Persisting it on every SCAN is the difference between answering the ETH question in six weeks and
+   never. Backfill is impossible.**
+
+### WHAT COULD NOT BE RETRIEVED - stated, not substituted
+
+Entry-time logs (`railway logs` reaches ~1 hour; both trades 22h+ old - **the scan that preceded ETH's
+entry is reconstructed from the 900s default and the fill time, NOT from a log line; I did not confirm
+that scan ran**) | historical order flow, depth and trade prints (**so "a seller arrived at 09:19" is
+inferred from volume z-scores and the cross-sectional control, NOT from tape**) | sub-minute data (both
+peaks are in the opening minutes, exactly where it would matter) | the external gate's actual numbers
+(only `ref_listed` persists) | the live universe at either scan instant (`ticker_snapshots` ends 09-10)
+| historical open interest | **any IOST-specific news around 09:19Z - not searched, cannot be ruled
+out. The idiosyncratic signature is what a headline looks like. Stated as a gap, not a finding.**
+# POST-MORTEM — IOST_USDT and ETH_USDT, 2026-09-11
+
+**Frame, stated up front:** two trades on one day cannot tell you whether the system works. They can tell you what happened. The short version is that the bot did what it was built to do, both exits were the best of the outcomes the machine can actually produce, and the two trades failed in genuinely different ways. Where I could not retrieve something, I say so; where a story is fitted to two observations, I label it HYPOTHESIS and give the test.
+
+Every claim below is **MEASURED** (pulled from data), **RECONSTRUCTED** (model, with error), or **HYPOTHESIS** (story + settling test).
+
+Five things in the brief and in the earlier reporting turned out to be wrong and are corrected here: the live wildcard 24h range gate is 3%, not 7%; there is no 92.5 SIMPLE score floor on either live sleeve; the 19F early stop is not merely out-of-window on ETH, it is **switched off on TREND**; IOST's peak was set at 09:17, not 09:02; and the "peak exceeds any price the feed printed" anomaly has an explanation that is not a feed defect.
+
+---
+
+## 1. THE ENTRIES
+
+### Both were defensible on the bot's own terms. Neither had a litter to choose from.
+
+**MEASURED (container /data + env, reached on some attempts by three independent readers; MEXC public klines).**
+
+At IOST's instant the shipped detector, replayed over the exact 31-name mover list the bot recorded, produced **one signal: IOST**. 28 died on `roc_below_min`, 2 on `no_pullback_resume`. At ETH's instant, 48 movers produced **zero** wildcard signals, and TREND's only alternates were XRP (+2.92% 24h) and ZEC (+3.74%), both under the 4% gate. The shadow ledger for the whole day holds four rows, none at either instant.
+
+So the question "did the scorer pick the worst of the litter" has no answer: **the field was one, twice.** There is also no scorer — `score=96.0` and `certainty=0.9` are hard-coded (runtime.py:6450/8548/8631). The 92.5 SIMPLE floor belongs to the retired PMT path, not to either live sleeve. Each decision was binary: take this, or trade nothing.
+
+**Slippage was favourable on both.** IOST signal 0.0010144 → fill 0.0010127 = −16.759 bps = **+$0.73**. ETH signal 2635.58 → fill 2634.50 = −4.098 bps = **+$0.32**. Combined **+$1.06** credit against a −$50.71 day. The fill is exonerated; stop looking there.
+
+**The external veto evaluated and passed on both, and did not fail open.** `ref_listed=1.0` on both feature rows, and that field is only assigned after `fetch_reference` returns. On IOST the corroboration arm *bound* (|roc| 9.2% ≥ the 5% big_move threshold) and a second venue confirmed the move — the book's only p<0.01 signal looked at IOST and said the pump was real. On ETH the arm **cannot execute**: `mexc_move` is hard-coded to 0.0 for non-WILDCARD kinds (runtime.py:8369), so the veto's teeth are structurally inert on TREND. Design fact, not error.
+
+**Breadth was fresh on both** (11.8 s and 72.3 s). The "TREND inherits a cached breadth reading" concern does not apply to this fill.
+
+### IOST: prompt, faithful, and still a bounce inside a decline
+
+**MEASURED.** Gates cleared with margin, not by a whisker: 3h ROC 9.2% (floor 8.0%), 24h range 29.44% (floor 3%), turnover $10.45M (floor $2M), calm 0.308 (ceiling 0.75). Filled **6.8 min and +0.18%** after the gate first opened. Given the rules, I cannot fault the execution anywhere.
+
+The rules picked badly, and the tell is direction. IOST's 24h "range" of 29.44% was earned almost entirely by a **−22.8% collapse** (high 0.0011691 at 09-10 13:00 → low 0.0009032 at 02:45), followed by a +9.2% bounce in an hour. On the day IOST was −0.91%. **The fill at 0.0010127 is the 09-10 17:45 close to the digit** — straight back into fifteen hours of overhead supply, 13.2% below the 24h high, on a flat alt tape (breadth 0.4737, alt median −0.18%).
+
+Corrected lateness makes the contradiction visible: **0.984** on the 3h high/low basis (top of the impulse) but **0.418** on the 24h basis (middle of a decline). The bot stores one number, 1.000, which is the by-construction defect value — the current bar is inside its own range, so any breakout scores 1.0. TREND clears the field entirely (runtime.py:6989, with a code comment already documenting it). **Any engine bucketing on `entry_lateness` is bucketing on noise**, and `conditional_expectancy.py` does so in five predicates.
+
+### ETH: the gate condition did not exist on a settled bar
+
+**MEASURED, and this is the most important entry finding.** `detect_trend_signal` requires the current close to exceed the prior 96 closes. `marketdata.get_klines` does not trim the in-progress bar, so `cur` at 14:02 was a **live unsettled tick**, 2635.58, clearing the prior max close of 2628.50 by $7.08. Replay the same detector on the **settled 14:00 bar** (close 2611.06) and it returns `no_new_extreme`. Independently reproduced by a second reader against both source and klines.
+
+`trend.py`'s docstring says "all on completed bars, no look-ahead." That is not what runs. **The trade existed only on an unsettled tick.**
+
+I would not "fix" this for profit: on the settled-close rule ETH enters at 2628.50, only 0.23% better, and still loses. It is a correctness and measurability defect — you cannot know what your entry rule is — not a demonstrated leak.
+
+**MEASURED.** The gate qualified in three disjoint runs: 12:50–12:53, a single minute at 13:44, and **13:48–14:02 (fourteen consecutive minutes)**. The 900 s sampler fired at 14:02 — the **last and highest minute of the open window**. On the same convention used for IOST (start of the run containing the fill), ETH's lag is **14.2 min and +3.79% = 1.204 stop-widths** from 13:48 @2538.74.
+
+I am deliberately *not* leading with the detail that the prior scan at ~13:47 missed the 4.000% gate by 0.030pp (3.9700%). It is exact, and it is the most quotable line available, and it is the line that generalises least — a near-miss threshold is a coin flip dressed as a cause. The mechanism is the boring one: **the gate was open for fourteen minutes and the sampler took the worst minute of it.**
+
+**MEASURED.** ETH bought a failed retest. The prior-24h intraday high, 2646.58, printed at 13:59 — three minutes before the fill and 0.46% *above* it. The 13:45 Min15 bar ran O2522.94 H2646.58 C2628.50, a +4.2% vertical. Entry sat at 88% of the trailing 24h range and 8.26% above the 24h low.
+
+---
+
+## 2. THE LIFECYCLE
+
+### IOST — 73 minutes, and the profit lived in wicks
+
+**MEASURED (Min1, fresh pulls, two independent readers agreeing to the digit).**
+
+Poll-visible R by minute: **+0.41** (5m) · +0.22 (10m) · +0.32 (15m) · +0.25 (20m) · **−0.33** (30m) · −0.65 (45m) · −0.72 (60m) · −0.92 (75m).
+
+- **t+3.2 min (09:02)**: high 0.0010551 = **0.772R**, on 388,678 contracts (z = +6.95).
+- **t+18.2 min (09:17)**: high 0.001056 = **0.7885R — the trade's high-water mark**, on 287,929 contracts (z = +4.92), range 2.78%. Upper wick 87% of range, close in the bottom 13%, the high effectively a single print.
+- **09:19 and 09:20**: z = **+9.99** and **+9.00**, back to back. −3.30% in ten minutes.
+- Full recovery to flat by 09:33–09:38 (r_close +0.03 at t+40 — the last minute this trade could have been exited at zero).
+- 09:41–09:43: second impulse (z = +4.54), −0.75R in three minutes.
+- 10:11: final flush (z = +7.67), stop taken.
+
+**Correcting the earlier read:** 09:16–09:17 was not a "failed retest" of an earlier high. It was a successful marginal new high that set the peak, followed within two minutes by the 9–10 sigma sell bars. The corrected sequence is a cleaner "a seller arrived" story, but it is a *different* story, and getting it backwards is exactly the failure mode this exercise is guarding against.
+
+**Dwell — the decisive measurement.** Poll-visible: 27 of 73 minutes above 0R, **9 above 0.30R, 3 above 0.50R, zero above 0.75R.** On closes: 5 above 0.30R, **one** minute above 0.50R. The +$18.66 the eye is drawn to existed as wicks, not as a state the position held.
+
+**MEASURED — the drop was idiosyncratic.** Over 09:15–09:25: IOST −3.30% while SOL −0.12, XRP −0.13, DOGE −0.07, ADA −0.19, LTC −0.15, AVAX −0.25, LINK −0.17, BTC −0.12. **~22× the median liquid alt.** Over the full hold, IOST −5.28% against BTC −0.34% and an alt spread of −0.31% to −1.69% (~6× the median). Quote the ten-minute window for the idiosyncrasy claim; the full-hold version is weaker.
+
+**MEASURED — funding helped.** IOST settles **hourly**. Both settlements inside the hold were negative (−0.0476% at 09:00, −0.0813% at 10:00), so the long **received ~+$0.56 (+0.024R)**. Not a cause.
+
+### ETH — 112 minutes, 2 of them in profit
+
+**MEASURED.** Poll-visible R by minute: −0.41 (5m) · −0.65 (10m) · −0.62 (15m) · −0.53 (30m) · −0.62 (45m) · −0.69 (60m) · −0.62 (90m) · −0.33 (105m).
+
+- 14:01 close 2640.74 = ETH's **highest 1-minute close of the prior 24 hours**. Entry fires 14:02:14 at 2634.50 (near that minute's *low*, hence the favourable fill).
+- **Peak +0.3043R at t+0.8 min.**
+- 14:03 prints the absolute top, **2665.81**, and closes at its own low 2626.61 — 1.49% range on 1,067,155 contracts (z = +2.93), the widest bar of the hold, a full-body reversal. ETH did not see 2665.81 again for 22 hours.
+- Minutes 4–105: a 2590–2620 box, volume decaying to z = −0.3 to −0.6. No distribution, no seller — **no bid and no interest**.
+- 15:51–15:54: one impulse, 2604 → 2552.92.
+
+**MEASURED — the death was beta, not the symbol.** Over the hold ETH −3.80% against BTC −2.50% (β ≈ 1.5, entirely ordinary; pre-entry OOS β_BTC 1.099 at R² 0.809). The 15:50–15:57 flush was market-wide: BTC −1.05, ETH −1.71, SOL −1.39, XRP −1.58, ZEC −2.04. **Nothing idiosyncratic happened to ETH.**
+
+**MEASURED — ETH paid zero funding.** 8-hourly settlements at 08:00Z and 16:00Z; the exit at 15:54 beat the settlement by six minutes.
+
+### The unified "CPI risk-off day" narrative is false on the timestamps
+
+**MEASURED.** US CPI released 12:30Z. **IOST opened 08:58Z and closed 10:11Z — entirely before it.** ETH opened 14:02Z — entirely after it. BTC bottomed at 76,403.8 at 12:31Z and ran to 79,579.6 by 14:02Z; in that window the median alt rose +4.85% and 95.3% of alts were up. ETH's entry minute was the **highest close of all 362 completed minutes** from 08:00Z (verified against completed bars only — no look-ahead).
+
+**HYPOTHESIS (labelled, because the causal reading is not measured):** that the 12:30–14:02 run was a relief move after a hawkish core print (+0.3% m/m vs +0.2% surveyed). The price path is measured; the causal label is a story and carries no weight here.
+
+The two trades did not share a market cause. The day's −$50.88 is **two unrelated events that landed on the same date.**
+
+---
+
+## 3. THE EXITS
+
+### What fired
+
+**MEASURED.** IOST `EXCHANGE_CLOSE` — the resting server-side 3.0×ATR stop. ETH `STOP_LOSS` — an in-process market close via `_pmt_hard_exit`. Different mechanisms, and it shows in the fills.
+
+| | designed stop | fill | slippage | $ |
+|---|---|---|---|---|
+| IOST | 0.00095618 | 0.0009541 | −21.8 bps **adverse** | **−$0.87** |
+| ETH | 2555.001 | 2556.048 | +4.1 bps favourable | **+$0.31** |
+
+**Net execution cost for the day: −$0.56.** Both fills printed inside their own exit minute on the public feed. IOST's in-process monitor never polled through the stop (`mae_r` −0.9925) while the tape printed −1.04R — exactly what a server-side resting stop looks like.
+
+### What was reachable — nothing
+
+**MEASURED.** The retention trail needs a 1.0R arm. IOST needed +5.58% and got +4.28%; ETH needed +3.02% and got +1.19%. Neither came close on any price basis. Below the arm there is no floor — structural, not a bug.
+
+**19F, verified and strengthened.** Inside the first 30 minutes the deepest excursion was **−0.4771R (IOST, t+21.2)** and **−0.4795R raw / −0.4447R poll (ETH, t+9.8)**, against a −0.50R trigger. Both missed **on depth, by ~0.02R**, not on time. They then crossed −0.50R at 43.6 min and 46.3 min, 13–16 minutes past the window. So poll blindness explains nothing: raw wicks and poll-visible prices agree.
+
+**And on ETH it is moot twice over. `FUTURES_TREND_EARLY_STOP_R=0.0` in the live container** (runtime.py:2247–2250 reads the per-sleeve key first and returns False on `arm <= 0`), locked by a regression test named `test_trend_is_off_even_when_the_shared_default_is_on`. **19F is disabled on TREND.** No value of T would ever have touched this fill.
+
+**The cleanest single statement about the day:** replaying "no trail at all" books **exactly the same** as the live stack on both trades. The trail was never a participant.
+
+### What the stack cost against the best non-anticipating outcome
+
+**RECONSTRUCTED** (exchange-resident rules on raw Min1 prints, in-process rules on poll visibility `close + 0.75×(extreme−close)`; model error **$0.99 across the two trades**, both stop minutes reproduced exactly).
+
+| variant | IOST | ETH | total |
+|---|---|---|---|
+| **LIVE (actual)** | −$25.93 | −$24.78 | **−$50.71** |
+| no trail at all | −$25.26 | −$24.46 | −$49.72 |
+| breakeven floor once peak ≥0.3R | +$0.53 | +$0.98 | **+$1.51** |
+| 45-min breakeven floor | −$25.26 | −$24.46 | −$49.72 |
+| stop 2.0×ATR (resized) | +$10.94 | −$24.92 | −$13.99 |
+| stop 4.0×ATR (resized) | −$24.86 | −$24.23 | −$49.09 |
+| 19F window 30 → 60 min | −$12.51 | −$24.46 | −$36.97 |
+| hold to the 24h clock | **−$63.34** | **−$29.91** | **−$93.25** |
+| perfect foresight (ceiling) | +$15.26 | +$6.72 | +$21.98 |
+
+Reading the table:
+
+- **The 24h clock was strictly worse on both.** IOST closed −2.677R at +24h and never traded above −0.738R after the exit; ETH closed −1.271R and never returned to breakeven. **The stop saved $37.41 and $5.13.** It was the best of the three outcomes the machine can produce, twice.
+- The 45-min floor is **structurally dead**, not marginally: both positions were far underwater at minute 45 (−0.73R, −0.35R). You cannot place a floor below the market.
+- 2.0×ATR is **not a stop-width change**. It works only because halving the stop distance multiplies R by 1.5, lifting IOST's peak past the existing 1.0R arm. It is arm@0.67R in a costume, and it makes ETH worse. Under risk normalisation the stop-width ranking inverts entirely (TREND: 2.0× +0.290, 3.0× +0.279, 5.0× +0.210). **Stop width is a leverage choice, not an edge.**
+- The full ~$72 gap to the perfect-foresight ceiling decomposes as: **execution −$0.56, rules ≈ zero** (none were reachable), **path, everything else.**
+
+---
+
+## 4. WHY THEY WERE BAD — and they were bad in different ways
+
+**IOST built $18.66 and gave it all back.** It was the **15% draw from an 85%-to-arm population**, and it needed 1.17% more price. The kill was a single-name liquidity event: −3.30% in ten minutes at ~22× the liquid cross-section, on two consecutive 9–10 sigma bars, with negative funding and a confirming second venue. **That is the risk the WILDCARD sleeve is paid to take.** It is arguably not a mistake at all.
+
+**ETH never built anything.** Peak +0.3043R inside 90 seconds, then 111 minutes of nothing, then market beta. It bought the top tick of a broad move, and the gate condition that admitted it **did not exist on a settled bar**. Its failure is upstream: a sampler that took the last minute of a fourteen-minute window, on a rule that fires latest in a move by construction.
+
+**What is NOT the answer** — each tested and refused this session:
+
+| candidate | verdict |
+|---|---|
+| the 19F window | could not fire on either, on any price basis; **disabled on TREND** |
+| the 16:16Z deployment | both closed hours earlier. Buried. Stays buried. |
+| entry slippage | **favourable +$1.06** |
+| funding / fees | ETH paid zero; IOST **received** +$0.56 |
+| stale breadth on ETH | 72.3 s. Fresh. |
+| MEXC thin book / venue basis | Bybit correlation 0.996 / 0.9998; the stop fires there too |
+| widening IOST's stop | REFUTED by replay: converts −1.06R realised into **−2.54R held for 9 hours** |
+| the calm_score story on ETH | REFUTED: across 14,479 twins, **high calm measured better** (+0.529 vs +0.282) |
+| "the signal bar was wider than the stop" | REFUTED: flat across bar-range buckets |
+| an in-trade exhaustion exit (my own best idea) | REFUTED by its own test: −0.166R ± 0.009, fires on 57% of trades, cuts winners |
+| a sub-1.0R profit floor | REFUTED three ways — see §5 |
+
+**The honest framing:** two −1.05R closes in a book whose 1R is ~$23.6, with 3 wildcard and 2 trend slots. This day is inside the design envelope and, on the evidence available, indistinguishable from variance.
+
+---
+
+## 5. WHAT IS ADDRESSABLE, AND WHAT IS NOT
+
+### Not addressable — and saying so is the point
+
+**IOST's entry.** Filled 6.8 min and 0.18% after the gate opened, at a favourable price, with the external veto corroborating. **There is no execution slack to recover.**
+
+**Any sub-1.0R floor.** Refused on three independent measurements, not on a story:
+1. P(arm | touched 0.75R) = **84.6%** (bot's own fills, 22/26), **87%** (41/47 corpus recompute), **85.9% / 88.9%** (twin replay). Three samples, same answer.
+2. A direct expectancy sweep on 14,580 replayed setups: arm@0.75R = **+0.0012 ± 0.0040** (TREND) and **+0.0599 ± 0.0558** (WILDCARD). Independently re-run by a second reader from klines. **Zero.** Lowering the arm raises win rate 49.9% → 54.9% and moves expectancy by nothing: the 14% it rescues is paid for by capping the 86% that run.
+3. IOST's own shape defeats it. **One** closing minute above +0.50R, **zero** above +0.75R, in two isolated wicks fifteen minutes apart. A close-based floor would not have fired at all; a wick-based one fires on a population that is 86% winners.
+
+**IOST is the most sympathetic case that rule will ever get, and it still measures zero. If it is proposed again, it needs a number that beats +0.001 ± 0.004, not a story about this trade.**
+
+**T on 19F.** Extending the window to 50–60 min books −$12.51 instead of −$25.93 on IOST. It is the most tempting bad idea in the set: T would be fitted to a trade that just lost, outside the 5–35 min range the original sweep validated, on a rule whose own documentation says the result rests on the parameters having been frozen beforehand. **No.** Both trades missed on *depth*, so this is not even evidence about T.
+
+### Addressable — and every one is a measurement, not a behaviour change
+
+1. **The in-progress-bar read.** Neither `_maybe_scan_wildcard` (6622) nor `_maybe_scan_trend` (6965) calls `_drop_incomplete_klines`; only the two PMT sites do. So "new 24h **closing** extreme" is decided on an intrabar tick, and the wildcard's exhaustion and blow-off guards are evaluated on an incomplete candle. **Cost on this trade: ~0.076R (~$1.80).** Fix the documentation or the code, but do not expect dollars.
+
+2. **The TREND scan cadence.** `FUTURES_TREND_SCAN_INTERVAL_SECONDS` is genuinely absent from the container, so trend.py's 900 s default applies — against a sleeve whose instruments moved 5% in fourteen minutes. Offline-testable. **Do not change it live off one trade:** a faster sampler enters a *different* population.
+
+3. **Detector-level rejects are never logged.** `roc_below_min` and `no_pullback_resume` die before the candidate list and never reach the shadow ledger — that is 30 of 31 candidates at IOST's instant and 48 of 48 at ETH's. The whole day produced four shadow rows. **The book's largest refusal population is structurally unmeasurable,** which is precisely why the direction-blindness and pullback-filter questions cannot be settled from live data. Logging the per-scan funnel histogram costs nothing and cannot affect a decision.
+
+4. **Breadth fields are on 9 of 200 rows (1 of 32 TREND rows).** They are already computed and already written on fills; persisting them on every *scan* costs nothing and is the difference between being able to answer the ETH question in six weeks and not. Backfill is impossible.
+
+5. **`entry_lateness` is unusable** (1.000 by construction on wildcard, null by design on TREND) and should be treated as such until repaired.
+
+6. **Trivial:** the ETH TREND row carries `tags.is_wildcard = true`. Cosmetic, but any sleeve split computed off that tag is silently wrong.
+
+---
+
+## 6. THE NEW METHODS — what actually produced something
+
+### The analogue / twin study worked, and it is the reason this post-mortem can refuse things
+
+**RECONSTRUCTED.** A full replay of the live detectors and exit stack over **113 MEXC perp symbols × 6,003 Min15 bars (~62 days)**, producing **n=101 WILDCARD** and **n=14,479 TREND** synthetic twins of these two setups.
+
+**Its validation is the strongest thing in the exercise:** the engine independently **re-discovered the IOST fill from klines alone** — IOST_USDT, 09-11 08:45 bar, roc +9.1% (live 9.2%), calm 0.31 (live 0.308), atr 1.86% (live 1.8604%) — and resolved it to STOP/−1.00R (live −1.06R). Disclosed bias: Min15 resolution understates peaks (it read IOST's at 0.62R vs the live 0.7885R), and twin stops book −1.00R with no fees, so **absolute levels are optimistic and survivorship-inflated; only matched differences are trustworthy.**
+
+What it established that n=2 could never:
+
+- **The exit stack is binary and there is no third state.** ARMED (peak ≥1.0R): n=55, mean **+1.813R**, 94.5% win. NOT ARMED: n=46, mean **−0.944R**, 2.2% win. Bucketed: peak [0.25,0.50) −1.000 · [0.50,0.75) −1.000 · [0.75,1.00) −0.883. Below the arm the trade is a coin that has already landed. **IOST missed the state change by 0.21R.**
+- **Independent replication of the 85% conditional** on a population the bot never traded.
+- **Every exit dial measured zero** (§5), with standard errors — which is what converts "I refuse this" from an opinion into a measurement.
+
+**And its headline result was killed, correctly.** The "entry geometry gradient" — same setup bought 60 min earlier returns +1.123R vs +0.279R at the trigger — is an **arithmetic identity, not a finding**. A verifier computed the pure mechanical carry `(C[i] − C[i−k]) / (C[i−k] · 3·ATR)` and it reproduces the gradient at every horizon in both sleeves, including the wildcard's non-monotone dip at −30m. Net of carry the earlier entry is worth **zero or slightly negative**. It says only "a trigger requiring an X% move fills X% above where the move began," it is positive on every signal including winners, and it therefore explains neither of these two trades. Struck.
+
+### The other lenses, ranked by what they produced
+
+**Worked:**
+- **Cross-sectional control at the minute level.** The cleanest diagnostic in the report: IOST at ~22× the liquid cross-section over its kill window vs ETH at β 1.5 in a market-wide flush. It is what separates the two failure shapes.
+- **The matched-pair study.** IOST 09-09 (+$33.23) vs 09-11 (−$25.93): breadth 57.0 vs 59.7%, alt median +0.17 vs +0.14%, dispersion 2.15 vs 2.07%, BTC +0.50 vs +0.18%, 3h ROC 11.1 vs 9.2%, and near-identical forward market paths. **Any market-state gate tuned to refuse the loser refuses the winner.** Corroborates the standing WILDCARD verdict from a fourth direction (it does not independently establish it — n=1 win, n=1 loss).
+- **The denominator forensic.** IOST's recorded peak of 0.7885R exceeds every price the public feed printed under the *designed* sl_frac (max 0.7661R). **Two readers independently converged on the resolution: a live sl_frac of 0.05423 ≈ risk_usdt/notional = 0.054226 reproduces 0.7885R exactly from the observed 09:17 high, with zero feed divergence required.** The 19F docstring names this failure mode in capitals. **Consequence: every replay in this book that divides by the designed stop fraction understates R by ~2.9%.** That is worth knowing before the next exit rule is priced.
+- **Cross-venue reconciliation** (Bybit): killed the thin-book story on both. Note IOST's raw Bybit low misses the MEXC stop by 0.12% and only fires after the basis adjustment — state it that way.
+
+**Produced nothing:**
+- **Beta decomposition.** Demoted to descriptive. It says IOST's loss was 95.5% idiosyncratic — but the same method says the **09-09 IOST winner was 98.2% idiosyncratic**. The split is determined by which sleeve the trade came from, not by why it lost. It is a restatement of the gate, which selects names with no stable market loading.
+- **Order-flow forensics.** Not retrievable, full stop.
+- **The nearest-neighbour analogue read on IOST specifically.** The nearest-20 mean (+0.906R) is carried by two or three TP-capped +5.00R draws, and the **median flips sign** (+0.654 → −0.242) under a reasonable change of neighbour metric. "The setup class was good, this draw was bad" is not supportable. **I don't know.**
+
+---
+
+## 7. WHAT WOULD SETTLE THE OPEN QUESTIONS
+
+| # | question | test | n | when |
+|---|---|---|---|---|
+| 1 | Does the 900 s TREND cadence cost fill quality? | Offline replay of every TREND signal in the kline corpus at 900 / 300 / 60 s sampling; compare (fill − first-qualifying) in stop-widths, then run the exit stack on both. A faster sampler enters a **different** population — score that, not just the same trades earlier. | 31 fills + all replayed signals, ~62 days | **runnable today**, no live change |
+| 2 | How often does the in-progress-bar read flip a TREND decision? | Replay the corpus both ways (live tick vs settled close); count entries taken/skipped and their resolved R. | 31 TREND fills | today |
+| 3 | Does the wildcard's direction-blind range gate admit bad longs? | Split every resolved WILDCARD LONG by the **sign of its 24h return at entry** (`range_24h` already recorded since 09-01). | needs ~40 LONGs — **not there yet** | ~Nov 2026 |
+| 4 | Is the pullback-resume filter costing more than it saves? | `FUTURES_WILDCARD_REQUIRE_PULLBACK` exists precisely so both arms replay offline. Run it over the full kline corpus. Caution: the same filter vetoed the 08-19 ETH move 7 times. | full corpus | today |
+| 5 | Does market-wide extension degrade TREND? | **Cannot be tested on history** — breadth exists on 1 of 32 TREND rows. Persist `breadth_24h` / `alt_med_24h` / `alt_disp_24h` on every scan, plus a 30-min-prior drawdown feature, then compare peak_r above vs below ~+2% alt median. | ~40 TREND entries forward | **~6 weeks after the logging change** |
+| 6 | Is the 19F window/threshold fragile? | Histogram of min-R-inside-30-min across the scored corpus. **Fragility measurement only — X must never be refit.** Both trades landed within 0.023R of the arm on the safe side; if the histogram is smooth through −0.50R that is chance. | 94 scored fills, subject to the 06-14 kline wall | today |
+| 7 | Does IOST need explaining at all? | Score the next 30 WILDCARD fills against a **pre-registered** P(arm). If realised arming holds near the twin estimate, it needs no explanation. | 30 fills | the honest answer is **time** |
+
+---
+
+## WHAT COULD NOT BE RETRIEVED
+
+Stated plainly. Nothing was substituted for any of it.
+
+- **Entry-time logs.** `railway logs` reaches back ~1 hour; both trades are 22+ hours old. The `[TREND_SCAN_SUMMARY]` and `[WILDCARD_SCAN]` lines, the funnel histograms, and the actual timestamp and verdict of the scan preceding ETH's entry are **gone**. The ~13:47 prior-scan reconstruction comes from the 900 s default and the fill time, **not from a log line**. I did not confirm that scan ran or what it decided.
+- **Historical order flow, depth and trade prints.** MEXC serves these for the current moment only. So "a seller arrived in IOST at 09:19" is inferred from volume z-scores, bar shape and the cross-sectional control — **not from tape**. I cannot say whether it was one order or a liquidation cascade, and I will not guess. Same for IOST's 21.8 bps of stop slippage: measured, not explained.
+- **Sub-minute price data.** Min1 is the finest public aggregation, and both trades made their peak in the opening minutes — exactly where finer resolution would matter most.
+- **The external gate's actual numbers.** Only `ref_listed` is persisted. I can prove the gate evaluated and both arms allowed; I cannot say which venue answered, nor the reference ROC, nor the funding rate.
+- **The live universe at either scan instant.** `futures_ticker_snapshots` ends 09-10, before both trades. So "did the scorer pick the best of what was available" is **unanswered** — the field-of-one finding comes from replaying the detector over the recorded mover lists, which is adjacent, not identical.
+- **Historical open interest.** No public MEXC endpoint found. The OI half of the position-crowding question is **unanswered**.
+- **Container access was intermittent** — reached on some attempts and not others. Env values quoted here were read independently by more than one reader and, for the 19F item, corroborated by a regression test. No position `metadata` (`convex_peak_r`, per-poll trace, the exact resting stop price MEXC held) was obtained; the stop trigger prices are reconstructed as `entry × (1 − sl_frac)`.
+- **News.** I did not search for and cannot rule out an IOST-specific announcement around 09:19Z. The idiosyncratic signature is what a headline looks like. Stated as a gap, not a finding.
+
+---
+
+## THE RULING
+
+**The bot did what it was built to do, and the path was bad.**
+
+The exit stack's measurable cost on 2026-09-11 was **$0.56 of slippage**. Nothing else in it was reachable: the trail needs 1.0R and neither trade came within 0.21R or 0.70R of it; 19F missed IOST on depth by 0.02R and is switched off on TREND. Holding to the clock was worse on both. The entry fills were a **credit**, not a cost.
+
+**IOST is the 15%.** An 86%-to-arm setup, filled promptly and favourably, corroborated by the only p<0.01 signal this book has, killed by a single-name event at 22× the cross-section. There is no remedy here that does not fire on a population of winners.
+
+**ETH is the one with something to fix, and the fix is not worth dollars.** Its gate condition did not exist on a settled bar; its sampler took the worst minute of a fourteen-minute window. Both are real defects of *correctness and measurability*. On this trade, fixing either still loses.
+
+Two trades on one day, diagnosed to opposite causes, with every obvious remedy either refuted by replay or untestable on the data that exists. **The correct output of a two-trade post-mortem is usually a logging change and a "no."** That is what this is.
