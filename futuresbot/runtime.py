@@ -4315,9 +4315,9 @@ class FuturesRuntime:
             "/pause — Pause new entries (open positions stay managed)\n"
             "/resume — Resume new entries\n"
             "/arm SYMBOL — Arm the retention trail now, below the automatic arm "
-            "(e.g. /arm ZEC). Same giveback rules; never lowers a floor\n"
+            "(e.g. /arm ZEC). Floors at 50% of the CURRENT value; never lowers a floor\n"
             "/arm SYMBOL GIVEBACK — Arm with your own giveback (e.g. /arm ZEC 0.20 "
-            "keeps 80% of the peak). Tightens an already-armed trade too\n"
+            "floors at 80% of the CURRENT value, then ratchets up on new highs)\n"
             "/close — Close the first open position\n"
             "/close SYMBOL — Close a specific position (e.g. /close ETH_USDT)\n"
             "/close all — Close every open position\n"
@@ -4477,7 +4477,7 @@ class FuturesRuntime:
         raw = (symbol or "").strip().strip("[]").strip().upper()
         if not raw:
             return False, ("Usage: /arm SYMBOL [GIVEBACK] — e.g. /arm ZEC, "
-                           "or /arm ZEC 0.20 to keep 80% of the peak.")
+                           "or /arm ZEC 0.20 to floor at 80% of the current value.")
         want_giveback, giveback_error = self._parse_giveback(giveback or "")
         if giveback_error:
             return False, giveback_error
