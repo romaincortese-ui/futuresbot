@@ -4533,10 +4533,29 @@ class FuturesRuntime:
         if r_now <= 0:
             return False, (f"{sym} is at {r_now:+.2f}R ({r_now * one_r:+.2f} USDT). "
                            "/arm only arms a trade that is in profit.")
+        # THE PRICE THE EXIT WILL ACTUALLY GET. The trail measures the FAIR price but
+        # closes with a market order that fills at the book, and on a fast move the
+        # two part company. STORJ 2026-09-13: armed at +0.14R on fair 0.04145 while
+        # the bid sat near 0.0409, below entry; the floor fired 14s later and filled
+        # at 0.04092 for -$0.87. So the floor is checked against the sellable price.
+        is_long = str(position.side).upper() == "LONG"
+        book_price = 0.0
+        try:
+            ticker = self.client.get_ticker(sym) or {}
+            book_price = float(ticker.get("bid1" if is_long else "ask1")
+                               or ticker.get("lastPrice") or 0.0)
+        except Exception as exc:
+            log.debug("Futures ticker fetch failed for %s: %s", sym, exc)
+        book_gross = self._position_pnl_pct(position, book_price) if book_price > 0 else None
+        if book_gross is None:
+            return False, (f"Could not read the order book for {sym} right now. "
+                           "Nothing changed — try again.")
+        r_book = book_gross / risk_pct
         stored_peak = self._metadata_float(md, "convex_peak_r") or 0.0
         peak_r = max(stored_peak, r_now)
         arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
         retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
+        retain_cfg = retain
         # The legacy giveback branch (retain<=0, kept reachable for rollback) subtracts
         # a FIXED R from the peak and applies NO cost floor, so at +0.60R with the
         # default 2.0R giveback it yields a floor of -1.40R: a "floor" 233% below the
@@ -4552,6 +4571,7 @@ class FuturesRuntime:
         lev = float(getattr(position, "leverage", 0) or 0)
         sl_frac = (risk_pct / (lev * 100.0)) if lev > 0 else 0.0
         cost_floor_r = 0.0
+        cost_r = 0.0
         if sl_frac > 0:
             cost_r = self._env_float("FUTURES_CONVEX_COST_PCT", 0.190) / 100.0 / sl_frac
             cost_floor_r = cost_r * self._env_float("FUTURES_CONVEX_COST_FLOOR_MULT", 1.5)
@@ -4614,6 +4634,23 @@ class FuturesRuntime:
                            f"floor ({exit_level:+.2f}R / {exit_level * one_r:+.2f} USDT) is at "
                            f"or above the current {r_now:+.2f}R ({r_now * one_r:+.2f} USDT), so "
                            "arming would close it at a net loss. Left to SL / TP / clock.")
+
+        def _px(value: float) -> str:
+            return f"{value:.6g}"
+
+        if r_book <= exit_level:
+            return False, (f"{sym}: the order book is behind the fair price. Fair {_px(price)} shows "
+                           f"{r_now:+.2f}R ({r_now * one_r:+.2f} USDT), but it can only be closed at "
+                           f"{_px(book_price)} right now: {r_book:+.2f}R ({r_book * one_r:+.2f} USDT), "
+                           f"at or below the {exit_level:+.2f}R floor. Arming would close it almost at "
+                           "once at the book price. Nothing changed — try again when the book catches up.")
+        min_gap_pct = max(0.0, self._env_float("FUTURES_MANUAL_ARM_MIN_GAP_PCT", 0.25))
+        gap_pct = (r_book - exit_level) * sl_frac * 100.0
+        if sl_frac > 0 and gap_pct < min_gap_pct:
+            return False, (f"{sym}: the floor would sit only {gap_pct:.2f}% below the price it can be "
+                           f"closed at ({_px(book_price)}), under the {min_gap_pct:.2f}% minimum, so "
+                           "ordinary price noise would close it at once. Nothing changed. Wait for more "
+                           f"profit or use a larger giveback (up to {max(0.0, 1.0 - retain_cfg):.2f}).")
         md["manual_arm"] = 1.0
         # Stamped ONCE. The exit path reads this instead of the env, so the floor a
         # human was shown is the floor that fires, even if the env changes later.
@@ -4651,14 +4688,18 @@ class FuturesRuntime:
         # the move from entry is exactly exit_level x sl_frac.
         floor_line = ""
         if sl_frac > 0 and position.entry_price > 0:
-            sign = 1.0 if str(position.side).upper() == "LONG" else -1.0
+            sign = 1.0 if is_long else -1.0
             floor_price = position.entry_price * (1.0 + sign * exit_level * sl_frac)
             if floor_price > 0:
-                floor_line = f"Exits at {self._format_price(floor_price)}\n"
+                floor_line = (f"Triggers at {_px(floor_price)} (fair price), {gap_pct:.2f}% from the "
+                              f"book at {_px(book_price)}. The exit is a market order: the fill "
+                              "can land below the floor on a fast move\n")
+        fee_usdt = max(0.0, cost_r * one_r)
         return True, (
             f"{sym} {position.side} armed at {r_now:+.2f}R ({r_now * one_r:+.2f} USDT)\n"
             f"Peak: {peak_r:+.2f}R ({peak_r * one_r:+.2f} USDT) · 1R = {one_r:,.2f} USDT\n"
-            f"Floor: {exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT)\n"
+            f"Floor: {exit_level:+.2f}R ({exit_level * one_r:+.2f} USDT gross, "
+            f"≈{(exit_level * one_r) - fee_usdt:+.2f} after ~{fee_usdt:.2f} fees)\n"
             + floor_line +
             f"Auto-arm gate was {arm_r:+.2f}R ({arm_r * one_r:+.2f} USDT) — bypassed\n"
             f"Exit rule: CONVEX_RETENTION_TRAIL — " + ", ".join(rules)

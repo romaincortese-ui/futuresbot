@@ -39,13 +39,20 @@ def _clean_env(monkeypatch):
 
 
 class _Client:
-    """Minimal client: the only call `_manual_arm` makes is get_fair_price."""
+    """Minimal client: `_manual_arm` reads the fair price and the book (bid/ask).
 
-    def __init__(self, price: float = 106.0) -> None:
+    The book defaults to the fair price; pass `book` to make them disagree."""
+
+    def __init__(self, price: float = 106.0, book: float | None = None) -> None:
         self.price = price
+        self.book = book
 
     def get_fair_price(self, symbol: str) -> float:
         return self.price
+
+    def get_ticker(self, symbol: str) -> dict[str, float]:
+        book = self.price if self.book is None else self.book
+        return {"bid1": book, "ask1": book, "lastPrice": book, "fairPrice": self.price}
 
     def get_account_asset(self, currency: str = "USDT") -> dict[str, str]:
         return {"availableBalance": "200", "equity": "200"}
@@ -82,9 +89,10 @@ def _runtime(tmp_path, client: _Client | None = None) -> FuturesRuntime:
     return runtime
 
 
-def _armed(runtime: FuturesRuntime, position: FuturesPosition) -> tuple[bool, str]:
+def _armed(runtime: FuturesRuntime, position: FuturesPosition,
+           giveback: str | None = None) -> tuple[bool, str]:
     runtime.open_positions[position.symbol] = position
-    return runtime._manual_arm(position.symbol)
+    return runtime._manual_arm(position.symbol, giveback)
 
 
 # --- happy path ------------------------------------------------------------
@@ -182,9 +190,62 @@ def test_success_reports_the_floor_as_a_price(tmp_path):
     runtime = _runtime(tmp_path, _Client(price=106.0))   # +0.60R, floor +0.30R
     ok, message = _armed(runtime, _pos())
     assert ok is True
-    assert "Exits at" in message
+    assert "Triggers at 103 " in message
     # 10% stop at 10x -> sl_frac 0.10; floor 0.30R -> entry x (1 + 0.30 x 0.10) = 103.0
-    assert "103" in message
+    assert "market order" in message
+
+
+def test_storj_fair_price_in_profit_but_book_below_entry_is_refused(tmp_path):
+    """STORJ 2026-09-13: fair price showed +0.14R, the bid sat below entry, and a
+    20% floor fired 14s later at a loss. The book must be checked, not the fair price."""
+    runtime = _runtime(tmp_path, _Client(price=101.4, book=99.6))   # fair +0.14R, book -0.04R
+    ok, message = _armed(runtime, _pos(), giveback="0.2")
+    assert ok is False
+    assert "order book is behind the fair price" in message
+    assert not runtime.open_positions["ZEC_USDT"].metadata.get("manual_arm")
+
+
+def test_book_in_profit_but_below_the_floor_is_refused(tmp_path):
+    runtime = _runtime(tmp_path, _Client(price=106.0, book=104.0))  # fair +0.60R, book +0.40R
+    ok, message = _armed(runtime, _pos(), giveback="0.2")           # floor +0.48R
+    assert ok is False
+    assert "at or below the +0.48R floor" in message
+    assert not runtime.open_positions["ZEC_USDT"].metadata.get("manual_arm")
+
+
+def test_floor_too_close_to_the_book_is_refused(tmp_path):
+    runtime = _runtime(tmp_path, _Client(price=101.0))    # +0.10R, 20% -> floor 0.08R
+    ok, message = _armed(runtime, _pos(), giveback="0.2")  # gap 0.02R x 10% = 0.20%
+    assert ok is False
+    assert "only 0.20% below" in message
+    assert not runtime.open_positions["ZEC_USDT"].metadata.get("manual_arm")
+
+
+def test_min_gap_is_configurable(tmp_path, monkeypatch):
+    monkeypatch.setenv("FUTURES_MANUAL_ARM_MIN_GAP_PCT", "0.1")
+    runtime = _runtime(tmp_path, _Client(price=101.0))
+    ok, _message = _armed(runtime, _pos(), giveback="0.2")
+    assert ok is True
+
+
+def test_unreadable_book_refuses_and_changes_nothing(tmp_path):
+    class _NoBook(_Client):
+        def get_ticker(self, symbol):
+            raise RuntimeError("timeout")
+
+    runtime = _runtime(tmp_path, _NoBook(price=106.0))
+    ok, message = _armed(runtime, _pos())
+    assert ok is False
+    assert "order book" in message
+    assert not runtime.open_positions["ZEC_USDT"].metadata.get("manual_arm")
+
+
+def test_short_checks_the_ask_side(tmp_path):
+    runtime = _runtime(tmp_path, _Client(price=94.0, book=96.5))    # fair +0.60R, ask +0.35R
+    pos = _pos(entry=100.0, sl=110.0, side="SHORT")
+    ok, message = _armed(runtime, pos, giveback="0.2")              # floor +0.48R
+    assert ok is False
+    assert "order book is behind the fair price" in message
 
 
 def test_symbol_resolution_is_case_insensitive_and_suffix_optional(tmp_path):
