@@ -13266,3 +13266,256 @@ Files, all under `C:/Users/Rocot/AppData/Local/Temp/wc/BAND/`:
 - L5: `L5/lib.py`, `s1_build.py` ... `s7_close_confirm.py`
 - L5-verify: `L5-mechanism-verify/v1_indep.py`, `v2_robust.py`, `v3_f5_live.py`
 - Synthesis live-fill table: `SYN/live20_table.py` (-> `SYN/live20_table.txt`)
+
+---
+
+## 2026-09-13 - ENTRY PARAMETERS STUDY (online top-10, winners vs stop-losses, ZEC deep dive): REFUTED. No new at-entry parameter separates winners from stop-losses; every threshold loses out of sample; ZEC re-entries are not the leak.
+
+**Owner: *"Do a deeper analysis on ZEC and the winning trades, finding at least 5 other parameters values at the
+time of entry (other than RSI, ROC and 24h high) and compare with the losers that hit TP. First, do a big online study
+about the top 10 technical or non-technical parameters that influence entry strategies more and get inspired from it
+to find the list of those 5 new parameters to compare."*** "Losers that hit TP" is read as **losers that hit their STOP LOSS**.
+
+**PRE-REGISTERED** (`wc/ZW/PREREG.md`): K = 8 parameters, live comparison rules, corpus C1/C2, a 56-cell gate family,
+kill criteria. It was written before any parameter had a value on any fill.
+
+**Lanes:**
+- Three research lanes (R-academic, R-derivatives, R-practitioner), merged in `wc/ZW/RESEARCH.md` with source spot-checks.
+- Four measurement lanes, each rebuilt by an adversarial verifier:
+  - M1-price: S1, S2, S3, S8 live.
+  - M1-deriv: S4-S7 live, plus corpus C1/C2.
+  - M2-corpus: S1-S8 corpus, gate family, walk-forward, null.
+  - M3-zec: ZEC deep dive.
+
+**Read-only. No file under the repo changed.**
+
+### THE ANSWER IN ONE LINE
+
+> **NOTHING SHIPS. Family-of-56 walk-forward OOS -$67.42/month [-123.6, -16.9] at $23.50 (-$44.44 at $15.49).
+> Best-of-56 null p 0.76. Corpus winner-vs-stop AUC 0.47-0.53 for every parameter (ZEC 0.50-0.54). Live best-of-8
+> chance 0.59 (primary), 0.82 (ZEC).** Re-entries lost live only under one run definition; in the corpus they earn
+> MORE (+0.26R vs +0.15R).
+
+### ONLINE TOP 10 -> 8 SELECTED (RESEARCH.md; at least one source fetched per row)
+
+| # | parameter | evidence | selected |
+|---|---|---|---|
+| 1 | slow trend alignment (Fieberg JFQA 2025; Zarattini et al. 2025; Liu-Tsyvinski-Wu JF 2022) | moderate-strong, weekly | S2 RET30_EX24 |
+| 2 | relative volume (Bianchi-Babiak-Dickerson JBF 2022; Bulkowski) | moderate, sign-conflicted | S1 RVOL_4H |
+| 3 | market state (Fieberg T5; Daniel-Moskowitz; Liu-Tsyvinski RFS 2021) | moderate | no - regime family refuted |
+| 4 | leverage demand (BIS WP1087; He-Manela-Ross-von Wachter) | moderate mechanism, weak at 24h | S4 BASIS_RES (perp/spot basis) |
+| 5 | order-flow imbalance (Kim & Hansen 2026; Bieganowski-Slepaczuk 2026) | strong at seconds, moderate 4-12h | S5 TAKER_4H_DEV |
+| 6 | pre-breakout compression (Hudson & Urquhart 2021) | weak-moderate | S3 COMP_PRE |
+| 7 | open-interest change (Glassnode long-position research) | weak, descriptive | S6 DOI24 (Bybit) |
+| 8 | macro release proximity (Kyriazis et al. 2023) | moderate for volatility | S7 MACRO_HRS |
+| 9 | spike vs grind / MAX (Li-Urquhart-Wang-Zhang IRFA 2021) | weak, sign-conflicted | no - cousins refuted |
+| 10 | cross-sectional strength (Liu-Tsyvinski-Wu; Blitz et al.) | weak at 24h | no - breadth closed (M3 exploratory: null) |
+| - | re-entry gap (Turtle folklore; owner's ZEC impression) | none | S8 REENTRY_GAP_H, reported only |
+
+**Research corrections:**
+- A lane misread w25882's MAXDPRC (maximum price, a size factor) as a lottery/MAX measure.
+- MEXC Min15 volume history is about 1 year, not about 270 days.
+- The Binance ZEC premium index is exactly 0 on up to 49% of early bars, so S4 uses the perp/spot basis.
+- Five quoted figures are unverified.
+
+### KILL CRITERIA (PREREG (a)-(d); any failure = DO NOT SHIP)
+
+| criterion | result | verdict |
+|---|---|---|
+| (a) pooled 5-fold walk-forward OOS >= +$10/month and CI excludes 0 | -$67.42 [-123.6, -16.9] (verifier -$67.42 [-123.5, -16.0]); anchored forward-only -$34.57 [-89.0, +13.4] | **FAIL** |
+| (b) best-of-56 fixed-incumbent null p <= 0.10 | 0.76 (verifier 0.764); walk-forward null p 0.93 | **FAIL** |
+| (c) no sign flip ex-ZEC | selected picks already negative (EXZEC -$29.37, ETH+XRP -$13.18); S7 <=2h alone: ETH+XRP -$1.33, EXZEC +$2.62 | not triggered for picks; **FAIL** for S7 <=2h |
+| (d) live-only never ships | S8 live-only by design. Corpus months: S1 11.2, S2 10.9, S3 10.8, S4-S7 11.8 | S8 reported only |
+
+**Per-parameter walk-forward OOS, $/month:**
+
+| parameter | OOS [CI] | best full-year cell |
+|---|---|---|
+| S1 | -14.69 [-36.4, +6.1] | +3.32 |
+| S2 | -18.51 [-58.0, +11.1] | -24.30 |
+| S3 | 0 (never picked) | -3.65 |
+| S4 | -10.66 [-29.2, +6.6] | -16.40 |
+| S5 | -43.28 [-86.3, -4.4] | -1.37 |
+| S6 | -51.68 [-110.7, +0.8] | -1.41 |
+| S7 | -17.62 [-52.1, +7.1] | +9.39 |
+
+- Only 3 of 56 cells are positive in-sample.
+- Literature-direction cells only: -$44.47 OOS.
+- **The only positive-looking cell, S7 "skip if a macro release is <=2h away":**
+  - It removes 4 stops: ZEC 2025-10-24 12:30 CPI, ZEC 2025-10-29 17:45 FOMC, ZEC 2026-07-02 11:45 jobs, ETH 2026-09-04 12:15 jobs. They total -4.31R.
+  - It admits XRP 2026-07-02 12:45 at +0.42R. Net +4.72R for the year.
+  - That is +$9.39/month in-sample (day-boot CI +2.1 to +19.6; +$6.19 at $15.49).
+  - It is below the shuffled best-of-56 median (+$15.50), acts in folds 0 and 4 only, and flips on ETH+XRP. **Dead.**
+
+### WINNERS VS STOP-LOSSES (live since T17: 8 W / 11 SL; ZEC 7 / 8; corpus LIVE3 207 / 147, ZEC 130 / 88)
+
+Cells are winner median / stop median, then p. Holm-8 p is 1.00 everywhere except live S7 (0.99).
+
+| param | live T17 | ZEC live | corpus AUC, p | corpus ZEC AUC, p | C1 Q5-Q1 R (SE) |
+|---|---|---|---|---|---|
+| S1 RVOL_4H | 1.10 / 1.85, .49 | 1.17 / 1.88, .46 | .505, .90 | .501, .98 | +0.36 (0.21) |
+| S2 RET30_EX24 | +71% / +82%, .66 | +76% / +101%, .23 | .471, .34 | .511, .78 | +0.10 (0.23) |
+| S3 COMP_PRE | 0.97 / 0.92, .84 | 0.99 / 1.02, .69 | .499, .97 | .509, .84 | -0.23 (0.20) |
+| S4 BASIS_RES | +2.5 / +2.5bp, .60 | +2.5 / +3.6bp, .23 | .496, .90 | .503, .93 | -0.06 (0.20) |
+| S5 TAKER_4H_DEV | +0.8 / +0.8pt, .84 | +1.7 / +0.6pt, .87 | .529, .36 | .519, .63 | +0.11 (0.21) |
+| S6 DOI24 | +0.8% / +1.5%, .72 | +2.3% / +1.9%, .69 | .512, .70 | .543, .28 | -0.06 (0.24) |
+| S7 MACRO_HRS | 38.5 / 72h, .12 | 51.5 / 72h, .21 | .522, .32 | .500, .99 | 2 bins: -0.06 (0.17) |
+| S8 REENTRY_GAP_H | 8.3 / 9.7h, .89 | 8.1 / 8.7h, .69 | .492, .81 | .510, .81 | Spearman -.13 [-.23, -.03] (short gaps better) |
+
+**Best-of-8 chance** (joint label permutation):
+
+| comparison | chance |
+|---|---|
+| primary | 0.589 |
+| ZEC | 0.820 |
+| TP 4 vs SL 11 | 0.321 |
+| all 32 | 0.367 |
+| episode-first 2 vs 4 | 0.133 (minimum possible p is 1/15; uninformative) |
+
+- **C1 best-of-8 |Spearman|:** S8, p 0.28.
+- **Carry:** no parameter correlates with carry beyond |rho| 0.16 on gate bars, and none adds beyond it.
+
+**Near-misses:**
+- **TP vs SL, S1:** p 0.056 (Holm-8 0.445). TP winners had LOWER volume. Corpus AUC .526.
+- **All-32, S2 p 0.060 and S3 p 0.072:** indistinguishable from calendar time (entry order alone p 0.065).
+- **Exploratory raw taker-buy share lagged 1h:**
+  - Live AUC 0.77, p 0.051 (ZEC 0.84, p 0.029).
+  - Best of >= 13 columns, joint chance >= 0.41.
+  - Corpus AUC 0.525, p 0.40. **Dead.**
+- **News in 6h:** Spearman +0.25 [0.04, 0.82] over 15 fills (about 7 days), 1 of 19 columns, and the feed has 11h and 6h gaps. Not credible.
+- **ZEC 09-04 16:55 time stop:** inside both ranges on S1-S8; extreme only on S3 (1.32).
+
+### ZEC
+
+**Replay by symbol:**
+
+| symbol | fills | R/fill (SE) | $/month |
+|---|---|---|---|
+| ZEC | 230 | +0.214 (0.086) | +$98.1 |
+| XRP | 75 | +0.162 (0.132) | +$24.2 |
+| ETH | 70 | -0.095 (0.144) | -$13.2 |
+
+- **Sleeve:** +$109.05/month, CI +3 to +220.
+- **Lumpiness:**
+  - 9 of 13 ZEC months are positive.
+  - The top 10 fills make 60% of ZEC $, and the top 20 make 120%.
+  - The top 3 of 91 runs make 50%.
+- **Trend-regime money:**
+  - Above-30-day-mean fills carry $1,025 of ZEC's $1,159 (88%).
+  - Below-mean fills earn +0.09R each (SE 0.18), about $11/month.
+  - The gate still beats an every-bar long by +0.24R (SE 0.08): +0.20R (0.09) above the mean, +0.26R (0.16) below.
+- **Regime filters** (exploratory, in-sample):
+  - ZEC above-mean only: -$13.35/month [-62, +29].
+  - All three symbols: -$31.3 [-99, +29].
+  - Mirror (ZEC below-mean only): -$86.
+
+**Concentration, $/month:**
+
+| scenario | at $23.50 | at $15.49 |
+|---|---|---|
+| full sleeve | +$109.05 | +$71.9 |
+| minus Oct-2025 (+$320) | +$82.09 | +$54.1 |
+| minus the best two ZEC months | +$54.76 | +$36.1 |
+| no ZEC | +$2.20 | +$1.45 |
+
+Removing any single ZEC month leaves at least $81.7.
+
+**Re-entries:**
+- **Live since T17** (16 ZEC fills, -$8.59, day SE $60.11): the result depends on the run definition.
+  - Gate-episode definition: first 4 fills +$57.96, re-entries 12 -$66.55 (exact p 0.79).
+  - 24h-from-exit definition: first 3 fills -$17.41, re-entries 13 +$8.82.
+  - The flip is ZEC 09-06 01:07 (+$75.37).
+- **Counts:** stops were re-entries 6 of 8; winners 6 of 7 (5 of 7 by episode). Fisher p 1.0. At the corpus rate, 6+ of 8 happens 30% of the time.
+- **Corpus:** re-entries +0.258R vs first entries +0.147R (+0.111, SE 0.171). "4th-or-later +0.46R" was picked from 22 cells, so it carries no weight.
+- **Consistent with the record:** deep re-entries better (L1728-1734); cooldowns and re-entry blocks refuted (L5913-5914, L6397-6530).
+
+**ZEC winners vs ZEC stops:**
+- Nothing separates them. Best-of-14 (8 registered + 6 exploratory) chance is 0.84.
+- **7d return (exploratory):** corpus Q5-Q1 +0.45R (0.25), rho +0.14 [+0.01, +0.26], Holm 0.30. Live runs the other way (W +18% vs SL +41%).
+- **Catalysts,** dated and not causal:
+  - 08-21: Grayscale ZCSH 8-K.
+  - 08-25: ZCSH starts trading.
+  - 09-02: record $12.6M inflow day.
+  - 09-04: ZEC crosses $1,000, about $34M of shorts liquidated.
+  - 09-06: squeeze, about $45M liquidated.
+  - 09-09 04:35: $500M ETF-assets headline, 4 min before the stopped 04:39 re-entry.
+- **Year high:** $1,296.37 in the 09-09 14:30 bar, about 50 min after the stopped 13:41 re-entry. The corpus high of $1,265.18 only runs to its 09-09 10:30 end.
+
+### CORRECTIONS (verifiers)
+
+1. **M1-price.**
+   - "S1's TP hint is a stand-in for ROC24" is REFUTED: ROC24 alone p 0.34; S1 net of ROC rank AUC 0.23, p 0.14. The discount is multiplicity only.
+   - "S2 is a calendar effect" is softened to "cannot be told apart from calendar time" (S2 net of entry order p 0.10).
+   - The all-32 S3 Holm-4 p is 0.24.
+   - "Largest fill entered on low volume": S1 1.02 is about normal volume.
+   - The registered S8 misreads two immediate re-entries (09-06 04:59 and 09-09 13:41); the scan version gives the same null.
+   - Across the lane's 16 tests, a smallest p <= 0.056 occurs in 40% of shuffles.
+2. **M1-deriv.**
+   - S7 cap: 289 of 375 corpus fills sit at 72h (not 298). Capped fills +0.13R (0.07), the other 86 +0.21R (0.17).
+   - "<=2h: -$8.57/month" was a row-deletion figure; the replay gives +$9.39 (see kill table).
+   - The "best of 10 columns" count understates the search.
+   - The 4-fill run is 09-08 16:38 -> 09-09 13:41.
+3. **M2-corpus.**
+   - S7 <=2h vetoes 4 fills, not 3.
+   - Q2CD and MEXC closes differ on exactly one bar per symbol (the last corpus bar, 09-09 10:30).
+   - S1 is missing for about 2.3 weeks, and S2/S3 for about 4 weeks, at corpus start.
+   - Corpus S8 counts a same-bar prior exit as 0h (reported-only, no effect).
+4. **M3-zec.**
+   - The S7 corpus Q5-Q1 of -0.35R was a tie artefact (173 of 230 at the cap). Within-72h +0.33R vs the rest +0.18R (+0.16, SE 0.21).
+   - Three-symbol regime cell: -$31.3, not -$34.1.
+   - The year high is $1,296.37, not $1,265.
+   - "Live and corpus disagree on 10 of 14 parameters" is uninformative and dropped.
+   - Omitted items now reported: live first-vs-re-entry dollars and the $15.49 figures.
+5. **Macro calendar.**
+   - All lanes agree on the same 33 events.
+   - The Sep-2026 CPI and jobs dates were confirmed on BLS pages by M1-deriv and its verifier; the M2 verifier could not find them there. The S7 verdict does not depend on them.
+
+### DECISION
+
+**1. DO NOTHING (recommended).** The gate, exits and universe are unchanged. Trial 19F is unchanged.
+
+**2. Rejected, add to the rejected-with-measurements list:**
+- S1 relative-volume floors and caps.
+- S2 30-day-trend gates.
+- S3 compression gates.
+- S4 basis gates.
+- S5 taker-flow gates.
+- S6 OI-change gates.
+- S7 macro-release vetoes and "only near releases" rules.
+- ZEC / all-symbol above-30-day-mean regime filters.
+- Re-entry blocks (again).
+
+**3. Nothing earned a live trial or a new pre-registration.**
+- S1's lowest-volume-quintile gradient failed as a gate.
+- The 7d-return gradient is a 12th look with no gate test, and live points the other way.
+
+**Unresolved (I don't know):**
+- Whether ZEC's trend regime persists. With no ZEC the sleeve earns +$2.20/month.
+- Why the 09-06 and 09-09 runs reversed when they did.
+- Whether news counts matter (the feed starts 09-02).
+
+### POWER
+
+Unchanged from the band record: detecting +$10/month live at about 37 fills/month needs decades of fills. Live fills here
+are descriptive only; the corpus replay decides.
+
+Files, all under `C:/Users/Rocot/AppData/Local/Temp/wc/ZW/`:
+- **Research and pre-registration:**
+  - `RESEARCH.md`, `PREREG.md`
+  - `R-academic/` (`chance_separation.py`, `pdftext.py`, `probe_apis.py`, `notes.md`)
+  - `R-derivatives/` (`binance_bybit_funding_premium_scale.py`, `mexc_funding_scale.py`, `null_separation.py`, `probe_data_availability.py`, `probe_data_availability2.py`, `scale_bps_to_R.py`, `notes.md`)
+  - `R-practitioner/` (`data_depth_check.py`, `data_depth_check2.py`, `news_zec_count.py`, `separation_chance.py`, `notes.md`)
+- **Synthesis:** `SYN/probe_coverage.py`, `SYN/chance_k8_and_premium_check.py`, `SYN/bianchi_selfcheck.txt`
+- **M1-price:** `fetch_raw.py`, `params_live.py`, `analysis_live.py` (-> `per_trade_table.csv`, `analysis_live.json`)
+- **M1-price-verify:** `adv_fetch.py`, `adv_params.py`, `adv_stats.py`, `adv_extra.py`
+- **M1-deriv:** `fetch_raw.py`, `fetch_mexc_min15.py`, `macro_calendar.py`, `build_fills.py`, `check_conventions.py`, `compute_params.py`, `compare_live.py`, `corpus_c1c2.py`, `verify_deriv.py`, `explore_posthoc.py` (-> `per_trade_table_deriv.csv`, `compare_live.txt`)
+- **M1-deriv-verify:** `v1_live_params.py`, `v2_live_stats.py`, `v3_corpus.py`, `v4_repull_sens.py`, `v5_s7_cap.py`
+- **M2-corpus:**
+  - `fetch_raw.py`, `macro_calendar.py`, `compute_params.py`, `m2common.py`
+  - `engine/repro_incumbent.py` (copied BAND/L3 engine)
+  - `fills_m2.py`, `gates_m2.py`, `c1_bestof8.py`, `robust_variants.py`, `summary_m2.py`
+  - `verify/crosslane_and_live.py`, `verify/rerun_chain.sh` (-> `cells_full_LIVE3.csv`, `trades_LIVE3_params.csv`, `summary_m2.txt`)
+- **M2-corpus-verify:** `vcommon.py`, `v1_params_indep.py`, `v2_repro_c1c2.py`, `v3_gates.py`, `v4_c1_bestof8.py`, `v5_close_match.py`, `v6_s7_folds.py`
+- **M3-zec:** `s00_fetch.py`, `s01_year_replay.py`, `s02_macro_calendar.py`, `s03_params.py`, `s04_live.py`, `s05_corpus_zec.py`, `s06_crosscheck.py`, `s07_summary.py`, `m3stats.py` (-> `live_zec_trades.csv`, `corpus_zec_fills_params.csv`)
+- **M3-zec-verify:** `v01_replay_year.py`, `v02_live.py`, `v03_corpus_zec.py`, `v04_ties.py`, `v05_regime.py`, `v06_small_checks.py`
+- **Owner answer and live table:** `answer.md`, `FINAL/live20_table.py` (-> `FINAL/live20_table.md`, `FINAL/live20_table.json`)
