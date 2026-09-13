@@ -13029,3 +13029,240 @@ Files from the four lines, all under `C:/Users/Rocot/AppData/Local/Temp/`:
 - Deviation z: `wc/XSS/PREREG.md`
 - Adversary: `claude/C--Users-Rocot-Claude-session/8c93b1ba-3446-4dcb-9618-2245bc04ca42/scratchpad/RW/PREREG.md`
 - XSS verifier's corrected-pricing rerun: `claude/C--Users-Rocot-Claude-session/8c93b1ba-3446-4dcb-9618-2245bc04ca42/scratchpad/sens.py`
+---
+
+## 2026-09-13 - TREND ENTRY BANDS (24h ROC cap, RSI band, above-prior-high band incl. negative near-high thresholds): REFUTED. Every cap cuts the better fills; the new-high rule earns its keep.
+
+**Owner: *"Let's compare the 24h roc, above prior 24h closing high and RSI between winning and losing trades. We
+could potentially fine-tune those, like the 24h roc instead of being only >4% it could be between 4% and x% for
+example? Same for RSI and 24h closing high."*** Owner addendum: enter when close to the 24h high but before
+crossing (thresholds like > -1%, -0.5%). **PRE-REGISTERED** (`wc/BAND/PREREG.md`: 106 cells in 5 families,
+primary statistic, kill criteria, written before any corpus result). Five lanes, each re-built by an
+adversarial verifier: L1 live fills + minute-level live-period replay; L2 prior-sweep walker re-walked to PREREG
+rules; L3 independent engine from raw Min15 bars; L4 5-year hourly; L5 mechanism + in-progress measurement gap.
+**Read-only. No file under the repo changed.**
+
+### THE ANSWER IN ONE LINE
+
+> **NO BAND SHIPS. All 5 families fail kill (a) on both Min15 engines and on the Min5 re-walk. Every pooled
+> walk-forward estimate is BELOW the incumbent: ALL106 -$22.30/month [-79.21, +29.55] (L3), -$55.71 (L2), -$4.46
+> (Min5).** R per fill is flat or RISING in ROC24, RSI14 and MARGIN, so there is no interior peak for an "x%" cap to
+> sit at. Relaxing the new-high gate to a near-high threshold loses in 16 of 16 cells in-sample on both engines.
+
+### THE INCUMBENT BEING DEFENDED (LIVE3, Min15 2025-09-13 -> 2026-09-09, 2 slots, 0.19% fee)
+
+| engine | fills | fills/mo | R/fill | $/mo @ $23.50 | 95% CI (day boot) |
+|---|---|---|---|---|---|
+| L2 (LSW walker re-walked to PREREG) | 371 | 31.6 | +0.1475 | +$109.49 | [+7.91, +220.27] |
+| L3 (independent, raw bars) | 375 | 31.74 | +0.146 | +$109.05 | [+3.04, +220.40] |
+| L2-verify Min5 re-walk | 378 | 32.2 | - | +$100.89 | [-3.58, +210.84] |
+
+**~90% of the $ is ZEC** (L3: ZEC 230 fills +$98.12, XRP 75 +$24.16, ETH 70 -$13.24). EXZEC incumbent -$33.84 to
+-$35.40/month; ETH+XRP-only +$2.2/month. **Any band result is effectively a ZEC result.**
+
+### KILL CRITERIA BY FAMILY (PREREG (a)-(d); any failure = DO NOT SHIP)
+
+(a) is the pooled 5-fold walk-forward out-of-sample change vs the incumbent, $/month at $23.50 1R, 95% CI. It is
+shown as L3 [CI] / L2 / Min5 re-walk. $15.49 values scale by 0.659.
+
+| family | selected cell (cells searched) | (a) OOS $/mo | (b) best-of-N p | (c) EXZEC sign | (c) hourly years | (d) engine sign | verdict |
+|---|---|---|---|---|---|---|---|
+| F1 ROC band | ROC[5,none) (23) | **-20.84** [-77.10, +30.72] / -39.20 / -4.46 | 0.20-0.23 (Min5: 0.05) | same sign in-sample (+$31 to +$34), but EXZEC incumbent loses, so uninformative | no F1 cell passes at either stop; LOYO held-out years 2+/4- (1.5xATRh), 0+/5- (3xATRh) | agrees (+13.82 / +23.86 / +34.78) | **DO NOT SHIP** (a; b on Min15; c hourly) |
+| F2 RSI band | RSI[none,95) (24) | **-13.16** [-41.68, +13.34] / -15.79 / -14.17 | 0.69-0.74 | +$8.55 same sign; EXZEC WF -$60.51 | rsi<95 -$1.54 hourly (flip); hourly RSI proxy r=0.18, uninformative | agrees (+2.85 / +5.40 / +4.57) | **DO NOT SHIP** (a, b) |
+| F3 MARGIN band | incumbent (L2) / MAR[0.25,none) (L3) (19) | **-37.57** [-78.44, +1.75] / -40.78 / -32.25 | 0.91-1.00 | +$13.95; only 4/18 cells agree LIVE3 vs EXZEC | owner caps positive in 1-2 of 6 years | **disagrees** on a ~$0 cell (-0.34 / +1.96 / +8.53) | **DO NOT SHIP** (a, b, d) |
+| F4 joint | ROC<20 only (24) | **-45.45** [-88.69, -7.60] / -36.16 / -31.20 | 0.68-0.81 | +$2.06; EXZEC WF -$19.35 | LOYO -$7.92; RSI<85+MAR<2% 1+/5- | agrees (+2.32 / +2.01 / +7.65) | **DO NOT SHIP** (a, b, c) |
+| F5 near-high | incumbent (17) | **-29.10** [-56.96, -1.32] / -33.19 / -28.97 (Min5-OHLC) | 1.0 (observed best is incumbent) | n/a; EXZEC WF -$35.60 | every at-or-above cell loses at both stops | n/a (both pick incumbent) | **DO NOT SHIP** (a, b) |
+| ALL106 | ROC[5,none) | **-22.30** [-79.21, +29.55] / -55.71 [-116.97, +0.37] / -4.46 [-54.14, +46.85] | ~0.58 fixed-incumbent; ALL90 gate-row 0.54-0.65 | - | - | agrees | **DO NOT SHIP** |
+
+**Search premium:** L3 in-sample +$23.86 -> OOS -$22.30 (~$46/month). L2 range $40-85/month depending on walk
+resolution. Out-of-sample fills/month: F1 24.1, F2 31.3, F3 28.7, F4 28.6, F5 33.8, ALL106 26.0 (L2).
+
+### WHAT THE OWNER'S CAPS COST (in-sample, LIVE3 2-slot, $/month vs incumbent @ $23.50; L3, verified cell-for-cell)
+
+| ROC floor 4% x cap | $/mo | RSI cap (no floor) | $/mo | MARGIN min 0 x max | $/mo |
+|---|---|---|---|---|---|
+| 6% | -49.61 | 70 | -77.45 | 0.5% | -53.33 |
+| 8% | -17.0 (L5) | 75 | -37.76 | 1% | -21.11 |
+| 10% | -15.11 | 80 | -28.64 | 2% | -16.34 |
+| 12% | -21.75 | 85 | -19.02 | 3% | -5.99 |
+| 15% | -10.21 | 88 | -18.47 | | |
+| 20% | +2.01 | 90 | -16.48 | | |
+| 25% | -2.57 | 95 | +5.40 | | |
+
+**Every positive in-sample cell has a 5% FLOOR (ROC[5,15/20/25/none) +10.33/+18.18/+16.09/+23.86). The exceptions
+are small: ROC[4,20) +$2.01, MAR[0.25,none) +$1.96, RSI<95 +$5.40.** The gain comes from raising the floor, which the prior sweep
+already tested and rejected on walk-forward. It does not come from a cap. Fee brackets for ROC[5,none): Min15 gross -$0.70 -> net +$13.82 (all fee avoidance); Min5
+gross +$20.82 -> net +$34.78 (~40% fee avoidance).
+
+### WINNERS VS LOSERS - THE OWNER'S LITERAL QUESTION
+
+| source | n (W/L) | ROC24 | RSI14 | MARGIN above prior high |
+|---|---|---|---|---|
+| live since T17 | 8 / 12 | median 6.85 vs 8.90, p=0.605 | 81.3 vs 74.8, p=0.109 (Holm 0.547) | 0.53 vs 0.62, p=0.745 |
+| corpus Min15 incumbent fills | 207 / 168 | 8.95 vs 9.02 (-0.07, SE 0.85) | 76.3 vs 73.3 (+3.0, SE 1.16; rank t 2.42) | mean 1.12 vs 0.82 (+0.30, SE 0.12) **but medians 0.57 vs 0.54, rank t 1.07** |
+| hourly 5y, 1.5xATRh | 1,804 fills | W-L +0.24pt | +0.77 | +0.13pt |
+
+Exact permutation over C(20,8). Every Holm p is 0.547 or higher. Per bar (LIVE3 gate bars, not independent): ROC decile 0
+(4.0-4.5%) -0.083R; deciles 8-9 (>15%) +0.480 / +0.242R; top RSI decile (>89.5) +0.197R. ALL34 within-carry ROC
+rank slope +0.260R (t 2.50), about half of it the fee identity (high ROC = high ATR = fee is fewer R). The top
+decile is not worse than deciles 5-9 on any feature (LIVE3 ROC +0.065 t 0.38, RSI -0.017, MARGIN +0.072).
+**Prior expectation H1 (a cap removes the best fills) CONFIRMED. F3 max side: negative. F2: caps lose.**
+
+### THE 20 LIVE FILLS - WHY ROC[4,8) LOOKS GOOD AND WHY IT DOES NOT COUNT
+
+Booked -$31.89 (day SE $65.13), +1.47R (SE 9.37), 9 trading days, 37.0 fills/month. 16 of 20 are ZEC. 8 of 20
+(rows 1-7, 9) have no recorded signal price, so MARGIN and RSI for them were rebuilt from the fill price.
+
+- **Removal replay, best by R of 106: ROC[4,8) +5.06R (SE 2.12) / +$98.03.** It skips XRP 09-03 15:01, ZEC 09-03
+  18:29, ZEC 09-04 16:55, ZEC 09-06 04:59 / 09:26 / 17:38, ZEC 09-09 04:39 / 09:03 / 13:41 and ETH 09-11 14:02.
+  That is 7 losers and 3 small trail wins. **All four +3R winners (ZEC 09-03 11:10, XRP 09-03 12:58, ZEC 09-03
+  15:17, ZEC 09-06 01:07) had ROC 4.9-7.7%.** Six of the skipped fills are re-entries into two ZEC runs.
+- **Best by $: ROC[5,8) +$118.05 (SE 45.79) / +4.39R**, which skips 13 fills.
+- **Selection null (20k perms): best-of-106 p=0.186 ($) and p=0.557 (R).** Within sizing eras: 0.24 / 0.62. F1
+  family alone $ p=0.081.
+- **Same cap on the 12 pre-T17 fills: -8.59R** (-5.19R ex censoring wall). The sign reverses.
+- RSI<85 +0.39R but **-$41.80**, because it drops ZEC 09-06 01:07 (+$75.37, RSI 90.2). MARGIN<1% +0.09R / -$16.61.
+- **Slot-adjusted** (3 untaken ETH signals 09-04): ROC[4,8) +3.88R. LOO range +3.94 to +5.67R. On the 4 non-ZEC fills
+  +2.16R (n=4).
+- **The minute-level engine cannot adjudicate the removal numbers.** Its own incumbent misses booked R by +0.53R
+  (wick), +3.67R (close) and +3.89R (hybrid). Close/hybrid never reproduce 3 live losing ZEC re-entries. Wick turns 3
+  live TP winners into small trail exits. The no-ship verdict here rests on the selection null and on PREREG's rule
+  that live fills are never a ship criterion.
+- 3 of 20 fills would fail the gate at bar close (ZEC 08-29 22:55, ZEC 09-09 13:41, ETH 09-11), all losers. That
+  outcome has ~19% chance.
+
+### F5 - NEAR THE HIGH, NOT YET CROSSED: WAITING WINS
+
+In-sample LIVE3 2-slot, L3 (all 16 cells reproduced by L3-verify; L2 and L5 agree in sign):
+
+| rule | fills/mo | R/fill | $/mo vs incumbent | 95% CI |
+|---|---|---|---|---|
+| incumbent (new closing high) | 31.74 | +0.146 | - | - |
+| at-or-above -0.25% (least bad) | 34.70 | +0.121 | -10.54 | [-61.1, +38.6] |
+| at-or-above -0.5% | 36.82 | +0.101 | -21.39 | [-76.6, +34.7] |
+| at-or-above -1.0% | 39.78 | +0.097 | -18.54 | [-88.4, +51.3] |
+| below-only [-0.5%, 0) | 29.79 | +0.083 | -50.79 | [-131.9, +28.6] |
+| below-only [-1.0%, 0) | 34.79 | +0.053 | -65.59 | [-148.4, +15.5] |
+| at-or-above -2.0% | 44.61 | +0.036 | -71.83 | [-148.6, +6.9] |
+| below-only [-2.0%, 0) | 40.88 | +0.030 | -80.49 | [-177.4, +14.1] |
+
+- **Below-only is worse than at-or-above at every threshold (8 of 8).** Min5-OHLC: 15 of 16 negative (best
+  at-or-above -0.25% +$1.53). Below-only is -$42 to -$91 at every resolution.
+- **Walk-forward -$29.10 is ONE FOLD.** The incumbent was picked in 4 of 5 folds, and the fold that picked
+  at-or-above -1% scored -$145 to -$167/month. Forcing the 27 exact trail-floor ties to hold moves it to -$83.85.
+  **Do not call it "significant"; the robust evidence is 0/16 in-sample.**
+- **Mechanism: re-timing AND new moves.** LIVE3 bars within 1% below the high cross it with probability
+  0.15 / 0.35 / 0.60 / 0.82 within 1 / 4 / 16 / 96 bars. At -0.5% with a single position per symbol:
+  - 115 re-timed episodes +27.48R. That is less than their built-in 0.318R head start, about -9R once the head start
+    is removed.
+  - 44 entries that never broke out while held -36.28R.
+  - Net -0.74R/month on LIVE3 (SE 0.86, not significant) and -8.64R/month on ALL34 (SE 3.89).
+  - Corpus slot replay: added pre-breakout fills average -0.03 to +0.14R, and the incumbent fills they displace
+    average +0.05 to +0.21R.
+- **Refines (does not overturn) the 2026-09-11 TREND record**, which found the new-24h-closing-extreme condition adds no
+  per-fill EDGE and kept it as a "free throttle". This prices the throttle: under the 0.19% fee + 2-slot replay,
+  relaxing it to m=-2% costs $72-77/month. The fully-off case (m=-infinity) was not re-run.
+- **Live-period replay since T17 (L1 engine, 0.526 months, 30 scan schedules x 3 trail models):** dR ranges -3.23 to
+  +1.60R across 16 cells; max |dR|/day-SE 0.88.
+  - At-or-above -1%: 9.1 fills re-timed 124 min earlier at 1.74% better (+5.13R), 7.4 added (-4.97R). Net -0.04 to
+    +1.16R; pinned schedule -2.02 / -5.18 / -5.08R.
+  - At-or-above -0.5%: 7.3 re-timed (+3.29R), 5.6 added (-2.79R). Net +0.28 to +1.51R; pinned +0.10 / -3.68 / -3.51R.
+  - Close-model means: re-timed + added = +1.38R, but net -0.50R. The gap is ~5.2 incumbent trades dropped per cell
+    (+1.64R forgone) plus a -0.23R residual.
+  - 4 at-or-above cells are positive under all 3 models; **0 of 16 are also positive on the pinned schedule.**
+    Engine error exceeds every delta: **sign since T17, I don't know.**
+- **Hourly 5y:** every at-or-above cell loses at both stops (-2%: 0/6 years). Below-only [-0.1%,0) 4+/2- at 1.5xATRh,
+  but the last two years are -$23.7 / -$59.9 and it is a thinning artefact.
+
+### MEASUREMENT GAP - THE LIVE GATE READS THE IN-PROGRESS BAR
+
+- Live fills land 1.6-14.7 min into the bar (median 9.8; 6 of 20 under 5 min). Probability a snapshot-passed gate
+  still passes at close: 0.475 (minute 0), 0.692 (5), 0.787 (10). **Live-relevant range 0.48-0.79.**
+- Snapshot minus close spread: MARGIN SD 0.68pt (min 5) / 0.48pt (min 10) on ROC>=4% bars, and **0.69-1.15pt on
+  incumbent gate bars**. A MARGIN 0.5% cap flips side for 27% of bars. A [-0.5%,0) band still holds at close only
+  54-67% of the time. **Bands finer than ~0.7pt MARGIN sit inside measurement noise.**
+- On the 20 live fills, close minus scan: ROC mean |d| 0.56pt, MARGIN 0.53pt, RSI 1.66.
+- **Open item (EXPLORATORY, not a ship candidate):** ROC<20% scored on snapshots is +$10.5/month (SE 10.0)
+  averaged over scan minutes. 5-fold WF over 18 caps: bar close +$1.2 (SE 6.5), minute 0 +$0.2, minute 5 -$21.7
+  (SE 10.5), **minute 10 +$27.8 (SE 12.6)**, minute 15 (Min5) +$1.4. It is phase-fragile, best of 18 x several
+  minutes, and has no null. Snapshot-scored nulls were not run for any family: I don't know whether they would move
+  F1.
+
+### RECONCILIATION - WHERE ENGINES DISAGREE
+
+1. **L2 vs L3 walk-forward magnitude (-$55.71 vs -$22.30 ALL106).** Both reproduce independently to the cent. The
+   incumbents agree (+0.1475 vs +0.146R), and their intrabar trail conventions agree on average R within 0.004R/bar
+   (Min15-prev +0.1354, Min15-OHLC +0.1336, Min5-prev +0.1312, Min5-OHLC +0.1330 per gate bar). The gap is
+   slot-replay path dependence plus fold picks: dropping 3 early rows (0.03%) moves L2 to -$67.27 and changes one
+   fold's pick. **Which magnitude is right: I don't know. The range is -$67 to -$4/month; the sign is never
+   positive for ALL106, and no family reaches +$10 at any resolution.**
+2. **F1 kill (b) depends on resolution:** p 0.20-0.23 on Min15 but 0.05 on Min5. (a) fails at every resolution, so
+   the F1 verdict rests on (a).
+3. **Nulls:** L3's superset shuffle scrambles the incumbent's own new-high gate (shuffled incumbent +$45.7 vs real
+   +$109.05), which inflates ALL106 p (0.872 vs 0.579 fixed-incumbent). L2's joint-A null has the same bias (0.946).
+   **Quote the fixed-incumbent / gate-row p.**
+4. **Exit convention:** under close-only trail variants (V3/V4), F3 MAR[0.25,none) walks forward +$20.10 / +$28.32
+   (CIs include 0, picked in 5/5 folds). The live monitor polls every 1s, so the intrabar V0 walker is the primary.
+   **F3 is the one band whose sign depends on exit convention.** The effect of the live poll-based trail (peak
+   sampled below bar highs, exit slips below the floor) on band deltas: I don't know.
+5. **L4 hourly (c):** "(c) blocks every family" relied on a both-stop-widths rule that is not in PREREG. At the
+   live-like 1.5xATRh stop, (c) passes the best cells of F2, F3 and F5, but those beat random thinning of a losing
+   hourly incumbent by only -$5 to +$4/month. **Hourly (c) cannot certify F2/F3/F5 either way; it fails F1/F4.**
+   rsi[60,none) is a PRE-REGISTERED cell with real hourly per-fill signal (+$14.47, SE 6.32, 6/6 years, +$12.6 over
+   thinning). It is ~0 at 3xATRh, and on Min15 the RSI floor 60 is -$13.05 (L2): **dead.**
+6. **Prior sweep +0.205R** is confirmed as a GROSS, unconstrained S4 gate-bar mean: +0.204R gross vs +0.120R net on
+   the same 1,803 bars.
+
+### CORRECTIONS
+
+1. **L1:** 8 of 20 T17 fills lack a signal price, not 11.
+2. **L1:** "the removal effect disappears on the engine" is withdrawn, because the engine error (+0.5 to +3.9R)
+   exceeds every cell delta. "Every F4 cell negative on the pinned schedule" is REFUTED: ROCcap15|RSIcap90 is +0.91 to
+   +1.09R. F2 RSI[60,95) / RSI[60,none) and F3 MARGIN[0.25,inf) are slightly positive on the engine under all 3
+   trail models. Engine $ overstate pre-funding sizing by 46% ($4 vs actual $2.73).
+3. **L2:** the -$55.71 headline is fragile (range -$67 to -$4). "All fee avoidance" holds on Min15 only. The F5
+   "significant OOS loss" is one fold. "Winners break out further" is a mean effect from a few large-margin winners;
+   medians are equal.
+4. **L3:** headline p 0.22 is the F1-family p. The grid-wide p for the argmax is 0.54-0.58. "Every positive F1 cell
+   has a 5% floor" is wrong: ROC[4,20) is +$2.01. RSI[60,95) is also positive in 4 of 5 folds. F5 per-fill R range
+   is +0.030 to +0.138R.
+5. **L4:** see reconciliation 5. Day-clustered SEs are NOT understated (week/month clusters are equal or smaller).
+   The F5 "distance below the high carries information" claim holds at 1.5xATRh only.
+6. **L5:** ROC<20% is not "0 or negative" under snapshot scoring (see open item). The 25% ROC cap removes slightly
+   WORSE fills (not significant). Gate hold rate is 0.48-0.79, not 0.69-0.79. The Min5 check is a resolution check,
+   not an independent engine. L5 tested 18 of 66 F1-F3 cells and no kill criteria, so its F1-F3 verdicts defer to
+   the grid lanes.
+7. **Fill-rate regime:** the corpus incumbent ran 47-57 fills/month over the last 3 weeks vs the 31.7 year average,
+   and live runs 37. Band $ differences would be ~1.5x larger in magnitude, **same sign**.
+
+### DECISION
+
+**1. DO NOTHING (recommended).** Gate stays ROC24 >= 4%, new 24h closing high, RSI cap disabled. Trial 19F unchanged.
+
+**2. Rejected:** ROC caps (any x), RSI caps and floors, MARGIN min/max bands, joint caps, near-high thresholds
+(-0.1% to -2%, -0.5/-1 ATR, both forms). Add them to the rejected-with-measurements list.
+
+**3. Not recommended:** a snapshot-phase-scored rerun of ROC<20%. Its best case is about the $10 bar before any
+selection discount, and its sign flips by scan minute.
+
+### POWER - CAN THE LIVE ACCOUNT CONFIRM A BAND? NO.
+
+- The ship bar at $23.50 and 37 fills/month is +0.0115R/fill. At 80% power (sd 0.573) that needs **~19,433 fills,
+  ~526 months (~44 years)**.
+- The in-sample ROC[4,8) effect taken at face value (+0.253R/fill) needs ~40 fills (~1.1 months). After selection,
+  the observed effect sits below the null median, so no finite n. The pre-T17 fills already reversed it.
+- Day-clustered SEs on the live set rest on 9 clusters and are rough.
+
+Files, all under `C:/Users/Rocot/AppData/Local/Temp/wc/BAND/`:
+- Pre-registration: `PREREG.md`
+- L1: `L1/l1_106.py` (out106/), `L1/l1_f5_replay.py` (out_f5/{wick,close,hybrid}/), `L1/f5_summary.py`, `L1/fetch_k.py`, `L1/fetch_k1.py`
+- L1-verify: `L1-live-verify/v1_fills.py`, `v2_feats.py`, `v4_engine_tables.py`, `rerun/v3_engine_probe.py`
+- L2: `L2/r106/a0_rows.py`, `eng.py`, `a1_deciles.py`, `a2_slots.py`, `a3_null.py`, `a4_wf.py`, `a5_bracket.py`, `a6_f5_gross.py`
+- L2-verify: `L2-corpus-verify/v1_indep.py`, `v2_replay.py`, `v3_fetch_min5.py`, `v5_paths.py`, `v6_replay_cols.py`, `v7_nullG.py`, `v8_wl_min5.py`
+- L3: `L3/feat.py`, `walker.py`, `test_walker.py`, `engine2.py`, `analysis2.py`, `test_replay2.py`, `summary2.py`, `fold_diag.py`, `sens_exit2.py`, `live2.py` (cells2_LIVE3_r.csv)
+- L3-verify: `L3-engine-verify/v2_indep.py`, `v2_null.py`, `v2_recon_live.py`, `v2_exitvar.py`, `v2_v4diag.py`, `v2_ties.py`
+- L4: `L4/prep.py`, `prep2.py`, `walk2.py`, `engine2.py`, `grid2.py`, `null2.py`, `yearly2.py`, `fills2.py`, `summ2.py` (v1 files in L4/ are superseded)
+- L4-verify: `L4-hourly-verify/v0_data.py` ... `v6_fills.py`
+- L5: `L5/lib.py`, `s1_build.py` ... `s7_close_confirm.py`
+- L5-verify: `L5-mechanism-verify/v1_indep.py`, `v2_robust.py`, `v3_f5_live.py`
+- Synthesis live-fill table: `SYN/live20_table.py` (-> `SYN/live20_table.txt`)
