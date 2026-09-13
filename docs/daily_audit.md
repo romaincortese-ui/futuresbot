@@ -1,3 +1,121 @@
+# Daily Audit — 2026-09-13
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Equity **$971.92** — all cash, zero margin, **zero open positions**. 09-11's line
+was $965.99: **+$5.93, fully explained by +$5.92 exchange-realized** on the two
+closes below. No deposit, no withdrawal. **No 09-12 audit was written; the
+exchange shows zero closes on 09-12, so no trade went unreviewed.**
+
+`FUTURES_TRIAL_LABEL=19F`, start `1788891501`. Env unchanged since 09-08. **One
+code deploy since 09-11, operator-shipped: `8e68739` (/arm reads the order book)
+live 14:15Z, SUCCESS**, plus the 09-12 /arm commits. Feature store 158 -> **160**.
+Log window (post-boot 14:15Z): no Traceback, no ERROR, no 5003/2015 rejects, no
+`[SIZE_TRIM]`. Only warning is the Prophet archive HTTP 422 — cosmetic.
+
+### 1. Closed trades — 2 in 24h (0 on 09-12), 1 winner, **+$5.21 / +0.44R**
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | mae R | risk% | mult | lateness | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-13 11:00 | STORJ | WILDCARD | LONG | x3 | 33m | -0.08 | -0.87 | +0.44 | -0.20 | 1.21 | 0.50 | 1.00 | retention trail (**manual /arm**) |
+| 09-13 12:44 | LSK | WILDCARD | LONG | x1 | 34m | **+0.52** | **+6.08** | +1.10 | -0.04 | 1.20 | 0.50 | 0.20 | retention trail (auto, armed at 1R) |
+
+**Reconcile: 2 exchange rows, 2 feature-store rows**, matched on symbol, side,
+entry, close. Exchange +$5.92 vs feature store +$5.21; the $0.71 is STORJ's fee
+leg (feature store matches the -$0.87 in the operator's commit). No censoring.
+Both ref-listed, entry slippage +2.4 / -11.7 bps. Neither reached -0.25R, so the
+19F early stop was never in play.
+
+**Min5 replay of the path after each exit:**
+- **STORJ: the unmanaged position hit its -1R stop at 12:50Z**, 1h50m after the
+  manual arm closed it. The misfire that `8e68739` now refuses **saved roughly
+  0.9R (~$10) on this instance.** That is path luck, not a case against the fix
+  — the fix is about execution fidelity, and a discretionary close is still
+  available to the operator. n=1, recorded only.
+- **LSK: after exit, max +0.82R, now +0.77R**, neither stop nor TP touched. The
+  trail left ~0.25-0.30R (~$3) against hold-to-now on an open-ended path. Exit
+  grid is already swept and refuted (09-11/09-12); no proposal.
+
+**Regime scaler halved both fills (mult 0.50).** At full size: STORJ -$1.75
+(saved $0.87), LSK +$12.16 (cost $6.08). **Net -$5.21 on these two** — it trimmed
+a winner. Against the +$27.20 measured on 09-09 this is one pair, not a reversal.
+
+### 1-OPEN. Open positions: NONE
+
+### 2. Learning loop
+
+**Conditional expectancy (160 rows, n>=10 per group):** overall -$0.504/trade,
+sum -$80.61, win 43.8%, mean R +0.096.
+- `hold>=120min` FAVOR — reverse causation, as before.
+- `side=SHORT` FAVOR / `side=LONG` AVOID — consistent with live config.
+- `leverage>=7` FAVOR, OOS e=0.039 — unstable, act on neither side.
+- **New: `roc>=12pct` FAVOR / `roc<12pct` AVOID with the dollar gaps running
+  the OPPOSITE way** (-$1.17 / +$0.98) — win-rate and dollars disagree. Noise
+  signature; not a proposal.
+- `regime_trimmed_hard(<0.5)` AVOID but $ gap +0.19 — same contradiction.
+- `exit=stop` AVOID — tautological.
+
+**Shadow ledger, 250 rows, deduped symbol+side+bucket+6h:**
+
+| bucket | n | resolved | net R | reading |
+|---|---|---|---|---|
+| veto:ref_not_listed | 36 | 35 | **-12.65** | saving money |
+| side_disabled | 27 | 26 | -6.55 | saving money (ZEC SHORT 09-12 resolved -1R) |
+| calm_shock | 25 | 24 | -3.46 | saving money |
+| slot_occupied | 21 | 21 | +9.47 | stale — last row 09-04 |
+| min_vol_skip | 14 | 14 | +8.37 | costing money |
+| below_trigger | 11 | 11 | +1.89 | flat |
+
+**Slot cost: +9.47R over 21 deduped, no new row since 09-04** (3 wildcard
+slots). Not evidence for a slot change.
+
+**Scan telemetry:** WILDCARD movers **26/cycle** (down from 53-54 on 09-11),
+rejects dominated by `roc_below_min` (20-23) and `no_pullback_resume` (1-6), zero
+candidates. TREND 3 symbols: `roc_below_min` 2, `no_new_extreme` 1. **Quiet tape,
+gates working. No loosening.**
+
+### 3. Decision rule — trial 19F (scored by ENTRY time)
+
+    16 closes of 30 | netR -3.09 (SE 3.61) | net$ -60.32 (SE $71 — not quotable)
+    ex-best -4.88R (best IOST 09-09 +1.79R)
+    TREND 4 fills -2.73R | WILDCARD 12 fills -0.36R
+    mean realised risk 1.705%, max 2.444%  -> inside [1.6%, 2.2%]
+    max drawdown from peak close 7.64%  -> under the 20% flag
+    early-stop fires 2 of 20 | guard trips 0 | TREND early stops 0
+
+**Basis note:** 09-11 printed 15 closes / -4.59R by CLOSE time; one ZEC fill
+entered before the trial stamp. Entry-time basis is the rule's.
+
+**Watch, not editorial:** both new fills booked ~1.2% risk (scaler at 0.5). **Five
+more half-sized fills in a row would take the mean under 1.6%.**
+
+**Neither kill condition tripped.**
+
+### 4. Exits
+
+**19F: TP 0 | stop 6 | other 10.** Lifetime TP 9 of 119 tagged rows. TP-scaling
+watch item stays closed (refuted, `DECISION_RULE.md:5892`).
+
+### 5. Lever
+
+**None tested.** Every candidate lever in reach was swept and refuted in the last
+48h of operator-led studies (TREND entry bands, entry parameters, arm x giveback
+grid, time arming, relative-weakness shorts). Two closes add nothing that
+reopens any of them.
+
+### 6. Action items carried, not self-applied
+
+1. Persist the per-position `r_now` poll series.
+2. Resync Futures-shadow to champion HEAD (`railway up --service Futures-shadow`,
+   paper). **Shadow stale, comparison suppressed.**
+
+### Verdict
+
+**No change. No deploy.** Two small wildcard closes, full reconcile, book flat,
+trial inside every limit. The operator's /arm fix is live and clean.
+
 # Daily Audit — 2026-09-11
 
 ---
