@@ -14274,3 +14274,27 @@ No selection discount is applied. **No forward trial settles this on a useful ho
   - `SYNTH/synth.py` (kill matrix, pick frequencies, power, order-limit and WILDCARD-proxy checks) -> `synth.json`, `synth.txt`, `synth_tail.txt`
   - `SYNTH/table.py` -> `table.md`
   - `answer.md`, `record.md`
+
+---
+
+## 2026-09-15 - ORDER-BOOK BUY% AS A LONG ENTRY FILTER (skip, never short): REFUTED. 4 of 5 kill criteria fail.
+
+**Owner:** *"Can it help decide whether we enter the long trade or not?"* Pre-registered (`wc/OB/PREREG_FILTER.md`): enter the TREND
+long only if Binance USD-M futures bookDepth BUY% >= t; a vetoed bar is re-evaluated on the next gate bar; broken or missing books fail
+open. Primary cell 1% band, last snapshot, t = 50; family 40 cells. LIVE3, one year, verified engine; lane `wc/OB/F/`, independent
+rebuild `wc/OB/F-verify/` (every headline CONFIRMED).
+
+| | result |
+|---|---|
+| primary (1%, last, t50) | **-$26.36/mo [-92.9, +39.1]**, 25.2 vs 31.7 fills/mo; removes 207 incumbent fills averaging +0.220R |
+| folds | -98.7, -5.5, -55.2, -28.7, +56.3 |
+| best of 40 (1%, last, t45) | +$25.5 [-30.5, +78.7]; best-of-40 null p 0.231 (null best median +$17.1, p95 +$37.5) |
+| walk-forward | leave-one-fold-out +$16.73 [-38, +70] (repeats the in-sample best in 4 of 5 folds); anchored +$12.33, all from fold 5 |
+| ex-ZEC | +$2.53 vs incumbent +$2.20: sign opposite to LIVE3 |
+| cost variant | -$15.42 |
+| long-leg R by BUY% decile, clean books | no trend; lowest decile +0.25R, highest +0.01R |
+
+Kill: (a) FAIL, (b) FAIL, (c) passes on the point estimate only, (d) FAIL, (e) FAIL. 41% of primary fills were unfiltered (broken or
+missing book), so this measured a diluted filter; the clean-book deciles do not support a stronger one. A "stretched-day" null gave
+best-of-40 p 0.03 but was rejected as miscalibrated (vetoes stickier than real). **Decision: no filter. The 1%/t45 cell may only be
+proposed as a new pre-registered test; nothing here recommends it.**
