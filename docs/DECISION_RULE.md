@@ -13836,3 +13836,10 @@ live -$97.20; final equity $977.99 vs $936.39; maxDD $215 vs $265. WILDCARD flip
 [-$213, +$325], P(<=0) 0.33**. Replaying WILDCARD UNFLIPPED under today's rules gives -$72.60 (every wick) / -$101.54 (75% wick), so
 the part due to direction alone is +$25 to +$53 and the rest is rules the live trades did not run under (early stop pre-09-08, manual
 actions). Noise on 26 trades; no change.
+
+**Addendum 2026-09-15 - flip TREND only, WILDCARD as live** (`wc/FLIP/R/trend_only.py`): book **-$101.15** (75% wick -$94.14) vs
+live **-$168.53**; TREND **-$8.26** (10/6; 75% wick -$1.08) vs live -$71.33; final equity $1,003.77; maxDD $169 vs $265. TREND flipped
+minus live at live size **+$65.35, 95% [-$268, +$354], P(<=0) 0.33**. TREND replayed UNFLIPPED under today's rules is -$21.20 (every
+wick) / -$59.01 (75% wick), so direction alone is +$13 to +$58 (bootstrap vs same-rules replay +$13.23, 95% [-$333, +$318], P(<=0)
+0.46); the rest is exit mechanics and manual actions (#12 stop pierce, #38 manual /arm). One two-week window in which ZEC and XRP
+fell; the 5-year record keeps TREND long-only (no short edge after fees, -22.27R short tail). No change.
