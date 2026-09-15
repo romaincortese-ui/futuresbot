@@ -13551,3 +13551,281 @@ $0.60 on the total. Read-only. Scripts and tables: `wc/FLIP/` (`table.md`, `answ
 - Consistent with the 2026-09-12 shorts records: no short edge after fees at 24-72h, fat short tail (-22.27R).
 
 **Decision: change nothing. TREND stays long-only; WILDCARD unchanged.**
+
+---
+
+## 2026-09-13 - TREND UNIVERSE 5-6 SYMBOLS (point-in-time pool, screen, tier, rotating): REFUTED. 24 of 24 cells fail kill (a); the rotating tier beats random coins but not luck.
+
+**Owner: *"Can you explore increasing the Trend universe to 5 or 6 symbols?"*** **PRE-REGISTERED** (`wc/UNI/PREREG.md`, written before any
+result).
+- **Rules** (each adds K = 2 or 3 coins to ETH/XRP/ZEC):
+  - R1 SCREEN: coins passing the banked symbol screen.
+  - R2 MECHANISM TIER: top trailing-90-day realised vol ≥100%.
+  - R3 ROTATING: R2 re-picked on the 1st of every month.
+- **Configs:** U5/2, U5/3, U6/2, U6/3 against incumbent U3/2.
+- **Pool:** point-in-time top-60 MEXC crypto USDT perps by 30-day median turnover, with ≥12 months of hourly history.
+- **Folds:** A selects on data to 2025-09-12 and scores 12 months. B selects to 2026-03-12 and scores 6 months.
+- **Lanes:**
+  - DATA: 632 listed perps, 262 hourly and 113 Min15 symbols.
+  - Two independent screen lanes plus a reconcile.
+  - P1: verified BAND/L3 engine (A).
+  - P2: independent engine B.
+  - P3: hourly eras, risk and live mechanics.
+- Each of P1-P3 was rebuilt by an adversarial verifier; P2's verifier wrote a third engine C. **Read-only. No repo file, Railway or /data touched.**
+
+**Settled before this study (cited, not re-tested):**
+- 09-08 BTC/SOL/LTC/BNB -$28/mo.
+- 09-07 +8 majors lose; the point-in-time rebuild of the top-8 cell is -$64/mo.
+- 09-11 98 symbols dilutes the gate to +0.042R.
+- The symbol screen passes only ZEC and XRP.
+
+### THE ANSWER IN ONE LINE
+
+> **NO CELL SHIPS.** All 24 rule x config x fold cells fail (a) on engine A, engine B and engine C. **R2 is refuted** (-$139 to
+> -$175/mo at fold A, CI entirely below 0). **R1 finds almost nobody** (1 of 58 at A) and loses at A. **R3 is the only positive rule, +$37.55/mo
+> [-60.8, +141.0] at 59.67 fills/mo**, and it beats random coins (placebo p 0.005). But it does not beat luck: the best-of-12 reality check
+> gives p 0.59, and the first half is -$3.2/mo.
+
+### WHAT EACH RULE ADDED (point-in-time, recomputed from pre-cutoff bars by two verifiers, 0 mismatches)
+
+| rule | fold A (from 2025-09-13) | fold B (from 2026-03-13) |
+|---|---|---|
+| R1 K2 / K3 | KAS / KAS (1 passer: U5 = U6 = U4) | KAS, PEPE / KAS, PEPE (U6 = U5) |
+| R2 K2 / K3 | NMR, MAV / + MEME | PIPPIN, VVV / + AXS |
+
+    R3 K3 monthly (K2 = first two): 2025-09 MAV CFX BRETT | 10 NMR MAV MOODENG | 11 SNX ZEN FARTCOIN | 12 DASH ZEN STRK
+    2026-01 DASH ZEN MERL | 02 PIPPIN DASH FARTCOIN | 03 PIPPIN AXS FARTCOIN | 04 SIREN PIPPIN VVV | 05 SIREN PIPPIN VVV
+    06 SKYAI B ORDI | 07 SIREN H SKYAI | 08 ESPORTS VELVET BANK | 09 VELVET AKE SKYAI
+
+**ZEC IS NOT IN THE POINT-IN-TIME TOP 60 AT FOLD A** (rank 117; 131 at 2025-09, 102 at 2025-10). A point-in-time rule could not have
+picked the incumbent's main earner. The live universe itself carries hindsight.
+
+The two screen lanes disagree on R1 in only 2 of 15 rows that change a pick: AERO at fold A and PI at fold B. Both drop under the both-lanes rule, both
+on history under 1.2 years.
+
+**Under a strict "each era ~1 year" reading R1 is EMPTY at both folds** (KAS and PEPE eras are 255-260 days). I don't know which reading
+the pre-registration meant; (a) decides it anyway.
+
+### THE CELLS (engine A, available-balance sizing, 1R $23.50; diff vs U3/2 with 1-day-block 95% CI; x0.659 for $15.49)
+
+    fold A (11.81 mo)  U3/2: 31.74 fills/mo  +$104.78/mo  exZEC +8.1  ZEC share 0.92  maxDD -16.1R/-$366  P(DD20 in 3mo) 0.38
+    cell          fills/mo   diff $/mo  [95% CI]           placebo p  exZEC   maxDD R/$      P(DD20)  engB diff  fails
+    R1 U5/2=U6/2    39.95     -26.37  [ -66.1,  +15.6]     0.412   -19.1   -16.2/ -366     0.46     -32.1    a b e (c?)
+    R1 U5/3=U6/3    44.69     -34.72  [ -78.1,   +8.9]     0.500   -21.2   -18.6/ -399     0.60     -37.5    a b c e
+    R2 U5/2         49.68    -139.05  [-199.4,  -79.1]     0.983  -128.8   -41.1/ -944     0.91    -130.7    a b c e
+    R2 U5/3         55.52    -163.94  [-227.5, -101.2]     0.999  -142.2   -49.6/-1148     0.95    -148.7    a b c e
+    R2 U6/2         57.89    -152.17  [-231.0,  -73.0]     0.962  -129.5   -42.3/ -925     0.96    -145.3    a b c e
+    R2 U6/3         65.51    -174.63  [-255.8,  -96.2]     0.989  -149.6   -55.7/-1189     0.98    -164.0    a b c e
+    R3 U5/2         59.67     +37.55  [ -60.8, +141.0]     0.005   +47.5   -24.4/ -548     0.78     +33.1    a c e
+    R3 U5/3         65.77     +17.41  [ -84.3, +122.7]     0.019   +37.6   -25.5/ -566     0.84     +12.7    a c e
+    R3 U6/2         69.74     +15.93  [ -98.9, +132.0]     0.012   +37.2   -24.1/ -546     0.86      +9.3    a c e
+    R3 U6/3         78.72     +12.42  [-102.7, +129.6]     0.018   +28.7   -27.4/ -602     0.87      +9.4    a c e
+
+    fold B (5.93 mo)   U3/2: 30.36 fills/mo  +$83.71/mo  exZEC +8.7  ZEC share 0.90  maxDD -16.1R/-$366  P(DD20) 0.62
+    R1 U5/2=U6/2    43.35      +7.08  [ -90.4, +113.5]     0.074   +13.3   -16.6/ -372     0.71      +6.5    a e (c?)
+    R1 U5/3=U6/3    48.75     +21.76  [ -62.6, +113.0]     0.051   +29.4   -18.2/ -391     0.78     +23.9    a e (c?)
+    R2 U5/2         60.22     -63.72  [-176.7,  +52.0]     0.538   -37.2   -21.8/ -473     0.92     -75.1    a b e (c?)
+    R2 U5/3         65.62     -24.50  [-129.7,  +80.3]     0.269   -11.7   -23.9/ -512     0.91     -23.7    a b e (c?)
+    R2 U6/2         67.47     -99.59  [-238.1,  +46.7]     0.695   -51.3   -27.3/ -611     0.97    -111.0    a b e (c?)
+    R2 U6/3         75.90    -109.74  [-233.6,  +21.1]     0.768   -90.2   -36.5/ -765     0.98    -109.1    a b e (c?)
+    R3 U5/2         66.63     +78.05  [ -70.2, +239.3]     0.005   +77.5   -24.4/ -548     0.90     +72.4    a c e
+    R3 U5/3         72.03     +46.32  [-109.3, +211.7]     0.025   +65.9   -25.5/ -566     0.93     +45.9    a c e
+    R3 U6/2         81.30     +69.83  [-107.6, +257.1]     0.009   +83.4   -24.1/ -546     0.93     +57.8    a c e
+    R3 U6/3         89.57     +54.61  [-123.0, +240.1]     0.018   +75.1   -27.4/ -602     0.95     +49.0    a c e
+
+How to read the table:
+- Engine B's fold A runs 2025-09-19 -> 2026-09-09 on an open-to-close intrabar path. Its signs agree with engine A on 24 of 24, and engine C
+  agrees on 24 of 24.
+- The 7-day-block CIs change no (a) verdict. They put B R2 U6/2 [-235.6, -0.8] and U6/3 [-223.5, -29.2] entirely below 0.
+- The fold B maxDD and worst month repeat fold A's because the troughs (2026-08-03 for R3, 2026-08-18 for the incumbent) fall inside B.
+- P(DD20) is a 7-day block bootstrap over 91 days with compounding. The verifier's re-run is within ~0.02. Do not compare it with the
+  2026-09-07 "26% at 3 symbols", whose method is unknown.
+
+**A THIRD SLOT ALONE LOSES.** U3/3 is -$20.39/mo [-41.2, -0.6] at A (7-day blocks [-37.1, -5.6]) and -$9.82 at B.
+
+### KILL CRITERIA (PREREG (a)-(e); any failure = DO NOT SHIP)
+
+| rule | (a) >= +$10 and CI excludes 0 | (b) placebo p <= 0.10 | (c) hourly eras | (d) engine sign | (e) best-of-12 | verdict |
+|---|---|---|---|---|---|---|
+| R1 | FAIL all 8 | FAIL A (0.41-0.50); pass B (0.051-0.074) | FAIL A 3-slot (2/4); count passes elsewhere but UNRESOLVED (proxy invalid, era leg ambiguous) | agrees | FAIL | **DO NOT SHIP** |
+| R2 | FAIL all 8 (A CIs below 0) | FAIL all (A 0.96-0.999, B 0.27-0.77) | FAIL A (0-1/4); B 3/4 on 4.9-month eras with hourly sign opposite to Min15, not evidence | agrees | FAIL | **DO NOT SHIP** |
+| R3 | FAIL all 8 | pass (0.005-0.025) | FAIL (2025-09 picks held fixed: 1-2/4) | agrees | FAIL | **DO NOT SHIP** |
+
+**(e) FAILS, it does not "pass on p".** The best cell in both folds is R3 U5/2 (A +$37.55, B +$78.05), and it fails (a).
+
+Two nulls give opposite answers:
+- **Placebo-max null** (max over 12 cells of random-coin draws): p 0.011 (A) and 0.021 (B). That null is centred negative (median -$14.2
+  at A) because random coins lose, so it is easy to beat.
+- **Luck null** (reality check: resample days with zero true improvement in all 12 cells): the luck-only best has a median of **+$40/mo at A**, above
+  the observed +$33 (engine B). **p 0.59 (A), 0.43 (B).** R3 U5/2 alone, one-sided: p 0.24 (A), 0.17 (B).
+
+**Do not quote engine B's "discounted" column.** It subtracts a negative placebo median and so raises +$33 to +$44.
+
+R1's placebo drew the number of names R1 passed. A K-name null gives A 0.10-0.27 (still fails) and B 0.025-0.087 (still passes).
+
+### R3: WHY THE ONE POSITIVE RULE IS NOT AN EDGE
+
+- **SECOND HALF ONLY.** The non-overlapping first half (2025-09-13 -> 2026-03-12, 5.89 mo, incumbent +$126.00/mo):
+  - R3 U5/2 -$3.2/mo [-122, +125], placebo p 0.16-0.29.
+  - U5/3 -$11.7, U6/2 -$38.4, U6/3 -$30.1; best-of-12 p 0.49-0.51.
+  - Weighting A1 and B reproduces fold A's +$37.55 (+$37.57). **"Positive in both folds" is one result counted twice.**
+- **MONTHS.** U5/2 is positive in 6 of 13 months: Jun-26 +$428, Sep-26 +$286 in 9 days, Feb-26 +$267; Jul-26 -$266, Oct-25 -$160.
+- **CARRIERS.** At fold A, 5 fills make 88% of the added $ (B 92%): AKE x2 2026-09-02, VELVET 08-11, PIPPIN 02-10, SIREN 04-09. Each is a
+  ~$70 capped 3R TP on a pump bar (AKE +90% then -52% the next bar; SIREN 04-04 bar range 120%).
+  - **The "remove top-5 fills" test cannot single out R3.** Removing 5 capped TPs takes ~$29.7/mo from ANY book; the incumbent goes +104.78 -> +75.22.
+  - The correct post-removal diffs are +7.87 / -12.26 / -13.68 / -17.19.
+- **STOP SLIPPAGE (bound, not estimate).** R3 U5/2 has 308 stop exits against the incumbent's 147. The replay fills stops at the level; AKE 09-02's
+  bar low was 43.6% below its stop.
+  - Stops filling 25% of the way to the bar low (fold A): U5/3, U6/2 and U6/3 go negative (-$5.8, -$7.4, -$13.1); U5/2 +$18.2.
+  - At 50%, U5/2 is -$1.2.
+  - Fee 0.285% plus 0.10% stop slip: U5/2 +$17.1 (A) / +$51.8 (B); other R3 at A -$8.8 to -$22.6; R1 B -$1.0 / -$10.2.
+- **EXACT PRICE TIES.** Tie-handling on exact touches moves single cells by about ±$13/mo (engine B A R3 U6/3 +$9.4 -> +$15.9). No sign
+  changes.
+- **SURVIVORSHIP.** Pools hold only currently listed contracts. Delisting concentrates in exactly R3's tier (picks run 3-7x annualised vol),
+  so it flatters both the $ and the placebo p. **Size UNKNOWN.**
+
+### MULTI-YEAR HOURLY ERAS (criterion (c); fair walker, stop 3x hourly ATR, common-history grid split in 4)
+
+    R1 A 2-slot (KAS)   2022-11-30 -> 2026-09-13, 11.4 mo eras   +104.42  +6.93  -28.24  +12.80   3/4 (range over 4 variants 2-4)
+    R1 A 3-slot                                                  +92.02  -2.90  -20.02  +36.23   2/4 FAIL
+    R1 B (KAS,PEPE)     2023-04-21 ->, 10.2 mo                   +102.78 +11.48  -31.09  +12.27   3/4 (3-slot also 3/4)
+    R2 A U5/2 | U5/3    2023-06-30 ->, 9.6 mo                     1/4 | 0/4 FAIL
+    R2 A U6/2 | U6/3    2023-11-05 ->, 8.6 mo                     1/4 | 0/4 FAIL  (hourly loss -$19 to -$99/mo across 4 variants)
+    R2 B (all four)     2025-01-30 ->, 4.9 mo                     3/4 (hourly +$73 to +$107/mo; Min15 says -$24 to -$110)
+    R3 stand-in (2025-09 picks fixed) U5 9.6 mo | U6 7.1 mo      +21.71 -60.76 +27.29 -86.02 (U5/2) ... 1-2/4 FAIL
+
+**THE HOURLY PROXY DOES NOT TRACK Min15.** The fair walker agrees in sign with the scored Min15 result in **9 of 22** cells (8 of 18
+unique). The live-stack variants agree in 12-13 of 22.
+- Where it disagrees:
+  - R1 fold A reads +$6.91 / +$29.70 hourly against -$26.37 / -$34.72 on Min15.
+  - U3/3 vs U3/2 reverses sign in all four variants.
+- A hourly PASS is not evidence. A FAIL is consistent only where the Min15 loss is large (R2 A).
+- Qualifications on the era counts:
+  - No era here is multi-year (4.9-11.4 months).
+  - R1 eras 1-3 are the screen's own selection history.
+  - On the fixed 5-year grid, early eras with 0-1 added fills get a sign from the extra slot alone. Do not count them.
+
+### RISK TRADE-OFF: NONE CLEAN
+
+- **R3 is the only rule that cuts ZEC dependence in both folds:**
+  - ZEC share 0.92 -> 0.67-0.75.
+  - ex-ZEC +$8.06 -> +$29-$48/mo.
+  - Ex-ZEC's-best-2-months +$52.50 -> +$71-$90.
+- **It pays for that in drawdown:**
+  - maxDD -16.1R -> -24.1 to -27.4R.
+  - P(DD20) 0.38 -> 0.78-0.87.
+  - Worst week -$158 -> -$239 to -$266.
+- **R1 and R2 at fold A worsen ZEC dependence** (share > 1, ex-ZEC negative).
+- **Every expansion raises P(DD20).** Worst week is worse in 18 of 20 cells; only A R1 2-slot improves (-$143), and it costs -$26/mo.
+- Same-day co-stops lift vs independence:
+
+      cells       lift        p (hypergeometric)
+      A R1        1.43-1.46   0.012-0.013
+      B R1        1.36-1.68   0.001-0.085
+      R3          0.94-1.13   0.05-0.77
+
+  A circular-shift permutation test gives similar p.
+
+### LIVE MECHANICS (fresh /contract/detail and /ticker 2026-09-15)
+
+- **Margin at 3 slots:**
+  - Total TREND margin at entry: median 15.0-23.3% of equity, p95 35.5-37.8%, max 47.0-49.3% (~$465-$488 at $990). U3/2 max 40.5%.
+  - Ceilings: 57.8% (3 x 25%-of-available), 76.3% with 2 WILDCARD positions.
+  - **CORRECTION: `FUTURES_MAX_MARGIN_FRACTION` (85%) does NOT bound TREND.** It is on the non-convex entry path (`runtime.py`
+    ~11585), absent from `_open_wildcard_position`. No account-wide margin cap exists; only available balance and 25%-of-available per entry.
+- **Risk cap:** the 5% cap is of AVAILABLE balance (`runtime.py` 8484-8487), not equity. It never binds; worst realised fill -2.8% of equity.
+- **Exchange limits:**
+  - All 29 names are state 0 and API-tradable, max leverage 20-500 (bot caps 10).
+  - Zero fills fall below the minimum order at $990; one AKE fill would at the 0.25x regime floor.
+  - Contract rounding loses up to 11-14% of size on KAS, PEPE and AKE.
+  - **SIREN base-tier max order $325 notional: 19 of its 70 fills exceed it.**
+- **Liquidity:**
+  - 24h turnover today: ~$0.1M NMR/MAV/MEME, $0.1-0.5M most R3 names.
+  - NMR/MAV/MEME median daily turnover in the scored window: $0.2-0.3M.
+- **WILDCARD overlap:**
+  - 0.769 (K2) / 0.744 (K3) of R3 added name-months rank outside the top-24 turnover. All fold-A R1/R2 names do too.
+  - Daily eligibility: ETH, XRP and PEPE sit in the majors band 100% of days, ZEC 95.3%. KAS is WILDCARD-eligible 75.1%; NMR/MAV/MEME
+    3.9/6.6/3.0% (below the floor).
+  - Same-name WILDCARD-signal collision rate: lane-measured small, NOT re-verified.
+  - WILDCARD margin locks are not modelled.
+- **Scan cost:** 576 vs 288 Min15 kline calls/day; 6 calls ~2s.
+
+### CORRECTIONS TO THE RECORD
+
+1. **Kill (e) status:** "(e) passes on p" (P1) is wrong. (e) requires (a)-(b) after the discount, so **(e) FAILS**.
+2. **Best-of-12 claim:** "R3 beats the best-of-12 discount" (P2) holds only against a random-coin null. Against the luck null, p is 0.59 / 0.43.
+3. **R2 range:** it is **-$24.50 to -$174.63**, not "-$64 to -$175". R2 is significantly harmful only at fold A.
+4. **Bootstrap label:** P3's CIs were 1-day blocks, not multi-day. At 1-day blocks, 4 of 20 exclude 0 (all A R2, negative).
+5. **Hourly era claims (P3):**
+   - "Hourly eras fail R2 in all four variants" is wrong: fold-B R2 passes 3/4 in the primary test.
+   - The R2 A hourly loss is -$19 to -$99, not -$94.
+6. **Minor numeric corrections:**
+   - P2's gap split: path -$4.11, sizing **-$3.84**, month basis -$0.30.
+   - P2's third-largest R3 month is 2026-02 (+$279), not September.
+   - Correlations use days ending at the 23:00 bar close. On true 24:00 days, ZEC correlations fall 0.02-0.07 (KAS 0.31, PEPE 0.39).
+     Conclusions unchanged.
+7. **Min60 is not an independent tape.** It comes from the same MEXC kline service, so it only rules out Min15-feed corruption.
+
+### POWER
+
+At R3 U5/2's own effect and noise (fold A +$37.55, SE ~$51.5/mo over 11.81 mo), a CI excluding 0 needs **~85 months** of data. A lower
+bound above +$10 needs **~159 months**. That assumes a constant effect and applies no selection discount; the first-half result says the effect is not
+constant. **No live or paper trial can settle it on any useful horizon.**
+
+### DATA NOTES
+
+- **Min15 start:** MEXC serves Min15 only from 2025-09-17 20:15. The 32 Q2CD names were spliced with Q2CD prices for 09-13 -> 09-17, and the
+  other 81 start late. This is a slight bias against expansion. The 2025-09-19 sensitivity changes nothing (R3 U5/2 +$37.99).
+- **Hourly history:** only 54 symbols have hourly bars back to 2021-09; 82 of 113 pool names have under 4 years before fold A.
+- **Excluded names:** SPX_USDT (SPX6900) is excluded by the live name rule.
+- **Renamed or delisted:** FIL_USDT is now FILECOIN_USDT; TON_USDT is delisted.
+- **Search size:**
+  - 24 decision cells plus 2 U3/3 references.
+  - Diagnostics:
+    - 12 first-half cells.
+    - 48 + 64 cost/slippage variants.
+    - 21 hourly cells x 4 walker/stop variants x 2 era grids.
+    - 3 intrabar path rules.
+  - Placebo draws: 1,000 per fold on engine A, 300 per cell on engine B (14,400 replays), 400 per fold in P1-verify.
+
+### DECISION
+
+**1. DO NOTHING (recommended).** Leave `FUTURES_TREND_SYMBOLS=ETH_USDT,XRP_USDT,ZEC_USDT` and `FUTURES_TREND_MAX_POSITIONS=2` untouched.
+
+**2. Rejected:**
+- Point-in-time static vol-tier expansion (R2, any K, any slots).
+- Screen-based expansion (R1; KAS, PEPE).
+- Monthly vol-rotation (R3, K 2-3, slots 2-3).
+- A third slot without new names (U3/3).
+
+Add them to the rejected-with-measurements list.
+
+**3. Banked:**
+- **Ranking liquid coins by trailing vol beats random coins (p 0.005-0.025), and random liquid coins lose -$32 to -$78/mo.** This is consistent
+  with the absolute-move mechanism (2026-09-08). It is NOT an edge over luck, and it buys pump-bar small caps whose stops and max-order limits
+  the replay does not price.
+- **The live universe is not point-in-time:** ZEC was rank 117 at fold A.
+
+Files, all under `C:/Users/Rocot/AppData/Local/Temp/wc/UNI/`:
+- **Pre-registration:** `PREREG.md`
+- **DATA:**
+  - Scripts in `data/scripts/`: `mexc.py`, `s1_universe.py`, `s2_day1.py`, `s3_candidates.py`, `s4_m15_fetch.py`, `s5_h1_fetch.py`,
+    `s6_check_q2cd.py`, `s7_pools.py`, `s8_build_m15_meta.py`
+  - Outputs: `crypto_perps.json`, `h1.pkl`, `m15.pkl`, `pools.json`, `survivorship.json`, `m15_meta.json`, `h1_meta.json`, `q2cd_check.json`, `raw/`
+- **Screen:**
+  - S-A: `S-A/screen_lib.py`, `test_screen_lib.py`, `run_screen.py`, `validate_screen.py` (`picks.json`, `picks_R1_strict_multiyear_eras.json`)
+  - S-B: `S-B/screen_lib.py`, `test_screen.py`, `run_screen.py`, `validate.py`, `diag_banked.py`
+  - Reconcile: `RECON/reconcile.py` (-> `picks_final.json`, `screen_reconcile.md`)
+- **P1 engine A:** `P1/L3copy/` (unedited BAND/L3), `build_trades.py`, `simlib.py`, `cells.py`, `repro.py`, `run_cells.py`, `placebo.py`, `diag_r3.py`,
+  `split_cost.py`, `check_prints.py`, `final_table.py` (-> `final_table.json`)
+- **P1-verify:** `P1-engineA-verify/vlib.py`, `v1_cells.py`, `v2_rebuild.py`, `v3_placebo.py`, `v4_picks.py`, `v5_misc.py`, `v6_ties.py`,
+  `v7_crash.py`, `v8_cost.py`
+- **P2 engine B:** `P2/engine_b.py`, `test_walker_b.py`, `check_gate_live.py`, `run_repro.py`, `repro_gap.py`, `score_p2.py`, `brute_check.py`,
+  `report_p2.py`, `top_fills_p2.py` (`common_b.py` unused)
+- **P2-verify:** `P2-engineB-verify/engine_c.py`, `run_engine_c.py`, `diag_c_vs_b.py`, `placebo_c.py`, `reality_check.py`, `audit_picks.py`,
+  `tie_check.py`, `tie_example.py`
+- **P3:** `P3/p3_lib.py` (`feat_L3.py`, `walker_L3.py` verbatim), `p3_check_inc.py`, `p3_m15.py`, `p3_m15_inspect.py`, `p3_h1_fair.py`,
+  `p3_h1_eras.py`, `p3_h1_overlap.py`, `p3_corr_cluster.py`, `p3_live_mech.py` (`live_api_20260915/`), `p3_wildcard_overlap.py`,
+  `p3_concentration.py`, `p3_summary.py`
+- **P3-verify:** `P3-eras-risk-verify/v1_m15_indep.py`, `v2_h1_eras_indep.py`, `v3_checks.py`, `v4_corr_convention.py`, `v5_mech.py`
+- **Synthesis:** `SYNTH/synth.py` (-> `SYNTH/synth.txt`: cell table, kill matrix, power), `answer.md`
