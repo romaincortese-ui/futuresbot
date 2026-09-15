@@ -13977,3 +13977,300 @@ Read-only. No repo file, Railway or /data was touched. Scripts are in `wc/OB/` (
 taker flow (09-13) and the flip replay (09-15), this makes four independent null results for choosing the side at entry.
 
 ---
+
+---
+
+## 2026-09-15 - TREND ROTATING UNIVERSE SLOT (1 symbol re-picked every 24/48/72h): DO NOT SHIP. 0 of 24 cells pass; the best (D4 RANK 48h shared, +$50.6/mo [-0.2, +102.7]) misses kill (a) by under $2 and shows pick skill only in Y2.
+
+**Owner:** *"What about selecting one new symbol to increase the universe every day? Like one universe slot is an open slot that gets filled for 24h given the market data? Or 48h or 72h? Can you study this?"*
+
+**PRE-REGISTERED** in `wc/ROT/PREREG.md`, written before any result.
+
+**Design:**
+- **Universe:** ETH/XRP/ZEC plus ONE rotating symbol, picked at 00:00 UTC from a point-in-time pool.
+- **Pool:** MEXC crypto USDT perps excluding ETH/XRP/ZEC. Top 40 by trailing-30-day median daily turnover, ≥60 days of history, and a trailing-7-day median turnover of ≥$2M.
+- **Rules:**
+  - D1 VOL: 7-day realised volatility.
+  - D2 MOM: return over the refresh length.
+  - D3 ATTN: 24h turnover divided by the 30-day median.
+  - D4 RANK: average rank of D1-D3.
+- **Grid:** periods of 24h, 48h and 72h; slot modes SHARED (2 slots for 4 symbols) and DEDICATED (2 + 1). That is 24 cells, each compared with the incumbent U3/2. Rotating positions are never force-closed.
+- **Years:**
+  - Y1 is 2024-09-17 -> 2025-09-16 on Binance USD-M 15m bars, because MEXC keeps only ~360 days of Min15.
+  - Y2 is 2025-09-17 -> 2026-09-09 on MEXC Min15.
+  - The live TREND stack is used throughout: available-balance sizing, 1R $23.50 (x0.659 for $15.49), fee 0.19%.
+
+**Lanes:**
+- **DATA:** exhaustive daily pools and picks, with a Binance mapping verified against MEXC.
+- **Engine A:** a copy of the UNI P1 L3/simlib engine.
+- **A-verify:** adversarial rebuild, matching to the cent.
+- **Engine B:** independent, built from UNI P2.
+
+**Read-only.** No repo file, Railway or /data was touched.
+
+**Settled before this study (cited, not re-tested):**
+- 09-08: permanent BTC/SOL/LTC/BNB adds refuted.
+- 09-13 universe study (wc/UNI): monthly vol rotation R3 U5/2 +$37.55/mo [-60.8, +141.0] on 59.67 fills/mo, second half only, luck-null p 0.59. A 3rd slot alone costs -$20.39/mo.
+
+### THE ANSWER IN ONE LINE
+
+> **NO CELL SHIPS.** All 24 cells fail (a) on engine A.
+> - **Best cell:** D4 RANK 48h SHARED, **+$50.62/mo [-0.21, +102.67] on 53.80 fills/mo** (20.29 rotating), against U3/2's 35.74. That is +$33.37 at $15.49.
+> - **Why it still fails:** its lower bound is -$0.2 to -$1.9 across 10 seeds, it is the maximum of 24 cells, its Y1 pick skill is nil (discounted p 0.78-0.80), and (e) halves it to +$24.68.
+> - **Four SHARED cells fail ONLY (a).** The idea is not refuted, but it is not an edge you can count on.
+
+### PICKS (point-in-time; recomputed independently: 723 pools and 5,304 picks, 0 mismatches)
+
+| rule (24h) | distinct | persistence | Y1 top (of 365) | Y2 top (of 358) |
+|---|---|---|---|---|
+| D1 VOL | 59 | 0.83 | FARTCOIN 135, MOODENG 32, TURBO 31, ENA 16 | PIPPIN 46, RIVER 40, SIREN 35, LAB 29 |
+| D2 MOM | 105 | 0.12 | FARTCOIN 39, ENA 26, POPCAT 20, TURBO 11 | PIPPIN 27, RIVER 26, BEAT 17, FARTCOIN 14 |
+| D3 ATTN | 86 | 0.47 | ENA 32, ADA 21, 1000BONK 16, FARTCOIN 16 | NEAR 21, ARB 18, INJ 16, PEPE 16 |
+| D4 RANK | 92 | 0.21 | FARTCOIN 39, ENA 34, POPCAT 26, TURBO 14 | PIPPIN 24, FARTCOIN 23, RIVER 19, BEAT 17 |
+
+- **The 48h/72h pick lists repeat the same names.** D1 is FARTCOIN on 67/183 (48h) and 46/122 (72h) of Y1 refreshes, which makes it close to a fixed vol add.
+- **Best cell's picks (D4 48h):** 69 distinct names.
+  - Y1: FARTCOIN 20, ENA 17, TURBO 12, POPCAT 12 of 183.
+  - Y2: PIPPIN 14, FARTCOIN 12, PUMPFUN 10, TAO 8 of 179.
+  - 482 rotating fills made +$1,036 in total: PIPPIN +$327, SIREN +$214, WLD +$175; ALLO -$99, 1000BONK -$88.
+- **Y1 Binance availability:** pool members absent from Binance were skipped (mean 1.35% per day, max 5%; mostly PI and pre-listing HYPE). Skipping changed 8-17 of 365 picks at 24h.
+
+### CELLS (engine A; diff vs U3/2 in $/mo at $23.50 with 1-day-block 95% CI; (e) counts trail exits as stops)
+
+    U3/2 pooled: 35.74 fills/mo  +$9.53/mo  exZEC -8.32  ZEC share 1.87  maxDD -$1,411  P(DD20 in 3mo) 0.73 (0.38 @15.49)  worst week -$166
+    U3/2 Y1 (Binance): 39.53 fills/mo  -$85.90/mo (engB -84.60 [-170, +3])   U3/2 Y2 (MEXC): 31.88 fills/mo  +$106.83/mo  maxDD -$366  P(DD20) 0.40
+
+    cell           fills(rot)   diff $/mo [95% CI]        Y1      Y2    engB   plac p  bo24 A/V      (e)    maxDD  P(DD20)  fails
+    D1 24h shared  51.4 (18.2)  +34.3 [-16.1,  +85.0]   +27.1   +41.8  +36.9   0.008  0.099/0.112  +10.5   -912   0.77    a b
+    D1 24h ded     55.2 (19.5)  +14.0 [-32.2,  +62.4]    -3.9   +32.3  +16.6   0.047  0.724/0.725  -14.0  -1291   0.83    a b c e
+    D2 24h shared  59.7 (27.2)  +23.6 [-37.9,  +82.7]   -16.6   +64.6  +22.2   0.034  0.357/0.383  -11.2  -1518   0.87    a b c e
+    D2 24h ded     63.6 (27.8)  +13.0 [-43.1,  +68.4]   -35.8   +62.8  +12.3   0.048  0.761/0.759  -27.4  -1796   0.90    a b c e
+    D3 24h shared  48.5 (15.3)   -6.6 [-51.6,  +41.3]    +3.8   -17.3   -4.9   0.431  1.000/1.000  -25.5  -1603   0.85    a b c e
+    D3 24h ded     52.9 (17.2)  -19.8 [-63.5,  +24.5]   -22.5   -17.1  -17.7   0.566  1.000/1.000  -43.6  -1931   0.90    a b c e
+    D4 24h shared  55.4 (22.7)  +37.9 [-21.3,  +97.4]   +43.7   +32.0  +37.7   0.005  0.057/0.068   +9.7   -922   0.81    a e
+    D4 24h ded     59.7 (24.0)  +14.9 [-40.4,  +70.7]   +13.4   +16.4  +14.3   0.031  0.691/0.700  -18.6  -1226   0.88    a b e
+    D1 48h shared  51.2 (17.6)  +39.4 [-10.2,  +88.9]   +36.7   +42.2  +41.8   0.003  0.049/0.048  +16.5   -815   0.75    a
+    D1 48h ded     55.0 (19.2)  +21.1 [-26.1,  +70.6]    -0.1   +42.7  +23.8   0.015  0.454/0.476   -6.7  -1222   0.82    a b c e
+    D2 48h shared  53.5 (20.1)  +38.7 [ -9.7,  +88.5]   +49.8   +27.4  +38.7   0.002  0.051/0.054  +12.4  -1342   0.77    a
+    D2 48h ded     57.0 (21.3)  +28.5 [-19.1,  +77.3]   +28.5   +28.5  +30.4   0.005  0.205/0.221   -2.1  -1478   0.81    a b e
+    D3 48h shared  47.7 (14.4)  +12.5 [-30.6,  +57.5]   +26.6    -1.9  +14.5   0.111  0.775/0.781   -4.8  -1382   0.80    a b c e
+    D3 48h ded     51.5 (15.7)   -1.2 [-41.4,  +40.4]    -1.1    -1.2   +0.4   0.235  0.996/0.996  -22.6  -1713   0.85    a b c d e
+    D4 48h shared  53.8 (20.3)  +50.6 [ -0.2, +102.7]   +35.9   +65.7  +52.7   0.000  0.005/0.006  +24.7  -1243   0.79    a
+    D4 48h ded     57.4 (21.6)  +37.5 [-12.4,  +88.9]    +1.2   +74.5  +38.7   0.002  0.062/0.069   +8.2  -1570   0.84    a e
+    D1 72h shared  51.7 (18.5)  +45.0 [ -3.2,  +95.5]   +37.1   +53.0  +48.9   0.000  0.016/0.018  +20.7   -872   0.76    a
+    D1 72h ded     55.4 (19.7)  +27.6 [-20.2,  +77.6]   +10.1   +45.5  +31.9   0.008  0.228/0.251   -1.6  -1295   0.82    a b e
+    D2 72h shared  53.1 (19.8)  +27.9 [-19.2,  +76.3]    +4.4   +51.9  +33.6   0.014  0.217/0.244   -1.1  -1361   0.77    a b e
+    D2 72h ded     57.0 (21.3)  +14.6 [-31.3,  +61.5]   -18.4   +48.3  +20.7   0.039  0.697/0.709  -18.3  -1723   0.83    a b c e
+    D3 72h shared  48.4 (14.9)   +3.4 [-38.6,  +46.5]    +4.4    +2.3   +8.1   0.247  0.982/0.972  -17.4  -1411   0.81    a b e
+    D3 72h ded     52.6 (16.9)  -16.7 [-58.5,  +25.4]   -26.6    -6.5  -12.5   0.535  1.000/1.000  -42.2  -1803   0.87    a b c e
+    D4 72h shared  51.6 (18.3)  +10.8 [-34.5,  +57.0]   -11.6   +33.6  +13.8   0.107  0.828/0.837  -14.2  -1472   0.82    a b c e
+    D4 72h ded     55.7 (19.9)   -2.9 [-46.2,  +41.4]   -32.4   +27.1   +2.7   0.228  0.998/0.999  -32.5  -1799   0.87    a b c d e
+
+How to read the table:
+- **Columns:**
+  - "bo24 A/V" is the best-of-24 discounted placebo p on engine A and on the verifier's independent 1,000-draw re-run. For kill (b) the larger of the two is used.
+  - "maxDD" is the pooled worst drawdown in $, almost always in Y1.
+  - "P(DD20)" is pooled, at $23.50.
+- **Engine B:** it agrees in pooled sign on 22 of 24 cells. The 2 disagreements are within $3 of zero. Year-sign disagreements occur in 3 cells, all D3 and all within $7 of zero.
+- **Shared > dedicated in 12 of 12 pairs, on both engines.**
+
+### KILL CRITERIA (PREREG (a)-(e); any failure = DO NOT SHIP)
+
+| kill | test | cells failing |
+|---|---|---|
+| (a) | pooled < +$10/mo or 95% CI includes 0 | **24 of 24** |
+| (b) | best-of-24 discounted placebo p > 0.10 | 18 (D1 24h shared: A 0.099 / V 0.112, Monte Carlo SE ~0.01, counted as fail) |
+| (c) | negative in either year | 12 |
+| (d) | independent engine disagrees in sign | 2 (D3 48h ded -1.2 vs +0.4; D4 72h ded -2.9 vs +2.7) |
+| (e) | stops AND trail exits filled 25% toward the bar extreme, fee 0.285%: < +$10/mo | 19 (14 if trail exits are left unslipped, as engine A first ran it) |
+
+**FAILS ONLY (a):**
+
+| cell | lower bound (1-day blocks) |
+|---|---|
+| D1 VOL 48h shared | -10.2 |
+| D2 MOM 48h shared | -9.7 |
+| **D4 RANK 48h shared** | **-0.2** |
+| D1 VOL 72h shared | -3.2 (-2.6 to -4.2 over seeds) |
+
+### THE BEST CELL IS A KNIFE EDGE, NOT A PASS
+
+**(a) CI lower bound by method:**
+
+| method | lower bound |
+|---|---|
+| Engine A, 1-day blocks, 10 seeds | -0.2 to -1.9 |
+| A-verify, 1-day blocks, entry day | -1.2 |
+| A-verify, 1-day blocks, exit day | -0.5 |
+| A-verify, 2 / 3 / 5 / 7 / 14-day blocks | +0.2 / -0.04 / +1.7 / +2.1 / +4.2 |
+| Engine B, 1-day blocks, exit day | +2.0 (on +52.65) |
+
+- PREREG says "day-block" and the UNI convention is 1-day blocks, so **(a) FAILS**. Choosing a block length after seeing the result is not allowed.
+- If (a) were read as 5+ day blocks, this cell would clear every pre-registered kill. **Record that the verdict rests on the block convention and on the discounts below.**
+- **Selection:** +$50.6 is the maximum of 24 cells and its CI is unadjusted. If the cells were independent, 45% of no-edge 24-cell searches would show a CI above 0 (engine B's estimate). The cells are correlated, so the true rate is lower, by an amount I don't know. **The luck-null (reality check) p was not computed. I don't know it.** (At UNI it was 0.59 while the placebo-max gave 0.011.)
+- **Y1 has no pick skill:**
+  - Per-cell Y1 placebo p is 0.11. The discounted Y1 p is 0.78 (A) / 0.80 (V).
+  - Y1's best-of-24 is D2 48h shared, p 0.40.
+  - Y1 H1 is negative or flat for 23 of 24 cells.
+  - Y1 gains in shared mode are partly displacement of a losing incumbent. Engine B splits Y1 +31.9 into +14.0 from the rotating coin and +17.9 from displaced U3/2 trades.
+  - Pooled (A): +43.6 from the rotating coin and +7.0 from ETH/XRP/ZEC changes (96 displaced incumbent fills lost -$105, worth +$4.4/mo).
+- **Half-years:**
+  - A: -3 / +74 / +61 / +70.
+  - B: -10 / +74 / +68 / +80.
+  - Y2 per-cell p 0.000, discounted p 0.007.
+- **Concentration:**
+  - The top 10 fills by contribution make 58%: 8 rotating fills (SIREN x4 2026-03-21..28, HBAR 2024-12-02, PIPPIN 2026-02-08/10, PNUT 2025-02-28) plus PIPPIN 2026-02-23 and PENGU 2025-07-13. Each is a ~$70 capped 3R TP.
+  - SIREN's four TPs make 23%; all SIREN trades make 18%.
+  - Re-simulated by removing whole symbols: no SIREN +41.5, no PIPPIN +37.1, no SIREN/PIPPIN/WLD **+20.7**.
+- **Costs:**
+  - (e) with stops only: +37.2 (Y1 +28.9, Y2 +45.7).
+  - Trail exits slipped as well: **+24.7** (Y1 +20.3, Y2 +29.1). Engine B: +27.15.
+  - U3/2 itself under (e): -$39.2/mo pooled.
+  - A 50% slip was not run.
+
+### COMPARISON WITH MONTHLY ROTATION (wc/UNI R3, same Y2 window)
+
+| | UNI R3 U5/2 (2 coins, monthly) | ROT D4 48h shared, Y2 only | ROT D4 48h shared, pooled |
+|---|---|---|---|
+| diff $/mo | +37.55 [-60.8, +141.0] | +65.7 [-10, +149] | +50.6 [-0.2, +102.7] |
+| fills/mo | 59.67 | 53.6 | 53.8 |
+| first half | -3.2 | +61 (Y2 H1) | -3 (Y1 H1) |
+| cost stress | +18.2 (stops 25%) | +45.7 stops / +29.1 incl. trail | +37.2 / +24.7 |
+| maxDD vs U3/2 | -$548 vs -$366 | -$526 vs -$366 | -$1,243 vs -$1,411 |
+| P(DD20 3mo) vs U3/2 | 0.78 vs 0.38 | 0.56 vs 0.40 | 0.79 vs 0.73 |
+| added-coin liquidity | $0.1-0.5M/day (today) | >= $2.3M/day at every fill (median $61M) | same |
+| search-discounted p | 0.011 placebo-max / 0.59 luck null | 0.007 placebo | 0.005-0.006 placebo / luck null unknown |
+
+- **Same idea, better version:**
+  - more $ in the same year;
+  - less drawdown uplift;
+  - liquid names;
+  - a second year that is positive (not from skill).
+- **Not independent confirmation:** the SIREN and PIPPIN pumps of Feb-Apr 2026 carry both studies.
+
+### RISK TRADE-OFF: NONE CLEAN
+
+- **Best cell vs U3/2:**
+
+  | | best cell | U3/2 |
+  |---|---|---|
+  | Y2 maxDD | -$526 (1.4x) | -$366 |
+  | Y1 maxDD | -$1,243 | -$1,411 |
+  | worst week | -$178 | -$166 |
+  | P(DD20 in 3mo) at $23.50 | 0.79-0.80 | 0.73 |
+  | P(DD20 in 3mo) at $15.49 | 0.43-0.45 | 0.38-0.39 |
+  | P(DD20 in 3mo), Y2 only | 0.56 | 0.40 |
+
+- **ZEC dependence halves:**
+  - ZEC share 1.87 -> 0.50.
+  - ex-ZEC -$8.3 -> +$30.1/mo.
+- **All 24 cells raise pooled P(DD20)** (0.75-0.90 vs 0.73).
+- **Shared cells cut Y1 maxDD** (to as low as -$815) only by crowding out a losing incumbent.
+
+### LIVE MECHANICS
+
+- **Liquidity:** every rotating fill of the best cell was on a name with a 7-day median turnover of at least $2.3M/day (median $61M). The largest order was <= 1.4 bps of daily turnover. The risk is pump-bar stop gaps, priced only at 25%.
+- **Order limits** (SYNTH check on today's `/contract/detail`, saved 2026-09-15 in `wc/UNI/P3/live_api_20260915/`; not independently verified):
+  - Rotating notional: median $410, p95 $906, max $1,380.
+  - 0 of 482 fills are over maxVol at the fill price.
+  - 10 are below minVol at full size (1000BONK 6, LAB 3, PEPE 1; net +$7).
+  - 34 are below minVol at the 0.25x regime floor (net -$46).
+  - Leverage is <= 10; the exchange minimum max-leverage is 20.
+  - SIREN's max order is $325 at today's price (UNI). Historical limits are unknown.
+- **WILDCARD overlap: NOT MEASURED. I don't know.**
+  - Proxy: of D4 48h picks, 49% rank 1-21 in the pool (inside the market top-24 turnover band, where WILDCARD is excluded), 44% rank 25-40 (WILDCARD zone) and 7% rank 22-24.
+  - Not modelled: same-day collisions, TREND skipping WILDCARD-held names, and WILDCARD margin locks.
+- **Margin:** SHARED keeps 2 TREND slots. DEDICATED adds a 3rd; UNI measured a 47-49% peak TREND margin share of equity at 3 slots, against 40.5% at 2.
+- **Build:** a daily point-in-time pool ranker over ~250 perps' hourly turnover, plus a universe swap that never closes open positions. Live `FUTURES_TREND_SYMBOLS` is static.
+- **DEDICATED under the live one-entry-per-scan rule** (the verifier's preferred reading): D4 48h ded +$35.5 (was +37.5), D1 72h ded +$24.6 (was +27.6). No verdict change.
+
+### CONTEXT FINDING (flag, not decided here)
+
+**U3/2 LOST ON Y1 BINANCE DATA.**
+
+- **By year:** -$85.90/mo on 39.53 fills/mo, R/fill -0.102 (engine B -$84.60 [-170, +3]). By coin: ZEC -$61.5, ETH -$36.2, XRP +$11.7.
+- **Pooled over both years:** +$9.53/mo on 35.74 fills/mo, or -$39.2 under (e).
+- **Binance vs MEXC tape:**
+  - Bar by bar, Binance is only -0.005R/fill more pessimistic (ZEC -0.017R), about $2-7/mo.
+  - Over the 6-week overlap, path divergence gave $333 vs $455 (59 vs 60 fills, 51 in common).
+  - **I don't know how much of the Y1 loss is the data source.**
+  - Engine B's overlap calibration: Binance cell diffs run +$9.8/mo above MEXC on average (22/24 signs agree). Y1 cell diffs may be flattered by a similar amount; not re-verified.
+
+### CORRECTIONS TO THE LANE REPORTS
+
+1. **(e):** trail exits are stop orders. Slipping them (A's e2) adds "e" to D4 24h shared (+9.7), D4 48h ded (+8.2), D2 48h ded, D1 72h ded and D2 72h shared. No verdict change.
+2. **D1 24h shared (b):** its 0.099 is Monte Carlo luck; the re-run gives 0.112. Its kills are "a b".
+3. **"Best-of-24 p in Y1 is 0.40"** belongs to D2 48h shared. For D4 48h shared it is 0.78-0.80.
+4. **Top-10 fills:** A ranked them by own $ and included two ZEC fills that U3/2 also took (~$0 contribution). Ranked by contribution, the list is the one above; the share is still 58%.
+5. **"Remove top 5/10 fills" (+35.9 / +21.2)** is arithmetic only. Re-simulated it gives +43.4 / +42.7, because neighbouring entries on the same pump replace the removed ones. Symbol removal is the valid test.
+6. **"Part of every gain is displacement"** is overstated: in D2 72h shared the ETH/XRP/ZEC change is -$1.6.
+7. **Engine A's Y2 end constant** is 2026-09-10 12:00, while its comment says 00:00. Immaterial: the last entry is 09-09 22:00 and the Y2 H2 month count is off by 0.3%.
+8. **Look-ahead checks:** pools and picks are rebuilt from bars closed at or before the refresh with 0 mismatches.
+   - Shifting the cutoff 1h earlier: best cell +52.2.
+   - Dropping entries on the refresh bar: +49.1.
+   - No Binance filter: +47.8.
+
+### POWER
+
+At the best cell's effect and noise (SE $26.25/mo over 23.75 months, ~$128/mo per-month SD):
+
+| assumed true effect | months for CI to exclude 0 | months for lower bound > +$10 |
+|---|---|---|
+| +$50.6 (as observed) | ~25 | ~38 |
+| +$25 (without top-3 symbols or with trail slippage) | ~100 | ~280 |
+
+No selection discount is applied. **No forward trial settles this on a useful horizon.**
+
+### DATA NOTES
+
+- **Pools:**
+  - Checked against all 632 listed MEXC perps. 41 hourly series were added that UNI h1.pkl lacked; BIGTIME, ALLO, BSB and AUCTION reached the top 40 on 26-62 days.
+  - Pool size is 37-40; the $2M floor cuts 1-3 names on 46 days.
+- **Rank <= 40 reading:** ranked WITHOUT ETH/XRP/ZEC. Ranking with them and then excluding changes 6-11% of picks. **Not scored; I don't know its effect.**
+- **Binance mapping:** 84/85 symbols, with median hourly-close deviation 1.87 bps.
+  - 1000x scaling for FLOKI/PEPE/SHIB.
+  - NEIROETH rejected; PI is not on Binance.
+  - PUMPUSDT bars before 2025-07-10 are a different token and were removed.
+  - ZEC Binance bar ranges are 6.4% wider than MEXC.
+- **Y2 start gap:** 18 m15 symbols begin 2025-09-17 20:15, which leaves 15 pick refreshes short of lookback.
+  - Engine B spliced Binance bars.
+  - Engine A: starting Y2 on 09-19 moves the best cell to +$66.0 in Y2 (not re-verified).
+- **Survivorship:** only symbols listed on 2026-09-13 can enter a pool. This flatters every cell and the placebo less. **Size unknown.**
+- **Search size:**
+  - 24 decision cells.
+  - Sensitivities:
+    - A: 12 DEDICATED one-entry, 24 Y2-from-09-19, 24 e2.
+    - B: 24 lowfirst, 24 Y2-no-splice, 12 d1, 24 overlap-calibration.
+    - Verifier: lag, tape and block-length checks.
+  - Placebo: 1,000 draws x 24 cells on A, plus 1,000 on the verifier.
+
+### DECISION
+
+1. **DO NOTHING (recommended).** Leave `FUTURES_TREND_SYMBOLS=ETH_USDT,XRP_USDT,ZEC_USDT` and `FUTURES_TREND_MAX_POSITIONS=2` untouched.
+2. **Rejected (add to the rejected-with-measurements list):**
+   - A daily/48h/72h rotating 4th symbol, all 4 rules, SHARED and DEDICATED.
+   - Best: D4 RANK 48h shared, +$50.6/mo [-0.2, +102.7] on 53.8 fills/mo; fails (a); (e) +$24.7; without SIREN/PIPPIN/WLD +$20.7; Y1 discounted p 0.78-0.80.
+3. **Banked:**
+   - A daily point-in-time ranking beats random pool picks after the 24-cell discount (p 0.005-0.006), all from Y2.
+   - SHARED beats DEDICATED 12/12.
+   - D3 ATTN adds nothing.
+   - A $2M/day turnover floor removes the monthly rule's thin-coin problem.
+4. **Re-open only** with >= 25 months of MEXC Min15 data this study has not seen, scored on the frozen D4 RANK 48h shared rule with no re-search.
+5. **Open flag:** U3/2 made -$85.90/mo in Y1 on Binance data. The cause (regime vs tape) is unknown.
+
+**Files**, all under `C:/Users/Rocot/AppData/Local/Temp/wc/ROT/`:
+- **Pre-registration:** `PREREG.md`
+- **DATA:**
+  - `data/scripts/r0..r6`
+  - Outputs: `pools_daily.json`, `picks.json`, `picks_y1_binance.json`, `h1_extra.pkl`, `m15_y2_extra.pkl`, `b15_y1.pkl` (+ `b15_y1_manifest.json`), `manifest.json`, `r2b_verify.json`, `binance_*`
+- **Engine A:**
+  - Scripts: `A/rotlib.py`, `a1_build_trades.py`, `a2_repro.py`, `a3_cells.py`, `a4_placebo.py`, `a5_diag.py`, `a6_table.py`, `a7_ci_robust.py`, `a8_md_tables.py`, `engine_copy/`
+  - Outputs: `cells.json`, `final.json`, `placebo.json/npz`, `diag.json`, `ci_robust.json`, `trades_rot.pkl`, `cells_taken.pkl`
+- **A-verify:** `A-verify/v1_replay.py` .. `v9_gaps.py`, with .txt/.json outputs and `v5_placebo_B.npy`
+- **Engine B:**
+  - Scripts: `B/engine_rot.py` (from an unedited copy `engine_b_orig.py`), `b0_test_engine.py`, `b1_trades.py`, `b2_score.py`, `b3_report.py`, `b4_checks.py`, `b5_brute.py`
+  - Outputs: `b2_score.json`, `b3_report.txt`, `b4_checks.txt`, `b5_brute.txt`
+- **Synthesis:**
+  - `SYNTH/synth.py` (kill matrix, pick frequencies, power, order-limit and WILDCARD-proxy checks) -> `synth.json`, `synth.txt`, `synth_tail.txt`
+  - `SYNTH/table.py` -> `table.md`
+  - `answer.md`, `record.md`
