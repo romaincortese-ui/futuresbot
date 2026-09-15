@@ -13829,3 +13829,10 @@ Files, all under `C:/Users/Rocot/AppData/Local/Temp/wc/UNI/`:
   `p3_concentration.py`, `p3_summary.py`
 - **P3-verify:** `P3-eras-risk-verify/v1_m15_indep.py`, `v2_h1_eras_indep.py`, `v3_checks.py`, `v4_corr_convention.py`, `v5_mech.py`
 - **Synthesis:** `SYNTH/synth.py` (-> `SYNTH/synth.txt`: cell table, kill matrix, power), `answer.md`
+
+**Addendum 2026-09-15 - flip WILDCARD only, TREND as live** (`wc/FLIP/R/wild_only.py`; TREND at booked live results, WILDCARD flipped
+under live rules, compounding kept): book **-$126.92** (75% wick -$128.24) vs live **-$168.53**; WILDCARD **-$47.36** (13/13) vs
+live -$97.20; final equity $977.99 vs $936.39; maxDD $215 vs $265. WILDCARD flipped minus live at live size **+$57.73, 95%
+[-$213, +$325], P(<=0) 0.33**. Replaying WILDCARD UNFLIPPED under today's rules gives -$72.60 (every wick) / -$101.54 (75% wick), so
+the part due to direction alone is +$25 to +$53 and the rest is rules the live trades did not run under (early stop pre-09-08, manual
+actions). Noise on 26 trades; no change.
