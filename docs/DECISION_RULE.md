@@ -13519,3 +13519,35 @@ Files, all under `C:/Users/Rocot/AppData/Local/Temp/wc/ZW/`:
 - **M3-zec:** `s00_fetch.py`, `s01_year_replay.py`, `s02_macro_calendar.py`, `s03_params.py`, `s04_live.py`, `s05_corpus_zec.py`, `s06_crosscheck.py`, `s07_summary.py`, `m3stats.py` (-> `live_zec_trades.csv`, `corpus_zec_fills_params.csv`)
 - **M3-zec-verify:** `v01_replay_year.py`, `v02_live.py`, `v03_corpus_zec.py`, `v04_ties.py`, `v05_regime.py`, `v06_small_checks.py`
 - **Owner answer and live table:** `answer.md`, `FINAL/live20_table.py` (-> `FINAL/live20_table.md`, `FINAL/live20_table.json`)
+
+---
+
+## 2026-09-15 - FLIP REPLAY of every trade since 18F (all sides reversed, live exit rules, compounding): BOTH DIRECTIONS LOSE. Do not flip.
+
+**Owner:** replay every trade since the 18F start with TREND longs as shorts and WILDCARD sides reversed, same entries, live
+exit rules, next trade sized off the new balance. 42 trades (exit >= 1788519433; #1 XRP entered 21h before the start).
+Two independent Min1 engines plus a reconciling third; exit reason and minute agree on all 42, within 0.1R per trade and
+$0.60 on the total. Read-only. Scripts and tables: `wc/FLIP/` (`table.md`, `answer.md`, `R/final.py`, `E-A/`, `E-B/`).
+
+| | live | flipped (every 1-min wick) | flipped (trail sees 75% of wick) |
+|---|---|---|---|
+| net $ | **-168.53** | **-58.47** | **-52.95** |
+| final equity | 936.39 | 1,046.45 | 1,051.96 |
+| R | -10.33 | +0.12 | +0.44 |
+| TREND 16 / WILDCARD 26 | -71.33 / -97.20 | -8.40 / -50.06 | -1.32 / -51.63 |
+| max DD $ | 264.60 | 109.93 | 112.02 |
+
+- **The gap is noise:** flipped minus live +$110, bootstrap 95% [-$321, +$517], P(flip no better) 0.29. Live directions sit at
+  the 41st percentile of random-direction draws under the same rules; the flip is equally ordinary.
+- **Flipping is not a sign change.** No flipped trade reached TP; flipped losers pay the full -1R plus fees (avg -$17.45), flipped
+  winners are banked by the trail at about half the peak (avg +$11.87). Same rules at live size, the live directions lose -$90 to
+  -$160 and the flipped directions -$39 to -$45: **both directions of the same entries lose**, ~$47 of it fees.
+- The owner's ZEC 2026-09-06 01:07 example flips to STOP -$27.00 (-1R + fees), not -$75.
+- TREND's fortnight was direction (ZEC and XRP fell); WILDCARD still loses flipped (-$50). That is hindsight, not a rule.
+- Calibration, unflipped at live size: exit reasons 34/42 (wick) and 36/42 (75%), net error +$78 / +$9; per-trade error $7-10.
+  Unresolved: flipped #12's stop touched by 0.004% (if not triggered, -$22 / -$17) and #26's one-minute early-stop wick (then
+  -$8 / -$2). Whether MEXC triggers stops on last or fair price is unknown; the order code sends no trigger type.
+- Flipped book needed positions live could not hold (5 open WILDCARDs at #22-23; opposite positions in BTR, MARSCOIN, REZ).
+- Consistent with the 2026-09-12 shorts records: no short edge after fees at 24-72h, fat short tail (-22.27R).
+
+**Decision: change nothing. TREND stays long-only; WILDCARD unchanged.**
