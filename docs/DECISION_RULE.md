@@ -14298,3 +14298,263 @@ Kill: (a) FAIL, (b) FAIL, (c) passes on the point estimate only, (d) FAIL, (e) F
 missing book), so this measured a diluted filter; the clean-book deciles do not support a stronger one. A "stretched-day" null gave
 best-of-40 p 0.03 but was rejected as miscalibrated (vetoes stickier than real). **Decision: no filter. The 1%/t45 cell may only be
 proposed as a new pre-registered test; nothing here recommends it.**
+
+---
+
+## 2026-09-15 - TREND FULLY ROTATING 3-SYMBOL UNIVERSE (24/48/72h, 5 rules, 2-3 slots): DO NOT SHIP. 0 of 30 cells pass; the best (S3 UPTREND 48h 2 slots, +$50.1/mo [-43.0, +142.1] vs B0) fails (a) and is -$0.5/mo vs B2, failing (f).
+
+**Owner:** *"ZEC losing a lot a month last [year] means that we definitely need to think about a rotation for the universe slots for TREND. We can keep 3 slots, but it has to rotate between the 3 'hottest' symbols, and should not be a static list. Can you do another study, this time updating the list of 3 symbols eligible to TREND every 24h or 48h or 72h based on the performance of the symbols and indication of potential up trend for them?"*
+
+**PRE-REGISTERED** in `wc/ROT3/PREREG.md`, written before any result.
+
+**Design:**
+- **Universe:** no static list. At 00:00 UTC every 24h, 48h or 72h (aligned to 2024-09-17), the universe is the top 3 of a point-in-time pool under the rule. Open positions on a coin that rotates out run to their normal exit and keep their slot.
+- **Pool:** MEXC crypto USDT perps ranked <= 40 by trailing-30d median daily turnover over ALL symbols (ETH/XRP/ZEC are ordinary candidates), >= 60d of history, 7d median turnover >= $2M. Same exclusions as wc/UNI.
+- **Rules:**
+  - S1 VOL: 7d realised volatility (hourly).
+  - S2 MOM: 7d return.
+  - S3 UPTREND: 7d return among coins with close > SMA20 and SMA20 rising vs 7d earlier; topped up from S2.
+  - S4 RANK: average rank of S1, S2 and the refresh-length return.
+  - S5 STRAT: trailing-30d net R of the live TREND gate on that coin, from fills closed before the refresh; >= 2 fills, else S4 order.
+- **Grid:** 5 rules x 3 periods x 2/3 position slots = 30 cells.
+- **Baselines:** B0 ETH/XRP/ZEC 2 slots (live), B1 the same at 3 slots, B2 ETH/XRP/ZEC + D4 RANK 48h shared (the ROT best).
+- **Years:** Y1 2024-09-17 -> 2025-09-16 on Binance USD-M 15m (members not on Binance skipped at selection); Y2 2025-09-17 -> 2026-09-09 on MEXC Min15. Live TREND gate and exits throughout, fee 0.19%, one entry per 900 s scan, available-balance sizing, 1R $23.50 (x0.659 for $15.49).
+
+**Lanes:**
+- **DATA:** pools3, picks3, S5 scores.
+- **Engine A:** ROT/A engine plus a new slot replay.
+- **A-verify:** adversarial rebuild of pools, picks, S5, replay, stress and placebo.
+- **Engine B:** independent, built from ROT/B.
+- **SYNTH:** kill (d) and the kill matrix.
+
+**Read-only.** No repo file, Railway or /data was touched.
+
+**Settled before this study (cited, not re-tested):**
+- 2026-09-15 ROT: ETH/XRP/ZEC + 1 rotating coin, best D4 RANK 48h shared +$50.6/mo [-0.2, +102.7] on 53.8 fills/mo; skill only in Y2; shared beats dedicated 12/12; D3 ATTN useless.
+- 2026-09-13 UNI: monthly rotation +$37.55/mo, second half only.
+
+### THE ANSWER IN ONE LINE
+
+> **NO CELL SHIPS.** All 30 fail (a) and all 30 fail (f), on both engines.
+> - **Best cell:** S3 UPTREND 48h 2 slots, **+$50.1/mo [-43.0, +142.1] vs B0 on 49.9 fills/mo** (B0 35.74). That is +$33.0 at $15.49.
+> - **Against B2** it is **-$0.5/mo [-90, +89]**. Full rotation adds nothing over ETH/XRP/ZEC + 1 rotating coin.
+> - **Owner's premise:** the Y1 loss of the static list is real on Binance data, but random pool picks also beat it in Y1, and ZEC was not in the Y1 pool at all (hindsight list). No rotating universe replaces its dollars with a CI clear of 0.
+
+### PICKS (point-in-time; 723 pools, 5,304 S1-S4 lists and 1,326 S5 lists rebuilt independently, 0 mismatches)
+
+| rule | distinct/mo Y1 (24h..72h) | distinct/mo Y2 | total distinct | kept | ETH/XRP/ZEC/any % of refreshes | rank 25-40 | most picked (% of refreshes) |
+|---|---|---|---|---|---|---|---|
+| S1 VOL | 11.2..8.9 | 8.9..7.2 | 89..80 | 0.85..0.71 | 0/0.8/10/10.8 | 39-40% | FARTCOIN 38-39, POPCAT 22-24, PIPPIN 18 |
+| S2 MOM | 18.5..14.4 | 18.0..12.9 | 94..84 | 0.66..0.44 | 2.2-2.9/5.4-6.4/12.2-13.3/20.1-21.2 | 36-38% | FARTCOIN 14-15, ZEC 12-13, ENA 11-13 |
+| S3 UPTREND | 18.2..13.6 | 16.5..12.4 | 89..82 | 0.68..0.48 | 3.7-3.9/6.4-7.1/13.3-13.4/23.4-24.1 | 34-36% | FARTCOIN 13-14, ZEC 13, ENA 12-14 |
+| S4 RANK | 23.2..14.9 | 22.6..14.6 | 104..88 | 0.33..0.32 | 0-0.3/2.9-3.6/12.2-12.7/15.4-16.5 | 40-41% | FARTCOIN 18-19, ENA 16, ZEC 12-13 |
+| S5 STRAT | 11.3..9.9 | 9.3..8.5 | 92..89 | 0.84..0.68 | 0.8-1.1/4.2-4.4/10.0-11.1/14.5-16.0 | 38-39% | PIPPIN 12, WLD 12, ZEC 10-11 |
+
+- **ZEC:** in the pool on 0 Y1 days and 329 Y2 days (first 2025-10-16), so it is picked only in Y2, on 20-27% of Y2 refreshes.
+- **Today's coins mostly drop out:** none of ETH/XRP/ZEC is in the universe on 76-89% of refreshes.
+- **S1 is nearly a fixed list:** Y1 FARTCOIN 57% / POPCAT 46%; Y2 PIPPIN 36% / RIVER 27%.
+- **S5 by year:** Y1 LINK/HBAR/WIF/AAVE; Y2 PIPPIN 24%, ZEC 22%, BEAT 17%.
+- **S3 top-up from S2:** 105 Y1 days and 77 Y2 days.
+- **Y1 Binance skip:** mean 1.22% of members per refresh (PI; HYPE before its listing). It changed 21-33 of 365 top-3 lists at 24h.
+
+### CELLS (engine A, verified; diff vs B0 $/mo at $23.50, 1-day-block 95% CI; engB = engine B pooled on its primary oc path)
+
+    B0 ETH/XRP/ZEC 2 slots: +$9.53/mo on 35.74 fills/mo (Y1 -85.90 on 39.53, Y2 +106.83 on 31.88); engB +8.20 [-60, +76]
+                            maxDD -$1,411; P(DD20 3mo) 0.73 / 0.38 @15.49; worst week -$166; stress -$57.5/mo absolute
+    B1 3 slots:             +$4.48 on 38.39; vs B0 -5.1 [-21.9, +12.6] (Y1 +10.1, Y2 -20.5); vs B2 -55.7; stress -7.8; maxDD -1,314; P(DD20) 0.77/0.43
+    B2 +D4 RANK 48h shared: +$60.15 on 53.80; vs B0 +50.62 [-0.21, +102.67] (Y1 +35.9, Y2 +65.7); stress +24.7; maxDD -1,243; P(DD20) 0.79/0.43
+
+    cell         f/mo  vs B0 [95% CI]           Y1     Y2     vsB2   plac p  bo30   stress  maxDD  P(DD20) 23/15  engB   fails
+    S1 24h 2     56.9  +22.2 [ -81.8, +126.1]  +48.5   -4.6  -28.4  .003   .064    +0.5   -957   .82/.48       +29.6  acef
+    S1 24h 3     60.2  +25.2 [ -80.8, +131.6]  +54.5   -4.7  -25.4  .002   .046    +0.0   -872   .85/.51       +33.1  acef
+    S2 24h 2     56.9  +10.3 [ -90.0, +107.4]  +73.8  -54.5  -40.4  .012   .186   -13.0  -1519   .88/.58       +13.2  abcef
+    S2 24h 3     60.6   -6.6 [-107.3,  +89.3]  +45.5  -59.7  -57.2  .026   .544   -33.8  -1739   .91/.66        -2.8  abcef
+    S3 24h 2     54.9  +22.5 [ -76.9, +119.0]  +68.3  -24.1  -28.1  .002   .062    +3.2  -1272   .83/.50       +25.5  acef
+    S3 24h 3     58.3   +7.2 [ -91.8, +103.4]  +33.4  -19.5  -43.4  .007   .228   -15.6  -1477   .87/.56       +11.1  abcef
+    S4 24h 2     66.5   -5.2 [-109.3,  +98.3]  +38.5  -49.8  -55.8  .033   .514   -40.4  -1512   .94/.68        -1.2  abcef
+    S4 24h 3     72.3   +2.1 [-103.5, +111.2]  +31.1  -27.4  -48.5  .009   .329   -40.7  -1534   .93/.68        +5.2  abc(d)ef
+    S5 24h 2     49.5   +9.1 [ -84.3, +100.1]  +56.9  -39.6  -41.5  .015   .200    -7.6   -949   .78/.41       +21.8  abcef
+    S5 24h 3     52.7   +5.9 [ -87.4,  +95.4]  +48.9  -37.9  -44.7  .013   .254   -15.9  -1066   .81/.46       +20.8  abcef
+    S1 48h 2     56.1  +18.7 [ -80.7, +118.3]  +56.3  -19.6  -31.9  .006   .089    -3.1   -961   .82/.47       +31.9  acef
+    S1 48h 3     59.7  +13.4 [ -87.6, +116.9]  +46.1  -20.1  -37.3  .010   .150   -12.3  -1031   .84/.51       +27.9  abcef
+    S2 48h 2     52.0  -11.8 [-103.9,  +78.6]  +21.4  -45.7  -62.4  .076   .681   -28.1  -1839   .87/.56        -7.6  abcef
+    S2 48h 3     55.5  -20.7 [-112.8,  +69.0]   +0.2  -42.1  -71.3  .095   .865   -40.6  -1981   .89/.61       -16.4  abcef
+    S3 48h 2     49.9  +50.1 [ -43.0, +142.1]  +85.8  +13.7   -0.5  .000   .004   +39.1   -995   .72/.35       +52.3  af
+    S3 48h 3     53.3  +35.5 [ -58.1, +125.5]  +55.6  +15.0  -15.1  .001   .015   +21.0  -1220   .78/.43       +37.7  acf
+    S4 48h 2     57.1  +39.8 [ -58.1, +136.9]  +24.7  +55.2  -10.8  .000   .010   +17.5  -1622   .83/.48       +48.7  acf
+    S4 48h 3     60.7  +37.1 [ -61.0, +135.0]  +10.2  +64.5  -13.5  .000   .011   +10.7  -1750   .85/.51       +48.3  acf
+    S5 48h 2     49.5  -13.0 [-107.5,  +79.3]  +28.0  -54.8  -63.6  .087   .711   -29.6  -1297   .82/.49        -2.6  abcef
+    S5 48h 3     52.4  -16.6 [-110.4,  +74.1]  +15.8  -49.6  -67.2  .082   .794   -38.4  -1437   .85/.53        -3.0  abcef
+    S1 72h 2     56.0  +28.3 [ -74.1, +129.3]  +73.4  -17.8  -22.3  .002   .034    +6.9   -823   .80/.43       +41.1  acef
+    S1 72h 3     59.1  +16.9 [ -87.8, +118.6]  +66.0  -33.1  -33.7  .005   .113    -7.6   -842   .83/.49       +31.1  abcef
+    S2 72h 2     51.6  -13.8 [-106.1,  +73.5]  +23.2  -51.5  -64.4  .081   .727   -29.6  -1756   .88/.57        -9.2  abcef
+    S2 72h 3     54.7  -31.8 [-124.2,  +55.7]   +0.1  -64.3  -82.4  .170   .977   -51.1  -2034   .91/.62       -28.4  abcef
+    S3 72h 2     49.6  +28.1 [ -63.4, +115.7]  +69.0  -13.6  -22.5  .002   .035   +16.6  -1125   .77/.40       +27.0  acf
+    S3 72h 3     52.5  +17.1 [ -72.9, +102.3]  +39.9   -6.0  -33.5  .004   .109    +2.8  -1413   .81/.45       +14.9  abcef
+    S4 72h 2     54.9  -27.0 [-120.1,  +64.2]  -41.5  -12.3  -77.7  .164   .952   -47.2  -2463   .92/.65       -15.3  abcef
+    S4 72h 3     59.0  -41.2 [-135.9,  +52.6]  -67.1  -14.8  -91.8  .236   .997   -65.5  -2771   .94/.72       -25.8  abcef
+    S5 72h 2     49.3  -14.0 [-109.8,  +76.6]  +22.7  -51.3  -64.6  .082   .728   -29.9  -1427   .85/.51        -1.5  abcef
+    S5 72h 3     52.5  -22.6 [-119.4,  +68.3]  +20.5  -66.5  -73.2  .096   .895   -43.0  -1515   .87/.56        -9.4  abcef
+
+How to read the table:
+- **Columns:**
+  - "plac p" is the per-cell pooled placebo p.
+  - "bo30" is the best-of-30 discounted pooled p (2,000 draws). The verifier's independent 2,000-draw rerun gives 0.001 for the best cell.
+  - "stress" means stops and trail exits filled 25% toward the bar extreme, with fee 0.285%.
+- **(d):** "(d)" on S4 24h 3 means engine B's lowfirst path, which matches engine A's B0 to the cent, gives -0.4 against A's +2.1. Engine B's oc path agrees (+5.2).
+- **Placebo null** (3 random pool members) vs B0, median [p10, p90]:
+  - pooled -53..-66 [~-104, ~-17];
+  - Y1 +15..+32;
+  - Y2 -138..-149.
+  - Best-of-30: pooled S3 48h 2 p 0.0035 (null max median -4.6, p95 +24.4); Y1 p 0.79; Y2 p 0.000.
+- **Engine B** (independent, oc primary): best cell +52.3 [-35.9, +139.4] on 50.1 fills/mo, vs B2 -0.4, stress +41.0. 0/30 pass (a), 0/30 pass (f).
+  - Engine B's B0 on lowfirst reproduces A exactly: Y1 -85.90, Y2 +106.83. Its B2 reproduces ROT engine B's +52.65.
+
+### KILL CRITERIA (PREREG (a)-(f); any failure = DO NOT SHIP)
+
+| kill | test | cells failing |
+|---|---|---|
+| (a) | pooled < +$10/mo or 95% CI includes 0 | **30 of 30** |
+| (b) | best-of-30 discounted placebo p > 0.10 | 20 |
+| (c) | negative vs B0 in either year, or per-year placebo p > 0.10 in either year | 29 (Y1 negative 2, Y2 negative 26, no Y1 skill 29, no Y2 skill 0) |
+| (d) | independent engine disagrees in pooled sign | 0 on engine B oc; 1 on lowfirst (S4 24h 3, +2.1 vs -0.4) |
+| (e) | stress improvement vs B0 < +$10/mo | 25 |
+| (f) | not better than B2 by >= +$10/mo pooled | **30 of 30** (best -0.5) |
+
+- **Fails only (a) and (f):** S3 48h 2.
+- **Direction counts:** 18/30 positive vs B0 pooled; 4 positive in both years (S3 48h 2/3, S4 48h 2/3); 0 positive vs B2.
+- **Year-sign agreement A vs B:**
+  - On lowfirst, 2 disagreements, both within $2 of zero: S2 48h 3 and S2 72h 3 in Y1.
+  - On oc, 9. The Y2 sign of all S1 cells except 72h 3, and of S4 72h 2/3, depends on the intrabar path (e.g. S1 24h 2 Y2 +19.2 oc vs -8.4 lowfirst).
+- **(c) is a marginal pass on the best cell:** Y1 placebo p 0.084-0.089, or 0.78-0.79 with the best-of-30 discount (PREREG discounts only in (b)).
+- **7-day-block CIs** are close to the 1-day ones and change no verdict (best cell [-47, +136]).
+
+### THE BEST CELL (S3 UPTREND 48h 2 slots)
+
+- **vs B0:** +$50.1/mo [-43.0, +142.1] (verifier [-42.4, +142.3]; lower bound -39 to -43 across 10 seeds) on 49.9 fills/mo; +$33.0 at $15.49.
+- **vs B2 by year:** Y1 +50.0, Y2 -52.0 (pooled -0.5). Y2 from 09-19: vs B0 +11.4, vs B2 -54.7.
+- **Half-years:**
+  - A vs B0: +4 / +166 / -129 / +159.
+  - A vs B2: +7 / +92 / -190 / +89.
+  - Engine B vs B0: 0 / +157 / -80 / +131.
+- **Concentration:**
+  - Own P&L: top-10 fills 49%, top-3 coins 75%.
+  - Gain vs B0: top-10 fills 0.59; top-3 coins 1.13 (ETH +577 is avoided B0 losses, then PIPPIN +504 and WLD +268, $ totals).
+  - Removing PIPPIN/WLD/TAO and re-simulating gives +$3.8/mo on 46.0 fills/mo.
+  - S4 48h 2 without BEAT/HYPE/SIREN: +$5.0 on 53.2.
+- **ZEC:**
+  - Y1: 0 fills, avoiding B0's ZEC -$61.5/mo on 201 fills.
+  - Y2: +$25.1/mo on 70 fills against B0's +$98.7 on 230, i.e. -$73.7/mo vs B0.
+- **Cost:** stress +$39.1 vs B0 (Y1 +99.6, Y2 -22.6); stops only +$51.7. In absolute terms under stress: B0 -57.5, B2 ~ -32.8, best cell ~ -18.4 (arithmetic).
+
+### OWNER PREMISE ("ZEC lost a lot last year, so the list must rotate")
+
+- **B0 Y1 (Binance):** -$85.90/mo on 39.53 fills/mo, R/fill -0.102 (engB oc -84.60 [-170, +3]).
+  - By coin: ZEC -$61.5 (201 fills), ETH -$36.2, XRP +$11.7.
+  - At $15.49: -$56.6 total, ZEC -$40.5.
+- **B0 Y2 (MEXC):** +$106.83 on 31.88 fills/mo, ZEC +$98.7 on 230 fills. Pooled +$9.53. The ROT ZEC share of pooled profit is 1.87; ex-ZEC -$8.3/mo.
+- **Data-source share of the Y1 loss: I DON'T KNOW.**
+  - Bar-level Binance bias is -0.005R/fill (ZEC -0.017R). That is ~$4.6/mo on B0 Y1's 474 fills, or ~$6.7/mo on ZEC's 201 fills (SYNTH arithmetic on ROT's measured gaps), under a tenth of the loss.
+  - The intrabar-order assumption moves B0 Y1 by $1.30 (oc -84.60 vs lowfirst -85.90).
+  - Unscaled: path divergence on the 6-week overlap ($333 vs $455, 51 fills in common) and ZEC Binance bars 6.4% wider.
+- **Hindsight:** ZEC was in the top-40 pool on 0 Y1 days; it first qualified 2025-10-16 (117th by turnover in 2025-09, per UNI). The static list could not have been built in real time in Y1.
+- **Rotation does not answer it:**
+  - Y1: 28/30 cells beat B0, but random pool members beat B0 by a median +$15..+$32/mo, and 29/30 rules have no Y1 skill.
+  - Y2: 26/30 cells lose to B0 by missing ZEC's run, even though all 30 beat random picks.
+  - The concern (single-coin concentration) stands. The remedy (full rotation) is not supported in $.
+
+### RISK TRADE-OFF
+
+| | B0 | B2 | S3 48h 2 |
+|---|---|---|---|
+| fills/mo | 35.74 | 53.80 | 49.9 |
+| $/mo pooled, $23.50 / $15.49 | +9.53 / +6.3 | +60.15 / +39.6 | +59.6 / +39.3 |
+| maxDD pooled | -1,411 | -1,243 | -995 |
+| maxDD Y2 | -366 | -526 | -328 |
+| worst week | -166 | -178 | -260 |
+| P(DD20 3mo) pooled, 23.50 / 15.49 | 0.73 / 0.38 | 0.79 / 0.43 | 0.72 / 0.35 |
+| P(DD20 3mo) Y2 only | 0.38-0.40 | 0.56 | 0.62-0.66 |
+
+- **Pooled DD improves** only by avoiding Y1 incumbents. On MEXC Y2, DD odds rise by more than half and the worst week is 1.6x B0.
+- **P(DD20)** is engine A's definition. Engine B uses 7-day blocks on $975 (B0 0.66); do not mix the two.
+
+### LIVE MECHANICS
+
+- **Build:**
+  - Live `FUTURES_TREND_SYMBOLS` is static.
+  - Rotation needs a daily point-in-time ranker over ~250 MEXC perps' hourly bars (turnover rank <= 40, $2M floor, 60d history, SMA20 uptrend test, 7d return).
+  - It also needs a 48h swap at 00:00 UTC that never closes positions. ~4.3% of fills were still open after their coin rotated out (engine B audit of 39,883 fills: 0 over-slotting, 0 double holdings).
+- **Order limits for the ROT3 picks: NOT CHECKED. I don't know.** ROT found SIREN's max order was $325 at today's price.
+- **WILDCARD overlap: NOT MEASURED. I don't know.** Proxy: 34-41% of picks rank 25-40 (best cell 34%).
+- **Margin:** 2 slots is the live setting. 3 slots is worse than 2 in 13/15 pairs on both engines, and B1 is -$5.1 vs B0.
+- **Intrabar fragility:** hot-coin cells are path-sensitive (S1 Y2 swings of $28-37 between oc and lowfirst). The best cell moves $5 pooled, $16 in Y2.
+
+### POWER
+
+At the best cell's effect and noise (SE $47.2/mo over 23.75 months, ~$230/mo per-month SD):
+- +$50.1 as observed: ~81 months for the CI to exclude 0, ~127 months for a lower bound above +$10.
+- vs B2 (-$0.5): never.
+- No selection discount is applied. **No forward trial settles this.**
+
+### CORRECTIONS
+
+1. **Engine A table:** the top-10 fill share of gain is 4.09 for S3 24h 3 and 4.99 for S5 24h 3 (the summary showed n/m). Cosmetic.
+2. **ROT record (2026-09-15, B2 = D4 RANK 48h shared):**
+   - The CI lower bound across seeds 1-10 is **-1.71 to +0.61**, and 2 of 10 seeds exclude 0.
+   - The ROT record's "-0.2 to -1.9 across 10 seeds" understates that.
+   - B2's (a) failure is a seed coin flip under 1-day blocks. It does not change ROT3 ((f) compares point estimates) or ROT's verdict (it was the max of 24 with no Y1 skill).
+   - Carry this into `docs/DECISION_RULE.md` at the next edit.
+3. **Engine A Y1/Y2 are replayed separately:** 2 S3 48h 2 positions open at 2025-09-17 00:00 do not occupy Y2 slots. B0 has none. Negligible.
+4. **Year-boundary refreshes** (48h 2025-09-16, 72h 2025-09-15) use Binance-filtered picks on both tapes (ROT used unrestricted picks on the Y2 side). ~2 days.
+
+### DATA NOTES
+
+- **Pools:** 120 distinct symbols (Y1 80, Y2 92), 38-40 members per day. ETH and XRP are in the pool every day (median rank 2 and 5).
+  - Ranking ETH/XRP/ZEC alongside everything else removed 1,750 member-days vs the ROT pool.
+  - The new non-incumbent members are a strict subset of ROT's, so ROT's completeness screen still covers them.
+- **S5 lookback before Y2:**
+  - MEXC 15m bars begin 2025-09-13 20:15, so Y2 refreshes 09-17..10-17 use Binance fills before 09-17. MYX was fetched from Binance (median hourly gap 7.3 bps).
+  - A MEXC-only lookback would change 25/34 (24h), 12/17 (48h) and 8/11 (72h) top-3 lists in 09-17..10-20.
+  - Engine B: a MEXC-only tape moves Y2 diffs by at most $5.40/mo.
+- **Y2 start gap:** 54 pick slots on the 2025-09-17/18 refreshes have no or partial bars (1000BONK, ETHFI, FARTCOIN, MOODENG, PUMPFUN, WLD; the MEXC API now starts 09-20). Y2-from-09-19 runs are reported above.
+- **Look-ahead checks:**
+  - Hourly timestamps are bar opens (428/428 checks).
+  - The Y1 Binance filter reads bars up to P+24h ahead, but 0 of 324 exclusions depend only on future bars.
+  - S5: 61,024 (day, symbol) scores recomputed, 0 mismatches; 0 counted fills entered at or after the refresh.
+- **Carried over from ROT:** BTC is an ordinary candidate; the turnover floor is applied after ranking with no back-fill.
+- **Survivorship:** only coins listed today can enter a pool. This flatters rotation vs B0. **Size unknown.**
+- **Search size:** 30 decision cells.
+  - A: B1 and Y2-from-09-19 runs.
+  - B: 30 lowfirst, 30 Y2-no-splice, 30 Y2-from-09-19.
+  - Placebo: 2,000 draws x 30 null cells on A, plus 2,000 on the verifier.
+
+### DECISION
+
+1. **DO NOTHING (recommended).** Leave `FUTURES_TREND_SYMBOLS=ETH_USDT,XRP_USDT,ZEC_USDT` and `FUTURES_TREND_MAX_POSITIONS=2` untouched.
+2. **Rejected (add to the rejected-with-measurements list):**
+   - A fully rotating 3-symbol TREND universe, all 5 rules x 24/48/72h x 2/3 slots.
+   - Best: S3 UPTREND 48h 2 slots, +$50.1/mo [-43.0, +142.1] on 49.9 fills/mo; vs B2 -$0.5; without PIPPIN/WLD/TAO +$3.8; Y1 discounted p 0.78-0.79; Y2 P(DD20) 0.62-0.66 vs 0.38-0.40.
+3. **Banked:**
+   - 48h is the only refresh with cells positive in both years (S3, S4).
+   - 2 slots beat 3 in 13/15 pairs on both engines.
+   - S5 STRAT (recent TREND P&L per coin) is negative in Y2 in 6/6 cells: it does not persist.
+   - S2 MOM is negative pooled in 4/4 cells at 48h and 72h.
+   - Rules beat random pool picks strongly in Y2 (30/30) and not in Y1 (29/30 no skill).
+   - Random pool coins lose $53-66/mo vs B0 pooled.
+4. **Re-open only** with >= 81 months of unseen MEXC data on a frozen rule. That is not a practical horizon, so do not shadow.
+5. **Open flag (unchanged):** the B0 Y1 loss (-$85.90/mo) has an unknown data-source share. The measured bar bias covers ~$5-7 of it. ZEC's place in the list is hindsight (0 Y1 pool days).
+6. **I don't know:** the data-source share of the Y1 loss, the survivorship size, WILDCARD collision cost, and order-limit fit for rotating coins.
+
+**Files**, all under `C:/Users/Rocot/AppData/Local/Temp/wc/ROT3/`:
+- **Pre-registration:** `PREREG.md`
+- **DATA:**
+  - Scripts: `data/scripts/d1_pools.py`, `d2_binance_lookback.py`, `d3_s5_picks.py`, `d4_checks_stats.py` (+ `*_run.txt`)
+  - Outputs: `picks3.json`, `pools3_daily.json`, `picks3_S1S4_mexc_unrestricted.json`, `s5_scores.json`, `s5_flat_fills.pkl`, `manifest.json`, `b15_extra.pkl`
+- **Engine A:**
+  - Scripts: `A/rot3lib.py`, `a3r_0_repro.py`, `a3r_1_cells.py`, `a3r_2_placebo.py`, `a3r_3_final.py`
+  - Outputs: `cells3.json/txt`, `placebo3.json/txt/npz`, `final3.json/txt`, `a3r_0_repro.txt/json`
+- **A-verify:** `A-verify/vlib.py`, `v1_picks.py` .. `v5_misc.py`, with `.json`/`.txt` outputs, `v4_null.npy` and `*_run.log`
+- **Engine B:**
+  - Scripts: `B/engine_rot3.py`, `b00_coverage.py`, `b0_tests.py`, `b1_trades.py`, `b2_score.py`, `b3_report.py`, `b4_audit.py`
+  - Outputs: `b2_score.json`, `b3_report.txt`, `b4_audit.txt`, `trades3_*.pkl`
+- **Synthesis:** `SYNTH/s1_synth.py` -> `s1_synth.json`, `s1_synth.txt`, `s1_run.log`; `answer.md`, `record.md`
