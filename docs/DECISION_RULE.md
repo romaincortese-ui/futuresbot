@@ -13843,3 +13843,137 @@ minus live at live size **+$65.35, 95% [-$268, +$354], P(<=0) 0.33**. TREND repl
 wick) / -$59.01 (75% wick), so direction alone is +$13 to +$58 (bootstrap vs same-rules replay +$13.23, 95% [-$333, +$318], P(<=0)
 0.46); the rest is exit mechanics and manual actions (#12 stop pierce, #38 manual /arm). One two-week window in which ZEC and XRP
 fell; the 5-year record keeps TREND long-only (no short edge after fees, -22.27R short tail). No change.
+
+---
+
+## 2026-09-15 - ORDER-BOOK IMBALANCE AS A DIRECTION SELECTOR: REFUTED. The owner's rule costs -$214.60/mo on a year of TREND fills. The book shows no ability to tell which side wins.
+
+**Owner: *"can it check the Spot Order Book as described in the screenshot [B 48.4% / S 51.6%] and use the information to either
+decide if it should be a Short or a Long?"***
+
+**PRE-REGISTERED** in `wc/OB/PREREG.md`, written before any result.
+- **Feature:** BUY% within ±b% = bid notional / (bid + ask notional), from the last snapshot at or before entry and no older than 120 s. PRIMARY b = 1%.
+- **Rule:** BUY% ≥ 50 goes LONG, below 50 goes SHORT, after all gates, using that side's live exit rules.
+- **Data:** Binance USD-M futures `bookDepth` from data.binance.vision, snapshots about every 30 s.
+  - This is **not the MEXC spot book** in the screenshot. No history exists for either MEXC book, and none exists for spot anywhere for free.
+
+**Lanes:**
+- **T1** scored the live trades since 18F.
+- **T2** scored one year of TREND fills.
+- **T2-verify** was an adversarial rebuild of T2: its own gate, three walkers, BUY% read from the raw zips, and a different null.
+
+Read-only. No repo file, Railway or /data was touched. Scripts are in `wc/OB/` (`T1/`, `T2/`, `T2-verify/`, `answer.md`).
+
+**Settled before, cited and not re-tested:**
+- 09-12 shorts: no short edge after fees at 24-72 h.
+- 09-13 entry parameters: taker-buy share is null (AUC 0.53).
+- 09-15 flip replay: both directions of the same entries lose.
+
+### THE ANSWER IN ONE LINE
+
+> **DO NOT SHIP. Kill criteria (a) and (b) fail.** Over one year of TREND gate fills the owner's rule is **-$214.60/mo** against long-only
+> at $23.50 1R (**-$141.45 at $15.49**), with a day-block 95% CI of [-353.5, -71.7] and null p 0.767. It shorts 56% of fills, and those fills were
+> winners as longs (long +0.148R vs short -0.271R).
+
+### DATA CHECKS
+- **Timestamps** are UTC snapshot times. Each label matches its book within about 5 s, and the snapshot used is 25-29 s before entry, never after. There is no look-ahead.
+  - A ±1 h shift gives 40-270 bp error.
+  - Negative percentages are bids.
+  - MEXC Min15 `t` is the bar open, so entry is t + 900 s. This was checked over the full year on all 3 symbols.
+- **Files:** 1,091 of 1,092 exist. XRPUSDT 2026-01-14 is a 404, and ZECUSDT 2026-01-14 holds a single snapshot. The ±0.2% band only starts 2026-01-15.
+  - At 1%, 98.1% of the 375 fills are covered.
+- **The archive book is often corrupt.** Stale orders on the wrong side of mid pin BUY% near 0 or 100.
+  - Over the year, 180 of 1,941 gate-bar snapshots sit more than 100 bp from entry, and 215 more sit 25-100 bp away.
+  - In the live fortnight, 18 of 40 entry snapshots are corrupt. That includes every ZEC entry before 09-14, among them the owner's #3.
+  - Unfiltered, the live-sample answer reverses (AUC 0.406).
+
+### TEST 1 - LIVE TRADES SINCE 18F (reported, never a ship criterion)
+
+**Sample: 20 of 42 trades are usable.**
+- NIULAI (2 trades) is not on Binance.
+- STORJ was delisted and POWER's 09-15 file is not yet published.
+- 18 trades have a corrupt book. The quality cut was set from book data only, not from trade results; the same 20 pass at 0/10, 10/25 and 25/50 bp.
+
+**Legs:** the live side is the booked result. The other side is the reconciled `wc/FLIP` replay.
+
+| n=20 (b=1%, snapshot) | $ |
+|---|---|
+| rule / live / all flipped | -51.97 / -78.38 / -36.00 |
+| rule - live | +26.41, 95% [-191, +249] |
+| random-direction null (100k) | mean -57.63, 95% [-195, +80], **p 0.47** |
+| AUC (low BUY% -> short better) | 0.616, p 0.21 one-sided / 0.41 two-sided; right side 11 of 20 |
+| TREND n=6: rule / live / flipped | +17.23 / -51.13 / +45.47 (null p 0.36) |
+| WILDCARD n=14: rule / live / flipped | -69.20 / -27.25 / -81.48 (null p 0.60) |
+
+- **5-min mean BUY%, same 20:** rule -$89.76, $11 worse than live, AUC 0.525.
+  - 4 of 20 trades change side between the snapshot and the mean, which flips rule minus live from positive to negative.
+- **TREND:** BUY% was between 45.6 and 50.8 on all six trades. The rule's +$17 is the falling week, not the book: flipping every trade beat it by $28.
+- **Other bands** (0.2 / 2 / 5%) show no signal. The single p < 0.05 cell (TREND 2%, n=6) is 1 of about 24 cells tried.
+- **Robustness:** conservative leg, live size, same-engine legs and R labels all give null p between 0.34 and 0.47.
+- T1 was not independently rebuilt. The table totals re-add exactly.
+
+### TEST 2 - ONE YEAR OF TREND FILLS (ship test)
+
+**Setup:** verified BAND/L3 engine on LIVE3 (ETH/XRP/ZEC), Min15 bars 2025-09-13 to 2026-09-09 (11.81 months).
+- **Incumbent reproduced exactly:** 375 fills, +0.146R, +$109.05/mo at $23.50.
+- **Short leg:** live rules (TP 3R, stop 3xATR, trail, 24 h clock). Three independent walkers agree to 1e-12 R.
+- **T2-verify reproduced every headline number.**
+
+| owner's rule, b=1% | fills | short share | diff $/mo @23.50 | 95% CI (day block) | @15.49 |
+|---|---|---|---|---|---|
+| **2-slot portfolio (primary)** | 452 | 56% | **-214.60** | [-353.5, -71.7] | **-141.45** |
+| 5-min mean BUY% | 456 | 59% | -202.61 | [-349.7, -54.4] | -133.55 |
+| high costs | | | -225.01 | | |
+| corrupt snapshots forced LONG | 445 | 51% | -200.01 | [-335.6, -64.8] | |
+| corrupt snapshots blanked, 25 bp / 15 bp cut | | | -181.72 / -136.88 | [-309, -63] / [-240, -34] | |
+| per fill, the 375 incumbent fills | 375 | 214 | -178.51 | [-302.0, -51.6] | |
+| always SHORT (reference) | 512 | 100% | -374.23 | [-591.3, -157.8] | |
+
+- **By symbol:** ETH +12.47, XRP -43.14, ZEC -183.92.
+- **By fold:** negative in all 5 (-289, -271, -211, -257, -44).
+
+| Kill criterion | Result |
+|---|---|
+| (a) ≥ +$10/mo and CI excludes 0 | **FAIL** (-$214.60, CI entirely below 0) |
+| (b) null p ≤ 0.10 | **FAIL** (0.767 over 2,000 day-block reps; verifier's null 0.732) |
+| (c) no sign flip ex-ZEC | pass: ETH+XRP is also negative, -$52.94 [-150.8, +39.6]. The incumbent makes only +$2.20/mo there. |
+| (d) no band shopping | respected |
+
+**Secondary grid (fitted, labelled):** 20 cells of band {0.2, 1, 2, 5}% × "short only when BUY% < t" for t in {40..60}.
+- **Best cell: 0.2%/t40, +$2.49/mo [-39, +45].**
+  - It shorts 7% of fills, on a band that only exists from 2026-01-15.
+  - Best-of-20 null p 0.309 (verifier 0.278).
+  - It is below +$10 even as a point estimate, so it is **not proposed for a new test**.
+- **Walk-forward:** leave-one-fold-out -$45.26/mo [-111, +15]; anchored -$13.13 [-71, +46].
+- **Every 1% cell is negative:** -51.7 to -304.2.
+
+### INFORMATION CONTENT (15 m to 24 h)
+- **Rank correlation** of BUY% (1%) with forward return on the incumbent fills, day-clustered CIs:
+  - 15 m: +0.036 [-0.07, +0.14]
+  - 1 h: +0.074 [-0.05, +0.19]
+  - 4 h: +0.088 [-0.02, +0.20]
+  - 24 h: +0.054 [-0.06, +0.16]
+- **All 1,941 gate bars:** -0.005 to +0.041. Across 64 cells the largest |z| is 1.56.
+- **AUC for "short better":** 0.527 (p 0.197).
+- **By BUY% quintile:** the long leg is positive in all five (+0.07 to +0.24R) and the short leg negative in all five (-0.15 to -0.42R). **No threshold can select winning shorts from these entries.**
+- **Reading:** there is no *detectable* information, which is not proof of none. The 1 h and 4 h readings lean in the owner's direction, with upper bounds of about +0.19 and +0.20.
+- **Untested (I don't know):** random times, WILDCARD coins, and MEXC's own books.
+
+### WHAT A LIVE VERSION WOULD NEED (not built)
+- **A live depth call at entry,** either MEXC `GET /api/v1/contract/depth/{symbol}` or Binance `GET /fapi/v1/depth`. Both are live-only with no history.
+- **A corrupt-book reject** and fail-open behaviour.
+- **Two open questions (I don't know):**
+  - whether one call reaches ±1% on every coin;
+  - whether the live API is cleaner than the archive.
+- **A MEXC-book rule can only be tested by forward logging.** At about 32 TREND fills/mo, narrowing the ±$141/mo CI to ±$10 takes roughly 200 years. No verdict is reachable.
+
+**Unresolved:**
+- BUY% at the owner's #3 ZEC entry, because the book is corrupt.
+- Whether the MEXC spot or futures book differs from Binance futures.
+- Binance's undocumented band reference price.
+- One-year exits use Min15 bars with the adverse move first, and funding is ignored.
+
+**Decision: change nothing. TREND stays long-only; WILDCARD unchanged. Order-book imbalance is not a direction selector.** Together with shorts (09-12),
+taker flow (09-13) and the flip replay (09-15), this makes four independent null results for choosing the side at entry.
+
+---
