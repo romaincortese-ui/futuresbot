@@ -239,6 +239,7 @@ class FuturesRuntime:
         self._last_squeeze_scan_at = 0.0
         self._last_trend_scan_at = 0.0
         self._last_trend_scan: dict[str, Any] | None = None
+        self._trend_rotation: dict[str, Any] = {}
         self._last_sniper_scan_at: dict[str, float] = {}
         self._sniper_last_signal_at: dict[tuple[str, str, str], float] = {}
         # Candidates already shadow-logged during the CURRENT slot-blocked
@@ -3403,6 +3404,16 @@ class FuturesRuntime:
         lines = [f"  📈 trend {age_m:.0f}m ago: {int(snap.get('scanned') or 0)} scanned → "
                  f"<b>{int(snap.get('cands') or 0)}</b> signals "
                  f"({int(snap.get('lookback_h') or 24)}h window)"]
+        rotating = str(snap.get("rotating") or "")
+        if rotating:
+            try:
+                until = float((self._trend_rotation or {}).get("until") or 0.0)
+            except (TypeError, ValueError):
+                until = 0.0
+            when = (f" (re-picked in {max(0.0, (until - time.time()) / 3600.0):.0f}h)"
+                    if until > time.time() else " (re-pick due)")
+            name = html.escape(rotating.replace("_USDT", ""))
+            lines.append(f"    🔄 rotating slot: <b>{name}</b>{when}")
         best = snap.get("best")
         if best:
             lines.append(f"    best: <b>{html.escape(str(best.get('symbol')))}</b> "
@@ -5153,6 +5164,8 @@ class FuturesRuntime:
             self._last_heartbeat_at = float(payload.get("last_heartbeat_at", self._last_heartbeat_at) or self._last_heartbeat_at)
             m = payload.get("trial_marker")
             self._stored_trial_marker = dict(m) if isinstance(m, dict) else None
+            rot_state = payload.get("trend_rotation")
+            self._trend_rotation = self._coerce_rotation_state(rot_state)
         except (TypeError, ValueError):
             pass
         log.info("Loaded futures runtime state from %s", self._state_path)
@@ -5176,6 +5189,9 @@ class FuturesRuntime:
             "last_telegram_update": self._last_telegram_update,
             "last_heartbeat_at": self._last_heartbeat_at,
             "trial_marker": self._trial_marker(),
+            # The rotating TREND symbol and its 48h window: a restart must not
+            # re-pick on a different tape, and a held symbol must stay held.
+            "trend_rotation": dict(self._trend_rotation or {}),
         }
         # Atomic write. This file is the authoritative open_positions map and is
         # rewritten every cycle; a bare write_text truncates it if the container
@@ -6299,6 +6315,187 @@ class FuturesRuntime:
             return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
         return False
 
+    @staticmethod
+    def _coerce_rotation_state(raw: Any) -> dict[str, Any]:
+        """Validate rotation state read from disk. Junk becomes {} rather than an
+        exception inside the scan and the status line, which the outer handlers
+        swallow — the sleeve would stop entering with nothing saying so."""
+        if not isinstance(raw, dict):
+            return {}
+        out = dict(raw)
+        try:
+            out["until"] = float(out.get("until") or 0.0)
+        except (TypeError, ValueError):
+            return {}
+        symbol = str(out.get("symbol") or "").upper()
+        if symbol:
+            out["symbol"] = symbol
+        else:
+            out.pop("symbol", None)
+        return out
+
+    def _trend_rotation_symbol(self) -> str | None:
+        """The rotating TREND symbol, re-picked every 48h. None = static list only.
+
+        Fails to the static list in every error path: a bad fetch, an empty pool or
+        a raised exception leaves the previous pick (if it is still inside its
+        window) or nothing. It never closes a position — a symbol that rotates out
+        while held simply stops being scanned, and its position exits on its own
+        rules."""
+        from futuresbot import trend_rotation as rot
+
+        if not rot.rotation_enabled():
+            if self._trend_rotation:
+                self._trend_rotation = {}
+                self._save_state()
+            return None
+        now_t = time.time()
+        current = self._trend_rotation or {}
+        until = float(current.get("until") or 0.0)
+        symbol = str(current.get("symbol") or "") or None
+        # The window governs the retry too, not just a held pick: after a failed
+        # refresh `until` carries the backoff and `symbol` is None.
+        if now_t < until:
+            return symbol
+        try:
+            pick = self._pick_trend_rotation_symbol()
+        except Exception as exc:  # pragma: no cover — never breaks the scan
+            log.warning("[TREND_ROTATION] pick failed: %s", exc)
+            pick = None
+        if pick is None:
+            # BACK OFF ON EVERY FAILURE, not only when a previous pick exists. A cold
+            # start during an exchange outage would otherwise re-run the full fetch on
+            # every scan: tens of seconds of blocked cycle each time, indefinitely. A
+            # held symbol is one the ranker already chose, so holding it for a quarter
+            # window is the conservative outcome; with nothing held the sleeve simply
+            # stays on the static list.
+            retry_at = now_t + rot.rotation_seconds() / 4.0
+            self._trend_rotation = {**current, "until": retry_at} if symbol else {"until": retry_at}
+            self._save_state()
+            log.warning("[TREND_ROTATION] no pick this refresh; %s (retry in %.0fh)",
+                        f"holding {symbol}" if symbol else "static list only",
+                        rot.rotation_seconds() / 4.0 / 3600.0)
+            return symbol
+        previous = symbol
+        self._trend_rotation = {
+            "symbol": pick.symbol, "chosen_at": now_t, "until": now_t + rot.rotation_seconds(),
+            "score": pick.score, "vol_7d": round(pick.vol_7d, 4), "mom": round(pick.mom, 4),
+            "attn": round(pick.attn, 3), "turnover_7d": round(pick.turnover_7d, 1),
+            "pool": pick.pool_size, "previous": previous,
+        }
+        self._save_state()
+        log.warning("[TREND_ROTATION] %s -> %s (score %.2f, vol7d %.0f%%, mom %.1f%%, attn %.2fx, "
+                    "7d turnover $%.1fM, pool %d)", previous or "none", pick.symbol, pick.score,
+                    pick.vol_7d * 100, pick.mom * 100, pick.attn, pick.turnover_7d / 1e6, pick.pool_size)
+        if pick.symbol != previous:
+            self._record_activity(f"TREND rotation: {previous or 'none'} -> {pick.symbol}")
+            self._notify(
+                f"🔄 <b>TREND Rotation</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"Rotating slot: <b>{html.escape(pick.symbol)}</b>"
+                f"{f' (was {html.escape(previous)})' if previous else ''}\n"
+                f"7d vol {pick.vol_7d * 100:.0f}% · {int(round(rot.rotation_seconds() / 3600))}h move "
+                f"{pick.mom * 100:+.1f}% · volume {pick.attn:.2f}x normal\n"
+                f"7d turnover ${pick.turnover_7d / 1e6:.1f}M · picked from {pick.pool_size} coins\n"
+                f"Universe: {', '.join(s.replace('_USDT', '') for s in trend_symbols())} + {pick.symbol.replace('_USDT', '')}"
+            )
+        return pick.symbol
+
+    def _pick_trend_rotation_symbol(self):
+        """IO for the rotation: shortlist by 24h turnover, then rank on hourly bars."""
+        from futuresbot import trend_rotation as rot
+
+        tickers = self.client.get_all_tickers() or []
+        static = {s.upper() for s in trend_symbols()}
+        # universe._is_crypto_usdt_symbol only checks contract STATE when handed a detail
+        # dict, and a ticker row has none — so a contract already moved to pause,
+        # delivery or offline would stay pickable. One extra call per refresh.
+        tradeable = None
+        try:
+            details = self.client.get_all_contract_details() or []
+            tradeable = {str(d.get("symbol") or "").upper() for d in details
+                         if int(d.get("state", 0) or 0) == 0}
+        except Exception as exc:
+            log.debug("[TREND_ROTATION] contract details unavailable: %s", exc)
+        shortlist: list[tuple[float, str]] = []
+        for t in tickers:
+            sym = str(t.get("symbol") or "").upper()
+            if not sym.endswith("_USDT") or sym in static or sym in self.open_positions:
+                continue
+            if not self._is_tradeable_crypto(sym):
+                continue
+            if tradeable is not None and sym not in tradeable:
+                continue
+            try:
+                turn = float(t.get("amount24") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if turn <= 0:
+                continue
+            shortlist.append((turn, sym))
+        shortlist.sort(reverse=True)
+        shortlist = shortlist[: rot.shortlist_n()]
+        if not shortlist:
+            return None
+        # CLOSED BARS ONLY: the in-progress hour would let a live tick act as a close
+        # in the momentum term and truncate the newest turnover bucket.
+        end = (int(time.time()) // 3600) * 3600
+        start = end - int((rot.min_history_days() + 1.0) * 86400)
+        # The pick runs in the CYCLE BODY, where the 1-second position monitor is NOT
+        # running (it lives in the cycle sleep). Measured healthy cost is ~19s for 60
+        # symbols; the budget is checked WITH the next request's cost so one hung fetch
+        # cannot turn a 48h refresh into a multi-cycle freeze.
+        budget_s = max(5.0, self._env_float("FUTURES_TREND_ROTATION_FETCH_BUDGET_S", 20.0))
+        began = time.time()
+        candidates: list = []
+        fetched = 0
+        truncated = False
+        for _turn, sym in shortlist:
+            if time.time() - began + 1.0 > budget_s:
+                truncated = True
+                log.warning("[TREND_ROTATION] TRUNCATED: budget spent after %d of %d symbols; the "
+                            "pool is then the head of the 24h-turnover order, which favours today's "
+                            "movers", fetched, len(shortlist))
+                break
+            try:
+                frame = self.client.get_klines(sym, interval="Min60", start=start, end=end)
+            except Exception as exc:
+                log.debug("[TREND_ROTATION] klines failed for %s: %s", sym, exc)
+                continue
+            fetched += 1
+            rows = self._hourly_rows_for_rotation(frame)
+            if not rows:
+                continue
+            cand = rot.metrics_from_hourly(sym, rows, window_hours=rot.rotation_seconds() / 3600.0)
+            if cand is not None:
+                candidates.append(cand)
+        pick = rot.rank_pick(candidates)
+        log.info("[TREND_ROTATION] shortlist=%d fetched=%d candidates=%d pick=%s",
+                 len(shortlist), fetched, len(candidates), pick.symbol if pick else "none")
+        return pick
+
+    @staticmethod
+    def _hourly_rows_for_rotation(frame: Any) -> list[tuple[float, float, float]]:
+        """(timestamp, close, quote turnover) rows from a kline frame, oldest first."""
+        try:
+            if frame is None or len(frame) == 0 or "close" not in frame:
+                return []
+            closes = [float(x) for x in frame["close"]]
+            if "amount" not in frame:
+                # No quote turnover, no candidate. `volume x close` is contracts x
+                # price: wrong by contractSize (1e-4 .. 1e7 across MEXC perps), which
+                # would turn the $2M/day liquidity floor into a price filter.
+                return []
+            amounts = [float(x) for x in frame["amount"]]
+            index = list(getattr(frame, "index", range(len(closes))))
+            stamps: list[float] = []
+            for item in index:
+                ts = getattr(item, "timestamp", None)
+                stamps.append(float(ts()) if callable(ts) else float(item))
+            return [(stamps[i], closes[i], amounts[i]) for i in range(len(closes))]
+        except Exception:                                 # pragma: no cover — diagnostics only
+            return []
+
     def _warn_inert_drawdown_kill(self) -> bool:
         """Announce a drawdown variable that is set but cannot act. Returns True if warned."""
         if not self._flag("USE_DRAWDOWN_KILL"):
@@ -7103,6 +7300,11 @@ class FuturesRuntime:
             if available <= 0:
                 return
             symbols = trend_symbols()
+            # The rotating universe slot (default off). Appended, never replacing:
+            # the static three keep trading exactly as before.
+            rotating = self._trend_rotation_symbol()
+            if rotating and rotating.upper() not in {x.upper() for x in symbols}:
+                symbols = tuple(symbols) + (rotating.upper(),)
             lookback = int(self._env_float("FUTURES_TREND_LOOKBACK_HOURS", 24.0))
             bars = int(self._env_float("FUTURES_TREND_SCAN_BARS", 400))
             end = int(now_t)
@@ -7145,6 +7347,7 @@ class FuturesRuntime:
                 "at": now_t, "scanned": scanned, "cands": len(cands),
                 "hist": dict(hist or {}), "shorts_blocked": shorts_blocked,
                 "lookback_h": lookback,
+                "rotating": rotating or "",
                 "best": ({"symbol": best.symbol, "side": best.side,
                           "roc": float(best.roc_pct or 0.0)} if best is not None else None),
             }

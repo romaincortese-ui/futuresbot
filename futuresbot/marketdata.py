@@ -31,24 +31,36 @@ class MexcApiError(RuntimeError):
 
 
 def build_contract_frame(payload: dict[str, Any]) -> pd.DataFrame:
+    columns: dict[str, Any] = {}
     data = payload.get("data", {}) if isinstance(payload, dict) else {}
-    frame = pd.DataFrame(
-        {
-            "time": data.get("time", []),
-            "open": data.get("open", []),
-            "high": data.get("high", []),
-            "low": data.get("low", []),
-            "close": data.get("close", []),
-            "volume": data.get("vol", []),
-        }
-    )
+    times = data.get("time", [])
+    columns = {
+        "time": times,
+        "open": data.get("open", []),
+        "high": data.get("high", []),
+        "low": data.get("low", []),
+        "close": data.get("close", []),
+        "volume": data.get("vol", []),
+    }
+    # QUOTE TURNOVER, when the payload carries it. `vol` is CONTRACTS, so
+    # `vol x close` is dollars only after multiplying by contractSize — which
+    # varies from 1e-4 to 1e7 across MEXC perps. Anything comparing turnover
+    # ACROSS symbols (the TREND rotation pool and its $2M/day floor) needs the
+    # exchange's own `amount` field instead; ratios within one symbol do not.
+    amount = data.get("amount")
+    if isinstance(amount, (list, tuple)) and len(amount) == len(times):
+        columns["amount"] = amount
+    frame = pd.DataFrame(columns)
     if frame.empty:
         return frame
     frame["time"] = pd.to_datetime(frame["time"], unit="s", utc=True)
     frame = frame.set_index("time").sort_index()
-    for column in ("open", "high", "low", "close", "volume"):
+    required = ["open", "high", "low", "close", "volume"]
+    for column in required + (["amount"] if "amount" in frame else []):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    return frame.dropna()
+    # Subset, not the whole row: a missing `amount` must never delete a bar that
+    # every scan in the bot depends on.
+    return frame.dropna(subset=required)
 
 
 class MexcFuturesClient:

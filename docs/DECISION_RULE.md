@@ -14558,3 +14558,42 @@ At the best cell's effect and noise (SE $47.2/mo over 23.75 months, ~$230/mo per
   - Scripts: `B/engine_rot3.py`, `b00_coverage.py`, `b0_tests.py`, `b1_trades.py`, `b2_score.py`, `b3_report.py`, `b4_audit.py`
   - Outputs: `b2_score.json`, `b3_report.txt`, `b4_audit.txt`, `trades3_*.pkl`
 - **Synthesis:** `SYNTH/s1_synth.py` -> `s1_synth.json`, `s1_synth.txt`, `s1_run.log`; `answer.md`, `record.md`
+
+---
+
+# Pre-registered decision rule — TRIAL 21R: TREND ROTATING UNIVERSE SLOT (from 2026-09-16)
+
+Written BEFORE the flag was set. The owner chose "build it and run it live" after the three universe studies
+(2026-09-13 5-6 symbols, 2026-09-15 rotating slot, 2026-09-15 full rotation) with the results in front of him.
+
+## What ships
+`FUTURES_TREND_ROTATION_ENABLED=1`. TREND trades ETH/XRP/ZEC **plus one rotating symbol**, re-picked every 48h
+(`_HOURS=48`) from the top 40 MEXC crypto perps by 30-day median QUOTE turnover, shortlisted from the top 60 by 24h
+turnover, requiring >= 60 days of hourly history and >= $2M/day 7-day median turnover. Score = average of three ranks:
+7-day annualised volatility, 48h return, last-full-day turnover / 30-day median. Slots stay 2 (`_MAX_POSITIONS=2`),
+stake stays halved (`FUTURES_TREND_RISK_PCT=0.01205`, 1R ~ $12). A position on a symbol that rotates out runs to its
+normal exit. Code: `futuresbot/trend_rotation.py`, `runtime._trend_rotation_symbol`. Off restores the static list.
+
+## What it is expected to be worth, honestly
+Measured cell: **+$50.6/month [-$0.2, +$102.7]** at $23.50 1R on 53.8 fills/month. At the halved stake the point
+estimate is **~+$25/month and the interval still includes zero**. It failed kill (a) of its own pre-registration by
+about $1, its picking skill is visible only in the second year, 10 fills carried 58% of the gain, and cost stress
+halves it. **This is a lead being run, not an edge.**
+
+## Kill rules — ANY ONE fires, set `FUTURES_TREND_ROTATION_ENABLED=0` the same day
+Scored on ROTATING-SLOT fills only (TREND fills whose symbol is not ETH/XRP/ZEC), from 2026-09-16:
+- **K1** cumulative net P&L of rotating fills <= **-$60** (about -5R at the halved stake).
+- **K2** any single rotating fill worse than **-2.5R** — the thin-name gap hazard the $2M floor exists to prevent.
+- **K3** three consecutive rotating fills at <= -1.0R.
+- **K4** account equity **15% below** its level at trial start.
+- **K5** two rotating entries with realised entry slippage > 50 bps.
+- **K6** the rotation ever picks a symbol failing the $2M/60-day floors (a defect, not a drawdown).
+
+## Review point
+At **40 rotating fills**: keep only if rotating-slot net > $0 AND no K2 event has occurred. Otherwise off.
+At 150 TREND closes total: score the sleeve as a whole against the halved-stake baseline.
+
+## Not allowed during the trial
+No parameter tuning (48h, the three ranks, the floors, pool sizes, slots). Any change ends the trial and starts a new
+one. No second rotating slot. No re-running the universe studies to "confirm" this — they are the prior, not evidence
+about this trial.
