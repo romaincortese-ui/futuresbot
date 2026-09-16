@@ -14597,3 +14597,135 @@ At 150 TREND closes total: score the sleeve as a whole against the halved-stake 
 No parameter tuning (48h, the three ranks, the floors, pool sizes, slots). Any change ends the trial and starts a new
 one. No second rotating slot. No re-running the universe studies to "confirm" this — they are the prior, not evidence
 about this trial.
+
+---
+
+## 2026-09-16 - SKIP vs SHRINK for low-efficiency entries: DO NOT SHIP
+
+**Question.** Owner asked: "trade less when the market isn't looking viable?" Should entries at the efficiency floor (eff ≤ 0.20, currently taken at 0.50× size) be skipped instead of half-sized?
+
+**Setup.** Pre-registered in wc/SKIP/PREREG.md before any result. Offline only; nothing deployed, so trial 21R is not confounded.
+
+**Verdict.** DO NOT SHIP.
+- **Kill criteria:** (a) FAIL, (b) FAIL, (c) FAIL (on live TREND, fragile), (d) PASS.
+- **Other variants:** none of the SKIP_T variants passes every criterion.
+- **Live config unchanged:** scaler ON for both sleeves, FUTURES_REGIME_FLOOR_MULT=0.50, FUTURES_TREND_RISK_PCT 1.205%.
+
+### C: TREND corpus (the ship test)
+**Data:** ETH/XRP/ZEC. Y1 is Binance 15m, 2024-09-17 → 2025-09-16. Y2 is MEXC Min15, 2025-09-17 → 2026-09-09.
+**Pricing and CIs:** live 1R $11.75 (1.205%); 1-day-block bootstrap. $ are per month, and fills per month are in brackets.
+
+**Results vs SHRINK:**
+- **SHRINK level:** Y1 −38.10 (39.5), Y2 +51.14 (31.9), pooled +6.09 (35.7). Max DD −621 / −140.
+- **SKIP_FLOOR − SHRINK (primary):** pooled **+4.02 [−3.4, +11.6]** (33.6).
+  - Y1 +2.56 [−7.4, +12.8] (37.2); Y2 +5.51 [−5.5, +16.5] (30.0).
+  - Max DD −606 / −124.
+  - An independent rebuild matches to the cent (CIs within ~0.3).
+- **SKIP_T 0.60 / 0.75 / 0.90, pooled:**
+  - T0.60: +3.52 [−6.9, +14.1] (32.1). Y2 is −3.64, so it fails the year test.
+  - T0.75: +9.81 [−4.2, +23.9] (28.8).
+  - T0.90: +9.50 [−6.8, +25.9] (24.6).
+- **FULL − SHRINK:** −2.03 [−10.9, +7.0] (35.7); Y1 −7.16, Y2 +3.19.
+- **At $23.50/R:**
+  - SKIP_FLOOR +8.10 [−6.2, +22.8]
+  - T0.75 +19.95 [−7.3, +47.6]
+  - T0.90 +17.58 [−14.4, +49.7]
+  - FULL −3.17 [−20.4, +14.3]
+
+**Placebo** (literal: skip the same number of entries, same slot replay, 2,000 draws):
+- **SKIP_FLOOR:** raw p 0.34–0.35. Best-of-4 p is 0.68 on the exact-count rebuild and 0.81 in lane C.
+- **T variants:** best-of-4 p 0.94 / 0.50 / 0.50 (lane C).
+- **Y1:** random skipping has mean +$6.9/mo, above SKIP_FLOOR's +2.56.
+- **Y2 T0.90:** the only variant that beats random (p 0.003–0.005, best-of-4 0.011–0.020). Not confirmed in Y1 (p 0.89).
+- **Clustered placebo is INVALID:** it skipped 25–30% too few entries. Do not cite it.
+
+**Floored cohort (eff ≤ 0.20, SHRINK fills):**
+- **Y1:** 70 fills (5.8/mo), −0.030R, 56% win. Exits: 31 STOP / 34 TRAIL / 2 TP / 3 CLOCK.
+- **Y2:** 46 fills (3.9/mo), −0.100R, 39% win. Exits: 24 / 13 / 5 / 4.
+- **Booked P&L at half size:** −$1.10 / −$2.12 per month.
+- **Re-fills:** after a skip, the same coin fills within 2h in 57% (Y1) / 45% (Y2) of cases.
+
+**Efficiency, winners vs stops (median):**
+- Y1: 0.353 vs 0.367 (p 0.44).
+- Y2: 0.410 vs 0.352 (p 0.011).
+- Pooled: p 0.20.
+
+All signals, mean R by efficiency band (≤0.20 / 0.20–0.45 / ≥0.45):
+- Y1: −0.099 / −0.051 / −0.015.
+- Y2: +0.017 / +0.107 / +0.199.
+
+**Definition used:** 25 closes ending at the gate bar, which equals 24 completed bars plus the in-progress bar's final close.
+- It matches the recorded live multiplier within 0.02 on 14/18 fills since 09-04.
+- It flips the floor flag on 1/18 (ZEC 09-14 10:04).
+- It reads about 0.016 low.
+
+**Window sweep** (SKIP_FLOOR − SHRINK, pooled, by bar moves; live = 24):
+- Pooled is positive at 9 of 11 lengths; mean +$5.7.
+- 23 moves: −2.50 [−12.0, +6.2].
+- 25 moves: +8.46 [+0.4, +16.8].
+- 28–29 moves: about +11.4 with the CI excluding 0.
+- This is post hoc and best of 11, with no placebo run on it. Underpowered, not refuted; not a ship case.
+
+### L: live fills, both sleeves
+**Window:** 2026-08-21T09:41Z → 09-16T17:28Z, 26.3 days. 106 closes: TREND 38 (43.9/mo), WILDCARD 68 (78.6/mo).
+**Pricing:** full intended 1R (TREND $11.75, WILDCARD $23.50), which is the pre-registered basis. Booked $ is not the headline.
+
+**Results vs SHRINK, $ per month:**
+
+| Rule | TREND | WILDCARD |
+|---|---|---|
+| SKIP_FLOOR | −23 [−89, +27] on 6.9 skipped/mo | +44 [−50, +140] on 22.0 skipped/mo |
+| T0.60 | −23 [−77, +21] (10.4) | +36 [−64, +136] (23.1) |
+| T0.75 | −32 [−150, +49] (13.9) | +50 [−83, +184] (34.7) |
+| T0.90 | −49 [−190, +62] (18.5) | −46 [−305, +170] (43.9) |
+| FULL − SHRINK | +24 [−35, +101] | −25 [−135, +87] |
+
+- SKIP_FLOOR on booked $: TREND −34, WILDCARD +42.
+- FULL − SHRINK pooled: −0.4 [−129, +138].
+- Booked max DD: SHRINK 265, FULL 358, SKIP_FLOOR 222, T0.60 209, T0.75 187, T0.90 161.
+
+**Cohort, placebo, slot effect:**
+- **Floored cohort:** TREND n=6, +0.565R (SE 0.71). WILDCARD n=19, −0.171R (SE 0.18).
+- **Placebo, best-of-4 p:** TREND 0.69, WILDCARD 0.48–0.50, pooled 0.73–0.74. Supporting only; not a kill criterion.
+- **Slot effect:** $0. There are 8 TREND slot_occupied rows and none overlaps a skipped hold. 277 ledger rows were re-pulled read-only and are identical.
+
+**Multiplier checks:**
+- **Recorded vs recomputed:** within 0.02 on 103/106. The floored class agrees 106/106. An independent pre-scan version gives 96/106 and 104/106.
+- **Floor switch:** 0.25 → 0.50 at 2026-08-29T00:37Z. 31 fills were re-classified at 0.50.
+
+**Correction (same-symbol re-entry, pre-registered but missed in the first pass):**
+- TREND SKIP_FLOOR moves to **−$7.1/mo (likelier)** or +$23.8/mo.
+- Which one depends on sub-minute ordering: the ZEC replacement hits TP 878.55 during the 09-03 15:17 minute, and the real ZEC entry filled at 874.0 at 15:17:24.
+- The largest TREND term at live 1R is ZEC 09-03 (+2.84R), not the 09-14 winners.
+- WILDCARD re-entry can't be replayed: effect unknown.
+
+### Does the scaler itself pay at the halved TREND stake: I don't know
+- **Corpus:** SHRINK − FULL = +2.03 [−7.1, +11.0] pooled (35.7 fills/mo), but the sign flips by year: Y1 +7.16, Y2 −3.19. At equal average risk: +2.27 [−4.4, +9.0].
+- **Live:** on TREND, FULL beats SHRINK by +24 [−35, +101]. On WILDCARD, SHRINK beats FULL by +25 [−87, +135].
+- **Drawdown:** Y1's reduction is all exposure (FULL scaled to the same exposure: −585 vs SHRINK −621). Y2's is about 28% selection (−140 vs −153).
+- The 2026-09-09 "+$27.20 saved on 8 closes" is neither confirmed nor refuted at the halved stake.
+
+### Verification corrections (do not cite the uncorrected versions)
+- Clustered placebo p-values (0.217 / 0.480) are invalid.
+- "A one-bar window change makes it negative in both years" is one-sided: only a shorter window turns it negative.
+- The caveat "9/18 match, 2 floor flips" tested the wrong reading. The correct figures are 14/18 and 1 flip.
+- The claim that the drawdown benefit is pure exposure is true for Y1 only (see above).
+- The live headline must be at 1R, not booked $.
+- r_multiple differs from pnl/risk by more than 0.02 on 35 fills (up to 0.44R). Immaterial: TREND SKIP_FLOOR moves from −23.0 to −22.9.
+
+### Unresolved
+- **Extra shrinks:** 9 of 74 post-fix live fills were shrunk beyond the multiplier, 5 of them at mult 1.0 (e.g. USELESS 09-01: 0.75 mult, 0.54 actual). Cause unknown.
+- **Not modelled:** streak throttle, WILDCARD shared equity, external veto, slippage, and scan-phase entry prices.
+- **Rebuild independence:** the gate/exit tape is shared by both corpus builds, so (d) is only partly independent.
+- **Y1 universe:** carries hindsight (ZEC).
+- **Stale 1R:** at today's equity ($902–958) the TREND 1R is $10.9–11.5, so all $ above are 2–7% too high.
+- **Mislabelled constant:** DEND 1789041600 is 09-10 12:00 UTC, not 00:00 as commented. No effect.
+- **Revisits:** any revisit of skip vs shrink needs a new pre-registration on data that did not produce this idea. Thresholds and windows here were explored post hoc.
+
+### Files
+All under C:/Users/Rocot/AppData/Local/Temp/wc/SKIP/:
+- Pre-registration: PREREG.md.
+- **Lane C** (C/): c1_eff.py, skiplib.py, c2_variants.py (optional arg eff23), c3_placebo.py, c4_live_eff_check.py, c5_checks.py.
+- **Corpus rebuild** (C-trend-verify/): v1_rebuild.py, vengine.py, v2_placebo.py, v3_proxy_check.py, v4_extra.py.
+- **Lane L** (L/): l1_build_live.py … l5_resolver_check.py, results.json, robust.json.
+- **Live rebuild** (L-live-verify/): v1_build.py … v6_misc.py, v4_trend_reentry.py, v5_trend_chain.py.
