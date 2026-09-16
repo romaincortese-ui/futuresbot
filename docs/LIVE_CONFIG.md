@@ -90,6 +90,8 @@ Three things worth knowing about this stack:
 available free margin  (NOT equity — 1R shrinks as slots fill)
   -> leverage = floor(20 / (3 x ATR% x 100)), clamped 1..5      <- an OUTPUT, not a dial
   -> margin targeted at 2.41% risk                              FUTURES_WILDCARD_RISK_PCT
+     (per sleeve: FUTURES_<SLEEVE>_RISK_PCT overrides it,       FUTURES_TREND_RISK_PCT
+      e.g. TREND at 1.205% = half the WILDCARD dial)
   -> cap: 25% of available                                      MAX_MARGIN_PCT 0.25
   -> x regime efficiency scaler, floor 0.50                     REGIME_FLOOR_MULT (trial 18)
   -> int() contract truncation                                  ~6% mean loss, measured
@@ -102,7 +104,9 @@ available free margin  (NOT equity — 1R shrinks as slots fill)
   from ATR to keep the stop inside the 20% margin cap, and lands at 1–4× in practice.
 - **Risk is a % of *available* margin, not equity.** The third concurrent position sizes
   off a smaller base than the first, so "fixed dollar 1R" is not true.
-- `RISK_PCT=0.0241` is **29% above** the 0.0187 code default.
+- `RISK_PCT=0.0241` is **29% above** the 0.0187 code default. Since 2026-09-16 a sleeve
+  may carry its own dial: `FUTURES_TREND_RISK_PCT=0.01205` halves TREND's stake and leaves
+  WILDCARD at 2.41%. Unset means "use the WILDCARD dial", so nothing changes by default.
 - **No streak throttle** (`CONVEX_STREAK_THROTTLE_ENABLED=0`) and **no drawdown brake**
   on the live path.
 

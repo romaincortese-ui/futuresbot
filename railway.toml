@@ -8,7 +8,16 @@ requiredMountPath = "/data"
 # could exhaust it and leave the bot permanently dead with no signal. This is a
 # daemon — any exit is a fault, and it should always come back.
 restartPolicyType = "ALWAYS"
-# Deploy on any change in the repo. Without this, Railway may show deploys as
-# SKIPPED with "No changes to watched files" when its UI-configured watch
-# paths do not match the actual edit. The wildcard overrides those settings.
-watchPatterns = ["**/*"]
+# Deploy on changes to what the SERVICE RUNS. The wildcard used to be "**/*" so
+# that Railway could not mark a real code push SKIPPED against its UI-configured
+# paths — but it also restarted the bot for documentation and research pushes:
+# 9 of 19 deploys over 11 days were docs/tools-only, and 12 landed with positions
+# open. A restart mid-position drops the in-process trail and the 1-second monitor
+# until the container is back. These patterns still override the UI settings.
+watchPatterns = [
+  "futuresbot/**",
+  "main.py",
+  "requirements.txt",
+  "pytest.ini",
+  "railway.toml",
+]

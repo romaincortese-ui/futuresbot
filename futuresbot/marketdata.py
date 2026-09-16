@@ -269,10 +269,25 @@ class MexcFuturesClient:
 
     @staticmethod
     def _trigger_trends_for_order_side(side: int) -> tuple[int | None, int | None]:
-        if int(side) == 1:  # open long: TP triggers on rise, SL on fall
+        """(profitTrend, lossTrend) — MEXC's TRIGGER PRICE TYPE, not a direction.
+
+        MEXC place-order docs: `lossTrend` / `profitTrend` = "1: latest price
+        (default); 2: fair price; 3: index price". This code used to read them as
+        rise/fall directions and returned (1, 2) for longs and (2, 1) for shorts,
+        so every SHORT rested its stop on the LAST TRADED price — the feed a thin
+        book spikes — while its target waited on fair price. 201 live stop orders
+        show exactly that (146 longs lossTrend=2, 55 shorts lossTrend=1), and
+        MARSCOIN 2026-09-08 was stopped for -$11.64 by a last-price spike the fair
+        price never reached.
+
+        Both sides now get the same, side-independent pair:
+          - stop on FAIR price (2): the feed the in-process trail and every R
+            measurement already use, and the one that ignores single-print spikes;
+          - target on LAST price (1): a favourable print fills the target, which is
+            the long behaviour that has always been live.
+        """
+        if int(side) in (1, 3):
             return 1, 2
-        if int(side) == 3:  # open short: TP triggers on fall, SL on rise
-            return 2, 1
         return None, None
 
     def place_order(

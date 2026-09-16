@@ -60,7 +60,7 @@ def test_place_order_sets_long_trigger_directions(monkeypatch):
     assert captured["lossTrend"] == 2
 
 
-def test_place_order_sets_short_trigger_directions(monkeypatch):
+def test_place_order_sets_short_trigger_price_types(monkeypatch):
     client = _client()
     captured: dict[str, object] = {}
 
@@ -79,8 +79,40 @@ def test_place_order_sets_short_trigger_directions(monkeypatch):
         stop_loss_price=102.0,
     )
 
-    assert captured["profitTrend"] == 2
-    assert captured["lossTrend"] == 1
+    # MEXC: 1 = latest price, 2 = fair price. A SHORT's stop must rest on the FAIR
+    # price like a long's, not on the last traded price that a thin book spikes
+    # (MARSCOIN 2026-09-08, -$11.64 on a spike fair price never printed).
+    assert captured["profitTrend"] == 1
+    assert captured["lossTrend"] == 2
+
+
+def test_stop_trigger_price_type_is_fair_on_both_sides():
+    client = _client()
+    assert client._trigger_trends_for_order_side(1) == (1, 2)
+    assert client._trigger_trends_for_order_side(3) == (1, 2)
+    assert client._trigger_trends_for_order_side(2) == (None, None)
+
+
+def test_place_position_tpsl_short_stop_rests_on_fair_price(monkeypatch):
+    client = _client()
+    captured: dict[str, object] = {}
+
+    def fake_post(path, body):
+        captured.update(body)
+        return {"success": True, "data": {"orderId": "stop-2"}}
+
+    monkeypatch.setattr(client, "private_post", fake_post)
+
+    client.place_position_tpsl(
+        position_id="12345",
+        vol=3,
+        take_profit_price=90.0,
+        stop_loss_price=110.0,
+        side="SHORT",
+    )
+
+    assert captured["lossTrend"] == 2
+    assert captured["profitTrend"] == 1
 
 
 def test_place_position_tpsl_uses_stop_loss_direction_for_long_profit_lock(monkeypatch):

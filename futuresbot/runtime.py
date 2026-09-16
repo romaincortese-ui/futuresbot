@@ -1763,7 +1763,17 @@ class FuturesRuntime:
         # 0.0187 = 0.12 balance_fraction x 15.6% median sl_margin, i.e. TODAY'S
         # measured effective risk. Chosen so switching this on leaves MEDIAN
         # size unchanged and only removes the dispersion around it.
-        risk_pct = max(0.0, self._env_float("FUTURES_WILDCARD_RISK_PCT", 0.0187))
+        # PER-SLEEVE RISK. FUTURES_WILDCARD_RISK_PCT is the only risk dial in the
+        # codebase and every convex sleeve sized off it, so "halve TREND's stake" —
+        # a standing decision since 2026-09-11 — could not be expressed without
+        # also halving WILDCARD. FUTURES_<SLEEVE>_RISK_PCT overrides it for one
+        # sleeve only (TREND, SQUEEZE, SNIPER); unset, nothing changes anywhere.
+        risk_pct = 0.0
+        sleeve_key = "".join(ch for ch in str(kind or "").upper() if ch.isalnum())
+        if sleeve_key and sleeve_key != "WILDCARD":
+            risk_pct = max(0.0, self._env_float(f"FUTURES_{sleeve_key}_RISK_PCT", 0.0))
+        if risk_pct <= 0:
+            risk_pct = max(0.0, self._env_float("FUTURES_WILDCARD_RISK_PCT", 0.0187))
         if risk_pct <= 0:
             return legacy
         margin = risk_pct * available_balance * 100.0 / sl_margin_pct
@@ -6289,6 +6299,52 @@ class FuturesRuntime:
             return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
         return False
 
+    def _warn_inert_drawdown_kill(self) -> bool:
+        """Announce a drawdown variable that is set but cannot act. Returns True if warned."""
+        if not self._flag("USE_DRAWDOWN_KILL"):
+            return False
+        if self._flag("FUTURES_CONVEX_DRAWDOWN_BRAKE", default=False):
+            return False
+        log.warning(
+            "[CONFIG] USE_DRAWDOWN_KILL=1 has NO effect on the live sleeves: only the retired "
+            "PMT path reads it. The convex sleeves have no equity-drawdown brake "
+            "(FUTURES_CONVEX_DRAWDOWN_BRAKE is off). Entries are unprotected by equity drawdown."
+        )
+        return True
+
+    def _restore_exchange_tpsl(self, position: FuturesPosition) -> bool:
+        """Re-place the resting stop (and target) after a close attempt failed.
+
+        Best-effort and never raises: it runs on the error path of an exit, where
+        the caller is about to propagate the real failure. Returns True when the
+        exchange accepted the bracket again."""
+        try:
+            if self.config.paper_trade or not position.position_id:
+                return False
+            if position.sl_price <= 0:
+                return False
+            self.client.place_position_tpsl(
+                position_id=str(position.position_id),
+                vol=int(position.contracts),
+                take_profit_price=position.tp_price if position.tp_price > 0 else None,
+                stop_loss_price=position.sl_price,
+                side=position.side,
+            )
+            log.warning("[EXIT_FAILED] %s close failed; exchange stop restored at %s",
+                        position.symbol, self._format_price(position.sl_price))
+            return True
+        except Exception as exc:  # pragma: no cover — diagnostics only
+            log.error("[EXIT_FAILED] %s close failed AND the stop could not be restored: %s",
+                      position.symbol, exc)
+            self._notify_once(
+                f"futures_stop_restore_failed_{position.symbol}_{position.position_id}",
+                f"⚠️ <b>Futures Stop Not Restored</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"Closing <b>{html.escape(str(position.symbol))}</b> failed and the exchange stop could "
+                f"not be put back. The position is running on the in-process stop only.",
+            )
+            return False
+
     def _close_position_for_exit(self, position: FuturesPosition, *, current_price: float, reason: str) -> bool:
         if self.config.paper_trade:
             self._close_history_trade(position, exit_price=current_price, reason=reason)
@@ -6297,15 +6353,25 @@ class FuturesRuntime:
             return True
         self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
         position_mode = self._live_position_mode()
-        order = self.client.close_position(
-            symbol=position.symbol,
-            side=self._close_side(position, position_mode=position_mode),
-            vol=position.contracts,
-            leverage=position.leverage,
-            open_type=self.config.open_type,
-            position_mode=position_mode,
-            position_id=position.position_id or None,
-        )
+        try:
+            order = self.client.close_position(
+                symbol=position.symbol,
+                side=self._close_side(position, position_mode=position_mode),
+                vol=position.contracts,
+                leverage=position.leverage,
+                open_type=self.config.open_type,
+                position_mode=position_mode,
+                position_id=position.position_id or None,
+            )
+        except Exception:
+            # THE BRACKET IS ALREADY GONE. cancel_all_tpsl is all-or-nothing, so
+            # between it and a filled close the position rests on the exchange with
+            # no stop; only the in-process monitor stands behind it, and that dies
+            # with the process. Put the stop back before the error propagates, so a
+            # failed close (rate limit, maintenance, a redeploy landing here) cannot
+            # leave an unprotected position overnight.
+            self._restore_exchange_tpsl(position)
+            raise
         order_id = str(order.get("orderId") or "")
         if order_id:
             detail = self.client.get_order(order_id)
@@ -12471,6 +12537,12 @@ class FuturesRuntime:
             self.config.heartbeat_seconds,
             self.config.paper_trade,
         )
+        # A SET VARIABLE THAT DOES NOTHING IS WORSE THAN AN UNSET ONE. USE_DRAWDOWN_KILL
+        # only reaches _drawdown_size_multiplier from the decommissioned PMT path; the
+        # live convex sleeves read FUTURES_CONVEX_DRAWDOWN_BRAKE (default off, refuted
+        # on P&L 2026-09-04). With the kill set and the brake off, the operator believes
+        # there is equity protection and there is none. Say so on every boot.
+        self._warn_inert_drawdown_kill()
         # Gate A A6 (memo 1 §7): single structured [BOOT] manifest line so the
         # operator can read the full live-config state (filter thresholds,
         # funding-gate state, leverage band, Sprint flags) on redeploy without
