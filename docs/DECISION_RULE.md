@@ -15192,3 +15192,173 @@ Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/WCR/`:
 - `LF_E/`, `LF_V/`, `LF_H/`, `LF_L/`: `lf_*.py`, `lf_results.txt/.json` (AMENDMENT_1 per line)
 - `R/`: `r_amend.py/.txt/.json` (the 15:04 record lane's AMENDMENT_1 computation, superseded by `LF_*`)
 - `record.md`, `answer.md`; the superseded 15:04 versions are in `_prev_record_1504/`
+
+## 2026-09-17 - TREND: ZEC WINNERS vs 7-DAY LOSERS, GATE REVIEW
+
+**Asked (owner):** "review the winning ZEC trades from the last couple of days and assess the difference in gates eligibility compared to all the losing Trends we had in the last 7 days".
+
+**Verdict: NO GATE CHANGE.**
+- Neither TREND gate (24h ROC >= 4%, new 24h closing high) separates the ZEC winners from the losers.
+- The only complete splits are market context on the day (ETH 24h, alt breadth, alt median 24h). They do not generalise:
+  - They reverse or go null on earlier live fills.
+  - Every filter version loses money in corpus Y2.
+  - No pooled 95% CI excludes zero.
+  - Relabelling the same 8 trades at random produces this many separators 1 time in 7.
+- No code or env change. The study was read-only.
+
+### Provenance (governs the reading)
+- **Window:** TREND entries from 09-10 00:00Z to 09-17 14:47Z. That is 10 entries: 9 closed (5 wins, 4 losses) and 1 open ZEC.
+  - State, feature store, the 200-row trade history and logs all show the same set.
+  - Logs are complete from 09-10 14:52Z, and state has no TREND trades in the gap before that.
+  - The live files were pulled at 14:47Z and their SHA-256 hashes match the container.
+- **Design set:** every trade in both groups, following the 09-17 WCF lesson.
+  - ZEC winners entered 09-14 or later: n=4 (#4, #7, #8, #9). There were none from 09-10 to 09-13.
+  - Every TREND loser entered 09-10 or later: n=4 (#1, #2, #3, #6).
+  - Reported but outside the split: XRP winner #5 and open ZEC #10.
+- **Gate values:** rebuilt as of the moment of entry from MEXC 15-minute and 1-minute bars by two lanes (gates_A, gates_B).
+  - 43 of the 48 shared columns reconcile (gen/recon). None of the 5 disagreements changes a winner/loser reading.
+  - The lanes are weakly independent.
+- **Stake:** halved on 09-16. #1 to #6 were at 2.41% and #7 to #10 at 1.205%, so the groups are compared in R. $/month figures use 1R = $11.75.
+- **Manual arms:** #7 and #9 won only because of a manual /arm. Neither reached the 1R auto-arm, and their un-armed outcome is unknown.
+
+### Trades
+| # | Trade | $ | R | ROC24 % | % above prior high | ETH 24h % | BTC 24h % | breadth | h since same-symbol exit | manual |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4 | ZEC W 09-14 14:12 | +10.38 | +1.05 | 4.49 | 0.66 | +1.1 | +1.8 | 0.63 | 1.2 | N |
+| 7 | ZEC W 09-16 09:32 | +2.32 | +0.21 | 4.47 | 0.08 | -3.0 | -1.5 | 0.17 | 36.5 | Y, decisive |
+| 8 | ZEC W 09-16 10:34 | +5.06 | +0.45 | 5.59 | 0.11 | -3.1 | -1.4 | 0.20 | 0.4 | N |
+| 9 | ZEC W 09-16 13:39 | +2.66 | +0.33 | 9.34 | 0.35 | -2.3 | -1.0 | 0.22 | 1.4 | Y, decisive |
+| 1 | ETH L 09-11 14:02 | -24.78 | -1.05 | 8.45 | 0.27 | +8.7 | +3.0 | 0.80 | 364 | N |
+| 2 | ZEC L 09-14 10:04 | -12.99 | -1.07 | 4.76 | 0.03 | +1.7 | +1.7 | 0.74 | 108 | N |
+| 3 | XRP L 09-14 10:51 | -20.59 | -1.13 | 4.70 | 0.04 | +1.9 | +1.7 | 0.76 | 238 | N |
+| 6 | XRP L 09-14 20:23 | -22.93 | -1.07 | 9.19 | 0.41 | +3.5 | +2.8 | 0.84 | 1.3 | N |
+| 5 | XRP W (other) 09-14 15:44 | +19.78 | +1.91 | 4.48 | 0.05 | +0.9 | +1.8 | 0.70 | 2.6 | Y, not decisive |
+| 10 | ZEC OPEN 09-17 02:06 | +13.12 unreal. | +1.25 unreal. | 23.54 | 0.05 | +1.4 | +0.9 | 0.90 | 9.0 | N |
+
+**Totals:**
+- **Closed:** -$41.10 (n=9). The standard error of the sum is about $48, so the total is not a finding.
+- **By group:**
+  - ZEC winners: +$20.41 (+2.03R)
+  - Other winner: +$19.78 (+1.91R)
+  - Losers: -$81.29 (-4.33R)
+- **In R:** closed trades total -0.39R. The $ gap between groups is mostly the stake.
+
+### Design set: what differs (winners n=4 vs losers n=4; median [range])
+- **ROC24:** 5.04 [4.47-9.34] vs 6.60 [4.70-9.19]. AUC 0.375, p 0.69. Does not separate.
+- **% above the prior high:** 0.23 [0.08-0.66] vs 0.16 [0.03-0.41]. AUC 0.69, p 0.49. Does not separate.
+  - #2, #3 and #7 cleared it by 0.08% or less. #2 and #3 lost, #7 won.
+- **Same level, opposite result:** #2 and #4 crossed the same ZEC prior close high (1143.95) 4.1h apart. #2 lost $12.99 and #4 made $10.38.
+- **RSI:** 66.4 vs 75.9. Overlaps.
+- **ATR:** 0.96% vs 0.84%. AUC 0.81, but it drops to 0.75 on completed bars.
+- **Cross type:** 2/2 in each group.
+- **Complete splits** (one factor):
+  - ETH 24h: -2.65% vs +2.70%.
+  - Recorded breadth: 0.21 vs 0.78.
+  - Recorded alt median: -2.67% vs +1.90%.
+- **One trade on the wrong side:**
+  - BTC 24h: -1.24% vs +2.29% (#4).
+  - Hours since last same-symbol exit: 1.3 vs 173 (#6).
+  - S2 and S7: stand-ins for symbol and date.
+- **Market states:**
+  - The losers entered into broad rallies: 09-11, ETH +8.7%; 09-14, BTC +1.7 to +2.8% and breadth 0.74-0.84.
+  - #7 to #9 entered within 4h07m on 09-16, after the market-wide selloff around 09-15 18:42Z and 4.5-8.5h before FOMC.
+- **Noise:** 14 of the 43 reconciled columns reach AUC >= 0.80 (10 distinct features), and 3 split completely.
+  - Relabelling the same 8 trades gives >= 14 and >= 3 at p ≈ 0.14 each.
+  - Assuming independent columns, P(>= 14) is 0.035 at 43 columns and 0.50 at 68.
+
+### L: live fills 08-21T09:41Z to 09-10 (n=28: 13 wins, 15 losses, 13 UTC days)
+Below 0.5 means reversed.
+
+| Filter | AUC | Result |
+|---|---|---|
+| ETH 24h < 1.368% | 0.29, reversed (p .055) | kept 10 at +0.08R; removed 18 at +0.23R |
+| BTC 24h < 0.333% | 0.23, reversed (p .013) | kept 8 (1 win) at -0.79R; removed 20 at +0.57R (≈ +11.4R ≈ +$134 at $11.75, derived) |
+| Breadth proxy | 0.49 | null |
+| Alt median proxy | 0.41 | null |
+| ATR | 0.56 | null |
+| Volume z | 0.53 | null |
+| S2 | 0.34, reversed | |
+| S7 | 0.59 | 5 kept fills, all on 09-03 |
+| S8 | 0.50 | null |
+
+- **All 31 fills before 09-10:** ETH24 AUC 0.23 and BTC24 0.18, both reversed.
+- **All 40 closed live fills:** BTC24 AUC 0.66 with winners higher, breadth proxy 0.44.
+
+### C: 2-year corpus
+- **Engine:** the BAND/L3 walker via ROT/A. 1-day block bootstrap for CIs, and a time-shift placebo with 2,000 draws.
+- **Incumbent:**
+  - Y1 (Binance): -$42.95/mo, n=474.
+  - Y2 (MEXC): +$53.41/mo, n=375.
+
+| Filter | Y1 $/mo [CI] | Y2 $/mo [CI] | Pooled [CI] | Placebo p pooled |
+|---|---|---|---|---|
+| ETH 24h < 1.368% | +43.89 [+6.6, +78.6] | -12.28 [-53.4, +26.9] | +16.08 [-10.4, +43.1] | .032 |
+| BTC 24h < 0.333% | +50.02 [+11.3, +86.1] | -28.47 [-79.6, +19.5] | +11.15 [-20.2, +41.3] | .034 |
+| Breadth proxy < 0.637 | +23.71 [-13.4, +58.5] | -35.66 [-83.2, +8.2] | -5.69 [-34.9, +22.2] | .78 |
+| Alt median proxy < 0.707% | +22.28 [-12.2, +56.2] | -34.60 [-80.3, +7.3] | -5.88 [-33.7, +21.5] | .79 |
+| ATR > 0.884% | +33.96 [-0.4, +67.0] | -12.37 [-46.9, +18.9] | +11.02 [-12.9, +33.5] | .20 |
+| Volume z < 2.256 | +8.51 [-17.5, +33.6] | -4.37 [-37.1, +27.5] | +2.13 [-19.0, +23.1] | .51 |
+
+- **Ex-ETH, both arms:**
+  - ETH24: +$2.87/mo pooled (p .071).
+  - BTC24: -$2.52/mo pooled (p .084).
+  - Both lose in Y2.
+- **Per-fill AUC:** 0.46-0.54 for every feature (n=849).
+- **Breadth proxy:** built from MEXC hourly bars over 303 symbols.
+  - Against recorded live breadth: Pearson 0.92 (MAE 0.071, n=35), and 0.95 for alt median.
+  - Survivorship: only currently listed symbols are included.
+
+### Gate-change criteria (owner-set: CI excludes zero in Y1 AND Y2 AND on live history)
+- **Y1 CI excludes 0:** passes for ETH24 and BTC24 only.
+- **Y2 CI excludes 0: FAIL for all six.** Every point estimate is negative.
+- **Live history agrees: FAIL.** ETH24 and BTC24 are reversed; the rest are null.
+- **Pooled:** no CI excludes 0.
+
+### Relation to prior verdicts
+- **wc/BAND/record.md (TREND ROC, RSI, above-prior-high and near-high bands refuted):** reconfirmed. The gate margins carry no winner/loser signal here.
+- **wc/ZW (S1-S8 refuted):** reconfirmed.
+  - S2, S7 and S8 separate only as symbol and date stand-ins.
+  - Corpus AUC was .471, .522 and .492.
+  - Walk-forward: S2 -$18.51/mo, S7 -$17.62/mo at $23.50.
+- **DECISION_RULE breadth-family closure (L9073-9235), market-timing gates (L12775) and WILDCARD regime/BTC (L1888):** consistent. Not reopened.
+- **DECISION_RULE L1143 (TREND beta +0.448R per +1% same-day BTC):** matches the sign outside the design set and is opposite to the design set.
+- **DECISION_RULE L11854 (open forward test, market-wide extension degrades TREND):** needs about 40 entries with logged breadth, and 10 exist. This review does not settle it.
+- **2026-09-17 WCF process lesson:** applied. Every trade in both groups was included.
+
+### Durable outputs
+1. **Gate margins do not predict outcome on 09-10 to 09-17 either.** ROC24 AUC 0.375, above-high AUC 0.69.
+2. **"ZEC strong while the market falls" (low breadth, negative ETH/BTC 24h at entry) is a design-set artefact until a forward test passes.** On live history it is null or reversed. In corpus Y2 it loses $12-36/mo.
+3. **Process:** in owner-group comparisons, report manual /arm outcomes separately. 2 of the 4 ZEC winners here were made by the exit, not the entry.
+4. **Hazard: `tags.entry_3h_roc_pct` on TREND trades holds the 24h ROC** (matches on 9 of 9 to within 0.1pp). The true 3h ROC is 0.2-7.5%.
+5. **Hazard: `manual_arm_peak_r` disagrees with the `[MANUAL_ARM]` log line.** #7 shows 0.469 vs 0.61 and #9 0.545 vs 0.65. `peak_r` matches the log.
+6. **Hazard: closed TREND trades do not persist entry gate values** (ROC, RSI, ATR, % above high). Only open positions carry them.
+7. **Hazard: the recorded BTC/ETH 24h context uses an unidentified window.** #1 shows BTC 2.06 recorded vs 3.04 rebuilt, and #9 -1.53 vs -1.05.
+8. **Hazard: gates_A `hours_since_1600Z` is anchored at 15:00Z.** Use gates_B.
+9. **Reusable: the MEXC hourly breadth proxy** (gen/proxy.py) validates against recorded breadth.
+
+### Forward evidence needed before any gate change (proposed, NOT registered)
+- **Registration:** pre-register in DECISION_RULE before the next TREND entry, alongside L11854.
+- **Hypothesis:** TREND entries with recorded alt breadth < 0.686 (frozen design cut) earn more R per fill than those above it.
+- **Sample:** the next 40 TREND entries, excluding these 10.
+  - At about 1.4 entries/day that is roughly mid-October.
+- **Scoring:** booked R, and again with manual-armed trades removed.
+- **Pass:** 95% CI on the R-per-fill difference excludes 0 with the design sign, and the effect is >= +$10/mo at $11.75.
+- **Detectable gap at n=40:** about 0.7R per fill (from per-fill SD 1.10R, n=9). The design gap is 1.59R; the corpus says about 0.
+- **After a pass:** re-run the corpus, where Y2 currently opposes the hypothesis.
+
+### Unresolved (I don't know)
+- The outcome of #7 and #9 without the manual arm.
+- Why `manual_arm_peak_r` differs from the log.
+- Which window the recorded BTC/ETH 24h tags use.
+- Whether the ~1.4 TREND entries/day rate holds.
+- S4-S6: B has values and A does not, so they cannot be reconciled. S5 AUC is 0.125 but it was already refuted in ZW.
+- OI 24h change: not available from MEXC public endpoints.
+- The final result of the open #10.
+
+### Files
+Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/ZT/`:
+- `raw/`: trades, logs, env, live state copies.
+- `gates_A/`
+- `gates_B/`
+- `gen/`: reconciliation, noise, live, corpus, proxy.
+- `answer.md`
