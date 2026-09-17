@@ -14729,3 +14729,112 @@ All under C:/Users/Rocot/AppData/Local/Temp/wc/SKIP/:
 - **Corpus rebuild** (C-trend-verify/): v1_rebuild.py, vengine.py, v2_placebo.py, v3_proxy_check.py, v4_extra.py.
 - **Lane L** (L/): l1_build_live.py … l5_resolver_check.py, results.json, robust.json.
 - **Live rebuild** (L-live-verify/): v1_build.py … v6_misc.py, v4_trend_reentry.py, v5_trend_chain.py.
+
+---
+
+## 2026-09-17 - WILDCARD OWNER CONFIG (3h move 8-11%, range 7-100%, breadth < 50%): DO NOT SHIP
+
+**Asked (owner):** test three WILDCARD conditions on both sides:
+- C1: 8% <= |3h move| < 11%
+- C2: 7% <= 24h range < 100%
+- C3: breadth < 0.50
+
+PRIMARY means all three together. The study was pre-registered in `wc/WCF/PREREG.md` with 3 evidence lines (E replay, L live, S shadow) and verifiers on E and L. S was not verified.
+
+**Verdict: DO NOT SHIP. Kill criteria (a), (b) and (c) fail in every replay variant. (d) and (e) do not fire.**
+- The effect is between about -$50 and +$2/mo, with intervals of about ±$150/mo.
+- This means no detectable effect. It does NOT mean "shown harmful".
+- No code or env change.
+
+### Provenance (governs the reading)
+- **The owner's sample was incomplete.** The design window (09-13 to 09-17 09:46Z) held 18 WILDCARD entries (+$24.61), not 12.
+  - The 12 examined were the 11 winners plus the BR short.
+  - The 6 losers (-$61.61) were not in view: STORJ, LSK 16:14, CVC short, REZ long, REZ short, NIULAI short.
+- **The rule does not reproduce the owner's split** when coded as specified. On the 12, only BR is classified as intended. On all 18, PRIMARY keeps 5 (+$6.27) and refuses 8 of the 11 winners.
+- I don't know whether the owner measured ROC, range or breadth differently from the bot.
+
+### E: replay, 2026-02-05 to 09-12 (220 days)
+All figures are $/mo with a 95% day-block interval. Replay sizing averages $15.94 per 1R.
+
+| Variant | Today | PRIMARY | Difference | Quarters won | Placebo p (deletion / random refusal) |
+|---|---|---|---|---|---|
+| Lane E as specified | +48.78 [-114, +219], 138.2 fills/mo | +13.00 [-81, +116], 35.1 fills/mo | -35.78 [-185, +112] | 1/4 | 0.73 / 0.56 |
+| Independent rebuild (new listings included) | +26.22 [-137, +195], 139.3 fills/mo | +16.57 [-77, +116], 35.4 fills/mo | -9.65 [-164, +139] | 1/4 | 0.81 / 0.52 |
+| Rebuild + live pre-emption | +19.37, 162.6 fills/mo | +21.40 | +2.02 [-151, +151] | 1/4 | 0.52 / 0.48 |
+| Flat $23.50/R | +54.97 | +4.67 | -50.30 | - | - |
+
+**Quarter differences ($ per quarter):**
+- As specified: -57 / -163 / -223 / +184
+- Rebuild: -51 / -71 / -189 / +241
+
+**Single conditions and side-restricted configs** (reported only):
+
+| Filter | Fills/mo | Lane E difference ($/mo) | Rebuild difference ($/mo) |
+|---|---|---|---|
+| C1 alone | 69.5 | +0.07 [-135, +129] | +29.60 |
+| **C2 alone** | 120.4 | **-99.27 [-184, -22]** | **-88.89 [-173, -12]** |
+| C3 alone | 73.7 | +10.92 [-104, +124] | +16.40 [-101, +131] |
+| PRIMARY on longs only | 71.9 | -10.20 [-142, +117] | +13.17 |
+| PRIMARY on shorts only | 113.9 | -11.66 [-83, +58] | not run |
+
+**Recent-window sensitivity, 06-16 to 09-12** (not pre-registered):
+- Rebuild: +163.88 [-80, +389], 4/4 quarters, placebo p 0.16 / 0.096.
+- Random deletion alone gains +104.61/mo in that window ("trade less in a losing window").
+- Still fails (a) and (b).
+
+**Replay fidelity:**
+- **Fill rate:** the replay fills 2.1x as often as live on the clean stretch (149.5 vs 71.4 fills/mo). The gap is mainly detection timing (completed bars only).
+- **Matched trades:** correlation 0.83, but the replay reads 0.17R low and clips the +5R tail.
+- **Not modelled:** the external listing veto.
+
+### L: live fills, 08-21T09:41Z to 09-12 (53 fills, 71.4 fills/mo)
+- **Today:** -$109/mo booked [-283, +54].
+- **PRIMARY:** keeps 9 fills (12.1 fills/mo).
+- **Effect of the refusals:**
+  - Booked: +$39.6/mo [-151, +225], placebo p 0.91.
+  - At $23.50/R: -$2.5/mo [-503, +473], placebo p 0.68.
+- **Per fill:** kept -0.254R (33% winners), refused +0.002R (48%).
+- **The booked gain is a sizing-period artefact:** median 1R was $2.4 before 09-06 and $18.0 after.
+- **(d) does not fire:** live shows no effect in either direction.
+- **C3 alone:** the earlier p 0.059 came from top-of-hour stale breadth. Corrected, p is 0.38 / 0.28.
+- **Unresolved:** the fall-through entries PRIMARY would take are unpriced. The probe found 3, worth +3.72R, which is too few to use.
+
+### S: shadow candidates, 07-23 to 09-12 (82 rows, about 1.7 months; UNVERIFIED)
+- **PRIMARY keeps** 10 (5.9/mo, -0.370R) and **refuses** 71 (41.7/mo, -0.086R).
+- **Refused minus kept:** +$6.67 per row [-8.08, +20.14], so the refused rows were not worse. This holds in all 9 variations.
+- **C1 alone:** -$4.96 per row [-21.39, +10.29], leaning the owner's way.
+- **C3 alone:** +$9.42 [-1.20, +21.48], leaning against.
+- **Caveat:** other live gates had already refused 62 of the 82 rows.
+
+### Kill criteria
+- **(a) FAIL:** no variant reaches +$10/mo, and every interval includes 0.
+- **(b) FAIL:** placebo p between 0.48 and 0.81.
+- **(c) FAIL:** 1 of 4 quarters in every variant.
+- **(d) does not fire:** live shows no effect.
+- **(e) does not fire:** the rebuild's -$9.65 has the same sign. The sign is not robust: it flips to +$2.02 once pre-emption is modelled.
+
+### Relation to prior verdicts
+- **2026-09-07 WILDCARD verdict:** reconfirmed. The top 5 replay fills make +$539 of a +$353 total, and without them the book runs -$25.85/mo.
+- **2026-09-09 regime study and the 2026-09-10 breadth-gate family closure:** consistent. A 0.50 breadth cap is the same family, and it is not reopened.
+- **2026-12-10 pre-registered breadth review:** stands unchanged. This study does not replace it or feed into it, because it used reconstructed breadth and a different statistic.
+
+### Durable outputs
+1. **Never cap WILDCARD at a 24h range below 100%.** It is the only cell here whose interval excludes zero, at -$89 to -$99/mo. Names at or above 100% range carry the sleeve: 174 replay fills at +0.262R, +$808 in total, +$355 without the top 5.
+2. **A 3h-move ceiling of 11% does nothing.** Fills on both sides of the cut average +0.017R.
+3. **Hazard:** the REACH hourly breadth series is unfit for fill-level classification. It prices up to 59 minutes stale and patches the 16:xx hour with look-ahead. Use a causal 15-min engine outside 16:xx and Min1 anchored on the 16:00Z open inside it. Both validate against recorded breadth.
+4. **Hazard:** `wc/WCF/E/e03_candidates.py` skips each symbol's first 260 bars, which silently drops new listings. The live detector needs only 28 bars.
+5. **Process:** a design set must be every entry in its window, not a hand-picked subset.
+
+### Unresolved (I don't know)
+- The true sign of an effect smaller than about $50/mo. This book cannot resolve a +$10 bar.
+- How the owner measured the three numbers.
+- The sign of the live R-priced result once fall-through entries are priced.
+- Whether the listing veto interacts with C2 (n = 18).
+
+### Files
+Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/WCF/`:
+- `PREREG.md`
+- `E/` and `E-replay-verify/`
+- `L/` and `L-live-verify/`
+- `S/`
+- `answer.md`
