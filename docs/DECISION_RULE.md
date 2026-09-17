@@ -14842,7 +14842,7 @@ Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/WCF/`:
 ## 2026-09-17 - WILDCARD LONGS-ONLY 24h RANGE CAP 200%: SHIPPED (owner decision)
 
 **Asked (owner):** "ship the longs-only 200% cap", after the range-ceiling study (wc/WCR/, pre-registration PREREG.md plus AMENDMENT_1.md
-"does it prevent losing trades from being opened?"). The full study record is appended separately.
+"does it prevent losing trades from being opened?"). The full study record follows this entry.
 
 **What shipped:** `FUTURES_WILDCARD_LONG_MAX_24H_RANGE=2.0`. A WILDCARD LONG candidate whose ticker 24h range (high24-low24)/low24 is
 >= 200% is refused before ranking, so the next candidate may enter. It is shadow-logged as `long_range_cap(x)`. Shorts are unchanged,
@@ -14851,9 +14851,11 @@ and the code default is 0 (off).
 **Evidence at ship time (read this as a preference, not an edge):**
 | Window | Longs refused | Losers / winners | Loser share: refused vs kept | Net R of refusals | Book $/mo vs today |
 |---|---|---|---|---|---|
-| Replay 2026-02-05 -> 09-12 | 20 | 16 / 4 | 80% vs 55% (Fisher p 0.02) | +3.6R | +9.08 [-28.9, +40.0]; rebuild +0.86 |
-| Unseen holdout 2025-10-01 -> 2026-02-04 | 11 | 7 / 4 | 64% vs 52% (p 0.32) | -1.5R | -5.09 [-53.9, +41.3] |
-| Live 08-21 -> 09-17 | 0 | - | - | - | - |
+| Replay 2026-02-05 -> 09-12 | 20 | 16 / 4 | 80% vs 55% (Fisher p 0.02) | +3.6R (+2.5R after replacement fills) | +9.08 [-28.9, +40.0] |
+| Rebuild V / VP | 21 / 26 | 17 / 4, 21 / 5 | Fisher 0.015 / 0.013 | +3.0R / +1.8R net | +10.54 / -4.12 |
+| Unseen holdout 2025-10-01 -> 2026-02-04 | 11 | 7 / 4 | 64% vs 52% (p 0.32) | -1.5R (-1.3R net) | -5.09 [-53.9, +41.3] |
+| Live 08-21 -> 09-12 | 0 | - | - | - | - |
+| Design window 09-13 -> 09-17 (not evidence) | 2 (LSK 1060%, 972%) | 1 / 1 | - | +0.53R (-$12.05 avoided, +$6.08 forgone) | - |
 
 - **Losers:** it refuses mostly losers in both windows, 23 of 31.
 - **Dollars:** about $0 net, roughly +$4/mo at $23.50/R. A single blocked winner decides the sign: TUT 08-09 made +5R and +$106.
@@ -14870,3 +14872,323 @@ unaffected. K4 (book equity -15%) is affected by at most about 1 refused long pe
 - **KEEP** if the refused rows' loser share is >= the kept WILDCARD longs' loser share over the same period and the refused rows'
   summed R is <= 0.
 - **Otherwise REMOVE** (set the variable to 0).
+
+## 2026-09-17 - WILDCARD 24h RANGE CEILING (120-400%): DO NOT SHIP
+
+**Asked (owner):** BR_USDT short on 2026-09-17 had a 238% 24h range and lost. Would a ceiling on the 24h range ("maybe 200%, or 150%") cut crazy trades like it? AMENDMENT_1 (written 14:00 while the lanes were computing, before any result was read) replaced the headline with the owner's question: **does the cap prevent losing trades from being opened?** Kill criteria (a)-(f) stay as the $ guardrail.
+
+- Pre-registered in `wc/WCR/PREREG.md` and `AMENDMENT_1.md`.
+- Rule: CAP_x refuses a WILDCARD candidate when range24 >= x. range24 is the trailing-24h high/low range as a fraction (2.38 = 238%).
+- Ship cells: CAP_150, CAP_200, SHORTS-ONLY CAP_150, SHORTS-ONLY CAP_200. Everything else is reported only.
+- Evidence: E replay, V/VP rebuild, H unseen holdout, L live (reported only). Verifiers: verify_EV (E+V), verify_H (H). Loser-filter lanes: LF_E, LF_V, LF_H, LF_L.
+- No lane was null or failed.
+
+**Verdict: DO NOT SHIP.**
+- **Owner's question (AMENDMENT_1): the cap is not a loser filter.** Rules (1), (2) and (3) all fail in all 4 ship cells.
+- **Guardrail:** kill criteria (a), (b), (c) and (f) fail in all 4 ship cells. (d) and (e) do not fire.
+- No code or env change.
+
+**Conventions.**
+- 1R = $23.50 (equity 23.50/0.0241, risk 2.41% of available, non-compounding).
+- Loser-filter $ = R x $23.50. Grid $/month is booked through `pit_book.take` (available-margin sizing; mean risk per fill $20.77 on E, $20.65 on H).
+- Months = days / 30.4375. Intervals are 95% day-block bootstrap, 10,000 resamples.
+- LOSER = net R < 0. STOP-OUT = hard stop or early stop. Fisher p is one-sided (refused group loses more often) unless marked.
+- NET R = -(refused R) + replacement R, where replacement = fills that exist only in the cap book. Displaced fills (kept fills pushed out by replacements) are not in NET R, per the amendment's wording "net of replacement fills".
+- **No NET R / NET $ figure in this record has an interval.** The $/month grid carries the intervals.
+
+### AMENDMENT_1 reading rule, per ship cell (the headline)
+
+| Rule | CAP_150 | CAP_200 | SHORTS-ONLY CAP_150 | SHORTS-ONLY CAP_200 |
+|---|---|---|---|---|
+| (1) E: refused loser share >= kept + 10pp, p <= 0.10 best-of-4 | **FAIL** 49.4% (n 81) vs 56.0%, -6.6pp, Fisher 0.897 | **FAIL** 62.2% (n 45) vs 55.1%, +7.1pp, Fisher 0.218 / perm 0.217 | **FAIL** 40.5% (n 42) vs 56.1%, -15.6pp, Fisher 0.984 | **FAIL** 48.0% (n 25) vs 55.6%, -7.6pp, Fisher 0.832 |
+| (2) E: losses avoided >= wins forgone in R, net of replacements | **FAIL** 29.00 vs 49.79; repl 36 fills -2.96 -> NET -23.75R (-$558) | **FAIL** 20.38 vs 23.51; repl 21 fills -1.51 -> NET -4.64R (-$109) | **FAIL** 10.75 vs 22.72; repl 27 fills -2.93 -> NET -14.90R (-$350) | **FAIL** 7.70 vs 14.44; repl 14 fills -1.41 -> NET -8.15R (-$192) |
+| (3) same direction on H and V | **FAIL** gap V -5.8 / VP -1.1 / H +5.4pp; NET V -22.22 / VP -18.55 / H +13.46R | **FAIL** gap V +7.5 / VP +8.3 / H +13.6pp (same sign); NET V -4.13 / VP -2.37 / H +7.49R (H opposite) | **FAIL** gap V -16.1 / VP -8.5 / H +6.0pp; NET V -14.38 / VP -9.05 / H +5.75R | **FAIL** gap V -8.1 / VP -6.4 / H +14.8pp; NET V -8.15 / VP -4.18 / H +8.78R |
+
+- **Best-of-4 on E:** CAP_200 at +7.1pp, family permutation p 0.366. That uses 20,000 shared label shuffles, seed 20260917; the null best-gap median is +4.7pp and its 95th percentile +17.0pp.
+- **Other lines:** V 0.368, VP 0.325 (shared shuffles); H 0.398 (independent refused sets per cell). No line reaches 0.10.
+- **Rule (3), how it was read:** under either reading of "direction", all 4 cells fail. Reading one is "H and V also look like a loser filter" (gap > 0 and NET >= 0). Reading two is "H and V have the same sign as E on both gap and NET".
+- **Rule (2) with displaced fills added** (book R change, which is not the amendment's definition):
+  - CAP_200 is +1.89R, but that same book is -$25.36 booked (-3.51/mo).
+  - The other three are -16.21 / -11.10 / -5.36R.
+  - Reported only; not used.
+
+### Kill criteria (guardrail), per ship cell
+
+| Criterion | CAP_150 | CAP_200 | SHORTS-ONLY CAP_150 | SHORTS-ONLY CAP_200 |
+|---|---|---|---|---|
+| (a) E >= +$10/mo and CI excludes 0 | **FAIL** -46.39 [-110.3, +12.5] | **FAIL** -3.51 [-49.0, +37.5] | **FAIL** -27.50 [-60.6, +3.9] | **FAIL** -14.88 [-42.5, +10.1] |
+| (b) family-wise best-of-4 deletion placebo p <= 0.10 | **FAIL** 0.9782 (cell 0.9674) | **FAIL** 0.9782 (cell 0.6163) | **FAIL** 0.9782 (cell 0.9367) | **FAIL** 0.9782 (cell 0.8578) |
+| (c) >= 3/4 E quarters positive | **FAIL** 0/4 (-25.3 / -5.4 / -89.1 / -215.6 $) | **FAIL** 1/4 (-5.4 / +135.9 / -16.9 / -138.9) | **FAIL** 1/4 (-4.6 / +24.0 / -72.4 / -145.8) | **FAIL** 1/4 (-5.4 / +34.1 / -44.6 / -91.6) |
+| (d) H point estimate > 0 | does not fire: +48.75 [-13.8, +117.7] | does not fire: +27.81 [-23.4, +81.6] | does not fire: +27.94 [-10.0, +71.2] | does not fire: +34.29 [-0.9, +75.8] |
+| (e) V and VP same sign as E | does not fire: -42.92 / -33.85 | does not fire: -1.97 / -0.47 | does not fire: -26.13 / -11.99 | does not fire: -14.80 / -5.75 |
+| (f) E refused meanR below kept meanR | **FAIL** +0.257 vs -0.004 | **FAIL** +0.070 vs +0.014 | **FAIL** +0.285 vs +0.005 | **FAIL** +0.269 vs +0.010 |
+
+- The best cell is CAP_200. It fails (a), (b), (c) and (f).
+- Under (e), E, V and VP agree only in sign, and that sign is negative.
+- The placebo is 10,000 draws; verify_EV got 0.9758 on 5,000 draws.
+
+### Provenance (governs the reading)
+- **One-trade origin.** The idea came from BR, which is in the design window (09-13 to 09-17T09:46Z). That window is excluded from every pass/kill statistic.
+- **Power was known to be short.** The PREREG recorded that a +$10/mo effect is undetectable here, so "inconclusive" was the expected outcome unless the tail was strongly negative. On E the tail is not negative.
+- **Prior knowledge.** WCF had shown that a 100% cap costs -$89 to -$99/mo and that the >= 100% tail was 174 fills at +0.262R. The 150/200/300% split had not been looked at.
+- **Amendment timing.**
+  - Lanes E, V and H were specified before AMENDMENT_1 and did not implement it. The loser-filter metrics were computed afterwards by LF_E, LF_V, LF_H and LF_L, with the same engines, after the $ grids existed.
+  - The reading rule was fixed before any result was read, so the reading is mechanical.
+  - Cross-checks on the loser counts:
+    - E: verify_EV `ev2_extra.txt` reproduces the 4 ship-cell loser shares and Fisher p.
+    - H: `verify_H/v05` reproduces them. Its "net" of +14.4 / +9.3 / +8.1 / +10.6R includes displaced fills.
+    - V: lane V's own table reproduces them (CAP_200 Fisher 0.199 V, 0.146 VP).
+- **Reruns.**
+  - An earlier 14:00 run of lanes E and V (cited by the 15:04 record) is archived in `E/_prev_run_1400/` and `V/prior_run_1400/`.
+  - The V rerun saw the earlier outputs, so it is not blind.
+  - Every grid number reproduced exactly. Only seed-dependent placebo p moved: E family 0.9795 -> 0.9782; V 0.985 -> 0.990; VP 0.952 -> 0.944.
+  - The earlier verify_EV run is in `verify_EV/_prev_run_1407/`. The 15:04 `record.md` and `answer.md` are in `_prev_record_1504/`.
+- **This record supersedes the 15:04 record** on four points:
+  1. Rule (2) for CAP_200 was read there as "pass in R" using book R including displaced fills. By the amendment's definition it fails (-4.64R).
+  2. Rule (3) is now evaluated on NET R as well as on the gap.
+  3. The loser counts are now cross-checked.
+  4. STORJ (148.3%) was said to be "kept by every cap". CAP_120 refuses it.
+- **Family-p construction is not specified in PREREG or AMENDMENT_1.** V: 0.368 with shared shuffles, 0.559 with independent draws. VP: 0.321-0.325 vs 0.477. The $ placebo uses independent matched deletions per cell. The verdict is the same under every construction.
+- **PREREG count correction.**
+  - "Live post-wall fills >= 150%: 4" is 1 out of sample (TAC 212%) plus 3 in the design window (LSK 1060%, LSK 972%, BR 238%).
+  - "Shadow >= 150%: 5" is 4 non-design rows plus AIN 09-17, which is in the design window.
+- **H decisions start 2025-10-01**, not 09-22, because of the 9-day warmup that matches E.
+- **Prose errors found by verifiers.** Lane E: among the bottom 10 of the >= 150% fills, 8 are longs, not 7. Lane V: CAP_200 Q1 is -3.47, not -4.
+- **Placebo size mismatch.** The placebo deletes fewer rows than a cap removes: CAP_150 removes 113 candidate rows but the placebo deletes 81 fills (CAP_200 59 vs 45, SO150 60 vs 42, SO200 32 vs 25). With every family p > 0.97, this cannot rescue a cell.
+- **Range data gaps.** 1 of 999 E fills has fewer than 96 bars in its 24h window: BTW_USDT long 06-05, range 1.887 from 63 bars, +1.13R. If its true range was >= 2.0, CAP_200 would refuse one more winner. I don't know its true range.
+
+### E: replay 2026-02-05 to 09-12 (220 d, 7.23 mo, 1,681 non-major candidates)
+- **Incumbent:** 999 fills (138.2/mo), 554 losers (55.5%), 445 winners, 524 stop-outs, 17 TP. Totals: +16.91R, +$48.78/mo [-113.6, +218.8].
+- **Harness:** CAP_100 = WCF C2 exactly (870 fills, 174 refused, -99.27 [-184.3, -22.1]).
+- **verify_EV:** 6/6 checks PASS. Field, direction, units and causality are correct; bands and cells were rebuilt with independent code.
+
+| Cell | Ref n | Los / Win | Stop / TP | Loser % ref vs kept | Gap pp | Fisher 1s | Avoided R | Forgone R | Repl n (los) / R | NET R ($) | Diff $/mo [95% CI] | Q+ | Ref meanR vs kept |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CAP_100 (WCF) | 174 | 83 / 91 | 81 / 4 | 47.7 vs 57.1 | -9.4 | .990 | 62.62 | 108.22 | 66 (38) / -2.78 | -48.38 (-1,137) | -99.27 [-184.3, -22.1] | 0/4 | +0.262 vs -0.035 |
+| CAP_120 | 124 | 61 / 63 | 60 / 3 | 49.2 vs 56.3 | -7.1 | .944 | 44.73 | 70.26 | 45 (27) / -7.82 | -33.35 (-784) | -54.73 [-124.4, +8.6] | 0/4 | +0.206 vs -0.010 |
+| **CAP_150** | 81 | 40 / 41 | 39 / 3 | 49.4 vs 56.0 | -6.6 | .897 | 29.00 | 49.79 | 36 (21) / -2.96 | -23.75 (-558) | -46.39 [-110.3, +12.5] | 0/4 | +0.257 vs -0.004 |
+| **CAP_200** | 45 | 28 / 17 | 27 / 2 | 62.2 vs 55.1 | +7.1 | .218 | 20.38 | 23.51 | 21 (13) / -1.51 | -4.64 (-109) | -3.51 [-49.0, +37.5] | 1/4 | +0.070 vs +0.014 |
+| CAP_250 | 27 | 15 / 12 | 15 / 2 | 55.6 vs 55.5 | +0.1 | .576 | 10.14 | 18.39 | 9 (5) / +2.44 | -5.81 (-137) | -9.74 [-50.4, +24.8] | 1/4 | +0.306 vs +0.009 |
+| CAP_300 | 22 | 12 / 10 | 12 / 1 | 54.5 vs 55.5 | -0.9 | .622 | 8.62 | 15.28 | 8 (4) / +2.59 | -4.08 (-96) | -9.03 [-48.0, +21.9] | 1/4 | +0.303 vs +0.010 |
+| CAP_400 | 11 | 6 / 5 | 6 / 0 | 54.5 vs 55.5 | -0.9 | .646 | 5.06 | 4.92 | 7 (4) / +0.99 | +1.13 (+27) | -0.61 [-19.6, +21.4] | 2/4 | -0.013 vs +0.017 |
+| SO CAP_120 | 57 | 25 / 32 | 24 / 1 | 43.9 vs 56.2 | -12.3 | .974 | 16.33 | 27.28 | 32 (16) / +0.16 | -10.79 (-254) | -16.64 [-51.1, +16.8] | 1/4 | +0.192 vs +0.006 |
+| **SO CAP_150** | 42 | 17 / 25 | 16 / 1 | 40.5 vs 56.1 | -15.6 | .984 | 10.75 | 22.72 | 27 (15) / -2.93 | -14.90 (-350) | -27.50 [-60.6, +3.9] | 1/4 | +0.285 vs +0.005 |
+| **SO CAP_200** | 25 | 12 / 13 | 11 / 1 | 48.0 vs 55.6 | -7.6 | .832 | 7.70 | 14.44 | 14 (8) / -1.41 | -8.15 (-192) | -14.88 [-42.5, +10.1] | 1/4 | +0.269 vs +0.010 |
+| SO CAP_250 | 16 | 7 / 9 | 7 / 1 | 43.8 vs 55.6 | -11.9 | .885 | 4.57 | 10.02 | 7 (4) / +1.03 | -4.43 (-104) | -5.85 [-26.5, +11.6] | 1/4 | +0.341 vs +0.012 |
+| SO CAP_300 | 14 | 7 / 7 | 7 / 0 | 50.0 vs 55.5 | -5.5 | .754 | 4.57 | 6.91 | 6 (3) / +1.17 | -1.17 (-28) | -1.27 [-15.4, +11.8] | 2/4 | +0.168 vs +0.015 |
+| SO CAP_400 | 7 | 3 / 4 | 3 / 0 | 42.9 vs 55.5 | -12.7 | .854 | 2.53 | 3.81 | 4 (2) / +0.58 | -0.70 (-16) | -4.67 [-17.8, +6.9] | 2/4 | +0.183 vs +0.016 |
+| LO CAP_120 | 67 | 36 / 31 | 36 / 2 | 53.7 vs 55.6 | -1.8 | .664 | 28.40 | 42.98 | 21 (14) / -7.64 | -22.22 (-522) | -39.17 [-100.5, +13.5] | 1/4 | +0.218 vs +0.002 |
+| LO CAP_150 | 39 | 23 / 16 | 23 / 2 | 59.0 vs 55.3 | +3.7 | .389 | 18.25 | 27.07 | 12 (8) / -0.79 | -9.61 (-226) | -16.22 [-72.9, +32.8] | 1/4 | +0.226 vs +0.008 |
+| LO CAP_200 | 20 | 16 / 4 | 16 / 1 | 80.0 vs 55.0 | +25.0 | .020 | 12.68 | 9.08 | 8 (6) / -1.10 | +2.50 (+59) | +9.08 [-28.9, +40.0] | 3/4 | -0.180 vs +0.021 |
+| LO CAP_250 | 11 | 8 / 3 | 8 / 1 | 72.7 vs 55.3 | +17.5 | .198 | 5.58 | 8.37 | 3 (2) / +0.40 | -2.39 (-56) | -7.58 [-43.9, +21.3] | 2/4 | +0.254 vs +0.014 |
+| LO CAP_300 | 8 | 5 / 3 | 5 / 1 | 62.5 vs 55.4 | +7.1 | .488 | 4.05 | 8.37 | 3 (2) / +0.40 | -3.92 (-92) | -11.46 [-47.6, +17.0] | 2/4 | +0.540 vs +0.013 |
+| LO CAP_400 | 4 | 3 / 1 | 3 / 0 | 75.0 vs 55.4 | +19.6 | .398 | 2.53 | 1.10 | 3 (2) / +0.40 | +1.83 (+43) | +4.06 [-9.1, +23.2] | 3/4 | -0.356 vs +0.018 |
+
+SO = shorts-only, LO = longs-only. Bold = ship cells. Avoided/forgone/NET $ = R x $23.50; Diff $/mo is booked.
+
+- **Replacements lose about as often as the book.** At CAP_150, 21 of 36 lost; at CAP_200, 13 of 21. A refused loser mostly makes room for another loser.
+- **Placebo medians:** the random deletion placebo improves the book by +1.5 to +2.8 $/mo, so every ship cell does worse than a random cut of the same size.
+- **Early stop off:** same sign in all 4 ship cells (-43.87 / -4.59 / -17.92 / -8.84).
+- **CAP_150 $ decomposition** (identity residual < 6e-14), total -$335.30:
+  - refused -418.49
+  - replacements -78.91
+  - displaced losers +115.98
+  - resize +46.11
+- **CAP_200 $ decomposition**, total -$25.36:
+  - refused -118.49
+  - replacements -37.19
+  - displaced losers +96.78
+  - resize +33.55
+  - Without the displaced-loser knock-on: about -$17/mo.
+- **LONGS-ONLY CAP_200 (reported only, post hoc, 1 of 19 cells, no multiplicity correction).**
+  - The only cell with Fisher p <= 0.10: 16 of 20 refused lost.
+  - V: 17 of 21, Fisher 0.015, NET +3.01R. VP: 21 of 26, Fisher 0.013, NET +1.81R.
+  - $/mo: V +10.54, VP -4.12, H -5.09.
+  - On H its 11 refused fills (7 losers) averaged +0.134R, NET -1.29R.
+  - It cannot ship from this study.
+- **Tail extremes, E >= 150%** (81 fills: 41 winners at 49.79R, 40 losers at 29.00R).
+  - Of the 40 losers: 21 early stops at -0.51R, 18 hard stops at about -1.01R, 1 timeout at -0.10R. Worst booked: SIREN short 246%, -$18.86.
+  - Top winners:
+    - B3 long 167%: +4.99R TP, +$106.35
+    - TUT long 307%: +4.99R TP, +$106.20
+    - ESPORTS short 265%: +2.49R TP, +$46.02
+    - VELVET long 153%: +2.90R
+    - LYN long 155%: +2.53R
+    - DEXE long 155%: +2.29R
+
+### Tail anatomy (incumbent fills by range24 band; $ booked)
+
+| Band | E n | E loser% | E stop% | E TP% | E meanR (mean win / mean loss) | E $ (w/o top 3) | E longs n / L% / meanR / $ | E shorts n / L% / meanR / $ | H n / L% / meanR / $ | H longs n / L% / meanR | H shorts n / L% / meanR |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| [7%, 50%) | 472 | 54.2 | 51.9 | 1.7 | +0.025 (+1.031 / -0.824) | +371.51 (+47.22) | 335 / 55.8 / +0.029 / +407.63 | 137 / 50.4 / +0.016 / -36.12 | 321 / 53.6 / +0.001 / +70.82 | 243 / 58 / -0.081 | 78 / 41 / +0.256 |
+| [50%, 100%) | 353 | 60.9 | 56.1 | 1.4 | -0.115 (+1.001 / -0.831) | -827.42 (-1,073.71) | 227 / 64.8 / -0.154 / -684.80 | 126 / 54.0 / -0.045 / -142.62 | 179 / 53.1 / +0.042 / +88.86 | 123 / 54 / +0.045 | 56 / 50 / +0.034 |
+| [100%, 150%) | 93 | 46.2 | 45.2 | 1.1 | +0.267 (+1.169 / -0.782) | +389.98 (+148.87) | 65 / 41.5 / +0.396 / +409.33 | 28 / 57.1 / -0.033 / -19.35 | 45 / 33.3 / +0.274 / +196.34 | 31 / 45 / +0.158 | 14 / 7 / +0.531 |
+| [150%, 200%) | 36 | 33.3 | 33.3 | 2.8 | +0.490 (+1.095 / -0.718) | +300.00 (+112.27) | 19 / 36.8 / +0.654 / +218.22 | 17 / 29.4 / +0.308 / +81.78 | 19 / 47.4 / -0.067 / -14.62 | 12 / 50 / -0.171 | 7 / 43 / +0.112 |
+| [200%, 300%) | 23 | 69.6 | 65.2 | 4.3 | -0.154 (+1.176 / -0.735) | -37.78 (-141.33) | 12 / 91.7 / -0.660 / -114.50 | 11 / 45.5 / +0.399 / +76.72 | 10 / 70.0 / -0.140 / -35.32 | 3 / 67 / -0.114 | 7 / 71 / -0.151 |
+| [300%, inf) | 22 | 54.5 | 54.5 | 4.5 | +0.303 (+1.528 / -0.718) | +156.27 (-11.32) | 8 / 62.5 / +0.540 / +97.92 | 14 / 50.0 / +0.168 / +58.35 | 13 / 61.5 / +0.032 / +22.11 | 8 / 62 / +0.226 | 5 / 60 / -0.280 |
+
+**Refused groups by side, all lines** (n / loser % / meanR):
+
+| Group | E | V | VP | H | Live OOS | Design (excluded) |
+|---|---|---|---|---|---|---|
+| All >= 150% | 81 / 49.4 / +0.257 | 83 / 50.6 / +0.238 | 98 / 57.1 / +0.165 | 42 / 57.1 / -0.054 | 1 / 0 / +1.35 (TAC S) | 3 / 67 / -0.42 |
+| All >= 200% | 45 / 62.2 / +0.070 | 46 / 63.0 / +0.057 | 53 / 66.0 / +0.021 | 23 / 65.2 / -0.043 | 1 / 0 / +1.35 | 3 / 67 / -0.42 |
+| Shorts >= 150% | 42 / 40.5 / +0.285 | 42 / 40.5 / +0.285 | 48 / 50.0 / +0.180 | 19 / 57.9 / -0.088 | 1 / 0 / +1.35 | 1 / 100 / -0.73 (BR) |
+| Shorts >= 200% | 25 / 48.0 / +0.269 | 25 / 48.0 / +0.269 | 27 / 51.9 / +0.184 | 12 / 66.7 / -0.205 | 1 / 0 / +1.35 | 1 / 100 / -0.73 (BR) |
+| Longs >= 150% | 39 / 59.0 / +0.226 | 41 / 61.0 / +0.190 | 50 / 64.0 / +0.150 | 23 / 56.5 / -0.025 | 0 | 2 / 50 / -0.27 (LSK x2) |
+| Longs >= 200% | 20 / 80.0 / -0.180 | 21 / 81.0 / -0.196 | 26 / 80.8 / -0.148 | 11 / 63.6 / +0.134 | 0 | 2 / 50 / -0.27 |
+
+- **Where the tail's wins sit.** TP share rises with range (1.1-1.7% below 150%, 2.8-4.5% above), and mean winner R rises with it (+1.10 to +1.53R above 150%). Tail losers are floored near -0.72R on average.
+- **BR's group is not the problem on E.** Shorts at 200-300% were 11 fills at 45.5% losers, +0.399R. H reverses this: shorts >= 200% were 12 fills at 66.7% losers, -0.205R. No side story is stable across windows.
+- **The repeating high-loser pocket is longs >= 200%.** Loser share is 80 / 81 / 81 / 64% on E / V / VP / H, but meanR is positive on H. E longs at 200-300%: 11 of 12 lost, -0.660R.
+- **E's losing band is ordinary, and every cap leaves it alone.** [50%, 100%) holds 353 fills at 60.9% losers, -0.115R, -$827. On H the same band is 53.1% losers, +0.042R.
+
+### V / VP: independent rebuild (verify_EV PASS)
+- **Harness:** reproduced WCF exactly. V C2 -88.89 [-173.3, -11.5] (incumbent +26.22/mo, 1,007 fills). VP C2 -96.99 [-181.3, -16.3] (incumbent +19.37/mo, 1,175 fills).
+- **V incumbent:** 563 losers (55.9%), 533 stop-outs, 16 TP. **VP incumbent:** 683 losers (58.1%), 530 stop-outs, 17 TP.
+- **Ship cells, $/mo, V:**
+  - CAP_150 -42.92 [-105.7, +16.4], 1/4 quarters (-23 / +4 / -89 / -202)
+  - CAP_200 -1.97 [-47.1, +39.2], 1/4 (-3.47 / +136 / -17 / -130)
+  - SO150 -26.13 [-59.4, +5.4], 1/4
+  - SO200 -14.80 [-42.0, +10.7], 1/4
+  - Family placebo p 0.990 (2,000 draws; verify_EV 0.9795)
+- **Ship cells, $/mo, VP:**
+  - CAP_150 -33.85 [-96.6, +24.6], 0/4
+  - CAP_200 -0.47 [-45.3, +39.5], 1/4
+  - SO150 -11.99 [-47.0, +21.0], 1/4
+  - SO200 -5.75 [-31.4, +16.6], 1/4
+  - Family p 0.944
+- **Loser filter, ship cells** (ref n, loser % ref vs kept, gap, Fisher, avoided vs forgone R, repl n / R, NET R):
+
+| Cell | V | VP |
+|---|---|---|
+| CAP_150 | 83, 50.6 vs 56.4, -5.8pp, .871, 30.02 vs 49.79, 37 / -2.45, **-22.22** | 98, 57.1 vs 58.2, -1.1pp, .625, 33.09 vs 49.24, 18 / -2.40, **-18.55** |
+| CAP_200 | 46, 63.0 vs 55.6, +7.5pp, .199, 20.89 vs 23.51, 21 / -1.51, **-4.13** | 53, 66.0 vs 57.8, +8.3pp, .146, 22.01 vs 23.12, 8 / -1.26, **-2.37** |
+| SO CAP_150 | 42, 40.5 vs 56.6, -16.1pp, .986, 10.75 vs 22.72, 28 / -2.41, **-14.38** | 48, 50.0 vs 58.5, -8.5pp, .905, 12.29 vs 20.92, 15 / -0.41, **-9.05** |
+| SO CAP_200 | 25, 48.0 vs 56.1, -8.1pp, .844, 7.70 vs 14.44, 14 / -1.41, **-8.15** | 27, 51.9 vs 58.3, -6.4pp, .807, 8.34 vs 13.30, 7 / +0.78, **-4.18** |
+
+- **Reported-only cells.** V: CAP_120 -49.56, CAP_250 -8.47, CAP_300 -9.22, CAP_400 -0.80. VP: CAP_250 +4.56, CAP_300 +0.43, CAP_400 +3.16. All intervals span 0.
+- **VP caveat.** The VP $ attribution is noisy: pre-emption changes exits on shared trades by more than the refused-trade component.
+
+### H: unseen holdout 2025-10-01 to 2026-02-04 (127 d, 4.17 mo) - verify_H: usable with caveats, 7/7 checks PASS
+- **Data.** 529 of 529 symbols fetched, 0 truncated, 0 rate-limit responses. The screen, exits, and a 54-symbol signal rebuild (324 of 324 signals) reproduce exactly.
+- **Incumbent.** 587 fills (140.7/mo), 306 losers (52.1%), 286 stop-outs, 6 TP, +17.94R, +$78.66/mo [-116.9, +276.1].
+- **Ship cells, $/mo:**
+  - CAP_150 +48.75 [-13.8, +117.7], 4/4, cell placebo p 0.030
+  - CAP_200 +27.81 [-23.4, +81.6], 4/4, p 0.077
+  - SO150 +27.94 [-10.0, +71.2], 3/4, p 0.070
+  - SO200 +34.29 [-0.9, +75.8], 3/4 (the missing quarter is exactly $0), p 0.011
+  - Family p 0.049 (verify_H: 0.0505)
+- **Reported only, not monotone:** CAP_100 -16.76 [-97.9, +58.8], CAP_120 +5.09, CAP_250 +3.52, CAP_300 -7.02, CAP_400 +7.35.
+- **Why it is weak** (verify_H):
+  - The refusals alone are worth +$3.17 to +$10.54/mo. Replacement fills carry 55-79% of each cell's gain; CAP_150's +$203.39 includes +$161.38 from 25 replacements.
+  - INJ long 11-07 (range 17%, +$48.07) is a replacement in all 4 cells.
+  - Without each cell's top 3 days: +8.04 / -4.23 / -1.54 / +4.96 $/mo. Without the top 5, all four are negative: -4.27 / -18.06 / -10.26 / -3.88.
+  - All 4 refused-minus-kept meanR intervals span 0 (CAP_150 [-0.41, +0.25]).
+- **Loser filter** (all cells from LF_H; ref, los/win, loser % ref vs kept, gap, Fisher 1s, avoided vs forgone R, repl n/los/R, NET R):
+
+| Cell | Ref | Los/Win | L% ref vs kept | Gap | Fisher | Avoided vs forgone R | Repl n / los / R | NET R ($) |
+|---|---|---|---|---|---|---|---|---|
+| CAP_120 | 62 | 30/32 | 48.4 vs 52.6 | -4.2 | .776 | 24.39 vs 26.69 | 32 / 15 / +3.79 | +1.49 (+35) |
+| **CAP_150** | 42 | 24/18 | 57.1 vs 51.7 | +5.4 | .304 | 19.82 vs 17.57 | 25 / 7 / +11.20 | +13.46 (+316) |
+| **CAP_200** | 23 | 15/8 | 65.2 vs 51.6 | +13.6 | .142 | 12.22 vs 11.23 | 12 / 4 / +6.50 | +7.49 (+176) |
+| CAP_250 | 16 | 10/6 | 62.5 vs 51.8 | +10.7 | .280 | 8.16 vs 9.54 | 6 / 2 / +1.33 | -0.05 (-1) |
+| CAP_300 | 13 | 8/5 | 61.5 vs 51.9 | +9.6 | .344 | 6.64 vs 7.05 | 4 / 3 / -0.31 | -0.73 (-17) |
+| CAP_400 | 10 | 6/4 | 60.0 vs 52.0 | +8.0 | .430 | 5.06 vs 4.04 | 5 / 3 / +1.62 | +2.65 (+62) |
+| SO CAP_120 | 25 | 11/14 | 44.0 vs 52.5 | -8.5 | .850 | 8.66 vs 10.86 | 15 / 8 / +0.31 | -1.89 (-45) |
+| **SO CAP_150** | 19 | 11/8 | 57.9 vs 51.9 | +6.0 | .392 | 8.66 vs 6.99 | 11 / 4 / +4.07 | +5.75 (+135) |
+| **SO CAP_200** | 12 | 8/4 | 66.7 vs 51.8 | +14.8 | .235 | 6.63 vs 4.17 | 7 / 1 / +6.32 | +8.78 (+206) |
+| SO CAP_250 | 8 | 5/3 | 62.5 vs 52.0 | +10.5 | .410 | 4.08 vs 3.66 | 2 / 0 / +0.81 | +1.23 (+29) |
+| SO CAP_300 | 5 | 3/2 | 60.0 vs 52.1 | +7.9 | .540 | 2.57 vs 1.17 | 0 | +1.40 (+33) |
+| SO CAP_400 | 4 | 2/2 | 50.0 vs 52.1 | -2.1 | .719 | 2.02 vs 1.17 | 0 | +0.86 (+20) |
+| LO CAP_120 | 37 | 19/18 | 51.4 vs 52.2 | -0.8 | .606 | 15.73 vs 15.82 | 20 / 10 / -0.18 | -0.28 (-7) |
+| LO CAP_150 | 23 | 13/10 | 56.5 vs 52.0 | +4.6 | .415 | 11.16 vs 10.58 | 13 / 4 / +3.33 | +3.91 (+92) |
+| LO CAP_200 | 11 | 7/4 | 63.6 vs 51.9 | +11.7 | .323 | 5.59 vs 7.06 | 5 / 3 / +0.18 | -1.29 (-30) |
+| LO CAP_250 / 300 | 8 | 5/3 | 62.5 vs 52.0 | +10.5 | .410 | 4.07 vs 5.89 | 4 / 3 / -0.31 | -2.12 (-50) |
+| LO CAP_400 | 6 | 4/2 | 66.7 vs 52.0 | +14.7 | .384 | 3.04 vs 2.87 | 5 / 3 / +1.62 | +1.79 (+42) |
+
+- **Loser-filter summary on H.**
+  - Every refused loser was a stop-out.
+  - Best-of-4 is SO CAP_200 at +14.8pp, family p 0.398 (null best median +11.4pp, 90th percentile +23.3pp).
+  - Rule (1) fails on H in all 4 ship cells. Rule (2) holds on H in all 4, but mostly through replacement fills: the refusals alone net +0.99 to +2.46R.
+- **Sensitivity streams** (ship cells, same sign): new listings gaps +4.8 to +17.0pp, lowest Fisher 0.080 (CAP_200, n 30), NET +6.32 to +13.95R. Survivor-augmented gaps +3.4 to +14.5pp, NET +5.75 to +15.21R.
+- **Survivorship.**
+  - Adding 30 delisted contracts that MEXC still serves lowers the incumbent from +78.66 to +55.25 $/mo. Only -$8.89/mo of that is the 11 delisted fills; -$16.04/mo is 3 winning fills displaced from their slots.
+  - Ship cells move to +54.68 / +24.26 / +27.94 / +34.29.
+  - How many purged delisted contracts traded in H: I don't know.
+- **Side mix differs from E:** H shorts +0.166R (n 167), longs -0.023R (n 420). The 10-10/12 crash holds 8 of the 42 fills at >= 150%.
+
+### L: live (reported only; cannot pass a cell)
+- **Out of sample, 08-21T09:41Z to 09-12** (53 fills, 71.4/mo; 29 losers (54.7%), 27 stop-outs, 1 TP; booked -$80.95).
+  - Only one fill has range >= 120%: TAC_USDT short 08-28, range 212% (Min1 rebuild), +1.35R, +$4.11 booked at the pre-09-06 sizing ($31.73 at $23.50/R), convex time stop.
+  - All 4 ship cells (and CAP_120) refuse that one winner. They prevent 0 losers, 0 stop-outs and 0 TPs, for NET -1.35R (-$31.73).
+  - $ guardrail: -$5.54/mo booked (p 0.86); -$42.73/mo at $23.50/R (p 0.90).
+  - CAP_250+ and every longs-only cap refuse nothing.
+  - No replacement rows appear during TAC's hold.
+  - Loser share by band: <50% 60.7% (n 28), 50-100% 52.4% (n 21), 100-150% 33% (n 3), >= 200% 0 of 1.
+- **Design window, 09-13 to 09-17T09:46Z** (excluded; 18 fills, 7 losers (38.9%), +$24.61 booked). Fills >= 120%:
+  - STORJ long 148.3%: -0.08R, -$0.87. Refused only by CAP_120; it is 1.1% under the 150% cut, inside the 1.5% range-measurement MAE.
+  - LSK long 12:10, 1060%: +0.52R, +$6.08, trail.
+  - LSK long 16:14, 972%: -1.05R, -$12.05, exchange close.
+  - **BR short 08:56, 238%** (237% on the rebuild), 3h move -12.85%: -0.73R, -$15.43 booked, early stop.
+- **Design window by cell.**
+  - CAP_150 and CAP_200 refuse LSK x2 and BR: 2 losers, 1 winner, 66.7% vs 33.3% kept, Fisher 0.326. 1.78R avoided vs 0.52R forgone, NET +1.26R (+$29.61).
+  - The shorts-only caps refuse BR alone: +0.73R (+$17.16).
+  - Best-of-4 p 0.383.
+  - BR's replacement cannot be observed: the shadow data ends at 09-17T03:57Z. I don't know whether refusing BR would have admitted another entry.
+- **After 09:46Z (read at 13:02Z):** 0 WILDCARD fills.
+- **Shadow** (UNVERIFIED; U8 deduped, 81 non-design priced rows, 43 losers (53.1%), 1.70 mo).
+  - CAP_150 refuses 4 (2 losers / 2 winners, -3.2pp).
+  - SO150 refuses 3 (2 / 1, +14.1pp).
+  - CAP_200 and SO200 refuse 2 (2 / 0, +48.1pp, Fisher 0.279, family p 0.285).
+  - Every shadow row >= 150% had already been refused by a live gate. Both rows >= 200% (CATE short 261%, BONER short 263%, -1.01R each) were listing-veto refusals, so a cap adds nothing there.
+- **L's directions disagree:** out of sample against the cap (n 1), design window for it (n 3). Too small to judge either way.
+
+### Relation to prior verdicts
+- **WCF 2026-09-17, 100% cap: reconfirmed and bracketed.**
+  - On E the cost shrinks as the cap rises: 100% -99, 120% -55, 150% -46, 200% -4, 400% -1 $/mo.
+  - 100% remains the only cap whose interval excludes 0. On H the 100% cap is -16.76 [-97.9, +58.8], the same sign.
+  - As a loser filter the 100% cap is worse than random on E: 47.7% vs 57.1%, two-sided Fisher 0.029.
+- **2026-09-07 WILDCARD verdict (coin flip; profit concentrated in a few big movers): consistent.**
+  - The sleeve's two +5R TPs on E (B3 167%, TUT 307%) sit in the >= 150% tail.
+  - Band $ collapses without its top 3 fills (>= 300%: +156.27 -> -11.32; 150-200%: +300.00 -> +112.27).
+  - A ceiling removes that right tail, while the losses it saves are floored at -0.5R / -1R.
+  - That verdict's only p < 0.01 signal, the listing veto, already refused both shadow rows >= 200%. It is not modelled in the replay.
+- **Reporting standard: applied.** Signed $/mo figures carry intervals. NET R / $ figures are marked as having none.
+
+### Durable outputs
+1. **Do not cap WILDCARD on 24h range at any value from 120% to 400%**, both sides or shorts-only. The 100% cap stays proven harmful (-$89 to -$99/mo, CI below 0).
+2. **A range cap is not a loser filter.**
+   - On E the ship cells refuse 40-62% losers against a 55-56% base. The best is +7.1pp at CAP_200, family p 0.37.
+   - Net of replacements, all 4 cells lose R on E, V and VP (-2.37 to -23.75R).
+   - Replacement fills lose at about the book rate, so a refused loser mostly makes room for another loser.
+3. **The high-range tail is where winners are largest.** E >= 150%: 81 fills, 41 winners (49.79R) vs 40 losers (29.00R), and 21 of those losers were already cut at -0.51R by the early stop.
+4. **BR's group (shorts >= 200%) is unstable across windows:** E and V +0.269R at 48% losers (n 25); H -0.205R at 67% losers (n 12); live OOS 1 winner (TAC).
+5. **Post-hoc lead only: longs >= 200%.** Loser share is 80 / 81 / 81 / 64% (E / V / VP / H, n 20 / 21 / 26 / 11), with NET +2.50 / +3.01 / +1.81 / -1.29R. It needs its own pre-registration on forward data. It is not shippable, and not a finding.
+6. **Process.**
+   - A mid-run amendment that changes the headline statistic must be pushed to the running lanes; here 4 extra LF lanes were needed.
+   - Pre-specify whether "net" includes displaced fills, and how a family-wise permutation is built (shared vs independent shuffles).
+7. **Process.** A PREREG's live counts must separate out-of-sample fills from design-window fills ("4 live >= 150%" was 1 + 3).
+
+### Unresolved (I don't know)
+- The sign of any cap effect smaller than about $50/mo. E (-) and H (+) disagree, and each interval is ±$40-65/mo.
+- How much the replay's known bias understates the tail: it reads 0.17R low on matched trades, clips +5R, and fills 2.1x live. Because this sits where the TPs are, the cap's true cost on E is probably no smaller than shown. By how much: I don't know.
+- How many of E's tail fills the external listing veto would have refused live.
+- How many purged delisted contracts traded in H, and their effect.
+- Whether refusing BR would have admitted a replacement entry.
+- Whether H's replacement-driven gain (INJ, 3-5 days, the 10-10/12 crash) would recur.
+- BTW_USDT 06-05's true 24h range (63 of 96 bars).
+- The true live rate of >= 200% trades per side. The replay rate divided by 2.1 suggests about 1-1.7 a month, which is an estimate, not a measurement.
+
+### Files
+Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/WCR/`:
+- `PREREG.md`, `AMENDMENT_1.md`
+- `E/`: `r_grid.py`, `r_grid_results.txt/.json`, `r_grid.log`; earlier run in `_prev_run_1400/`
+- `V/`: `v11_capgrid.py`, `v02_book.py`, `v12_lfam_shared.py/.txt`, `v_grid_V.txt/.json`, `v_grid_VP.txt/.json`, `run_V.log`, `run_VP.log`; earlier run in `prior_run_1400/`
+- `verify_EV/`: `ev2.py`, `ev2_results.txt`, `ev2_extra.py/.txt`, `ev2.log`; earlier run in `_prev_run_1407/`
+- `H/`: `h_results.txt/.json`, `h_grid_primary/newlistings/survivors.txt`, `h06_*.txt`, `h03_candidates.py`, `h04_grid.py`, `h08_report.py`, `data/`
+- `verify_H/`: `v1`-`v5` and `v01`-`v07` scripts and outputs; `v05_out.json` is the H loser filter cross-check
+- `L/`: `l_results.txt/.json`, `l_results_raw.json`, `l1_range_cap.py`, `l2_report.py`
+- `LF_E/`, `LF_V/`, `LF_H/`, `LF_L/`: `lf_*.py`, `lf_results.txt/.json` (AMENDMENT_1 per line)
+- `R/`: `r_amend.py/.txt/.json` (the 15:04 record lane's AMENDMENT_1 computation, superseded by `LF_*`)
+- `record.md`, `answer.md`; the superseded 15:04 versions are in `_prev_record_1504/`
