@@ -145,8 +145,9 @@ def default_conditions() -> dict:
         "kind=PMT": lambda r: r.get("kind") == "PMT",
         "side=SHORT": lambda r: r.get("side") == "SHORT",
         "side=LONG": lambda r: r.get("side") == "LONG",
-        "roc>=12pct": lambda r: (r.get("entry_3h_roc_pct") or 0) >= 12,
-        "roc<12pct": lambda r: 0 < (r.get("entry_3h_roc_pct") or 0) < 12,
+        # WILDCARD only: older TREND rows carry their 24h ROC under this key.
+        "roc>=12pct": lambda r: r.get("kind") == "WILDCARD" and (r.get("entry_3h_roc_pct") or 0) >= 12,
+        "roc<12pct": lambda r: r.get("kind") == "WILDCARD" and 0 < (r.get("entry_3h_roc_pct") or 0) < 12,
         "leverage>=7": lambda r: (r.get("leverage") or 0) >= 7,
         "leverage<=4": lambda r: 0 < (r.get("leverage") or 0) <= 4,
         "hold<=30min": lambda r: (r.get("hold_min") or 1e9) <= 30,

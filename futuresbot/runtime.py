@@ -138,6 +138,13 @@ PMT_EXCHANGE_PROFIT_LOCK_ERROR_AT_KEY = "pmt_exchange_profit_lock_error_at"
 BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 
 
+# Entry gate values stamped on a position and copied, by name, to the closed
+# trade record and the feature-store row.
+ENTRY_GATE_KEYS = ("atr_pct", "calm_ratio", "vol_z", "range_24h", "turnover_24h_usdt",
+                   "candidate_rank", "candidate_field", "entry_lateness",
+                   "trend_roc_24h", "trend_prior_close_extreme", "trend_extreme_margin_pct")
+
+
 class FuturesRuntime:
     def __init__(self, config: FuturesConfig, client: MexcFuturesClient):
         self.config = config
@@ -1080,8 +1087,13 @@ class FuturesRuntime:
     # (sampled_at, {(symbol, hours): return}) - see _majors_state.
     _MAJORS_TTL_S = 600.0
 
-    def _majors_state(self) -> dict[str, float]:
+    def _majors_state(self, max_age_s: float | None = None) -> dict[str, float]:
         """BTC/ETH/SOL returns at 12h/24h/72h, plus the derived calm score.
+
+        Window: the latest Min15 close (the in-progress bar, i.e. the price at the
+        sample instant) against the close 48/96/288 bars earlier - rolling, NOT
+        MEXC's riseFallRate from the 16:00Z daily open. The sample instant is the
+        cache time; `max_age_s` tightens the cache for callers that need "now".
 
         MEASUREMENT ONLY - nothing reads this to make a decision. It is stamped
         on every convex entry so the regime question can eventually be answered
@@ -1111,10 +1123,19 @@ class FuturesRuntime:
         for a field nothing acts on. Fails soft - a missing major is simply
         absent from the result, and callers stamp what they get.
         """
+        return self._majors_sample(max_age_s)[1]
+
+    _MAJORS_KEYS = tuple("%s_%dh" % (t, h) for t in ("btc", "eth", "sol") for h in (12, 24, 72))
+
+    def _majors_sample(self, max_age_s: float | None = None) -> tuple[float, dict[str, float]]:
+        """(sampled_at, values) as one pair, so an age can never be paired with a
+        different sample. A refetch that comes back incomplete does not replace a
+        complete cache that is still inside the normal TTL."""
         now_ts = time.time()
+        ttl = self._MAJORS_TTL_S if max_age_s is None else min(self._MAJORS_TTL_S, max_age_s)
         hit = getattr(self, "_majors_cache", None)
-        if hit is not None and now_ts - hit[0] < self._MAJORS_TTL_S:
-            return hit[1]
+        if hit is not None and now_ts - hit[0] < ttl:
+            return hit
         out: dict[str, float] = {}
         score = 0.0
         for sym, tag in (("BTC_USDT", "btc"), ("ETH_USDT", "eth"), ("SOL_USDT", "sol")):
@@ -1140,8 +1161,18 @@ class FuturesRuntime:
                 log.debug("majors state fetch failed for %s: %s", sym, exc)
         if out:
             out["calm_score"] = round(score, 3)
+        if (hit is not None and now_ts - hit[0] < self._MAJORS_TTL_S
+                and not all(k in out for k in self._MAJORS_KEYS)):
+            return hit
         self._majors_cache = (now_ts, out)
-        return out
+        return self._majors_cache
+
+    def _majors_stamp(self, max_age_s: float | None = None) -> dict[str, float]:
+        """Majors values plus majors_age_s, the age of that sample at stamping."""
+        sampled_at, values = self._majors_sample(max_age_s)
+        if not values:
+            return {}
+        return {**values, "majors_age_s": round(max(0.0, time.time() - float(sampled_at)), 1)}
 
     def _btc_trend_line(self) -> str:
         change_1h, change_24h = self._btc_trend_changes()
@@ -4691,7 +4722,7 @@ class FuturesRuntime:
         md["convex_peak_r"] = round(peak_r, 4)
         self._save_state()
         self._record_activity(f"Telegram: /arm {sym} (armed {r_now:+.2f}R, floor {exit_level:+.2f}R)")
-        log.warning("[MANUAL_ARM] symbol=%s side=%s now=%.2fR peak=%.2fR floor=%.2fR arm_gate=%.2fR",
+        log.warning("[MANUAL_ARM] symbol=%s side=%s now=%.2fR true_peak=%.2fR floor=%.2fR arm_gate=%.2fR",
                     sym, position.side, r_now, peak_r, exit_level, arm_r)
         pct = int(round(exit_level / r_now * 100)) if r_now > 0 else 0
         ratchet_r = self._env_float("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0)
@@ -5597,6 +5628,10 @@ class FuturesRuntime:
                 "sl_frac_designed": (position.metadata or {}).get("sl_frac_designed"),
                 "peak_r": (position.metadata or {}).get("convex_peak_r"),
                 "mae_r": (position.metadata or {}).get("convex_trough_r"),
+                # ENTRY GATE VALUES. Stamped on the position at entry and dropped here,
+                # so every gate review rebuilt them from klines. Decision-free.
+                "entry_rsi": (position.metadata or {}).get("wildcard_rsi"),
+                **{k: (position.metadata or {}).get(k) for k in ENTRY_GATE_KEYS},
                 # Market-wide state at entry. Promoted explicitly because this
                 # record is built field by field and anything not named here is
                 # discarded at close - the same defect that wiped five metadata
@@ -5632,7 +5667,13 @@ class FuturesRuntime:
                 # rule in this programme shipped and why none of them can be priced.
                 "manual_arm": (position.metadata or {}).get("manual_arm"),
                 "manual_arm_at_r": (position.metadata or {}).get("manual_arm_at_r"),
+                # manual_arm_peak_r is the floor's ANCHOR: the value when armed,
+                # ratcheted up by later highs. manual_arm_true_peak_r is the trade's
+                # peak AT ARM TIME (the [MANUAL_ARM] log's true_peak); peak_r is the
+                # final peak.
                 "manual_arm_peak_r": (position.metadata or {}).get("manual_arm_peak_r"),
+                "manual_arm_anchor_r": (position.metadata or {}).get("manual_arm_peak_r"),
+                "manual_arm_true_peak_r": (position.metadata or {}).get("manual_arm_true_peak_r"),
                 "manual_arm_floor_r": (position.metadata or {}).get("manual_arm_floor_r"),
                 "manual_arm_arm_r": (position.metadata or {}).get("manual_arm_arm_r"),
                 # The one free variable of this feature. Without it the operator's
@@ -5807,6 +5848,10 @@ class FuturesRuntime:
                 "entry_slippage_bps": md.get("entry_slippage_bps"),
                 "signal_price": md.get("signal_price"),
                 "entry_notional_usdt": _entry_notional,
+                # Entry gate values, on the same surface as the trade record. The
+                # trade history keeps 200 rows; this file is the durable corpus.
+                "entry_rsi": md.get("wildcard_rsi"),
+                **{k: md.get(k) for k in ENTRY_GATE_KEYS},
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -5863,6 +5908,9 @@ class FuturesRuntime:
             margin_usdt = float(trade.get("margin_usdt") or 0.0)
             gross_pct = pnl_pct + abs(fees) / margin_usdt * 100.0 if margin_usdt > 0 else None
             roc = mf("wildcard_roc_pct")
+            # wildcard_roc_pct holds the sleeve's OWN trigger: the 3h move for WILDCARD
+            # but the 24h move for TREND. It used to be tagged entry_3h_roc_pct for both.
+            is_trend = bool(md.get("trend"))
             try:
                 hold_min = round((datetime.fromisoformat(trade["exit_time"]) - datetime.fromisoformat(trade["entry_time"])).total_seconds() / 60.0, 1)
             except Exception:
@@ -5872,7 +5920,8 @@ class FuturesRuntime:
                 "r_multiple": round(pnl_pct / sl, 2) if sl and sl > 0 else None,
                 "hold_min": hold_min,
                 "is_wildcard": bool(md.get("wildcard")),
-                "entry_3h_roc_pct": round(abs(roc) * 100.0, 1) if roc is not None else None,
+                "entry_3h_roc_pct": round(abs(roc) * 100.0, 1) if roc is not None and not is_trend else None,
+                "entry_24h_roc_pct": round(roc * 100.0, 2) if roc is not None and is_trend else None,
                 # Majors regime at entry, carried through from position metadata
                 # so the conditional-expectancy engine can slice on it. The
                 # sizing fields below were written to metadata but never copied
@@ -5881,7 +5930,7 @@ class FuturesRuntime:
                 **{k: mf(k) for k in ("btc_12h", "btc_24h", "btc_72h",
                                       "eth_12h", "eth_24h", "eth_72h",
                                       "sol_12h", "sol_24h", "sol_72h",
-                                      "calm_score") if mf(k) is not None},
+                                      "calm_score", "majors_age_s") if mf(k) is not None},
                 "regime_size_mult": mf("regime_size_multiplier") or 1.0,
                 # Sizing telemetry: these were written to position metadata but
                 # never copied here, so the undersizing question could not be
@@ -7310,6 +7359,8 @@ class FuturesRuntime:
         # this column - a gate proposal could reach the live config off another
         # symbol's data.
         self._pending_entry_lateness = None  # trend enters AT the 24h extreme
+        self._pending_candidate_rank = None   # set by the WILDCARD rank loop, not TREND's
+        self._pending_candidate_field = None
         # Scan even with the slot full, so the untaken candidate is shadow-logged
         # and resolved as a counterfactual (same reason the wildcard does).
         slot_blocked = self._convex_open_count("TREND") >= trend_max_positions()
@@ -8829,7 +8880,7 @@ class FuturesRuntime:
             ) if v is not None},
             "equity_at_open_usdt": self._last_known_equity(),
             # Regime telemetry. Decision-free; see _majors_state.
-            **self._majors_state(),
+            **self._majors_stamp(),
         }
         if kind == "TREND":
             # Marker checked BEFORE wildcard in _sleeve_kind, so a trend
@@ -8837,6 +8888,16 @@ class FuturesRuntime:
             # silently consuming a wildcard one — the exact defect that made a
             # SNIPER position indistinguishable from a wildcard in trial 6.
             metadata["trend"] = 1.0
+            # TREND's own gate values. wildcard_roc_pct holds the 24h ROC here, and
+            # the prior closing extreme was never stored, so every review had to
+            # rebuild both from klines. Decision-free.
+            _prior = getattr(sig, "prior_close_extreme", None)
+            metadata["trend_roc_24h"] = round(float(sig.roc_pct), 6)
+            if _prior:
+                metadata["trend_prior_close_extreme"] = float(_prior)
+                metadata["trend_extreme_margin_pct"] = round(
+                    ((sig.entry_price / _prior - 1.0) if side_name == "LONG"
+                     else (_prior / sig.entry_price - 1.0)) * 100.0, 4)
         elif kind == "SQUEEZE":
             metadata["squeeze"] = 1.0
         elif kind == "SNIPER":
@@ -8884,6 +8945,7 @@ class FuturesRuntime:
                 entry_signal=f"{kind}_{side_name}", metadata=metadata,
             )
             self._register_position(position)
+            self._stamp_majors_at_entry(position.metadata)
             self._notify(self._entry_message(position))
             self._record_activity(f"Opened {kind} {side_name} {symbol} x{sig.leverage} (paper)")
             self._save_state()
@@ -8967,10 +9029,25 @@ class FuturesRuntime:
             entry_signal=f"{kind}_{side_name}", metadata=metadata,
         )
         self._register_position(position)
+        self._save_state()                         # persisted before any network call
+        self._stamp_majors_at_entry(position.metadata)
         self._notify(self._entry_message(position))
         self._record_activity(f"Opened {kind} {side_name} {symbol} x{sig.leverage}")
         self._save_state()
         return True
+
+    def _stamp_majors_at_entry(self, md: dict) -> None:
+        """Re-stamp BTC/ETH/SOL 12h/24h/72h at the fill. The pre-order stamp is served
+        from a 10-minute cache: on 2026-09-11 an ETH entry recorded BTC 24h +2.06%,
+        which was BTC five minutes earlier; at the fill it was +3.00%. Called after
+        the order and after the position is saved, so a slow API delays neither.
+        Stamps only a complete set; majors_age_s says how old it is."""
+        try:
+            fresh = self._majors_stamp(max_age_s=60.0)
+            if all(k in fresh for k in self._MAJORS_KEYS):   # never mix fresh and stale majors
+                md.update(fresh)
+        except Exception:                          # pragma: no cover - telemetry never blocks
+            pass
 
     def _event_candidate_side(self, decision: Any) -> str | None:
         try:

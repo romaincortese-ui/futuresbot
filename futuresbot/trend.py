@@ -203,4 +203,5 @@ def detect_trend_signal(frame: pd.DataFrame, symbol: str,
         balance_fraction=min(0.15, max(0.05, _f("FUTURES_TREND_BALANCE_PCT", 0.12))),
         rsi=round(rsi, 1),
         sl_frac_designed=round(sl_frac_designed, 6),
+        prior_close_extreme=float(window.max() if s > 0 else window.min()),
     )

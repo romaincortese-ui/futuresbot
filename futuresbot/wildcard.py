@@ -128,6 +128,7 @@ class WildcardSignal:
     sl_frac_designed: float | None = None   # pre-margin-cap stop distance
     calm_ratio: float | None = None     # |3h move| / prior 21h range
     vol_z: float | None = None          # entry bar volume in prior-20-bar sigma
+    prior_close_extreme: float | None = None   # TREND: prior 24h closing high (low for shorts)
 
 
 def calm_ratio(frame: pd.DataFrame) -> float | None:

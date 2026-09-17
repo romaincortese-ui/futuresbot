@@ -775,3 +775,20 @@ def test_the_anchor_never_falls_when_price_does(tmp_path):
     for price in (105.0, 104.0, 103.0, 101.0, 100.5):
         runtime._convex_runner_trail_exit(pos, price)
         assert pos.metadata["manual_arm_peak_r"] >= 0.60 - 1e-9
+
+
+def test_closed_trade_separates_the_arm_anchor_from_the_true_peak(tmp_path, monkeypatch):
+    """manual_arm_peak_r is the floor's anchor (value when armed), not the trade's
+    peak. The closed record carries both, named, so the log and the store agree."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos()
+    position.metadata["convex_peak_r"] = 0.85            # the trade peaked earlier
+    runtime.open_positions["ZEC_USDT"] = position
+    assert runtime._manual_arm("ZEC")[0] is True
+
+    monkeypatch.setattr(runtime, "_notify", lambda *a, **k: None)
+    runtime._close_history_trade(position, exit_price=103.0, reason="CONVEX_RETENTION_TRAIL")
+    trade = runtime.trade_history[-1]
+    assert trade["manual_arm_anchor_r"] == pytest.approx(0.60, abs=0.01)
+    assert trade["manual_arm_anchor_r"] == trade["manual_arm_peak_r"]
+    assert trade["manual_arm_true_peak_r"] == pytest.approx(0.85)
