@@ -14838,3 +14838,35 @@ Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/WCF/`:
 - `L/` and `L-live-verify/`
 - `S/`
 - `answer.md`
+
+## 2026-09-17 - WILDCARD LONGS-ONLY 24h RANGE CAP 200%: SHIPPED (owner decision)
+
+**Asked (owner):** "ship the longs-only 200% cap", after the range-ceiling study (wc/WCR/, pre-registration PREREG.md plus AMENDMENT_1.md
+"does it prevent losing trades from being opened?"). The full study record is appended separately.
+
+**What shipped:** `FUTURES_WILDCARD_LONG_MAX_24H_RANGE=2.0`. A WILDCARD LONG candidate whose ticker 24h range (high24-low24)/low24 is
+>= 200% is refused before ranking, so the next candidate may enter. It is shadow-logged as `long_range_cap(x)`. Shorts are unchanged,
+and the code default is 0 (off).
+
+**Evidence at ship time (read this as a preference, not an edge):**
+| Window | Longs refused | Losers / winners | Loser share: refused vs kept | Net R of refusals | Book $/mo vs today |
+|---|---|---|---|---|---|
+| Replay 2026-02-05 -> 09-12 | 20 | 16 / 4 | 80% vs 55% (Fisher p 0.02) | +3.6R | +9.08 [-28.9, +40.0]; rebuild +0.86 |
+| Unseen holdout 2025-10-01 -> 2026-02-04 | 11 | 7 / 4 | 64% vs 52% (p 0.32) | -1.5R | -5.09 [-53.9, +41.3] |
+| Live 08-21 -> 09-17 | 0 | - | - | - | - |
+
+- **Losers:** it refuses mostly losers in both windows, 23 of 31.
+- **Dollars:** about $0 net, roughly +$4/mo at $23.50/R. A single blocked winner decides the sign: TUT 08-09 made +5R and +$106.
+- **Post-hoc selection:** the cell was chosen after seeing the band table, and about 18 cells were looked at. The replay p of 0.02 is
+  about 0.35 after that discount.
+- **Not a pre-registered ship cell:** it does not meet the +$10/mo bar and does not claim to.
+- **BR_USDT:** it would not have refused BR, which was a short.
+- **Expected rate:** about 1 refusal per month live.
+
+**Confound check:** WILDCARD only. Trial 21R (TREND rotating slot) kill rules K1-K3 and K5 read rotating-slot fills only and are
+unaffected. K4 (book equity -15%) is affected by at most about 1 refused long per month.
+
+**Review (no tuning in between):** at 40 `long_range_cap` shadow rows, or 2027-09-17, whichever comes first.
+- **KEEP** if the refused rows' loser share is >= the kept WILDCARD longs' loser share over the same period and the refused rows'
+  summed R is <= 0.
+- **Otherwise REMOVE** (set the variable to 0).

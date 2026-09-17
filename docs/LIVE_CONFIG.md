@@ -48,6 +48,7 @@ wildcard's software stop lives inside a function called `_pmt_hard_exit`.
 | 10 | signal: \|3h ROC\| ≥ 8% | 0.08 | `MIN_ROC` |
 | 11 | pullback-then-resume | on | code default — **rejects ~76% of triggers, never measured** |
 | 12 | calm-shock ratio | 0.75 | `MAX_CALM_RATIO` — equals code default, so setting it is a no-op |
+| 12b | **LONG 24h range cap** (shorts untouched) | **2.0** (200%) | `WILDCARD_LONG_MAX_24H_RANGE` — code default 0 = off; refused longs shadow-logged as `long_range_cap(x)`. Owner decision 2026-09-17, expected ~$0/mo |
 | 13 | external cross-exchange veto | on | `EXTERNAL_GATE_ENABLED` |
 | 14 | free slot (of 3) | 3 | `MAX_POSITIONS` — *code default 2* |
 

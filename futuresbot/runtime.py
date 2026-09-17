@@ -7003,6 +7003,7 @@ class FuturesRuntime:
             funnel = {"usdt": 0, "non_crypto": 0, "symbol_open": 0, "major_excl": 0,
                       "in_band": 0, "turnover_ok": 0, "move_24h_ok": 0}
             movers = []
+            mover_range: dict[str, float] = {}
             for t in tickers:
                 sym = str(t.get("symbol") or "")
                 if not sym.endswith("_USDT"):
@@ -7040,6 +7041,7 @@ class FuturesRuntime:
                 if chg >= min_move:
                     funnel["move_24h_ok"] += 1
                     movers.append((chg, sym))
+                    mover_range[sym] = self._range_24h(t)
                     self._wildcard_attribution[sym] = {
                         # Would the OLD rules have let this symbol through?
                         "legacy_major": bool(sym in legacy_majors),
@@ -7138,6 +7140,23 @@ class FuturesRuntime:
                 cands = kept
                 best = cands[0][1] if cands else None
                 best_lateness = cands[0][2] if cands else None
+            # LONG RANGE CAP (owner decision 2026-09-17). Refuse a LONG whose 24h
+            # range is >= the cap; shorts untouched. Replay: capped longs lost 23 of
+            # 31 times but netted ~$0 (docs/DECISION_RULE.md, range ceiling record).
+            # Shadow-logged like calm-shock, so refused longs keep being priced.
+            long_range_cap = self._env_float("FUTURES_WILDCARD_LONG_MAX_24H_RANGE", 0.0)
+            range_capped = 0
+            if long_range_cap > 0:
+                kept = []
+                for key, sig, lat in cands:
+                    rng = mover_range.get(sig.symbol, 0.0)
+                    if self._long_range_capped(sig.side, rng, long_range_cap):
+                        range_capped += 1
+                        self._pending_entry_lateness = lat
+                        self._shadow_log_untaken(sig, "WILDCARD", f"long_range_cap({rng:.2f})")
+                    else:
+                        kept.append((key, sig, lat))
+                cands = kept
             shorts_blocked = 0
             if wildcard_long_only():
                 kept = []
@@ -7167,9 +7186,9 @@ class FuturesRuntime:
                      "range24" if range_prefilter else "move24h",
                      min_move * 100, funnel["move_24h_ok"], scan_capped, scanned, len(cands))
             log.info("[WILDCARD_SCAN_SUMMARY] movers=%d scanned=%d candidates=%d shorts_blocked=%d "
-                     "sub_trigger=%d shock_blocked=%d deflated=%d/%d histogram=%s signal=%s",
+                     "sub_trigger=%d shock_blocked=%d range_capped=%d deflated=%d/%d histogram=%s signal=%s",
                      len(movers), scanned, len(cands), shorts_blocked,
-                     locals().get("sub_trigger", 0), locals().get("shock_blocked", 0),
+                     locals().get("sub_trigger", 0), locals().get("shock_blocked", 0), range_capped,
                      self._last_deflator_stats[0], self._last_deflator_stats[1],
                      hist or "{}", best.symbol if best else "none")
             if best is None:
@@ -7490,6 +7509,12 @@ class FuturesRuntime:
             reverse=True,
         )
         return {sym for _turn, sym in ranked[:n]}
+
+    @staticmethod
+    def _long_range_capped(side: str, range_24h: float, cap: float) -> bool:
+        """True when a LONG's 24h range is at or above the cap. Off when cap <= 0;
+        an unreadable range (0.0) fails open."""
+        return cap > 0 and str(side).upper() == "LONG" and range_24h >= cap
 
     @staticmethod
     def _range_24h(ticker: dict) -> float:
