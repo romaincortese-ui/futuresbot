@@ -1,3 +1,137 @@
+# Daily Audit — 2026-09-17
+
+---
+
+## Automated Assessment (UTC 16:25)
+
+Equity **$992.25** — all cash, zero margin, **zero open positions** (ZEC closed on the
+retention trail at 16:10:43Z, mid-run). 09-15's line was $936.39: **+$55.86, exactly
+equal to exchange-realized** on the 10 closes below. No deposit, no withdrawal.
+**No 09-16 audit was written; every close since the 09-15 run (16:10Z) is reviewed here.**
+
+`FUTURES_TRIAL_LABEL=19F`. **Operator changes since 09-15 (not this routine):**
+`baa28b2` per-sleeve risk dial (TREND 1R halved to 1.205%), `922b3ba` TREND rotating slot
+(**trial 21R live, `FUTURES_TREND_ROTATION_ENABLED=1`**), `06829f7` WILDCARD longs-only 24h
+range cap (**env set 2.0**), `f5f757c` four trade-record fixes (deployed 15:49Z), WILDCARD
+slots 3. Feature store 175 -> **185** (+10). Logs since deploy: no Traceback, no ERROR,
+no 5003/2015, no `[SIZE_TRIM]`.
+
+### 1. Closed trades — 10 since 09-15 16:10Z, 9 winners (90%), **+$55.86 / +5.27R**
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | mae R | risk% | mult | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-15 18:34 | SAGA | WILDCARD | L | x2 | 1.1h | +0.60 | +9.86 | +0.99 | -0.05 | 1.77 | 0.72 | retention trail |
+| 09-16 04:07 | POWER | WILDCARD | S | x1 | 2.4h | +0.95 | +10.97 | +2.76 | -0.35 | 1.08 | 0.50 | retention trail |
+| 09-16 10:12 | ZEC | TREND | L | x6 | 0.7h | +0.21 | +2.32 | +0.61 | -0.10 | 1.18 | 1.00 | retention trail |
+| 09-16 12:13 | ZEC | TREND | L | x7 | 1.6h | +0.45 | +5.06 | +1.07 | -0.13 | 1.18 | 1.00 | retention trail |
+| 09-16 14:29 | POWER | WILDCARD | S | x2 | 1.0h | +0.81 | +9.40 | +1.18 | -0.02 | 1.24 | 0.50 | retention trail |
+| 09-16 17:07 | ZEC | TREND | L | x4 | 3.5h | +0.33 | +2.66 | +0.65 | -0.10 | 0.83 | 0.77 | retention trail |
+| 09-17 02:59 | IOST | WILDCARD | L | x4 | 0.8h | +0.50 | +5.46 | +1.05 | -0.10 | 1.17 | 0.50 | retention trail |
+| 09-17 06:45 | SAGA | WILDCARD | L | x3 | 0.5h | +0.49 | +8.87 | +0.87 | -0.11 | 1.90 | 0.81 | retention trail |
+| 09-17 09:12 | BR | WILDCARD | S | x1 | 0.3h | **-0.73** | **-15.43** | +0.75 | -0.18* | 2.03 | 0.96 | **early stop** |
+| 09-17 16:10 | ZEC | TREND | L | x4 | 14.1h | **+1.66** | **+17.64** | +2.25 | -0.69 | 1.08 | 0.95 | retention trail |
+
+**Reconcile: 10 exchange rows, 10 feature-store rows.** Exchange +$55.86 vs store +$56.81
+($0.95 fee/funding rounding, mostly SAGA 09-15). No censoring. All ref-listed; worst
+|slippage| 107 bps (POWER 04:07, favourable), under the 200-bps watch item.
+
+**Sleeves:** TREND 4 fills **+2.65R / +$27.68** (all ZEC — no rotating-slot fill yet);
+WILDCARD 6 fills **+2.62R / +$29.13**. Exits: 9 retention trail, 1 early stop, 0 stop,
+0 TP. No unhandled exit path.
+
+**Min5 replay, trail exit vs holding to -1R / TP:**
+- WILDCARD trail **saved ~5.0R**: SAGA 09-15 1.60R, POWER 14:29 1.81R, IOST 1.50R, SAGA
+  09-17 1.49R (all four later hit -1R); cost POWER 04:07 1.44R (ran to +3.2R).
+- TREND trail **cost ~2R** after overlap: the three 09-16 ZEC fills each later reached the
+  +3R TP (ZEC +5.4R from 10:12), but they are one move — holding the first blocks the
+  re-entries. n=1 move, exit grid already swept and refuted; no proposal.
+- **BR early stop helped 0.27R (~$6):** the unmanaged path never recovered above -0.59R
+  and hit -1R. Fired at r_now -0.61, filled -0.73 (0.12R fast-squeeze slippage).
+
+**Record defect (new, not self-fixed):** early-stop exits under-record `mae_r` — BR shows
+-0.18 against a -0.61 firing poll and a -0.73 fill. The early-stop check
+(`runtime.py:~2289`) closes before the trough update (`runtime.py:2381`) runs on that poll.
+Only affects `mae_r` on `CONVEX_EARLY_STOP` rows (3 in 19F).
+
+**Scaler this window: cost $33.54 on 7 trimmed winners, saved $0.69 on BR — net -$32.85.**
+One all-winners window; the 09-09/09-15 net-positive readings stand. Recorded, not a lever.
+
+### 1-OPEN. Open positions: NONE
+(ZEC L x4, held 14.1h, peaked +2.25R, closed +1.66R by the trail during this run; at
+16:04Z it was 0.70 of the way to its +3R TP and 4.1% above its stop.)
+
+### 2. Learning loop
+
+**Conditional expectancy (185 rows, n>=10 per group):**
+- `hold>=120min` FAVOR / **new `hold<=30min` AVOID (n=15, -$3.93/fill)** — reverse
+  causation (fast losses are fast); not a lever.
+- `regime_trimmed_hard(<0.5)` AVOID, $ gap -0.03 — contradiction persists.
+- **New `leverage<=4` FAVOR** (n=112, +$0.26/fill, OOS e=0.52) — recorded, not a proposal.
+- `exit=stop` AVOID — tautology. `stalled_reclaim` FAVOR holds (n=18).
+- `side=SHORT/LONG` no longer qualify.
+
+**Shadow ledger, 279 rows, deduped symbol+side+bucket+6h:**
+
+| bucket | n | resolved | net R | reading |
+|---|---|---|---|---|
+| veto:ref_not_listed | 38 | 37 | **-13.12** | saving money |
+| side_disabled | 33 | 33 | -8.23 | saving money (TREND shorts, incl. rotating AKE) |
+| calm_shock | 25 | 25 | -3.22 | saving money |
+| slot_occupied | 21 | 21 | +9.47 | stale — last row 09-04 |
+| min_vol_skip | 15 | 15 | +7.37 | costing money |
+| below_trigger | 16 | 16 | +2.18 | mildly costing (AIN SHORT 09-17 -1R) |
+| veto:crowded_shorts | 6 | 6 | +4.89 | costing, n<10 |
+
+**Slot cost: +9.47R over 21 deduped, no new row since 09-04 (3 slots now).** No slot evidence.
+
+**Scan telemetry (15:58-16:07Z):** WILDCARD 52-53 movers, `roc_below_min` 46-48,
+`no_pullback_resume` 5-6, `range_capped` 0, zero candidates. TREND scans **4 symbols**
+(rotation active), 0 candidates.
+
+### 3. Decision rules
+
+**Trial 19F (by ENTRY time):**
+
+    41 closes | netR +0.11 (SE 6.01) | net$ -39.59 (SE $95 — not quotable)
+    ex-best -1.78R (best XRP 09-14 +1.89R)
+    TREND 13 fills -0.39R | WILDCARD 28 fills +0.50R
+    mean realised risk 1.527%, max 2.444%  -> BELOW the [1.6%, 2.2%] band
+    max drawdown from peak close 11.90% ($1,045.71) -> under the 20% flag; now 5.1% below peak
+    early-stop fires 3 of 20 (BR helped +0.27R) | TREND early stops 0
+
+Criterion 3 slipped further (1.585% -> 1.527%). Confound stated, not editorialised: the
+TREND 1R was halved mid-trial (`baa28b2`), which mechanically lowers the mean.
+
+**Trial 21R (rotating TREND slot, from 09-16):** 0 rotating fills; K1-K6 none tripped
+(K4: equity $992 vs ~$956 at start). Rotating symbol seen in the ledger: AKE_USDT (short,
+side-disabled).
+
+### 4. Exits
+**19F: TP 0 | stop 14 | other 27.** Lifetime TP 9 of 185. TP-scaling watch item stays closed.
+
+### 5. Lever
+**None tested.** 10 closes, 9 winners; the one reading that moved (scaler -$32.85) is a
+single all-winners window against two prior net-positive measurements. 21R forbids
+TREND tuning; everything else is on the refuted list.
+
+### 6. Action items carried, not self-applied
+1. **New:** write the firing poll's `r_now` into `convex_trough_r` before a
+   `CONVEX_EARLY_STOP` close (mae_r under-recorded on early-stop rows).
+2. Persist the per-position `r_now` poll series.
+3. Resync Futures-shadow to champion HEAD (`railway up --service Futures-shadow`, paper).
+   **Shadow stale, comparison suppressed.**
+
+### 7-day change verdicts
+- Per-sleeve risk dial / TREND halved stake (09-16): 4 TREND fills +$27.68 — too few to judge.
+- TREND rotation 21R (09-16): 0 rotating fills.
+- WILDCARD long range cap 2.0 (09-17): `range_capped` 0 so far.
+- Trade-record fixes (09-17 15:49Z): one close since (ZEC), no errors.
+
+### Verdict
+**No change. No deploy.** +$55.86 on 10 closes, full reconcile, book flat, no kill tripped.
+
+---
+
 # Daily Audit — 2026-09-15
 
 ---
