@@ -15362,3 +15362,224 @@ Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/ZT/`:
 - `gates_B/`
 - `gen/`: reconciliation, noise, live, corpus, proxy.
 - `answer.md`
+
+## 2026-09-18 - REPLACING THE OWNER'S MANUAL /arm (ARM2): SHIP NOTHING
+
+**Asked (owner):** "Any suggestions to help me not require those manual armings? I don't mind doing it, but it looks like if I let the bot alone, I would lose money right now."
+
+**Verdict: SHIP NOTHING ON EXITS. Owner may stop arming at no expected cost.**
+- No priced rule that replaces /arm pays, on either sleeve or either corpus.
+- His arms are indistinguishable from random arming.
+- One optional item is WILDCARD-only: an exchange-resting breakeven at +0.75R. It costs about $0 and buys retention, not dollars. It needs code and has a pre-registered forward test (below).
+- No code, env or state change. The study was read-only.
+
+### Premise correction
+- Today's bot, 18F → 09-17 15:48Z: **-$64.18 [-224, +89] without arms and -$39.03 [-196, +104] with them.**
+- Counting SAGA #50's resolved stop, the no-arms figure is about -$70.
+- The arms are not the difference between losing and not losing.
+
+### His actions (flat 1R, engine A, which reproduces the live fills)
+- **9 arms: +$30.42.** Without SAGA #50: **-$7.42.**
+  - Leave-one-out range is -7.42 to +42.79; it turns negative only when SAGA is dropped.
+  - WILDCARD 5 arms: +$72.0. TREND 4 arms: -$41.6, with 4 of 4 negative.
+- **Decisive arms** (final peak < 1.0R, n=5): +$40.36, or **+$2.52 without SAGA #50**.
+- **Arms on trades that reached 1.0R anyway** (n=4): **-$9.94**. This includes ZEC #52 at -$12.37: armed at 1.11R, closed +1.15R, against +2.21R on the 24h clock.
+- **In R:** his arms banked 6.49R against 6.96R for the bot alone. The dollar gain is purely the sleeve stake ratio.
+- **IOST #15 manual close:** -$11.32.
+- **All 10 actions:** +$19.10 total, +$21/mo [-38, +98]. **-$18.74 without SAGA #50.**
+- **Real-time placebo** (3,000 draws: 9 random post-/arm fills, his delays, his 06:38–18:23 UTC window, his givebacks): median +$0.1 [-62.1, +65.0]. P(placebo ≥ his) = 0.23; without SAGA, 0.58.
+- **RP convention** (live sizing, 15:48Z cutoff, SAGA marked open): +$25.15 [-13.58, +78.88]; +$1.23 without SAGA.
+  - SAGA #50 unarmed then stopped at 17:10Z (session low 0.02027 against a stop of 0.0204543, 90 bps through). That lifts the RP figure to about +$31.
+  - ZEC #52 was still open at that cutoff.
+- **Selection:**
+  - 21 of 27 post-09-12 positions met his trigger; he armed 9.
+  - All 9 arms fell between 06:38 and 18:23 UTC. He typed /status before all 9, with a median gap of 45 s.
+  - Of the 4 eligible trades never alive in that window, he armed 0.
+  - This is attendance, not a trading rule.
+
+### Rules priced (all $/mo, 1R: WILDCARD $23.50, TREND $11.75; 95% day-block intervals)
+| Family | TREND corpus Y2 (MEXC, 358 d) | WILDCARD 220-d replay | Live fills 08-21 → 09-17 (selection window) | Verdict |
+|---|---|---|---|---|
+| F2 owner-mimic (peak ≥ 0.38, now ≥ 0.30, now < peak; giveback 0.30, or 0.20 at ≥ 1R; anchored on now) | **-$50.6 [-89.5, -13.8]**, identical in 3 engines. 5-min bars: -$38 [-71, -5]. Y1 about +$3 | **-$142 [-269, -21]** with knock-on; frozen -$127 to -$161. 5-min: -$149 [-283, -23] | WILDCARD +$14 [-377, +383], TREND -$95 [-305, +93] | REJECTED |
+| F2, 06:30–18:30 UTC only | -$44 [-74, -16] | -$111 [-225, -2] | – | REJECTED |
+| F2 placebo (same fill count, F2's delays, 4,000 draws) | random median -$44.1 [-55.4, -33.0]; F2 at the 17th percentile | random median -$148.8 [-195.6, -99.1]; F2 at the 76th percentile | – | F2 is no better than random arming |
+| F2 leave-one-out (drop POWER #47 → thresholds 0.61/0.40) | -$30.4 [-63.1, +0.4] | -$98.7 [-208.7, +4.1] | – | Still negative |
+| F1 auto-arm, A 0.40–0.75 × retain 0.60–0.70 (12 cells) | -$23 to -$44 frozen, all 12 negative. 5-min: -$5 to -$32 | -$60 to +$15; every interval spans zero; all negative without the top 5% (-$112 to -$192) | Finer FAIR bars below 15-min LAST in 24/24 cells | REJECTED (5th time) |
+| F3 exchange-resting breakeven (entry + 0.19%) at A 0.75 | -$17.2 to -$18.9. 5-min: -$15 | +$0.9 [-70, +68] (A), +$10 (B), frozen -$6.4, 5-min +$15 [-52, +80], without top 5% -$23 | WILDCARD +$99 [-24, +226] from 5 saves; TREND +$7 | TREND REJECTED. WILDCARD about $0: optional, test only |
+| F3 at A 0.50 | -$39 [-73, -8] | -$23 [-123, +72] | – | REJECTED |
+| F3 at A 1.00 | $0 | $0 | $0 | No-op on bars (floor already above breakeven). Restart-cover value unpriced |
+| F4 alert at first +0.5R on fair (no rule change) | – | – | 72.5/mo (WILDCARD 45.7, TREND 26.8), 2.38/day, 46% outside 06:30–18:30 UTC. 75% reach 1.0R anyway; 15 of 65 end at a loss (-$301/mo against +$872/mo for all alerted fills) | Information only, worth about $0, needs code. NOT RECOMMENDED |
+
+**Settled record, cited and not re-argued:**
+- The 55-cell TREND grid had 54 of 55 cells negative (arm 0.80 at -$32.7).
+- The 90-cell Min1 grid collapses below arm 1.0; its maximum is arm 2.0.
+- Breakeven k=0.4–1.0: 7 of 7 negative, best -$5.6.
+- Arm 0.50 moves the invariant from 22% to 0.3% at -$48/mo.
+- P(reach 1.0R | touched 0.75R) = 85%, against a 42% base rate.
+- A 10% giveback is followed by a new high 93% of the time.
+
+**Harness:** reproduced -$48 (inside [-130, +9]), 22% → 0.3% (as 20.6% → 0.0%), the k-grid (6 of 6 testable cells negative) and arm 0.80 TREND (-$38.4 frozen).
+
+### Engine fidelity
+- **TREND:** 4908 of 4919 rows match the verified BAND/L3 walker. The 11 that don't are exact price ties.
+- **WILDCARD:** 1681 of 1681 replay candidates match.
+- **Live fills:** engine A (FAIR, 1-minute) reproduces live on all 11 incumbent disagreements. Engine B (LAST) misses 9, because LAST wicks arm trails that FAIR never armed (PONS 09-07: LAST 1.066R against FAIR 0.982R). **B's live-fill column is unusable.**
+- The long lines are LAST bars at 15 and 5 minutes. On live paths they flatter F1 and may understate F3 at 0.75R (FAIR +$25 WILDCARD total). I don't know by how much; there is no FAIR history for 220 days.
+
+### Structure (for any future exit rule)
+- Only the -1R stop and the TP rest on the exchange. The trail and the early stop are in-process, run at 1 s, and do nothing while the process is down.
+- `FUTURES_CONVEX_TRAIL_ARM_R` and `_RETAIN_FRAC` are global across WILDCARD, SQUEEZE and TREND (runtime.py:2362-2363). A per-sleeve arm is code.
+- F3 hazards:
+  1. The trail's R denominator is the live stop distance (runtime.py:1273, 2350-2356). A breakeven move shrinks 1R to about 0.19%, which instantly crosses the arm and the 3R retain tier. R must be pinned at entry.
+  2. `cancel_all_tpsl` is all-or-nothing (runtime.py:2238). A failed re-place leaves the position with no resting stop. It must place first, then cancel.
+- The legacy breakeven lock is skipped for convex sleeves (runtime.py:1526-1540).
+
+### Pre-registered forward test (only if the owner opts in; code required)
+- **Rule:** WILDCARD only. At the first fair-price peak of +0.75R (R pinned at entry), move the exchange stop to entry ± 0.19%. Everything else is unchanged. TREND is untouched.
+- **Judged on:** each fill that crosses 0.75R, paired against the unchanged rules on 1-minute fair prices (engine A).
+  - Primary: cumulative paired $.
+  - Secondary: share of fills that reach +0.5R and close at a loss (24% → about 14% expected).
+- **Length:** 30 affected fills, about 3–4 months at 8–10 a month. No interim promotion.
+- **Kill if any of these happen:**
+  - a position is ever left without a resting stop;
+  - a trail exits within 5 minutes of a breakeven move;
+  - the paired total is below -$47 (-2R) at 30 fills;
+  - the loss-after-profit share is not below 20%.
+- **What a pass means:** a cost cap, not a profit claim. Detecting $10/mo needs years. The false-kill rate of the -2R line is unknown.
+- **Selection caveat:** chosen from about 20 cells. P(≤ 0) is 0.33–0.46, and the 09-08 breakeven lock at 0.9R had a placebo p of 0.53.
+
+### Owner guidance given
+- Stop arming.
+- If he arms anyway: WILDCARD only, below 1.0R only, never TREND.
+- Do not lower `FUTURES_CONVEX_TRAIL_ARM_R`.
+- Size remains the only lever whose effect exceeds its noise. The TREND stake was already halved on 09-16.
+
+### Out of scope, flagged
+- The 09-18 loss, ONE_USDT short (15:14 → 16:11Z, -1.015R, -$15.14), peaked at only +0.058R. No exit rule reaches it; it is an entry question and was not studied here.
+- BR_USDT short on 09-17 peaked at +0.7505R and then hit the early stop at -0.766R (-$15.43). I don't know whether F3 at A 0.75 would have fired on it.
+
+### Corrections to the record (not edited: read-only)
+- DECISION_RULE.md lines 6054 and 6363 attribute **-$62/mo to WILDCARD arm 0.80**. The 09-08 table gives -$62 for **arm 0.70** (line 1507) and **+$19 for arm 0.80** (line 1390). Both ARM2 lanes find WILDCARD arm 0.80 at +$35 to +$41 on the replay, with intervals that span zero.
+- The settled breakeven k=1.0 cell is recorded as negative, but it is a no-op by construction on bars in both lanes. I don't know how the recorded engine scored it.
+- Do not cite `priceA/t1_trend.*` (F2 anchored on the peak, breakeven at 1.5× cost) or `priceB/b0_lib.py`, `b1_lineT.py`, `b2_lineE.py`, `lineT.json`, `lineE.json`. All are superseded.
+
+### I don't know
+- Why `/arm XRP 0.20` was refused on 09-14.
+- Whether there are manual closes before 09-10 other than IOST #15.
+- The exact fill for SAGA #50's counterfactual stop.
+- How long a Railway restart leaves positions unwatched.
+- Whether the 55-cell grid included retain 0.60 or 0.65.
+- The per-sleeve placebo for his WILDCARD arms alone (not run).
+
+**Files:** `wc/ARM2/char/`, `priceA/results.md`, `priceB/results.md`, `verify/verify.md` (plus v1–v6 scripts and JSON), `answer.md`.
+
+## 2026-09-18 - ONE_USDT WILDCARD SHORT STOP-OUT: GATE REVIEW
+
+**Asked (owner):** review today's stop-loss and its gates, and whether anything can prevent the same scenario.
+
+**Verdict: NO CHANGE.** The gates passed ONE as designed. Three pre-registered short-refusal rules all fail. No gate, env or code change.
+
+### The trade
+- ONE_USDT WILDCARD SHORT.
+  - Entry 15:14:29Z at 0.001546 (42.5 bps entry slippage). Exit 16:11:34Z at 0.001788 on the resting stop (EXCHANGE_CLOSE).
+  - Result -$15.14, which includes $0.17 of fees.
+  - -1.02R in dollars on a real 1R of $14.92. The recorded r_multiple is -1.05, measured from the price stop.
+- **Sizing:** risk is sized off available balance, $940.33: 2.41% = $22.66, then the regime scaler at 0.64x brings it to $14.92.
+- **Path:** best point +0.06R, in the entry minute. The worst point in the first 30 minutes was -0.24R. -0.5R was first touched at 44.5 min, so the early stop could not fire.
+- **What drove the loss:** a squeeze on ONE alone. From 15:58 ONE rose 11% in 14 minutes while BTC rose 0.16% and the alt median was flat or down. It began a minute before the 16:00Z hourly funding settlement (an observation, not a proven cause).
+- **Stop fill:** 4.7 bps past the stop price. The median across 31 stop exits is 20.5 bps.
+- **After the exit:** ONE reached 0.00189 by 17:01Z. Holding would have cost about -1.4R (about -$21).
+- **Entry:** every gate passed with room; vol_z of 1.11 was the thinnest margin. ONE was the only candidate (1 of 1, 51 scanned). The external listing veto ran and passed it (ref_listed=1).
+- **ONE vs the 19 earlier live shorts** (descriptive, in-sample). ONE sat beyond all 19 on three groups of columns:
+  - **Market rallying:** breadth 0.88, alt median +7.4%, BTC 24h +5.5%.
+  - **Coin still pumped:** +15.3% since the 16:00Z open, +136% over 7 days, $51.4M turnover.
+  - **Crowded shorts:** MEXC funding -0.255%/h; shorts paid 6.96% over the prior 24h.
+  - None of these is an entry gate.
+  - I don't know Bybit's rate at entry, which is what the live crowding veto reads. I don't know the change in open interest.
+
+### Telemetry check (first WILDCARD stop-out after the 09-17 f5f757c fix): PASS
+- **Populated:** all 23 entry-gate fields are filled.
+- **Exact matches:** range_24h and turnover match the 15:14:07 ticker snapshot. RSI 30.3, ATR 5.036%, calm 0.081, lateness 1.00 and range 0.9519 rebuild exactly from bars.
+- **Close matches:**
+  - vol_z 1.11, against 1.04 to 1.34 rebuilt; part of the entry minute is missing.
+  - breadth 0.8814 (n=59, 19 s old), against 0.86 to 0.88 rebuilt.
+  - BTC and ETH 24h within 0.1 point. Majors data was 5 s old.
+- **Nits** (no trading effect):
+  - The 3h ROC tag is saved unsigned (11.1 vs -11.07). The side carries the sign.
+  - equity_at_entry 940.33 and equity_at_open 998.94 differ BY DESIGN:
+    - entry = available balance (runtime.py:1849)
+    - open = total equity (runtime.py:8881)
+    - the $58.61 gap is margin already committed to open positions.
+- **Unknown:** I don't know whether the ~$0.16 of funding paid at 16:00Z is included in the P&L.
+
+### Rule test
+**Pre-registration:** `wc/ONE/test/PREREG.md`, written 17:27:12Z before any outcome. N=3, one rule per group, WILDCARD shorts only, a missing feature fails open.
+
+**Lanes:**
+- E replay: 2026-02-05 to 09-12, 220 d; incumbent 999 fills, +$48.78/mo.
+- V: independent book; incumbent +$26.22/mo.
+- H holdout: 2025-10-01 to 2026-02-04, 127 d; incumbent 587 fills, +$78.66/mo.
+
+| Rule (refuse a SHORT when) | E diff $/mo [95% CI] | Placebo p, best-of-3 | E quarters + | H diff $/mo [95% CI] | V diff | E refused: losers/winners | E refused vs kept, mean R | Verdict |
+|---|---|---|---|---|---|---|---|---|
+| R1 breadth_24h >= 0.50 | +19.71 [-28.9, +68.7] | 0.624 | 3/4 | -36.98 [-99.0, +22.4] | +20.50 | 73/65 ($915 avoided / $767 forgone) | -0.014 vs +0.049 | DO NOT SHIP (fails a, b, d) |
+| R2 up since the 16:00Z open | -14.70 [-54.8, +25.6] | 0.999 | 1/4 | -53.39 [-102.8, -7.6] | -14.09 | 26/42 ($220 / $420) | +0.297 vs -0.047 | DO NOT SHIP (fails a, b, c, d, f) |
+| R3 MEXC funding <= -0.10% | -26.81 [-68.9, +13.4] | 1.000 | 1/4 | -47.47 [-96.6, -6.6] | -26.07 | 29/30 ($318 / $452) | +0.193 vs -0.014 | DO NOT SHIP (fails a, b, c, d, f) |
+
+**Live design set** (73 fills, 20 shorts; reported only):
+- R1 refuses 10 of 20 shorts: 3 winners, 7 losers, -$44.69. That includes ONE and BR 09-17.
+- R2 refuses ONE and BTR (a winner).
+- R3 refuses ONE and CVC (a loser).
+
+### Verification (`wc/ONE/verify.md`, `verify/v01_verify.py`)
+- **R1 E cell:** recomputed from the booked fills with an independent predicate. It reproduces +19.7066/mo, 138 refused (73/65), $914.99 / $766.85 and 53 fall-throughs. CI [-28.8, +68.4] with a new seed. Raw placebo p 0.32 (300 draws; the test lane had 0.344).
+- **Timing:**
+  - No outcome file predates the PREREG.
+  - Thresholds in code equal the PREREG exactly: >= 0.50, > 0.0, <= -0.001, all fail-open.
+  - A dry run between 17:27 and 17:48 cannot be ruled out from mtimes, but no threshold moved.
+- **Breadth is causal:**
+  - E 1,681/1,681 and H 1,135/1,135 candidates carry exactly `breadth15[ts]`, where ts is the close of the signal bar and the bars used closed by ts.
+  - The independent V rebuild matches the side of 0.50 on 524/524 shared shorts.
+  - At exactly 16:00Z the pre-reset day is used, which is conservative.
+- **Trying to refute H:**
+  - **R1:** the negative sign survives but is fragile.
+    - P(better) = 0.12, and it is -$8/mo without H's 3 largest days.
+    - It beats random deletion on H (p 0.37).
+    - Record it as "no improvement", not "-$37/mo".
+    - R1 is positive on E and negative on H at all 7 thresholds from 0.40 to 0.80, so the breadth effect on shorts flips between periods.
+    - The ONE-like cut, breadth >= 0.80 (post hoc, reported only): E +$12.91 [-5.2, +31.3], H -$13.97 [-50.3, +22.8].
+  - **R2 and R3:** the signs survive dropping the top days, charging funding (R2 H -$50.83, R3 H -$43.56, R3 E -$13.66) and the placebo. The refused shorts were the better shorts on both periods.
+- **Replay caveats (WCF):**
+  - It fills 2.1x as often as live, reads 0.17R low and clips the +5R tail.
+  - The external listing veto is not modelled.
+  - E's last 22 days overlap the design window. The pre-window E run has the same signs.
+
+### Early stop
+- **This trade:** the early stop did not fire, because -0.5R was touched at 44.5 min, after the 30-min window. Even if it had fired, it would have saved about $7.50.
+- **A 60-min window on live fills:** +$7.42 over 12 trades (+$15.13 on shorts, -$7.71 on longs). That is noise, and it would cut the USELESS +2.58R and IOST +1.81R runners.
+- **Decision:** not refitted on 3 trades. The 30-cell grid pricing stands.
+
+### Decisions
+1. No gate, env or code change. The WILDCARD configuration is unchanged.
+2. R2 (coin green on the day) and R3 (MEXC funding crowding) are CLOSED. They point the wrong way on E, V and H, so there is no forward test. The live Bybit crowding veto is not tightened (7 shadow rows, 6 would have won).
+3. R1 (no shorts at breadth >= 0.50) is the breadth-gate family already closed on 2026-09-10.
+   - It is carried into the pre-registered 2026-12-10 breadth review as a REPORTED-ONLY cut: WILDCARD shorts, recorded breadth_24h >= 0.50 vs < 0.50. That review's own statistic decides, and this study neither replaces nor feeds it.
+   - Forward power: short R has SD 0.98 and live shorts arrive at about 11/mo on each side of 0.50.
+     - By 12-10 there will be about 30 per side, which detects only a gap of about 0.7R/trade or more.
+     - Confirming the live 0.29R gap needs about 180 per side, roughly 16 months.
+   - Ship only if a future test clears all six kill criteria.
+4. Telemetry fix f5f757c is confirmed working on live data.
+
+### Open / not verified
+- Bybit funding at ONE's entry.
+- The change in open interest.
+- Whether the 16:00Z funding is in the P&L.
+- The 73 pre-09-17 live fills were not checked against the exchange, which needs private endpoints.
+
+**Files:** `wc/ONE/` holds:
+- `raw/` (live pull, SHA-256 matched)
+- `profileA/`, `profileB/`
+- `test/` (PREREG.md, results.md/json)
+- `verify.md`, `verify/`
+- `answer.md`
+- `record.md`
