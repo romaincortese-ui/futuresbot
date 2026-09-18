@@ -15583,3 +15583,109 @@ Everything is under `C:/Users/Rocot/AppData/Local/Temp/wc/ZT/`:
 - `verify.md`, `verify/`
 - `answer.md`
 - `record.md`
+
+## 2026-09-18 - WILDCARD SIDE REFUSALS IN EXTREME MARKET STATES (S1-S5, L1-L5): DO NOT SHIP
+
+**Asked (owner):** test "no WILDCARD short when more than 75% of alts are rising" and the mirror "no WILDCARD long when more than 75% of alts are falling", plus other relevant parameters.
+
+**Verdict: DO NOT SHIP.** None of the ten decision cells passes the pre-registered kill criteria, and criterion (a) alone rules out all ten. No gate, env or code change.
+
+### Pre-registration
+- **File:** `wc/MKT/PREREG.md`, created 21:47:19 and never modified. It predates every result file.
+- **Cells:**
+  - S1 (primary): refuse a short when breadth > 0.75.
+  - L1 (primary): refuse a long when breadth < 0.25.
+  - S2-S5 and L2-L5 (secondary): BTC 24h ±3%, alt median ±3%, coin 7d +100% / -50%, BTC 3h ±1%.
+  - S1+L1: reported only.
+- **Kill criteria (a)-(g):** failing any one means no ship.
+  - (a) E gain >= +$10/mo with a CI that excludes 0.
+  - (b) Discounted placebo p <= 0.10.
+  - (c) E positive in at least 3 of 4 quarters.
+  - (d) H > 0.
+  - (e) B > 0, and for S1 also a B CI low > -$10.
+  - (f) V has the same sign as E.
+  - (g) Refused fills are worse than kept fills on E and on B, on both loser share and mean R.
+- **Provenance:** prompted by BR (09-17) and ONE (09-18), both shorts that lost during broad rallies. S1 was partly seen already in the ONE R1 sweep, so B was its deciding unseen line.
+
+### Lines
+All lines use 1R = $23.50, no compounding. The live 200% long rule is applied in the incumbent, every cell and every placebo draw, on every line.
+
+| Line | Window | Book | Incumbent (with the 200% rule) | Longs removed by the 200% rule | Harness check |
+|---|---|---|---|---|---|
+| E | MEXC, 2026-02-05 to 09-13, 220 d | e04 `book()` | 983 fills, +$57.86/mo [-103.1, +224.8] | 29 | without the rule: 999 fills, +$48.78/mo = e04 |
+| V | same window, independent v02 book | v02 `run()` | 990 fills, +$36.76/mo | 31 | without the rule: 1,007 fills, +$26.22/mo |
+| H | MEXC, 2025-10-01 to 2026-02-05, 127 d | h04 `book()` | 581 fills, +$73.57/mo | 18 | without the rule: 587 fills, +$78.66/mo |
+| B | Binance USD-M, 2024-09-22 to 2025-09-22, 365 d; 524 symbols, 111 delisted | e04 `book()` | 965 fills, +$90.18/mo [-14.6, +201.5] | 0 | NEW, unseen |
+
+### Results ($/mo vs incumbent)
+| Cell | E [95% CI] | E placebo p (discounted) | E quarters positive | H | B | V | Loser filter on E / B | Fails |
+|---|---|---|---|---|---|---|---|---|
+| **S1** short, breadth > 0.75 | +13.65 [-14.6, +41.5] | 0.443 (best-of-2) | 2/4 | -44.54 | -16.32 [-40.6, +7.1] | +13.92 | yes / no | a b c d e g |
+| **L1** long, breadth < 0.25 | +34.75 [-2.8, +73.7] | 0.084 (best-of-2) | 4/4 | +39.11 | +1.67 [-48.4, +49.8] | +41.61 | yes / no | a g |
+| S2 short, BTC 24h > +3% | +7.98 | 0.979 | 3/4 | 0.00 (can't be tested) | -4.89 | +7.98 | yes / no | a b d e g |
+| S3 short, alt median > +3% | -5.46 | 1.000 | 1/4 | -22.94 | -2.50 | -5.19 | no / no | a b c d e g |
+| S4 short, coin 7d > +100% | -6.60 | 1.000 | 2/4 | -17.43 | -1.85 | -5.21 | yes / no | a b c d e g |
+| S5 short, BTC 3h > +1% | -4.50 | 1.000 | 1/4 | -16.74 | -4.35 | +3.82 | no / no | all 7 |
+| L2 long, BTC 24h < -3% | -1.19 | 1.000 | 2/4 | -1.77 | -9.69 | -1.16 | no / no | a b c d e g |
+| L3 long, alt median < -3% | +17.91 | 0.775 | 2/4 (corrected) | -3.76 | +4.36 | +17.92 | no / no | a b c d g |
+| L4 long, coin 7d < -50% | -5.09 | 1.000 | 2/4 | -9.90 | +6.64 | -5.17 | no / yes (7 fills) | a b c d g |
+| L5 long, BTC 3h < -1% | -14.63 | 1.000 | 2/4 | +25.22 | -8.32 | -12.99 | no / no | a b c e g |
+| S1+L1 (reported only) | +46.95 [+1.2, +93.1] | 0.060 raw | 3/4 | +7.34 | -11.23 | +54.08 | - | not a decision cell; B negative |
+
+**Owner metric, S1 (losers/winners refused; losses avoided vs wins forgone):**
+- E: 22/16, $293 vs $191.
+- H: 10/19, $112 vs $290.
+- B: 21/29, $225 vs $408.
+
+**Owner metric, L1:**
+- E: 51/34, $655 vs $486.
+- H: 52/41, $638 vs $475.
+- B: 84/86, $1,196 vs $1,427.
+
+**Live fills since 08-21T09:41Z (reported only; real dollars):**
+- S1 would have refused BR (-$15.43) and ONE (-$15.14), the design trades, plus 2 other losers (-$20.17).
+- L1 would have refused 7 fills (5 losers); refusing them would have cost $12.37.
+- Two LSK longs were already refused by the 200% rule and are not credited to any cell.
+
+### Verification (`wc/MKT/verify/`)
+- **Independent re-book:** reproduces every lane to the cent on E, H and B, and on the V stream.
+- **Features:** match the feature lane on 1,681/1,681 (E), 1,135/1,135 (H) and 2,556/2,556 (B) candidates.
+- **Causality:** 23/23 on every line, after truncating every bar not closed by the scan time.
+- **Thresholds:** no threshold moved, no cell added, and the PREREG was never edited.
+- **Defects** (no verdict changes):
+  - E L3 had a $0.00 quarter counted as positive; the true count is 2/4.
+  - The B lane overstated quarter counts for S4 (true 0/4), S5 (true 0/4) and L4 (true 3/4).
+  - S2 on H should read "can't be tested", because it refuses 0 incumbent fills.
+  - The PREREG says alt_med is the "24h" median, but the lanes used the since-16:00Z median. The trailing version (S3t/L3t) also fails (a) on E.
+- **B fidelity:**
+  - Fair on per-fill economics: mean R +0.064 vs +0.023, TP share 1.3% vs 1.6%, similar exit mix.
+  - Not fair on market structure: 59% of E's fill rate, 76% longs vs 66%, and breadth at an extreme about twice as often.
+  - Neither difference flips S1 or L1 in their favour: an S1 threshold matched to E's share still gives -$6.29/mo, and tightening L1 makes B worse.
+
+### Decisions
+1. **No gate, env or code change.** The WILDCARD configuration is unchanged.
+2. **S1 is CLOSED.** It joins the breadth-gate closure of 09-10 and ONE R1. The sign flips across periods, and the refused shorts were the better ones on H and B. Do not re-open it on replay.
+3. **L1 is NOT SHIPPED.** It fails (a) and (g), and it is the only cell with no negative line.
+   - It is carried into the pre-registered 2026-12-10 breadth review as a REPORTED-ONLY cut, together with S1 (shorts at breadth > 0.75, longs at breadth < 0.25), on live-recorded breadth. That review's own statistic decides, and this study neither replaces it nor feeds into it.
+   - **Forward power** (assuming an R standard deviation of about 1):
+     - The E gap of 0.15R/trade needs about 350 affected longs, roughly 45 months at the live rate of about 7.7/mo.
+     - By 12-10 there will be about 21 affected longs (enough to show a gap of 0.6R or more) and about 12 affected shorts for S1 (0.8R or more).
+   - L1 ships only if a new unseen replay window clears all seven criteria.
+4. **S2-S5 and L2-L5 are CLOSED**, with no forward test.
+5. **The Binance year** (`wc/MKT/bin/`) is now used up for breadth questions, but it stays unseen for other WILDCARD questions.
+
+### Open / not verified
+- The size of the funding omission on B (probably flatters S1 and L1 slightly): I don't know.
+- The direction of the venue and period effect (Binance 2024-25 vs MEXC 2026): I don't know.
+- Replay caveats (WCF):
+  - It fills 2.1x as often as live and reads 0.17R low.
+  - It clips the +5R tail and does not model the external listing veto.
+  - E's last 22 days overlap the live design window. The pre-window E run has the same signs for every cell.
+
+**Files:** `wc/MKT/` holds:
+- `PREREG.md`
+- `feat/`, `bin/`
+- `test_E/`, `test_V/`, `test_H/`, `test_B/`
+- `verify/`
+- `answer.md`
+- `record.md`
