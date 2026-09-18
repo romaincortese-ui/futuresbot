@@ -1,3 +1,111 @@
+# Daily Audit — 2026-09-18
+
+---
+
+## Automated Assessment (UTC 17:00)
+
+Equity **$983.06** (cash $895.09 + $94.77 margin, **-$6.80 unrealised** on 2 open TREND
+longs). Realised basis (cash + margin) $989.86 vs 09-17's $992.25: **-$2.39**, against
+exchange-realised **-$2.21** on 4 closes (rest fees/funding). No deposit, no withdrawal.
+Feature store 185 -> **189** (+4). Logs (3,000 lines to 17:00Z): no Traceback, no 5003/2015;
+only WARNINGs are the Prophet archive HTTP 422 (unrelated to trading).
+
+### 1. Closed trades — 4 since 09-17 16:25Z, 3 winners, **-$2.21 exchange / +0.54R**
+
+| close (UTC) | symbol | sleeve | side | lev | hold | R | $ | peak R | mae R | risk% | mult | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-18 13:45 | NEAR | TREND (rotating) | L | x4 | 3.2h | +0.53 | +2.89 | +1.16 | -0.79 | 0.55 | 0.50 | retention trail |
+| 09-18 15:04 | XRP | TREND | L | x10 | 1.2h | +0.53 | +5.02 | +1.31 | -0.48 | 0.93 | 0.84 | retention trail |
+| 09-18 16:11 | ONE | WILDCARD | S | x1 | 1.0h | **-1.05** | **-15.31** | +0.06 | -0.95 | 1.49 | 0.64 | **stop (-1R)** |
+| 09-18 16:42 | STRK | WILDCARD | L | x3 | 1.2h | +0.53 | +5.19 | +1.29 | -0.07 | 0.94 | 0.50 | retention trail |
+
+**Reconcile: 4 exchange rows, 4 feature-store rows.** Exchange -$2.21 vs store -$2.03 (ONE
+$0.17 fee rounding). No censoring. All ref-listed; worst |slippage| 42.5 bps (ONE, adverse).
+Exits: 3 retention trail, 1 stop, 0 TP, 0 early stop. No unhandled exit path.
+
+**ONE loss (Min1 replay):** short entered 15:14Z at **lateness 1.00** — i.e. at the bottom of an
+-11% 3h flush, not mid-path. Price never went below +0.06R, rebounded through the stop at
+16:11Z and was **+21% above entry by 17:00Z (~-1.5R unmanaged)**. The stop did its job; the
+early stop did not fire (the move to -1R ran through two fast legs 16:00/16:12). Recorded, not
+a lever: lateness>=1.0 is n=1 today; the store's `stalled_reclaim(0.85-0.99)` FAVOR excludes 1.00.
+
+**Scaler:** trimmed all 4 (0.50-0.84). Cost on 3 winners ~$8.9, saved ~$8.6 on ONE (0.64x) — ~flat.
+
+### 1-OPEN. Open positions: 2 (both TREND longs)
+- **ZEC L x4**, entered 09-17 17:22Z at 1,488.70, held 23.6h. Now **-0.58R** (1,445.6).
+  Peak **+0.57R** (09-18 05:00Z), giveback **-1.15R**; trough -0.86R. TP 1,711.07 **+18.4%**
+  away, stop 1,414.24 **-2.2%** away. Margin $59.74, full size.
+- **NEAR L x3 (rotating slot, 21R)**, entered 15:24Z at 3.744, held 1.6h. Now **-0.08R**,
+  peak <=+0.22R. TP ~4.49 **+20.7%**, stop ~3.495 **-6.1%**. **Undersized by the scaler:**
+  margin $35.03 vs $51.00 risk-targeted (regime x0.69, eff 0.30).
+
+### 2. Learning loop
+
+**Conditional expectancy (189 rows, n>=10):** unchanged set — `hold>=120min` FAVOR,
+`hold<=30min` AVOID (reverse causation), `regime_trimmed_hard` AVOID ($ gap -0.03),
+`leverage<=4` FAVOR (+0.13), `exit=stop` AVOID (tautology), `stalled_reclaim` FAVOR (n=18).
+No new condition; nothing proposed.
+
+**Shadow ledger, 287 rows, deduped symbol+side+bucket+6h:**
+
+| bucket | resolved | net R | reading |
+|---|---|---|---|
+| veto:ref_not_listed | 38 | **-13.86** | saving money |
+| side_disabled | 37 | -7.99 | saving money |
+| calm_shock | 26 | ~-2.1 | saving money (MYX 09-18 +1.1R blocked) |
+| slot_occupied | 21 (+1 open) | +9.47 | **new row: ETH TREND L 14:23-16:41Z** (both TREND slots full), unresolved |
+| min_vol_skip | 15 | +7.37 | costing money |
+| below_trigger | 17 | +2.83 | mildly costing (TIA 09-18 +0.65R) |
+| veto:crowded_shorts | 6 | +4.89 | costing, n<10 |
+
+**Slot cost: +9.47R over 21 resolved; the first new row since 09-04 is a TREND ETH block, not
+WILDCARD.** No slot proposal.
+
+**Scan telemetry (16:51-16:59Z):** WILDCARD 53-54 movers, `roc_below_min` 48-49,
+`no_pullback_resume` 2-3, `low_volume_z` 2, `range_capped` 0, zero candidates — dormancy is
+regime (few extreme movers), not execution. TREND 4 symbols, 2 `symbol_open`. 3 `[SIZE_TRIM]`.
+
+### 3. Decision rules
+
+**Trial 19F (by ENTRY time):**
+
+    45 closes | netR +0.65 (SE 6.17) | net$ -41.62 (not quotable)
+    ex-best -1.24R (best XRP 09-14 +1.89R)
+    TREND 15 fills +0.67R | WILDCARD 30 fills -0.02R
+    mean realised risk 1.478%, max 2.444%  -> BELOW the [1.6%, 2.2%] band
+    max drawdown from peak close 11.90% ($1,045.71) -> under the 20% flag; now ~6.0% below peak
+    early-stop fires 3 of 21 | TREND early stops 0
+
+Criterion 3 slipped again (1.527% -> 1.478%); today's 4 fills averaged 0.98% (halved TREND 1R +
+scaler at 0.50-0.84). Confound as before.
+
+**Trial 21R (rotating TREND slot):** **first rotating fill — NEAR +0.53R / +$2.89**; second NEAR
+fill open. K1-K6 none tripped.
+
+### 4. Exits
+**19F: TP 0 | stop 15 | other 30.** Lifetime TP 9 of 189. Watch item stays closed.
+
+### 5. Lever
+**None tested.** 4 closes, one ordinary -1R stop; no reading moved. 21R forbids TREND tuning.
+
+### 6. Action items carried, not self-applied
+1. Write the firing poll's `r_now` into `convex_trough_r` before a `CONVEX_EARLY_STOP` close.
+2. Persist the per-position `r_now` poll series.
+3. Resync Futures-shadow to champion HEAD (paper). **Shadow stale, comparison suppressed.**
+
+### 7-day change verdicts
+- Per-sleeve risk dial (09-16): 7 TREND fills since, all winners — too few; it is the main
+  driver of criterion-3 drift.
+- TREND rotation 21R (09-16): 1 rotating close +0.53R, 1 open.
+- WILDCARD long range cap 2.0 (09-17): `range_capped` 0 — inert so far.
+- Trade-record fixes (09-17): 5 closes since, no errors.
+
+### Verdict
+**No change. No deploy.** -$2.21 on 4 closes, full reconcile, 2 TREND longs open (ZEC 2.2% off
+its stop), no kill tripped.
+
+---
+
 # Daily Audit — 2026-09-17
 
 ---
