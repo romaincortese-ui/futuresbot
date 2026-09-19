@@ -15805,3 +15805,23 @@ TREND corpus of 849 fills (Y1 474, Y2 375), $/mo at 1R $11.75. Kill criteria: (a
 - **Every-SL-is-an-anomaly case logged.** Cause class: "burst-made entry, stop at the burst's launch". It is not refusable pre-entry at a profit (R1 corpus: refused +0.126R vs kept +0.001R).
 - **The loss-ceiling mechanism is size, never stop placement.** The env unit is percent: never 0.01.
 - The in-progress-bar read remains a $0 correctness item. This trade is a clean, logged example of it.
+
+### 2026-09-19 addendum: the ZEC defects are fixed, and one claim in the review above is corrected
+
+**What shipped:**
+- `FUTURES_MAX_TRADE_RISK_PCT=0.886`.
+- **TREND gates on COMPLETED 15-min bars.** The scan runs once per bar, at the first cycle after the bar closes. The signal is re-priced at
+  the latest tick with the same stop and target distances, so sizing and the cap describe the order actually sent. It is refused and
+  shadow-logged as `stale_bar` when the gate bar closed more than 180 s earlier (`FUTURES_TREND_MAX_BAR_AGE_SECONDS`, e.g. after a
+  restart), and as `breakout_failed` when the tick is already back through the prior 24h closing extreme.
+- **The exit-race alert.** The stop restore still runs at once. Only when the restore fails does the bot ask the exchange whether the
+  position is still open; if the exchange's own stop or target already closed it, the bot logs `[EXIT_RACE]` and sends no alert. An
+  unreadable exchange, an unknown side or an odd payload all count as open.
+
+**Correction.** The review said that on completed bars "this particular stop-out would not have happened". That assumed the stop stays at
+the completed-bar price. The fix as shipped keeps the stop *distance* from the actual entry, which is required for the 0.886% cap to hold.
+Replayed at the live 23:05 scan time, the re-anchored stop (1532.69) still stops out. Under the new once-per-bar timing the scan would have
+run at about 23:00:30, mid-burst, and I don't know the outcome.
+
+**Classification.** This is a correctness fix (DECISION_RULE 4(a): TREND -$4.9 ± $4.1/mo, book $0), not a dollar lever, and it does not
+explain the ZEC loss. WILDCARD still reads the forming bar by design; changing that needs its own pre-registration.

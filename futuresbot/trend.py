@@ -126,7 +126,8 @@ def detect_trend_signal(frame: pd.DataFrame, symbol: str,
                         reasons: list[str] | None = None) -> WildcardSignal | None:
     """Sustained-trend entry. Returns a signal or None.
 
-    Gates, all on completed bars, no look-ahead:
+    Gates, on the frame as given. The runtime passes COMPLETED bars only
+    (_maybe_scan_trend trims the forming bar), so no look-ahead:
       1. |lookback-hour return| >= FUTURES_TREND_MIN_ROC (0.04).
       2. NEW CLOSING EXTREME over the same window, in the move's direction.
          CLOSING, not intraday: an intraday-high test demands the close sit

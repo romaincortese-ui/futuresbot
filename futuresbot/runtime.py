@@ -142,7 +142,8 @@ BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 # trade record and the feature-store row.
 ENTRY_GATE_KEYS = ("atr_pct", "calm_ratio", "vol_z", "range_24h", "turnover_24h_usdt",
                    "candidate_rank", "candidate_field", "entry_lateness",
-                   "trend_roc_24h", "trend_prior_close_extreme", "trend_extreme_margin_pct")
+                   "trend_roc_24h", "trend_gate_close", "trend_prior_close_extreme",
+                   "trend_extreme_margin_pct")
 
 
 class FuturesRuntime:
@@ -6558,6 +6559,20 @@ class FuturesRuntime:
         )
         return True
 
+    def _exchange_position_open(self, position: FuturesPosition) -> bool:
+        """False only when the exchange positively reports no open volume on this
+        position's side. Any error counts as open, so the stop is restored."""
+        try:
+            rows = self.client.get_open_positions(position.symbol)
+            if rows is None:
+                rows = []
+            if not isinstance(rows, list):
+                return True
+            return any(self._position_row_side(row) in (None, position.side)
+                       and self._open_position_volume(row) > 0 for row in rows)
+        except Exception:
+            return True
+
     def _restore_exchange_tpsl(self, position: FuturesPosition) -> bool:
         """Re-place the resting stop (and target) after a close attempt failed.
 
@@ -6580,6 +6595,15 @@ class FuturesRuntime:
                         position.symbol, self._format_price(position.sl_price))
             return True
         except Exception as exc:  # pragma: no cover — diagnostics only
+            # The exchange may have closed it already: its own stop or target filled
+            # seconds before our close (ZEC 2026-09-19 03:51, 7 s). Then there is
+            # nothing to protect, and "Stop Not Restored" would be a false alarm.
+            # Checked only here, after the restore failed, so it never delays a restore.
+            if not self._exchange_position_open(position):
+                log.warning("[EXIT_RACE] %s is already closed on the exchange (its own "
+                            "stop or target filled first); nothing to restore",
+                            position.symbol)
+                return False
             log.error("[EXIT_FAILED] %s close failed AND the stop could not be restored: %s",
                       position.symbol, exc)
             self._notify_once(
@@ -7346,7 +7370,11 @@ class FuturesRuntime:
         if not trend_enabled() or self._paused:
             return
         now_t = time.time()
-        if now_t - self._last_trend_scan_at < trend_scan_interval_seconds():
+        # One scan per interval, at the first cycle after the interval (a 15-min bar
+        # at the default 900 s) closes. The gates read COMPLETED bars below, so a scan
+        # later in the bar would only make the entry staler.
+        interval = trend_scan_interval_seconds()
+        if self._last_trend_scan_at >= (now_t // interval) * interval:
             return
         self._last_trend_scan_at = now_t
         # Clear the wildcard's leftover, as squeeze and sniper already do. This
@@ -7393,10 +7421,21 @@ class FuturesRuntime:
                     continue
                 scanned += 1
                 reasons: list[str] = []
-                sig = detect_trend_signal(df, sym, reasons)
+                # COMPLETED bars only. get_klines includes the forming bar, so the "new
+                # 24h closing high" was decided on an intrabar tick, and where the scan
+                # clock landed inside the bar decided the entry (DECISION_RULE 4(a); ZEC
+                # 2026-09-18 23:05 read a 7-minute burst mid-bar). Correctness, not $.
+                closed = self._drop_incomplete_klines(df, interval_seconds=900, now_ts=now_t)
+                sig = detect_trend_signal(closed, sym, reasons)
                 for r in reasons:
                     hist[r] = hist.get(r, 0) + 1
                 if sig is not None:
+                    sig = self._anchor_trend_signal(sig, df, closed)
+                    stale = self._trend_signal_stale(sig, closed, now_t)
+                    if stale:
+                        hist[stale] = hist.get(stale, 0) + 1
+                        self._shadow_log_untaken(sig, "TREND", stale)
+                        continue
                     cands.append(sig)
             # Strongest move first. No lateness ranking here: unlike the wildcard
             # there is no "deep pullback" tier to prefer — the entry IS the
@@ -7445,6 +7484,46 @@ class FuturesRuntime:
                     return
         except Exception as exc:  # pragma: no cover — never breaks the cycle
             log.warning("[TREND_SCAN] failed: %s", exc)
+
+    def _trend_signal_stale(self, sig: Any, closed: pd.DataFrame, now_t: float) -> str | None:
+        """Why a completed-bar signal may no longer be taken, or None.
+
+        stale_bar: the gate bar closed too long ago (a restart or a slow cycle landed
+        mid-bar), so the latest tick is not the moment the gates approved.
+        breakout_failed: the latest tick is back through the prior 24h closing extreme,
+        so the entry would not be at a new extreme at all."""
+        try:
+            if isinstance(closed.index, pd.DatetimeIndex) and len(closed):
+                bar_close = pd.Timestamp(closed.index[-1]).timestamp() + 900.0
+                max_age = max(60.0, self._env_float("FUTURES_TREND_MAX_BAR_AGE_SECONDS", 180.0))
+                if now_t - bar_close > max_age:
+                    return "stale_bar"
+            prior = getattr(sig, "prior_close_extreme", None)
+            if prior:
+                px = float(sig.entry_price)
+                if (sig.side == "LONG" and px <= prior) or (sig.side == "SHORT" and px >= prior):
+                    return "breakout_failed"
+        except Exception:                          # pragma: no cover - never blocks a scan
+            return None
+        return None
+
+    @staticmethod
+    def _anchor_trend_signal(sig: Any, frame: pd.DataFrame, closed: pd.DataFrame) -> Any:
+        """Re-price a completed-bar TREND signal at the latest tick, keeping its stop
+        and target DISTANCES. Sizing and the 1R cap then describe the order actually
+        sent, not a close that may be minutes old. gate_close keeps the gate's own close."""
+        try:
+            if closed is frame or len(closed) == len(frame):
+                return sig
+            px = float(frame["close"].iloc[-1])
+            e = float(sig.entry_price)
+            if px <= 0 or e <= 0:
+                return sig
+            k = px / e
+            return dataclasses.replace(sig, entry_price=px, sl_price=float(sig.sl_price) * k,
+                                       tp_price=float(sig.tp_price) * k, gate_close=e)
+        except Exception:                          # pragma: no cover - never blocks a scan
+            return sig
 
     def _maybe_scan_squeeze(self) -> None:
         """Coiled-Spring strategy: scan the LIQUID universe for a volatility
@@ -8832,7 +8911,8 @@ class FuturesRuntime:
                 contract_size=contract_size, equity_usdt=available_balance, max_risk_pct=max_risk_pct,
             )
             if capped != contracts:
-                log.info("[RISK_SIZE] wildcard %s contracts %d -> %d (cap %.1f%% equity)", symbol, contracts, capped, max_risk_pct)
+                log.info("[RISK_SIZE] %s %s contracts %d -> %d (cap %.3f%% of available $%.2f)",
+                         kind, symbol, contracts, capped, max_risk_pct, available_balance)
             contracts = capped
         if contracts < min_vol:
             log.info("[WILDCARD] %s contracts %d below min_vol %d — skip", symbol, contracts, min_vol)
@@ -8892,12 +8972,14 @@ class FuturesRuntime:
             # the prior closing extreme was never stored, so every review had to
             # rebuild both from klines. Decision-free.
             _prior = getattr(sig, "prior_close_extreme", None)
+            _gate = float(getattr(sig, "gate_close", None) or sig.entry_price)
             metadata["trend_roc_24h"] = round(float(sig.roc_pct), 6)
+            metadata["trend_gate_close"] = _gate
             if _prior:
                 metadata["trend_prior_close_extreme"] = float(_prior)
                 metadata["trend_extreme_margin_pct"] = round(
-                    ((sig.entry_price / _prior - 1.0) if side_name == "LONG"
-                     else (_prior / sig.entry_price - 1.0)) * 100.0, 4)
+                    ((_gate / _prior - 1.0) if side_name == "LONG"
+                     else (_prior / _gate - 1.0)) * 100.0, 4)
         elif kind == "SQUEEZE":
             metadata["squeeze"] = 1.0
         elif kind == "SNIPER":
