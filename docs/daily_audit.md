@@ -1,3 +1,125 @@
+# Daily Audit — 2026-09-19
+
+---
+
+## Automated Assessment (UTC 16:10)
+
+Equity **$972.20** (cash $940.00 + $31.25 margin, +$0.79 unrealised on 1 open TREND long).
+Realised basis $971.25 vs 09-18's $989.86: **-$18.61**, against exchange-realised **-$18.23** on 4
+closes (the rest is fees/funding). No deposit, no withdrawal. Feature store 189 -> **193** (+4).
+Logs (3,000 lines, 11:18-16:09Z, all after today's 09:41Z deploy): no Traceback, no 5003/2015,
+no `[EXIT_RACE]`/`stale_bar`/`breakout_failed` yet. WARNINGs are only Prophet HTTP 422 and the
+calibration seed fallback.
+
+### 1. Closed trades: 4 since 09-18 17:00Z, all TREND longs, 1 winner, **-$18.23 exchange / -1.85R**
+
+| close (UTC) | symbol | slot | lev | hold | R | $ | peak R | mae R | risk% | mult | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-18 17:22 | ZEC | static | x4 | 24.0h | -0.65 | -7.60 | +0.53 | -0.78 | 1.20 | 1.00 | **24h time stop** |
+| 09-18 19:54 | ETH | static | x10 | 2.0h | +0.60 | +6.73 | +0.91 | -0.10 | 1.11 | 1.00 | retention trail |
+| 09-19 03:51 | ZEC | static | x6 | 4.8h | **-1.06** | **-12.15** | +0.07 | -1.00 | 1.17 | 1.00 | **stop (-1R)** |
+| 09-19 15:24 | NEAR | rotating | x3 | 24.0h | -0.74 | -5.21 | +0.68 | -0.78 | 0.69 | 0.69 | **24h time stop** |
+
+**Reconcile: 4 exchange rows = 4 store rows.** Exchange -$18.23 vs store -$18.28 (fee rounding).
+No censoring. All ref-listed; worst |slippage| 8.0 bps (NEAR, favourable). Exits: 2 time stop,
+1 stop, 1 retention trail, 0 TP. The 24h clock is an intended TREND exit (first two in 19F), not an
+unhandled path.
+
+**ZEC stop:** already root-caused by the owner session today (DECISION_RULE 2026-09-19: an entry
+made during a price burst, with the stop sitting where the burst started). The resulting fixes
+shipped at 09:41Z. Not re-litigated.
+**Time stops:** both peaked +0.5/+0.7R, short of the trail's +1.0R arm, then drifted back and
+expired. n=2. This is not a lever.
+
+### 1-OPEN. Open positions: 1
+- **XRP L x10 (static)**, entered 04:13Z at 1.4268, held 11.9h. Now **~+0.13R** (~1.4304).
+  Peak **+0.95R**, giveback **-0.82R**; trough -0.66R. TP 1.5113 (+3R) **+5.7%** away, stop 1.3984
+  **-2.2%** away. The 24h clock expires 09-20 04:13Z. **Undersized by the scaler:** margin $31.25 vs
+  $57.33 intended (regime x0.547). Risk $6.23 = 0.64% vs 1.205% intended.
+
+### 2. Learning loop
+
+**Conditional expectancy (193 rows, n>=10):**
+- The same six conditions as yesterday, plus one new: **`leverage>=7` FAVOR** (n=54, +1.08R/trade
+  vs -1.00).
+- This reverses the 06-26 early finding. It is confounded: x7+ fills are almost all TREND majors
+  (ETH/XRP at x10), and leverage is derived from the stop distance, not chosen.
+- The `regime_trimmed_hard` gap flipped sign (-0.03 -> +0.08) while its verdict still says AVOID,
+  so it is unstable.
+- Nothing proposed.
+
+**Shadow ledger, 297 rows.** Deduplicated by symbol + side + bucket within 6h; R is cost-net
+(`outcome_net`):
+
+| bucket | resolved | net R | reading |
+|---|---|---|---|
+| veto:ref_not_listed | 38 | **-16.32** | saving money |
+| side_disabled | 33 | -10.69 | saving money |
+| calm_shock | 26 | -2.67 | saving money |
+| slot_occupied | 25 (+1 open) | **+4.06** | 4 new TREND rows: XRP +0.50, XRP +0.47, **ZEC -1.07**, ETH open |
+| below_trigger | 17 (+1 open) | +2.29 | mildly costing |
+| veto:crowded_shorts | 6 | +4.83 | costing, n<10 |
+
+**Slot cost: +4.06R over 25 resolved.** Today's blocked rows net about -0.1R: the slot lock kept
+the bot out of a second ZEC -1R. Correction to 09-18: its "+9.47R over 21" cannot be reproduced.
+The same 21 rows sum to **+3.47R** under this method. No slot proposal.
+
+**Scan telemetry (15:59-16:07Z):**
+- WILDCARD: 40-44 movers. Rejections: `roc_below_min` 34-38, `no_pullback_resume` 4-5,
+  `low_volume_z` 2, `climax_wick` 1. Zero candidates.
+- The WILDCARD drought is caused by the market regime, not by execution.
+- TREND: 4 symbols, `roc_below_min` 3, `symbol_open` 1.
+- No `[SIZE_TRIM]` lines in this window.
+
+### 3. Decision rules
+
+**Trial 19F (by ENTRY time):**
+
+    49 closes | netR -1.20 (SE 6.36) | net$ -59.90 (not quotable)
+    ex-best -3.09R (best XRP 09-14 +1.89R)
+    TREND 19 fills -1.18R | WILDCARD 30 fills -0.02R
+    mean realised risk 1.442%, max 2.444%  -> BELOW the [1.6%, 2.2%] band
+    max drawdown from peak close 11.90% ($1,045.71) -> under the 20% flag; now 6.9% below peak
+    early-stop fires 3 of 30 WILDCARD | TREND early stops 0
+
+**Flag for the owner (not editorialised):** criterion 3's band floor (1.6%) is now above the
+per-trade cap shipped today (`FUTURES_MAX_TRADE_RISK_PCT=0.886`). Every new fill is at most 0.886%, so
+criterion 3 cannot come back into the band while this setting holds. The owner needs to decide how
+criterion 3 is scored from 09-19.
+
+**Trial 21R (rotating TREND slot):** 2 fills, both NEAR: +$2.89, then **-$5.21 (-0.74R, time stop)**.
+Net **-$2.32**. K1-K6: none tripped. K1 limit is -$60; worst fill -0.74R; no 3-loss run; no
+slippage >50 bps.
+
+### 4. Exits
+**19F: TP 0 | stop 16 | other 33** (retention trail 10 TREND + time stop 2 + WILDCARD others).
+Lifetime TP 9 of 193.
+
+### 5. Lever
+**None tested.** Four closes, one stop that was already root-caused, and two time stops (n=2).
+A correctness deploy landed today, and 21R forbids TREND tuning.
+
+### 6. Action items carried, not self-applied
+1. Owner: decide criterion-3 scoring under the 0.886% cap (see §3).
+2. Write the firing poll's `r_now` into `convex_trough_r` before a `CONVEX_EARLY_STOP` close.
+3. Persist the per-position `r_now` poll series.
+4. Resync Futures-shadow to champion HEAD (paper). **Shadow stale, comparison suppressed.**
+
+### 7-day change verdicts
+- **TREND completed-bar gate + 0.886% cap + exit-race alert (09-19 09:41Z):** 0 closes since, and
+  no tags fired in 6.5h. Healthy; too early to judge.
+- **Per-sleeve risk dial (09-16):** 11 TREND fills since. Today's -1.85R pulled 19F TREND to
+  -1.18R. Too few to judge.
+- **TREND rotation 21R (09-16):** 2 rotating closes, -$2.32.
+- **WILDCARD long range cap 2.0 (09-17):** `range_capped` still 0, inert.
+- **Trade-record fixes (09-17):** 9 closes since, full reconcile, no errors.
+
+### Verdict
+**No change. No deploy.** -$18.23 on 4 TREND closes, full reconcile. 1 TREND long open (XRP,
+2.2% off its stop). No kill tripped.
+
+---
+
 # Daily Audit — 2026-09-18
 
 ---
