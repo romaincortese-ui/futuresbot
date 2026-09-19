@@ -15825,3 +15825,75 @@ run at about 23:00:30, mid-burst, and I don't know the outcome.
 
 **Classification.** This is a correctness fix (DECISION_RULE 4(a): TREND -$4.9 ± $4.1/mo, book $0), not a dollar lever, and it does not
 explain the ZEC loss. WILDCARD still reads the forming bar by design; changing that needs its own pre-registration.
+
+## 2026-09-19 - GOOD DAYS vs BAD DAYS: DAY-LEVEL LEVERS
+
+**Question (owner):** "How can we tend towards having mainly days like the 17/09? What are the levers?" The owner compared the 09-17 report (+$55.86, 10 closes, 90% wins) with the 09-19 report (-$18.23, 4 closes, 25% wins).
+
+**Ruling: NO CHANGE. No day-level lever ships.** The share of good days is set by the market, not by a setting.
+
+### Why the two days differ
+
+- The 09-17 report covered a 48h window (09-15 16:10Z to 09-17 16:10Z). Live it made +5.30R / +$56.79.
+  - Under today's rules with no /arm: +3.31R, about **+$28 at $8.40/R**.
+  - About 2R (~$17) came from the owner's /arms, which are indistinguishable from random arming (DR L15366).
+- The 09-19 window made -1.54R / -$23.04 live. Under today's rules: -0.73R, about **-$6**.
+- **Market-given:**
+  - WILDCARD candidate supply: 6 closes against 0 candidates. Live is short of candidates, not slots (0 of 593 scans found the slots full).
+  - A trending major for TREND: same-day ZEC 15-min trend efficiency vs TREND R, rho +0.60 (p 0.001). Next-day persistence is -0.03.
+  - TP reach: 7 TPs in the 28-day window, all before 19F. Since then, 0 of 50 trades peaked at 3R or more.
+
+### Concentration
+
+- **Live, 28 days:** +5.40R [-22.6, +36.8], about +$45 [-$190, +$309] at $8.40/R.
+  - The top 3 days (08-22, 09-03, 09-04, all TP days) made +19.14R, 355% of the net. Without them: -13.74R.
+- **Replay, 705 days under today's rules:**
+  - GOOD 221 days (31%): +$6,347.
+  - BAD 242 days (34%): -$4,946.
+  - The incumbent makes +$60.21/mo.
+- **Nothing known at 00:00Z predicts the day:** about 108 tests, none survives multiple testing. Yesterday's follow-through vs today's: -0.174 (n=112).
+
+### Pre-registered test (lane DAYS/test, PREREG.md 17:53Z, before code and results)
+
+Results are POOLED over CB (Binance) and CM (MEXC), 705 days, $/mo at $8.40/R, with 1,000 best-of-4 placebo draws.
+
+| Lever | $/mo [95%] | Placebo p | Line signs E H B Y1 Y2 CB CM | maxDD $ | Live L19 | Kills |
+|---|---|---|---|---|---|---|
+| L1 daily loss stop -2R | -17.25 [-41.2, +6.6] | 1.00 | - - - - - - - | 373 → 426 | 0.00 (never fires) | a, b, d |
+| L2 daily profit stop +3R | -15.22 [-35.4, +4.3] | 1.00 | - - - - - - - | 373 → 335 | -15.78 | a, b |
+| L3 max 5 entries/day | -37.04 [-68.4, -6.5] | 1.00 | - - - + - - - | 373 → 387 | -32.28 | a, b, c, d |
+| L4 x1.5 after 2 same-day wins (uncapped) | +2.92 [-7.2, +13.5] | 0.74 | - + + + + + + | 373 → 466 | -2.91 | a, b, c, d, e |
+
+- **Mechanism check.** The day's start does not change what later trades are worth.
+  - Trades after a -2R day average +0.033R (CB) and +0.09R (CM), against +0.024R and +0.060R overall.
+  - Trades after 2 same-day wins average +0.046R and +0.007R.
+- The `anat` hint that a first loss predicts a bad rest of day (n=13, p 0.15) does not hold over 705 days.
+- **L4 inside the 0.886% cap:** it cannot act on WILDCARD, because the regime floor of 0.50 puts 2.41% × 0.50 = 1.205%, above the cap. Only the TREND part (+$1.68/mo) could apply.
+- **The earlier screen's profit-stop gain (E +16.17, H +9.37) reversed under the pre-registered definitions** (E -4.85, H -42.49). I did not isolate the cause.
+
+### Verification (DAYS/verify.md)
+
+- PREREG.md was created and last written at 17:53:02, before the engine (17:54), the run script (17:55) and the results (17:56). It was never edited.
+- The L4 headline recomputes exactly from fills booked by the reference bookers (`pit_book.take`, `rotlib.replay`) with independent streak code: E -11.89, Y2 +13.65, CB +4.68, CM +1.07, POOLED +2.9154 (reported +2.9154).
+- Day state is causal and resets at 00:00 UTC:
+  - 0 of 180 future-perturbation runs changed a decision.
+  - The midnight unit test passes.
+  - CAP5 never exceeds 5 entries per day.
+  - 335 of 339 DLS/DPS triggers are exactly the first threshold crossing. The other 4 are simultaneous-close ties, with no early or missing crossing.
+
+### Standing conflict noted
+
+- The task brief says the streak throttle "pays". DR L6084 rules **do not re-enable it** (+$47.70 over 75 days; -$269 without the top 5%; p 0.161). Only the regime scaler "pays" on live fills.
+
+### What would reopen this
+
+- A pre-registered day-level rule that meets all of the following:
+  - adds at least +$10/mo POOLED with its CI above 0;
+  - best-of-4 placebo p ≤ 0.10;
+  - the same sign on E, H, B, Y1, Y2, CB and CM;
+  - no worse POOLED max drawdown;
+  - not contradicted on the live window.
+- The only unscreened candidate is a **correlated-entry cap**: one TREND entry per 60-min move across ETH/XRP/ZEC (09-03 took 3 fills in 57 minutes). Its sign is unknown.
+- Otherwise, more good days need more independent positive-expectancy fills: new edge or more market supply. Trial 21r (the rotating TREND slot) is the running candidate: +$50.6/mo [-0.2, +102.7] at $23.50/R, about +$18 at $8.40/R.
+
+Files: `DAYS/anat/`, `DAYS/cat/`, `DAYS/test/` (PREREG.md, results.md, results.json), `DAYS/verify/`, `DAYS/verify.md`, `DAYS/answer.md`.
