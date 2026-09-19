@@ -15689,3 +15689,119 @@ All lines use 1R = $23.50, no compounding. The live 200% long rule is applied in
 - `verify/`
 - `answer.md`
 - `record.md`
+
+## 2026-09-19 - ZEC TREND STOP-OUT ANOMALY REVIEW + 1% BALANCE LOSS CAP
+
+**Asked (owner):** "review what happened to the last ZEC trade... It says exchange close... consider this one as an anomaly as well... Also can you test capping the SL to 1% of the current balance at the time of entering the trade? ... right now the current account balance is around $971, no trade should lose more than $9.71 at once."
+
+**Verdict:**
+- **ZEC: an anomaly with a named cause, a burst-made entry with the stop at the burst's launch. No gate change.**
+- **1% cap:**
+  - Moving the stop (C2) is rejected: it is negative on every line.
+  - A size cap is a risk rule with an unproven dollar effect.
+  - If the owner wants the ceiling, the env-only setting is `FUTURES_MAX_TRADE_RISK_PCT=0.886`, not 1.
+- **No code, env or order change. The study was read-only.**
+
+### Provenance
+- **Lanes:** Z19/forA and forB (independent forensics), zrules (pre-registered refusal rules), capin (code and live inputs), capA and capB (independent cap engines). Everything is verified in `Z19/verify.md`.
+- **Checked against the exchange order history:**
+  - Entry 23:05:07Z, 22 contracts @ 1581.99.
+  - Close `stoporder_STOP_LOSS`, 03:51:10Z, 22 @ 1529.36.
+- **Stop reproduced exactly:** 1529.527142857143, from the forming 23:00 Min15 bar (C 1581.38, ATR14 1.0930%).
+- **PREREG order confirmed from NTFS creation times:** PREREG 09:33:57, first outputs 09:34:51 to 09:35:58, erratum 09:36:17, results 09:38:03. The erratum changed no corpus number.
+
+### The trade
+- **Setup:** ZEC_USDT TREND long. Signal 1581.38, fill 1581.99, stop 1529.53 (3xATR, 3.279%), leverage 6.
+- **Size:** 1R $11.41 from the signal ($11.54 from the fill), which is 1.205% of available balance ($954.04). Equity was $989.26.
+- **Result:** -$12.13 = $11.41 stop distance + $0.13 entry slippage + $0.55 fees + $0.04 stop slippage.
+  - That is -1.06R, 1.23% of equity.
+  - The bot's P&L excludes $0.02 funding.
+
+### Named cause
+- **The burst.** From 22:58 to 23:04Z ZEC alone rose from 1527 to 1583 (+3.7%).
+  - Binance volume ran 13-55x normal, taker buy/sell was about 1.6, and open interest was flat. That looks like short covering (inference).
+  - The news feed has no ZEC item. The cause of the burst: I don't know.
+  - The majors were flat. They had peaked 2-3 hours earlier.
+- **The gate.** Before the burst the 24h ROC was 2.1-2.3%, under the 4% gate.
+  - The 23:05:00 scan read the forming bar mid-burst: ROC 7.19%, and the "prior closing high" of 1550.0 was the burst's own first bar.
+  - The fill was 0.07% under the burst top.
+- **The stop.** The burst lifted ATR 17-19%, which put the stop at the burst's launch (1523.6-1527.2).
+- **The reversal.** It was a full retrace, ZEC-only: ZEC -3.2% against BTC +0.04 to +0.11%; after BTC, ZEC's own move was -3.25%.
+  - Peak +0.07R. It reached -0.25R at 2.9 min and -0.5R at about 45 min, with the fair-price stop at 03:51:10.
+  - Afterwards the low was 1518.88 (04:52Z), and ZEC was about 1565 (-0.31R) by 08:25Z.
+- **The slot.** It was free only because of the manual /arm on ETH at 19:46. The rules-only replay, in both engines, blocks this entry.
+- **Why no earlier exit:**
+  - The trail arms at +1R and the peak was +0.07R.
+  - TREND has no early stop (L1880).
+  - The 24h clock was not reached (4.77h).
+
+### Defects
+- **$ impact: none.** Stop, trigger, fill, leverage and sizing were all exact. The 5% cap did not bind.
+- **Known and unfixed: the in-progress-bar read** (DECISION_RULE §4(a); TREND -$4.9 ± $4.1/mo; "correctness, book $0").
+  - Both completed-bar versions pass the gate.
+  - A: at 23:05 on the 22:45 bar, stop 1502.28. B: at 23:15 on the closed 23:00 bar, stop 1511.18.
+  - Both stops sit below the 1518.88 low. n=1.
+- **New, $0: a false "Futures Stop Not Restored" alert path.** The bot fired a close and stop-restore 7s after the exchange had already filled the stop, logging 2 ERRORs. I don't know whether Telegram received it.
+- **Field naming:** the feature-store field `equity_at_entry` actually holds available balance. True equity is `equity_at_open_usdt`.
+
+### Entry-rule test (zrules, pre-registered, N=3)
+TREND corpus of 849 fills (Y1 474, Y2 375), $/mo at 1R $11.75. Kill criteria: (a) at least +$10/mo and the CI excludes 0, (b) placebo, (c) year signs agree, (d) refused fills are worse than kept fills, (e) live evidence.
+
+| Rule | Pooled Δ [95% CI] | Y1 / Y2 | Placebo p (best-of-3) | Refused vs kept (mean R) | Result |
+|---|---|---|---|---|---|
+| R1 1h burst ≥ 1.6715 stop-units | +1.01 [-6.5, +9.0] | +4.50 / -2.55 | 0.82 | +0.126 vs +0.001 | FAIL a-d |
+| R2 idiosyncratic 3h ≥ 1.6340 | +0.93 [-11.6, +13.3] | +9.63 / -7.93 | 0.83 | +0.087 vs -0.002 | FAIL a-e |
+| R3 hour ≥ 20 UTC | -5.64 [-19.6, +8.4] | -11.59 / +0.42 | 1.00 | +0.052 vs +0.001 | FAIL a-d |
+
+- R1 and R2 refuse ZEC 09-06 01:07 (+2.88R, +$75.37).
+- None of the six reported-only sensitivities is positive in both years.
+- Consistent with L12542: the entry-instant family's out-of-sample ceiling is below zero.
+
+### 1% cap (capA primary, capB cross-check; hand-recomputed)
+- **Mechanism.**
+  - `FUTURES_MAX_TRADE_RISK_PCT` (in percent) caps the PLANNED 1R (signal to stop) at that % of AVAILABLE balance.
+  - It is applied at both call sites (runtime 8829, 12103) when `FUTURES_RISK_BASED_SIZING_ENABLED=1`. The live setting is 5, and it has never bound.
+- **Live book** (09-04 to 09-19, 14.9d, n=69 replayed, today's sizing), window Δ $ vs INC:
+  - C1-EQ +21.73, C1-AV +20.16 [-39.56, +85.55], C1-AV 0.886 +19.56, C2 -56.58, C2r -31.38.
+  - capB (n=58): +23.20 / +23.22 / +27.21 / -50.88.
+  - C1-AV is WILDCARD +23.22 and TREND -3.06. Without IOST 09-11 and ATOM 09-09 it is -10.35 (capB -7.04).
+  - Live-rescale at actual live sizing (TREND 2.41% before 09-16): +$75.00 (n=58). That answers a different question.
+- **TREND 2 years:**
+  - Δ $/mo: C1-EQ -2.47 [-6.05, +1.00], C1-AV -2.46, 0.886 -3.30 [-9.87, +2.90], C2 -6.20 [-15.38, +1.88]. capB agrees within about $0.7.
+  - In Y2, the winning year: C1-EQ -7.41 [-13.14, -2.09], C1-AV -8.13 [-14.33, -2.37].
+- **WILDCARD 220d:**
+  - capA, no slippage: C1-EQ -27.71, C1-AV -31.01, 0.886 -33.68, C2 -108.37 [-225.54, -2.84].
+  - capB with live slippage: +25.35 / +28.08 / +30.20, C2 -90.49, C2r -146.79 [-292.5, -5.9]. With no slippage: -16.49 / -17.92 / -18.57.
+  - The size-cap sign equals the sign of INC, which depends on the slippage model. C2 and C2r are negative in both engines.
+- **WILDCARD holdout 127d (capA):** C1-EQ -31.46, C1-AV -36.94, 0.886 -39.83, C2 -5.13, C2r +2.25. No CI excludes 0.
+- **Tail:**
+  - Worst loss falls from 2.5% to 1.04-1.19% of equity (C1) and 0.92-1.05% (0.886).
+  - Max drawdown falls 8-50%.
+  - Median size: WILDCARD 0.45-0.60x, TREND 0.85-0.95x.
+- **Overshoot of "1%":** actual/planned on live stop-outs ran median 1.054x, max 1.129x (n=50).
+  - At `=1`: 10 of 36 replayed live losses were over 1%, the worst 1.12% of equity. The 09-18 ZEC trade would have been 18 contracts, -$9.92, against the $9.71 example.
+  - At `0.886`: 0 of 36 live losses were over (ZEC 16 contracts, -$8.82). In the corpora: WILDCARD 0-2 of about 983, TREND 13-19 of about 848, worst 1.045%.
+  - Gaps are unbounded: the worst live stop fill was 159.9 bps past the stop (BTR 09-10).
+- **Expected $ at 0.886, if adopted:**
+  - TREND -$3.30/mo.
+  - WILDCARD gives up about half its true $ result. At live fill rates that is -$9 to -$22/mo if the replay edge is real, ~$0 if it is a coin flip, and +$15/mo if it loses at live slippage.
+  - Net: about -$26 to +$14/mo. Sign unknown.
+
+### Caveats
+- The cap tests were not pre-registered. H is the only WILDCARD window the rules weren't built on.
+- The live-book replay uses today's sizing from 09-04. Replay equity at the ZEC trade was $1,061.82 against the live $989.26.
+- The E replay fills about 1.8x the live WILDCARD rate (136 against about 65-76 fills a month).
+- TREND corpus limits:
+  - The rotating slot is not included.
+  - Available balance excludes WILDCARD margin, so C1-AV binds less than it would live.
+- C2 depends on stop slippage staying constant for closer stops. I don't know whether it does.
+- Discrepancies resolved in verify.md:
+  - Burst start price: a definitional difference.
+  - Pre-burst ATR: 0.935% reproduces, B's 0.922% does not, and the difference is immaterial.
+  - Settled-bar stop: two different counterfactuals, both reproduced.
+  - capB's "1579.26 by 08:30Z" was actually the post-exit high at 07:17Z.
+
+### Standing implications
+- **Every-SL-is-an-anomaly case logged.** Cause class: "burst-made entry, stop at the burst's launch". It is not refusable pre-entry at a profit (R1 corpus: refused +0.126R vs kept +0.001R).
+- **The loss-ceiling mechanism is size, never stop placement.** The env unit is percent: never 0.01.
+- The in-progress-bar read remains a $0 correctness item. This trade is a clean, logged example of it.
