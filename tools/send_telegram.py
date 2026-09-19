@@ -10,7 +10,9 @@ Pretty-report JSON fields (all optional — absent lines are skipped):
   date, equity, equity_change_pct, trades_24h, win_rate, pnl_24h,
   review   : list of CLOSED-trade objects (preferred) or strings. A trade
              object: {side, symbol, reason, entry, exit, pnl_usd, pnl_pct,
-             acct_pct} — rendered as a clear multi-line block.
+             acct_pct} — rendered as a clear multi-line block. entry/exit are
+             NUMERIC prices and reason the exit text; raw trade-record names
+             (entry_price, exit_price, pnl_usdt, exit_reason) are accepted too.
   scan_context : str shown when there are 0 closed trades (why nothing opened).
   notes    : list[str] of flags/observations (e.g. concentration warnings).
   bt_24h, bt_baseline, bt_7d, change,
@@ -79,7 +81,39 @@ def _side_label(side) -> str:
     return s or "?"
 
 
+def _first(t: dict, *keys):
+    for k in keys:
+        if t.get(k) is not None and str(t.get(k)).strip().lower() not in ("", "none", "null", "n/a"):
+            return t.get(k)
+    return None
+
+
+def normalize_trade(t: dict) -> dict:
+    """Accept the documented keys AND the raw trade-record names, so a payload
+    built from trade_history renders fully. 2026-09-19 the routine sent
+    {entry: null, exit: "24h time stop"} with the P&L under another key, and the
+    report printed "Entry None" with no P&L line."""
+    out = dict(t)
+    out["pnl_usd"] = _first(t, "pnl_usd", "pnl_usdt", "pnl", "realised", "realized")
+    out["entry"] = _first(t, "entry", "entry_price")
+    out["exit"] = _first(t, "exit", "exit_price")
+    out["reason"] = _first(t, "reason", "exit_reason", "exit_rule")
+    # a text exit is a reason, not a price
+    if out["exit"] is not None and _f(out["exit"]) is None:
+        out["reason"] = out["reason"] or out["exit"]
+        out["exit"] = None
+    if out["entry"] is not None and _f(out["entry"]) is None:
+        out["entry"] = None
+    return out
+
+
+def missing_fields(t: dict) -> list[str]:
+    n = normalize_trade(t)
+    return [k for k in ("entry", "exit", "pnl_usd") if _f(n.get(k)) is None]
+
+
 def _render_trade(t: dict) -> str:
+    t = normalize_trade(t)
     side = _side_label(t.get("side"))
     sym = t.get("symbol", "?")
     head = f"{_pnl_emoji(t.get('pnl_usd'))} <b>{side} {sym}</b>"
@@ -87,7 +121,9 @@ def _render_trade(t: dict) -> str:
         head += f" — {t['reason']}"
     lines = [head]
     if t.get("entry") is not None or t.get("exit") is not None:
-        lines.append(f"   Entry {_price(t.get('entry'))} | Exit {_price(t.get('exit'))}")
+        ent = _price(t["entry"]) if t.get("entry") is not None else "?"
+        ext = _price(t["exit"]) if t.get("exit") is not None else "?"
+        lines.append(f"   Entry {ent} | Exit {ext}")
     pnl_bits = []
     if t.get("pnl_usd") is not None:
         pnl_bits.append(f"{_money(t['pnl_usd'])}")
@@ -204,7 +240,14 @@ def main() -> int:
 
     if args.payload or args.payload_file:
         raw = args.payload or open(args.payload_file, encoding="utf-8").read()
-        message = render(json.loads(raw))
+        payload = json.loads(raw)
+        # Tell the caller (the daily routine reads stderr) when a trade block
+        # will render without its prices or P&L, instead of silently sending it.
+        for i, t in enumerate(payload.get("review") or []):
+            if isinstance(t, dict) and missing_fields(t):
+                print(f"send_telegram: review[{i}] {t.get('symbol', '?')} missing "
+                      f"{', '.join(missing_fields(t))}", file=sys.stderr)
+        message = render(payload)
     elif args.text:
         message = args.text
     else:

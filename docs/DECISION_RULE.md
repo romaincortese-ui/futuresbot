@@ -25,6 +25,124 @@ increase wearing one's clothes.
 
 ---
 
+## TRIAL 20F — PRE-REGISTERED 2026-09-19 18:05 UTC, BEFORE THE FLAG WAS SET
+
+**Written before the env var was changed. If any line below is edited after a result is seen, the trial is
+void.** Owner: "let's start trial 20F now with all the new settings we have."
+
+### The change at the boundary, in full
+
+    FUTURES_TRIAL_LABEL        19F -> 20F
+    FUTURES_TRIAL_START_TS     1788891501 -> the second the flag is set (recorded below, administrative)
+
+Nothing else changes at the boundary. 20F is a BUNDLE trial. It measures the configuration that is live now,
+which changed several times inside 19F. Any change to the list below ends 20F and starts a new trial. The only
+exceptions are defect fixes that cannot change a trading decision, and each must be logged here.
+
+### Frozen for 20F
+
+**Code: commit df0192e and later docs-only commits.**
+- TREND gates on COMPLETED 15-min bars, one scan per bar.
+- Signals are re-priced at the latest tick with the same stop and target distances.
+- Signals are refused as `stale_bar` (> 180 s) or `breakout_failed`.
+- WILDCARD longs are refused at 24h range >= 200%.
+- /arm checks the order book.
+- A failed close restores the exchange stop, with the exit-race alert fix.
+- Per-sleeve risk dial.
+- Entry-gate telemetry.
+
+**Env:**
+
+| Area | Setting |
+|---|---|
+| Stakes | `WILDCARD_RISK_PCT 0.0241`, `TREND_RISK_PCT 0.01205`. `MAX_TRADE_RISK_PCT 0.886` with `RISK_BASED_SIZING_ENABLED 1` (1R <= 0.886% of available) |
+| Sizing dials | `REGIME_SIZE_SCALER_ENABLED 1`, floor 0.50. `CONVEX_STREAK_THROTTLE_ENABLED 0` |
+| Early stops | `WILDCARD_EARLY_STOP_R 0.5` over 30 min. `TREND_EARLY_STOP_R 0.0` |
+| Trail and targets | `CONVEX_TRAIL_RETAIN_FRAC 0.50`, arm 1.0R and ratchet 3R/0.75 at code defaults. TP 5R WILDCARD, 3R TREND. 24h clock |
+| Slots | WILDCARD 3, TREND 2 |
+| TREND universe | ETH/XRP/ZEC plus rotating slot (`TREND_ROTATION_ENABLED 1`, 48h). `TREND_MIN_ROC 0.04`, long-only |
+| WILDCARD gates | Turnover >= $2M. `SHADOW_MIN_ROC 0.07`, `MIN_ROC` 0.08 by default. `LONG_MAX_24H_RANGE 2.0`. `EXTERNAL_GATE_ENABLED 1`. `PREEMPT_ENABLED 1` |
+| Off | SQUEEZE and SNIPER |
+
+`/arm` stays available. Manual actions are tagged, and every statistic is also reported with them removed.
+
+### PRIMARY: does the bundle beat the settings it replaced, on NEW data?
+
+The 19F replay (wc/R19) said today's settings would have added **+$82.62 [-$48.81, +$227.42]** over 19F. That was in
+sample: three of the changes were designed on those trades. 20F is its forward test.
+
+**Statistic:** for each UTC day in 20F, the booked 20F P&L minus the same market replayed under the 19F-START settings.
+The 19F-start settings are:
+- TREND at 2.41% on the forming bar, at the old 900 s clock;
+- no 0.886% cap;
+- no WILDCARD range cap;
+- no rotating slot;
+- the same exits and early stop.
+
+The replay uses the reconciled engine lineage (wc/RP/recon, wc/R19) run in reverse. The forming-bar approximation
+(scan at bar open + 5 min) is fixed now and may not be tuned.
+
+**Judged at 45 days or 60 closes, whichever comes first:**
+- **Better:** paired difference > 0 with the 95% day-block interval above 0.
+- **No detectable difference:** the interval includes 0. Keep the settings; they are the lower-risk configuration.
+- **Worse:** the interval is below 0. Propose reverting the component that the same staged attribution names, as a new
+  pre-registered trial.
+
+### Secondary (reported, not decided)
+
+- Net R per fill and $ by sleeve, with intervals, including and excluding manual actions.
+- Share of GOOD / BAD days. The 705-day base is 31% / 34%.
+- Max drawdown.
+- Every realised loss as % of equity and of available balance at entry.
+- TREND completed-bar fills: fill vs signal price.
+
+### THE PRE-REGISTERED KILL. Any one: alert the owner immediately. No automatic reversal.
+
+| | Condition |
+|---|---|
+| K1 | Equity drawdown >= 15% from the 20F start equity. |
+| K2 | CAP DEFECT: a closed loss > 1.25% of AVAILABLE balance at entry, unless the stop filled > 50 bps past its price (a gap). |
+| K3 | Any open position without a resting exchange stop. |
+| K4 | RE-ANCHOR DEFECT: two TREND entries filled > 50 bps from their signal price. |
+| K5 | Any TREND entry taken on a bar that closed > 180 s earlier, or while the tick was back through the prior 24h closing extreme. |
+
+**Standing rules that continue:**
+- **Trial 21R** keeps its own kill rules K1-K6 and its 40-fill review, inside 20F.
+- **19F early stop:** its evaluation continues. Fires accumulate across 19F and 20F toward n >= 20, where its pre-registered
+  counterfactual test applies.
+- **Stop-loss reviews:** every stop-loss gets a root-cause review (owner directive, 2026-09-18).
+- **Flows:** a deposit or withdrawal resets the trial.
+
+**Administrative (recorded after the flag, not a result):** START_TS = `1789841100`, 2026-09-19T18:05:00Z. Start
+equity is the first [ACCOUNT] line after the deploy.
+
+## TRIAL 19F — CLOSED 2026-09-19 (the owner opened 20F)
+
+**The end condition was met.** 19F ran to 30 WILDCARD closes, its "30 WILDCARD closes or 45 days" clause.
+
+**Result:** 49 closes by entry time (30 WILDCARD, 19 TREND), **-$59.90 / -1.20R**.
+- The only open 19F position is XRP, entered 2026-09-19 04:13Z. It stays 19F by entry time.
+
+**Scorecard:**
+- **PRIMARY, early-stop counterfactual delta at n >= 20 fires: NOT REACHED.** There were 3 fires:
+  - MARSCOIN x2 on 09-10: both helped, per the 09-11 audit.
+  - BR on 09-17: saved 0.27R, per the 09-17 audit.
+  - The rule's verdict is carried into 20F (see above).
+- **Kill #1, two cuts whose unmanaged path reaches +1.5R:** not tripped (0).
+- **Criterion 2, cuts above a 1R peak <= 1:** PASS (0; BR peaked at 0.75R).
+- **Criterion 3, mean realised risk in [1.6%, 2.2%]: FAIL, re-scored at the owner's instruction on 2026-09-19.**
+  - Scored only on trades entered before the owner's 0.886% cap (09-19 09:43Z). That is all 49: mean **1.442%**
+    (feature-store `risk_pct_actual`).
+  - TREND: 1.768% before the owner's 09-16 halving, 0.992% after.
+  - WILDCARD: 1.495% (1.503% / 1.462%). WILDCARD alone was also below the floor, from available-balance sizing and
+    scaler trims.
+  - From 09-19 09:43Z the criterion is superseded by the owner's cap and is not scored.
+- **Criterion 4, zero TREND early stops:** PASS (0).
+
+**Verdict: INCONCLUSIVE on the primary (3 of 20 fires).** The early stop stays live.
+
+---
+
 # PRE-REGISTERED DECISION RULE — CONVEX TRIAL 19
 
 **Opens AFTER the funded week closes and the withdrawal completes**, not before.
