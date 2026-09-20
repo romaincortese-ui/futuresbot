@@ -138,6 +138,13 @@ PMT_EXCHANGE_PROFIT_LOCK_ERROR_AT_KEY = "pmt_exchange_profit_lock_error_at"
 BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 
 
+# Breakeven-stop and shadow telemetry, copied by name to the closed trade record
+# and the feature-store row.
+EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "be_stop_failed",
+                       "be_stop_attempts", "be_stop_wrong_side", "be_stop_no_position_id",
+                       "be_stop_paper_price", "be_stop_bare", "be_stop_cancel_failed",
+                       "be_shadow_arm_r", "be_shadow_arm_ts", "be_shadow_touch_ts", "be_shadow_touch_r")
+
 # Entry gate values stamped on a position and copied, by name, to the closed
 # trade record and the feature-store row.
 ENTRY_GATE_KEYS = ("atr_pct", "calm_ratio", "vol_z", "range_24h", "turnover_24h_usdt",
@@ -2314,6 +2321,196 @@ class FuturesRuntime:
         return self._close_position_for_exit(position, current_price=current_price,
                                              reason="CONVEX_EARLY_STOP")
 
+    def _repair_bare_stop(self, position: FuturesPosition, current_price: float | None = None) -> bool:
+        """Put a resting stop back on a position that has none, and keep trying.
+
+        Called from the per-position monitor, NOT from the trail: a bare position is the
+        one state that must be repaired even when the trail is switched off, and
+        FUTURES_CONVEX_RUNNER_TRAIL=0 is the first thing an owner reaches for after a
+        "Stop Not Restored" alert. Bounded and rate-limited (60 s) like the amend."""
+        md = position.metadata if isinstance(position.metadata, dict) else None
+        if md is None or not md.get("be_stop_bare") or self.config.paper_trade:
+            return False
+        last = self._metadata_float(md, "be_stop_bare_last_try_ts") or 0.0
+        if time.time() - last < 60.0:
+            return False
+        md["be_stop_bare_last_try_ts"] = time.time()
+        # Wider than the amend's 4 s: this runs once a minute per position, not every
+        # poll, and an ambiguous place is what leaves a position bare in the first place
+        # - the next repair cancels whatever the last one left resting.
+        bounded = {"attempts": 1, "timeout": 8.0}
+        repaired = self._restore_exchange_tpsl(position, bounded=bounded, cancel_first=True,
+                                               reason="breakeven", current_price=current_price)
+        if repaired:
+            md.pop("be_stop_bare", None)
+            log.warning("[BREAKEVEN_STOP] %s resting stop repaired at %s", position.symbol,
+                        self._format_price(self._effective_stop_price(position)))
+        elif not self._exchange_position_open(position, bounded=bounded):
+            md.pop("be_stop_bare", None)           # the exchange closed it; nothing to repair
+            log.warning("[BREAKEVEN_STOP] %s closed on the exchange; bare flag cleared",
+                        position.symbol)
+        self._save_state()
+        return repaired
+
+    def _move_exchange_stop(self, position: FuturesPosition, new_sl: float,
+                            current_price: float | None = None) -> bool:
+        """Replace the resting stop with a new fixed price, keeping the target.
+
+        MEXC exposes one stopLossPrice and cancel_all_tpsl is all-or-nothing, so this
+        is cancel-then-place with a gap in between (runtime.py:2239). On a failed
+        place it puts the ORIGINAL bracket back; if that fails too the position is
+        bare on the exchange and the owner is told at once."""
+        # BOUNDED: this runs inside the ~1s position monitor, which is a synchronous
+        # loop over every open position. At the default 3 attempts x 15s timeout a
+        # stalled exchange would park exits for EVERY position for ~45s per call, and
+        # the in-process stop with them. One attempt, 4s, is the whole budget here;
+        # the restore below keeps the normal retries because that one must land.
+        bounded = {"attempts": 1, "timeout": 4.0}
+        try:
+            try:
+                self.client.cancel_all_tpsl(position_id=position.position_id,
+                                            symbol=position.symbol, **bounded)
+            except TypeError:                      # a client without the retry knobs
+                self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
+            try:
+                self.client.place_position_tpsl(
+                    position_id=position.position_id,
+                    vol=int(position.contracts),
+                    take_profit_price=float(position.tp_price) if position.tp_price else None,
+                    stop_loss_price=float(new_sl),
+                    side=position.side,
+                    **bounded,
+                )
+            except TypeError:
+                self.client.place_position_tpsl(
+                    position_id=position.position_id,
+                    vol=int(position.contracts),
+                    take_profit_price=float(position.tp_price) if position.tp_price else None,
+                    stop_loss_price=float(new_sl),
+                    side=position.side,
+                )
+            return True
+        except Exception as exc:
+            log.warning("[BREAKEVEN_STOP] %s stop move failed: %s", position.symbol, exc)
+            # The whole failure path stays inside the same budget: this runs in the
+            # position monitor's synchronous loop, so an unbounded restore would park
+            # exits for EVERY position for minutes - worse than the gap it repairs.
+            # Cancel first: a place whose RESPONSE timed out may have rested on the
+            # exchange, and restoring without cancelling would leave two live stops.
+            if not self._restore_exchange_tpsl(position, bounded=bounded or {"attempts": 1, "timeout": 4.0},
+                                               cancel_first=True, reason="breakeven",
+                                               current_price=current_price):
+                md = position.metadata if isinstance(position.metadata, dict) else None
+                if md is not None and self._exchange_position_open(position, bounded={"attempts": 1, "timeout": 4.0}):
+                    # No resting stop now: the in-process check is the only protection and
+                    # it is the DESIGNED stop, not breakeven. Repaired on later polls.
+                    md["be_stop_bare"] = 1.0
+            return False
+
+    def _maybe_breakeven_stop(self, position: FuturesPosition, current_price: float,
+                              *, r_now: float, peak_r: float) -> None:
+        """Once the FAIR peak first reaches FUTURES_CONVEX_BREAKEVEN_ARM_R, move the
+        resting exchange stop once to entry +/- costs and never move it again.
+
+        Why it exists (owner decision 2026-09-20, trial 21F): below the 1.0R trail arm
+        a position has no floor at all, so a trade that builds 0.75-1.0R and fades pays
+        the full -1R. Measured on 120 live fills over 30 days: 7 such trades, -$99.25,
+        all of which must cross entry on the way down. Priced at -$4 to +$30/mo - bought
+        for the retention invariant, not for dollars; the arm-threshold family stays
+        refuted (DECISION_RULE, four grids).
+
+        `position.sl_price` is deliberately NOT changed: r_now divides by the live stop
+        distance, so moving it would rescale every R this position reports.
+
+        The shadow threshold is measurement only: it records when a lower arm WOULD have
+        fired and when price later touched breakeven, and never sends an order.
+
+        FAILURE MODE, stated plainly: the amend is cancel-then-place. If the place fails
+        AND the restore fails, the position has no resting stop and is protected only by
+        the in-process check at the DESIGNED stop (-1R, not breakeven), which dies with
+        the process. That state is flagged be_stop_bare, retried every 60 s until it is
+        repaired, and alerted once."""
+        md = position.metadata if isinstance(position.metadata, dict) else None
+        if md is None:
+            return
+        if md.get("be_stop_bare"):
+            return                                 # repaired by _repair_bare_stop, not here
+        entry = float(position.entry_price or 0.0)
+        if entry <= 0 or current_price <= 0:
+            return
+        is_long = str(position.side).upper() == "LONG"
+        cost = max(0.0, self._env_float("FUTURES_CONVEX_BREAKEVEN_COST_PCT", 0.19)) / 100.0
+        be_price = entry * (1.0 + cost) if is_long else entry * (1.0 - cost)
+        # NOT tick-snapped on purpose: _tick_size_for_symbol falls back to 0.01 for any
+        # symbol outside the active list, which on a sub-dollar alt rounds the breakeven
+        # price to the WRONG side of entry (measured: SHORT entry 0.0080 -> stop 0.01).
+        # The entry path places its stop unsnapped in production and the take-profit in
+        # this same call is unsnapped too.
+        if (be_price <= entry) if is_long else (be_price >= entry):
+            return                                 # never a "breakeven" that banks a loss
+
+        shadow_r = max(0.0, self._env_float("FUTURES_CONVEX_BREAKEVEN_SHADOW_R", 0.75))
+        if shadow_r > 0:
+            if peak_r >= shadow_r and "be_shadow_arm_ts" not in md:
+                md["be_shadow_arm_r"] = round(peak_r, 4)
+                md["be_shadow_arm_ts"] = time.time()
+                self._save_state()                  # or a restart loses the arm and the touch
+            if "be_shadow_arm_ts" in md and "be_shadow_touch_ts" not in md:
+                if (current_price <= be_price) if is_long else (current_price >= be_price):
+                    md["be_shadow_touch_ts"] = time.time()
+                    md["be_shadow_touch_r"] = round(r_now, 4)
+                    self._save_state()      # a touch on a down poll is not saved elsewhere
+
+        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_BREAKEVEN_ARM_R", 0.0))
+        if arm_r <= 0 or peak_r < arm_r or md.get("be_stop_price") or md.get("be_stop_paper_price"):
+            return
+        # WRONG-SIDE GUARD, the same one the PMT profit-lock carries (runtime.py
+        # ~11342). peak_r can be a PERSISTED peak, so a trade that already faded
+        # through entry - the exact population this rule targets - would otherwise
+        # have its -1R stop replaced by one sitting on the wrong side of the market
+        # and be closed at once. This fires on the deploy that enables the rule.
+        if (be_price >= current_price) if is_long else (be_price <= current_price):
+            if "be_stop_wrong_side" not in md:
+                md["be_stop_wrong_side"] = round(r_now, 4)
+                self._save_state()
+            return
+        if not position.position_id:
+            # cancel_all_tpsl drops a falsy positionId and cancels the SYMBOL's whole
+            # book, and the restore path refuses without an id: it would leave the
+            # position bare with nothing able to put the stop back.
+            if "be_stop_no_position_id" not in md:
+                md["be_stop_no_position_id"] = 1.0
+                self._save_state()
+            return
+        attempts = int(self._metadata_float(md, "be_stop_attempts") or 0.0)
+        if attempts >= 3:
+            return
+        # (2) one attempt per minute: each try re-opens the bare window, and a
+        # stalled exchange must not park the position monitor for every position.
+        last_try = self._metadata_float(md, "be_stop_last_try_ts") or 0.0
+        if attempts and time.time() - last_try < 60.0:
+            return
+        md["be_stop_last_try_ts"] = time.time()
+        md["be_stop_attempts"] = float(attempts + 1)
+        if self.config.paper_trade:
+            # No order exists and no in-process exit fires at this level, so the live
+            # key would make a paper row look like an armed live one in the corpus.
+            md["be_stop_paper_price"] = float(be_price)
+            md["be_stop_armed_peak_r"] = round(peak_r, 4)
+            self._save_state()
+            return
+        if self._move_exchange_stop(position, be_price, current_price):
+            md["be_stop_price"] = float(be_price)
+            md["be_stop_ts"] = time.time()
+            md["be_stop_armed_peak_r"] = round(peak_r, 4)
+            log.warning("[BREAKEVEN_STOP] %s peak %.2fR -> resting stop %s (entry %s, attempt %d)",
+                        position.symbol, peak_r, self._format_price(be_price),
+                        self._format_price(entry), attempts + 1)
+            self._record_activity(f"{position.symbol}: stop -> breakeven at {peak_r:+.2f}R")
+        else:
+            md["be_stop_failed"] = float(attempts + 1)
+        self._save_state()
+
     def _convex_runner_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
         """Proportional retention (trial 7): arm at +1R, floor = 0.30 x peak R.
 
@@ -2382,6 +2579,13 @@ class FuturesRuntime:
         trough_r = self._metadata_float(md, "convex_trough_r")
         if trough_r is None or r_now < trough_r:
             position.metadata["convex_trough_r"] = round(r_now, 4)
+        # Breakeven stop: proved-itself protection BELOW the arm, resting on the
+        # exchange. Runs on every poll (the new-peak branch below returns early).
+        try:
+            self._maybe_breakeven_stop(position, current_price,
+                                       r_now=r_now, peak_r=max(peak_r, r_now))
+        except Exception as exc:                   # pragma: no cover - never breaks the trail
+            log.debug("breakeven stop check failed for %s: %s", position.symbol, exc)
         if r_now > peak_r:
             position.metadata["convex_peak_r"] = round(r_now, 4)
             # The manual anchor ratchets on the same poll. This branch returns early,
@@ -5633,6 +5837,7 @@ class FuturesRuntime:
                 # so every gate review rebuilt them from klines. Decision-free.
                 "entry_rsi": (position.metadata or {}).get("wildcard_rsi"),
                 **{k: (position.metadata or {}).get(k) for k in ENTRY_GATE_KEYS},
+                **{k: (position.metadata or {}).get(k) for k in EXIT_TELEMETRY_KEYS},
                 # Market-wide state at entry. Promoted explicitly because this
                 # record is built field by field and anything not named here is
                 # discarded at close - the same defect that wiped five metadata
@@ -5853,6 +6058,7 @@ class FuturesRuntime:
                 # trade history keeps 200 rows; this file is the durable corpus.
                 "entry_rsi": md.get("wildcard_rsi"),
                 **{k: md.get(k) for k in ENTRY_GATE_KEYS},
+                **{k: md.get(k) for k in EXIT_TELEMETRY_KEYS},
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -6234,7 +6440,13 @@ class FuturesRuntime:
                 current_price = self._open_position_guard_price(position.symbol)
             except Exception as exc:
                 log.debug("Open-position guard price fetch failed for %s: %s", position.symbol, exc)
-                continue
+                current_price = 0.0
+            try:
+                # Before the price guard: a bare position whose price is unreadable (WS
+                # down, halted symbol) is the one that must not wait for a quote.
+                self._repair_bare_stop(position, current_price if current_price > 0 else None)
+            except Exception as exc:               # pragma: no cover - never breaks the monitor
+                log.debug("bare-stop repair failed for %s: %s", position.symbol, exc)
             if current_price <= 0:
                 continue
             try:
@@ -6559,11 +6771,15 @@ class FuturesRuntime:
         )
         return True
 
-    def _exchange_position_open(self, position: FuturesPosition) -> bool:
+    def _exchange_position_open(self, position: FuturesPosition, *,
+                                bounded: dict[str, Any] | None = None) -> bool:
         """False only when the exchange positively reports no open volume on this
         position's side. Any error counts as open, so the stop is restored."""
         try:
-            rows = self.client.get_open_positions(position.symbol)
+            try:
+                rows = self.client.get_open_positions(position.symbol, **(bounded or {}))
+            except TypeError:
+                rows = self.client.get_open_positions(position.symbol)
             if rows is None:
                 rows = []
             if not isinstance(rows, list):
@@ -6573,7 +6789,24 @@ class FuturesRuntime:
         except Exception:
             return True
 
-    def _restore_exchange_tpsl(self, position: FuturesPosition) -> bool:
+    @staticmethod
+    def _effective_stop_price(position: FuturesPosition) -> float:
+        """The stop the exchange should be holding: the breakeven price once this
+        position has armed one, else the designed stop. `position.sl_price` stays at
+        the designed stop (it is the R denominator), so every path that RE-PLACES the
+        bracket must read this instead or it silently reverts the floor to -1R."""
+        md = position.metadata if isinstance(position.metadata, dict) else {}
+        try:
+            be = float(md.get("be_stop_price") or 0.0)
+        except (TypeError, ValueError):
+            be = 0.0
+        return be if be > 0 else float(position.sl_price or 0.0)
+
+    def _restore_exchange_tpsl(self, position: FuturesPosition, *,
+                               bounded: dict[str, Any] | None = None,
+                               cancel_first: bool = False,
+                               reason: str = "close",
+                               current_price: float | None = None) -> bool:
         """Re-place the resting stop (and target) after a close attempt failed.
 
         Best-effort and never raises: it runs on the error path of an exit, where
@@ -6582,36 +6815,79 @@ class FuturesRuntime:
         try:
             if self.config.paper_trade or not position.position_id:
                 return False
-            if position.sl_price <= 0:
+            stop_price = self._effective_stop_price(position)
+            # A breakeven floor sits ~50x closer to the market than the designed stop, so
+            # by the time a close fails the market may already be through it. Re-placing
+            # it there is rejected (or fills at once); fall back to the designed stop.
+            if current_price and current_price > 0 and stop_price != float(position.sl_price or 0.0):
+                is_long = str(position.side).upper() == "LONG"
+                if (stop_price >= current_price) if is_long else (stop_price <= current_price):
+                    log.warning("[EXIT_FAILED] %s breakeven floor %s is through the market %s; "
+                                "restoring the designed stop", position.symbol,
+                                self._format_price(stop_price), self._format_price(current_price))
+                    stop_price = float(position.sl_price or 0.0)
+            if stop_price <= 0:
                 return False
-            self.client.place_position_tpsl(
-                position_id=str(position.position_id),
-                vol=int(position.contracts),
-                take_profit_price=position.tp_price if position.tp_price > 0 else None,
-                stop_loss_price=position.sl_price,
-                side=position.side,
-            )
+            knobs = dict(bounded or {})
+            if cancel_first:
+                try:
+                    self.client.cancel_all_tpsl(position_id=position.position_id,
+                                                symbol=position.symbol, **knobs)
+                except TypeError:
+                    knobs = {}
+                    self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
+                except Exception as exc:
+                    # If this fails after an AMBIGUOUS place, the restore below can add a
+                    # second resting stop. Counted, not swallowed silently.
+                    md_c = position.metadata if isinstance(position.metadata, dict) else None
+                    if md_c is not None:
+                        md_c["be_stop_cancel_failed"] = float(
+                            (self._metadata_float(md_c, "be_stop_cancel_failed") or 0.0) + 1.0)
+                    log.warning("[EXIT_FAILED] %s pre-restore cancel failed: %s", position.symbol, exc)
+            try:
+                self.client.place_position_tpsl(
+                    position_id=str(position.position_id),
+                    vol=int(position.contracts),
+                    take_profit_price=position.tp_price if position.tp_price > 0 else None,
+                    stop_loss_price=stop_price,
+                    side=position.side,
+                    **knobs,
+                )
+            except TypeError:
+                self.client.place_position_tpsl(
+                    position_id=str(position.position_id),
+                    vol=int(position.contracts),
+                    take_profit_price=position.tp_price if position.tp_price > 0 else None,
+                    stop_loss_price=stop_price,
+                    side=position.side,
+                )
             log.warning("[EXIT_FAILED] %s close failed; exchange stop restored at %s",
-                        position.symbol, self._format_price(position.sl_price))
+                        position.symbol, self._format_price(stop_price))
             return True
         except Exception as exc:  # pragma: no cover — diagnostics only
             # The exchange may have closed it already: its own stop or target filled
             # seconds before our close (ZEC 2026-09-19 03:51, 7 s). Then there is
             # nothing to protect, and "Stop Not Restored" would be a false alarm.
             # Checked only here, after the restore failed, so it never delays a restore.
-            if not self._exchange_position_open(position):
+            if not self._exchange_position_open(position, bounded=bounded):
                 log.warning("[EXIT_RACE] %s is already closed on the exchange (its own "
                             "stop or target filled first); nothing to restore",
                             position.symbol)
                 return False
             log.error("[EXIT_FAILED] %s close failed AND the stop could not be restored: %s",
                       position.symbol, exc)
+            md_b = position.metadata if isinstance(position.metadata, dict) else None
+            if md_b is not None:
+                md_b["be_stop_bare"] = 1.0         # one repair loop covers both paths
+            what = {"breakeven": "Moving <b>%s</b> to breakeven failed",
+                    "preempt": "Preempting <b>%s</b> failed",
+                    }.get(reason, "Closing <b>%s</b> failed") % html.escape(str(position.symbol))
             self._notify_once(
-                f"futures_stop_restore_failed_{position.symbol}_{position.position_id}",
+                f"futures_stop_restore_failed_{reason}_{position.symbol}_{position.position_id}",
                 f"⚠️ <b>Futures Stop Not Restored</b> [{self._mode_label()}]\n"
                 f"━━━━━━━━━━━━━━━\n"
-                f"Closing <b>{html.escape(str(position.symbol))}</b> failed and the exchange stop could "
-                f"not be put back. The position is running on the in-process stop only.",
+                f"{what} and the exchange stop could not be put back. The position is "
+                f"running on the in-process stop only.",
             )
             return False
 
@@ -6640,7 +6916,7 @@ class FuturesRuntime:
             # with the process. Put the stop back before the error propagates, so a
             # failed close (rate limit, maintenance, a redeploy landing here) cannot
             # leave an unprotected position overnight.
-            self._restore_exchange_tpsl(position)
+            self._restore_exchange_tpsl(position, current_price=current_price)
             raise
         order_id = str(order.get("orderId") or "")
         if order_id:
@@ -6926,12 +7202,13 @@ class FuturesRuntime:
             # resting stop and the scan's blanket handler would have swallowed
             # it as one WARNING line. Re-arm the stop and shout.
             log.exception("[PREEMPT] close FAILED for %s — re-arming its stop", victim.symbol)
-            self._rearm_stop(victim)
+            rearmed = self._rearm_stop(victim, mark)
             self._notify_once(
                 f"preempt_fail_{victim.symbol}",
                 f"⚠️ <b>Preemption close failed</b> [{self._mode_label()}]\n"
                 f"━━━━━━━━━━━━━━━\n{html.escape(victim.symbol)} is still OPEN. "
-                f"Its exchange stop was cancelled and has been re-armed — verify it.\n"
+                f"Its exchange stop was cancelled and "
+                f"{'has been re-armed - verify it' if rearmed else 'could NOT be re-armed'}.\n"
                 f"<code>{html.escape(str(exc))[:200]}</code>")
             return None
         if not ok:
@@ -6946,21 +7223,28 @@ class FuturesRuntime:
         except Exception:
             return None
 
-    def _rearm_stop(self, position) -> None:
-        """Re-place a resting stop after a failed close. Best-effort, loud."""
+    def _rearm_stop(self, position, current_price: float | None = None) -> bool:
+        """Re-place a resting stop after a failed close. Best-effort, loud.
+
+        Delegates to _restore_exchange_tpsl so this path gets the same three things the
+        close path has: the wrong-side fallback (a breakeven floor sits ~50x closer to
+        the market than the designed stop, and a preempted position is BELOW its floor
+        by construction), the be_stop_bare flag so the repair loop keeps trying, and one
+        alert that names the real event."""
         try:
             if self.config.paper_trade or not position.position_id:
-                return
-            if not (position.sl_price and position.sl_price > 0):
-                return
-            self.client.place_position_tpsl(
-                position_id=str(position.position_id), vol=int(position.contracts),
-                take_profit_price=position.tp_price or None,
-                stop_loss_price=float(position.sl_price), side=position.side)
-            log.warning("[PREEMPT] re-armed stop on %s at %s",
-                        position.symbol, self._format_price(float(position.sl_price)))
+                return False
+            ok = self._restore_exchange_tpsl(position, reason="preempt",
+                                             current_price=current_price)
+            if ok:
+                log.warning("[PREEMPT] re-armed stop on %s at %s", position.symbol,
+                            self._format_price(float(self._effective_stop_price(position))))
+            else:
+                log.error("[PREEMPT] could not re-arm stop on %s", position.symbol)
+            return ok
         except Exception as exc:  # pragma: no cover — already in a failure path
             log.exception("[PREEMPT] could not re-arm stop on %s: %s", position.symbol, exc)
+            return False
 
     def _position_r_multiple(self, position, mark: float | None) -> float | None:
         """Current P&L in R, net of the round-trip cost. None when unknowable."""

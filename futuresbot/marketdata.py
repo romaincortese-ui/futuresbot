@@ -23,6 +23,17 @@ _HTTP_RETRY_ATTEMPTS = 3
 _HTTP_RETRY_SLEEP_SECONDS = 0.75
 
 
+def _retry_kwargs(attempts: int | None, timeout: float | None) -> dict[str, Any]:
+    """Only pass the knobs when a caller set them, so a stubbed private_post that
+    takes (path, body) keeps working."""
+    out: dict[str, Any] = {}
+    if attempts is not None:
+        out["attempts"] = attempts
+    if timeout is not None:
+        out["timeout"] = timeout
+    return out
+
+
 class MexcApiError(RuntimeError):
     def __init__(self, message: str, *, path: str, payload: dict[str, Any]):
         super().__init__(message)
@@ -138,16 +149,18 @@ class MexcFuturesClient:
         except Exception:  # pragma: no cover - alerting must never break trading
             log.exception("auth-failure hook raised")
 
-    def private_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    def private_get(self, path: str, params: dict[str, Any] | None = None,
+                    *, attempts: int | None = None, timeout: float | None = None) -> Any:
         last_error: Exception | None = None
         filtered_params = {key: value for key, value in (params or {}).items() if value is not None}
-        for attempt in range(_HTTP_RETRY_ATTEMPTS):
+        tries = _HTTP_RETRY_ATTEMPTS if attempts is None else max(1, int(attempts))
+        for attempt in range(tries):
             try:
                 response = self.session.get(
                     self.config.futures_base_url + path,
                     params=filtered_params,
                     headers=self._headers(method="GET", params=filtered_params),
-                    timeout=15,
+                    timeout=(15 if timeout is None else timeout),
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -157,14 +170,15 @@ class MexcFuturesClient:
                 return payload
             except (requests.RequestException, ValueError, RuntimeError) as exc:
                 last_error = exc
-                if attempt >= _HTTP_RETRY_ATTEMPTS - 1:
+                if attempt >= tries - 1:
                     break
                 time.sleep(_HTTP_RETRY_SLEEP_SECONDS * (attempt + 1))
         assert last_error is not None
         self._note_private_failure(path, last_error)
         raise last_error
 
-    def private_post(self, path: str, body: dict[str, Any] | list[Any] | None = None) -> Any:
+    def private_post(self, path: str, body: dict[str, Any] | list[Any] | None = None,
+                     *, attempts: int | None = None, timeout: float | None = None) -> Any:
         payload_body = body or {}
         if isinstance(payload_body, dict):
             # Signature is computed over filtered body values; send the same
@@ -173,13 +187,14 @@ class MexcFuturesClient:
             payload_body = {key: value for key, value in payload_body.items() if value is not None}
         last_error: Exception | None = None
         body_json = json.dumps(payload_body, separators=(",", ":"))
-        for attempt in range(_HTTP_RETRY_ATTEMPTS):
+        tries = _HTTP_RETRY_ATTEMPTS if attempts is None else max(1, int(attempts))
+        for attempt in range(tries):
             try:
                 response = self.session.post(
                     self.config.futures_base_url + path,
                     data=body_json,
                     headers=self._headers(method="POST", body=payload_body if isinstance(payload_body, dict) else None),
-                    timeout=15,
+                    timeout=(15 if timeout is None else timeout),
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -189,7 +204,7 @@ class MexcFuturesClient:
                 return payload
             except (requests.RequestException, ValueError, RuntimeError) as exc:
                 last_error = exc
-                if attempt >= _HTTP_RETRY_ATTEMPTS - 1:
+                if attempt >= tries - 1:
                     break
                 time.sleep(_HTTP_RETRY_SLEEP_SECONDS * (attempt + 1))
         assert last_error is not None
@@ -247,8 +262,11 @@ class MexcFuturesClient:
         payload = self.private_get(f"/api/v1/private/account/asset/{currency}")
         return payload.get("data", {}) if isinstance(payload, dict) else {}
 
-    def get_open_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
-        payload = self.private_get("/api/v1/private/position/open_positions", {"symbol": symbol} if symbol else None)
+    def get_open_positions(self, symbol: str | None = None, *, attempts: int | None = None,
+                           timeout: float | None = None) -> list[dict[str, Any]]:
+        payload = self.private_get("/api/v1/private/position/open_positions",
+                                   {"symbol": symbol} if symbol else None,
+                                   **_retry_kwargs(attempts, timeout))
         data = payload.get("data", []) if isinstance(payload, dict) else []
         return data if isinstance(data, list) else []
 
@@ -359,6 +377,8 @@ class MexcFuturesClient:
         take_profit_price: float | None,
         stop_loss_price: float,
         side: str | int | None = None,
+        attempts: int | None = None,
+        timeout: float | None = None,
     ) -> Any:
         side_code: int | None = None
         if isinstance(side, str):
@@ -382,11 +402,14 @@ class MexcFuturesClient:
             "lossTrend": loss_trend if stop_loss_price else None,
             "volType": 2,
         }
-        return self.private_post("/api/v1/private/stoporder/place", payload)
+        return self.private_post("/api/v1/private/stoporder/place", payload,
+                                 **_retry_kwargs(attempts, timeout))
 
-    def cancel_all_tpsl(self, *, position_id: str | None = None, symbol: str | None = None) -> Any:
+    def cancel_all_tpsl(self, *, position_id: str | None = None, symbol: str | None = None,
+                        attempts: int | None = None, timeout: float | None = None) -> Any:
         payload = {"positionId": int(position_id) if position_id else None, "symbol": symbol}
-        return self.private_post("/api/v1/private/stoporder/cancel_all", payload)
+        return self.private_post("/api/v1/private/stoporder/cancel_all", payload,
+                                 **_retry_kwargs(attempts, timeout))
 
     def close_position(
         self,

@@ -1661,10 +1661,11 @@ def test_a_failed_preempt_close_rearms_the_stop_and_alerts(rt, monkeypatch):
     monkeypatch.setattr(rt, "_close_position_for_exit",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("MEXC 500")))
     rearmed, alerts = [], []
-    monkeypatch.setattr(rt, "_rearm_stop", lambda p: rearmed.append(p.symbol))
+    monkeypatch.setattr(rt, "_rearm_stop",
+                        lambda p, price=None: (rearmed.append((p.symbol, price)), True)[1])
     monkeypatch.setattr(rt, "_notify_once", lambda k, m, **kw: alerts.append(k))
     assert rt._try_preempt_for(_Incoming()) is None
-    assert rearmed == ["V_USDT"], "stop was not re-armed"
+    assert rearmed == [("V_USDT", 100.0)], "stop was not re-armed at the live mark"
     assert alerts and "preempt_fail" in alerts[0], "operator was not told"
     assert rt._preempt_log == [], "budget spent on a close that never happened"
 

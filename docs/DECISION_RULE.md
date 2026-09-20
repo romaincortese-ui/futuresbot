@@ -25,6 +25,72 @@ increase wearing one's clothes.
 
 ---
 
+## TRIAL 21F — PRE-REGISTERED 2026-09-20, BEFORE THE FLAG WAS SET
+
+**Written before the env var was changed. If any line below is edited after a result is seen, the trial is void.**
+Owner decision 2026-09-20, after the XRP give-back (+0.9458R peak -> -1.10R) and the saved-vs-cut measurement.
+
+### The change, in full
+
+    FUTURES_CONVEX_BREAKEVEN_ARM_R   (unset, 0 = off)  ->  0.90
+    FUTURES_TRIAL_LABEL              20F -> 21F
+    FUTURES_TRIAL_START_TS           1789841100 -> the second the flag is set (administrative)
+
+Nothing else. Code: the breakeven stop and its repair loop (this commit). Every 20F setting stays frozen and carries into 21F:
+the 0.886% per-trade cap, TREND on completed bars, the WILDCARD 200% long cap, halved TREND stake, the rotating slot, the
+early stop, the exits.
+
+### The rule
+
+When a position's FAIR peak first reaches +0.90R, the resting exchange stop is amended ONCE to entry +/- 0.19% and never moved
+again. Both sleeves. `position.sl_price` is unchanged, so R keeps its designed denominator. If the retention trail arms at 1.0R
+and its floor is higher, the trail wins. A second threshold (0.75R) is MEASUREMENT ONLY: it records when a lower arm would have
+fired and whether price later touched breakeven, and never sends an order.
+
+### What it is bought for, and what it is not
+
+**Not dollars.** Priced at **-$4 to +$30/month**, point estimate about +$5 to +$10, which is indistinguishable from zero.
+- Live, 120 fills over 30 days: 7 build-then-full-stop trades worth **-$99.25** saved; 3 winners cut for **-$3.99**.
+- One full TREND year: 0.90 costs **-$0.5 to -$3.4/mo** (0.75 costs -$18 to -$22/mo and cut six 3R runners; that is why 0.75 is
+  shadow-only).
+- It is bought for the retention invariant: the build-then-full-stop class goes to zero by construction, and the 0-1R zone gets
+  protection that survives a restart.
+
+### PRIMARY (execution, not dollars: the dollar signal is too small to read in a trial)
+
+**Build-then-full-stop rate among fills that reach 0.90R: pre-registered 0 of N.** It cannot fail on merit; it is the check that
+the amend actually landed and rested.
+
+### SECONDARY, the real measurement
+
+The **cut** column: every fill that arms at 0.90R, dips through entry+costs and would have booked more than $0. Baselines to beat:
+live 1 of 58 armed; corpus 22 of ~45 fired. The 0.75R shadow rows give the same count for the lower threshold at zero risk.
+
+### THE PRE-REGISTERED KILL. Any one: revert `FUTURES_CONVEX_BREAKEVEN_ARM_R=0` and say so.
+
+| | Condition |
+|---|---|
+| K1 | Cumulative cut exceeds **$40**. |
+| K2 | Any single cut exceeds **2.0R** (one truncated 3R runner is the corpus failure mode). |
+| K3 | Any position is left with no resting exchange stop for more than 5 minutes (`be_stop_bare` unresolved), or twice in the trial. |
+| K4 | A stop is amended to the wrong side of the market, once. |
+| K5 | The amend blocks the position monitor for more than 30 s, once. |
+
+### Length
+
+**40 fills that arm at 0.90R** (about 21 days at the current rate), or a kill, whichever comes first. No tuning in between: the
+threshold may not be refit, and 0.75 is decided on its shadow rows, not on this trial.
+
+### Carried from 20F, unchanged
+
+The 20F primary (today's settings vs the 19F-start settings, paired daily replay, 45 days or 60 closes) keeps running across the
+boundary; the breakeven stop is recorded as a layer inside it. Trial 21R (rotating slot) keeps its own K1-K6. Every stop-loss still
+gets a root-cause review. A deposit or withdrawal resets the trial.
+
+**Administrative (recorded after the flag, not a result):** START_TS = `1789902300`, 2026-09-20T11:05:00Z.
+
+---
+
 ## TRIAL 20F — PRE-REGISTERED 2026-09-19 18:05 UTC, BEFORE THE FLAG WAS SET
 
 **Written before the env var was changed. If any line below is edited after a result is seen, the trial is
