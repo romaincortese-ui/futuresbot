@@ -9218,7 +9218,10 @@ class FuturesRuntime:
                                 (min_risk / cap_risk - 1.0) * 100.0, cap_risk, roundup_pct)
                     capped = int(min_vol)
                     rounded_up = 1.0
-            if capped != contracts:
+            if rounded_up or capped != contracts:
+                # `rounded_up` too: when the intended size IS one minimum contract the
+                # round-up lands back on `contracts`, and gating on the difference alone
+                # would leave the one over-cap trade recorded as untouched.
                 log.info("[RISK_SIZE] %s %s contracts %d -> %d (cap %.3f%% of available $%.2f)",
                          kind, symbol, contracts, capped, max_risk_pct, available_balance)
                 self._last_risk_cap = {"risk_capped_from_contracts": float(contracts),

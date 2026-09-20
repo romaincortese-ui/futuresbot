@@ -44,7 +44,7 @@ day stays in the code but is DEFAULT OFF (`FUTURES_MAX_TRADE_RISK_ROUNDUP_PCT=0`
 | | |
 |---|---|
 | What it was bought for | a hard per-trade loss ceiling of about 1% of balance (owner, 2026-09-19) |
-| What it cost, day one | **AKE_USDT 09-20 09:00: sized to ZERO** (2 contracts -> 0; one contract of size 1000 risks $9.46 against an $8.55 cap, 10.6% over). AKE ran +125% and traded through its +5R target: about **-$94.57 forgone**, a counterfactual, n=1 |
+| What it cost, day one | **AKE_USDT 09-20 09:00: sized to ZERO** (2 contracts -> 0; one contract of size 1000 risks $9.46 against an $8.55 cap, 10.6% over). AKE ran +125% and traded through its +5R target: about **-$94.57 forgone**, a counterfactual, n=1. **Attribution, corrected 2026-09-20 after review:** $94.57 is the price of the CAP (2 contracts x 5R x $9.46). The zero-sizing branch alone is worth about **$47.3** - one minimum contract - because the cap would still have shrunk 2 contracts to 1. The revert, not the round-up, is what buys back the full $94.57 |
 | What it saved, day one | **EVAA_USDT: +$6.74** (the loss was -$4.48 instead of about -$11), n=1 |
 | The structural problem | the cap DELETES a trade whenever one minimum contract exceeds it, selecting on contract granularity rather than on anything about the trade. On a convex long-only sleeve whose return lives in the right tail, an arbitrary deletion is worse than a shrink |
 | Scope it had taken | 72 of 82 historical WILDCARD rows and 39 of 48 TREND rows carried realised risk above 0.886%, so the sleeve dials (2.41% / 1.205%) had become largely inert and WILDCARD ran at about 0.4x |
