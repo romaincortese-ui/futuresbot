@@ -16015,3 +16015,42 @@ Results are POOLED over CB (Binance) and CM (MEXC), 705 days, $/mo at $8.40/R, w
 - Otherwise, more good days need more independent positive-expectancy fills: new edge or more market supply. Trial 21r (the rotating TREND slot) is the running candidate: +$50.6/mo [-0.2, +102.7] at $23.50/R, about +$18 at $8.40/R.
 
 Files: `DAYS/anat/`, `DAYS/cat/`, `DAYS/test/` (PREREG.md, results.md, results.json), `DAYS/verify/`, `DAYS/verify.md`, `DAYS/answer.md`.
+
+## 2026-09-20 - XRP TREND STOP-OUT (near-miss give-back): ANOMALY REVIEW
+
+**Trade.** XRP_USDT TREND LONG. Entry 2026-09-19T04:13:41.723Z @ 1.4268 (signal 1.4266, slippage 1.40 bps), 219 contracts, x10, margin $31.247, 1R = $6.229, SL 1.398357, TP 1.511329. Exit 2026-09-20T01:30:14.541Z @ 1.3981, EXCHANGE_CLOSE (the resting stop, fair-price triggered). **Net -$6.780 = -1.088R.** Hold 21.28h. Last position of trial 19F; account $964.94 flat; trial 20F still at zero trades.
+
+**Cause (named, not a base rate).** The old rolling scan interval put the TREND scan at 04:13:35Z, **13m35s inside** the unfinished 04:00-04:15 Min15 bar (previous scan 03:58:28Z, 907s earlier — pure cycle drift). It read that forming bar as a new 24h *closing* extreme: tick 1.4266 vs prior closing high 1.4217 (set 02:30Z), recorded margin **+0.3447%**. The last **completed** bar, 03:45-04:00, closed **1.4181 — below the extreme. The breakout did not exist on finished data.** Every other gate was comfortable (24h ROC +8.2151% vs a 4% floor; RSI cap off; breadth 0.8154 over n=65). The forming-bar margin was the only binding gate.
+
+**Consequence.** The completed-bar rule would have anchored the same signal at the 04:15 boundary at **1.4230 — 0.27% lower**. The stop is a fixed 3xATR (1.98%), so 0.27% of entry price is **0.14R of head-room** on the entire R ladder.
+
+**The near miss.** Peak fair 1.4537 at **14:19:00Z** = **+0.9458R** (reproduces recorded `peak_r` exactly). Arm price 1.455243 — **short by $0.001543 = 10.6 bps = 0.054R**. Minutes at or above 1.0R: **zero**. Above 0.90R: **4** (14:18-14:21Z). Above 0.75R: 11. The trail never armed, so the position kept its full -1R stop for its whole life. On the completed-bar entry the same fair high is **+1.088R** — over the unchanged gate.
+
+**The give-back.** Peak -> stop: **XRP -3.60% vs BTC -0.44%, ETH -0.76%** (~8x BTC). Sharpest hour 21:04-22:04Z (XRP -2.18%, BTC -0.24%). First stop test at **22:04Z: last price traded 1.3983, through the stop; fair low 1.3986 held it by 1.7 bps** — the fair-price trigger bought 3.5 hours for free. Final approach 00:55-01:33Z was a quiet bleed (XRP -0.50%, BTC -0.24%): **reached by attrition, not by an event.**
+
+**Counterfactuals (n=1, descriptive; 1R = $6.23).** ACTUAL **-6.78** | arm @0.90R +2.44 | exchange breakeven @0.75R/@0.90R -0.50 (identical) | breakeven+cost @0.75R/@0.90R +0.09 (identical) | 24h clock **-10.0 to -10.4** (due 2h43m *after* the stop filled) | `/arm` at the peak +2.2 to +2.4 | **completed-bar rules (already deployed) +2.87, swing +$9.65, no exit rule touched**. Shadow-ledger rows for the slot-blocked signals: 02:25Z +0.467R (+$2.91), 02:40Z +0.468R (+$2.92), **00:37Z -1.153R (-$7.18)** — sum -0.218R.
+
+**Settings shipped 2026-09-19T09:43Z (deploy ce375477 / df0192e), 5h30m after this entry.**
+- **Completed-bar gates: would have changed the entry, decisively.** Two independent parts each refuse the 04:13 scan — `_drop_incomplete_klines` (the 03:45 close was not a new extreme) and the boundary-anchored scheduler (no scan runs at 04:13 at all). At 04:15:35Z the completed 04:00 bar (close 1.4244) is a genuine extreme; anchored entry **1.4230**, SL 1.394785. `stale_bar` has fired 0 times in 31 hours post-deploy.
+- **0.886% risk cap: would have changed nothing.** Applied to *available* balance after the regime trim, ceiling $8.345 vs realised risk $6.229 (0.661% of available, 0.637% of equity). `risk_cap_bound = 0.0`, zero `[RISK_SIZE]` lines in 31h; still non-binding under the new entry ($6.21 vs $8.35).
+
+**Sizing.** 12% of available $941.88 = $113.03 -> `FUTURES_TREND_RISK_PCT` 1.205% -> $57.33 -> **regime scaler eff 0.22 -> x0.5474** -> $31.38 -> 219 contracts -> risk $6.229. Streak throttle 1.0, drawdown brake off. **The scaler cut the position 46% and saved about $5.6 of this loss.**
+
+**Defects.**
+- CLEAN: stop design (3 x ATR% 0.65991% = `sl_frac_designed` 0.019797 exactly; 19.797% vs the 20%-of-margin cap, so leverage was never trimmed — x10 is a consequence of a tight ATR); fair-price trigger; fill quality (1.84 bps adverse on the stop, 1.40 bps on the entry); exit race (`[EXIT_RACE]` handled the same-tick collision, no false "Stop Not Restored").
+- EXPLAINED: `trend_gate_close` null (field ships in the 09:43Z deploy); `equity_at_entry` = available balance, misnamed column; WILDCARD-path nulls the TREND scan never populates.
+- **NEW DEFECT:** with two positions open the cycle log prints **one** `open_position` line (the first position only) — 0 of ~1,500 cycles printed two. XRP's live P&L is missing from the logs for its **first 11 hours (04:13 -> 15:24)**, including the run and the peak; the peak survives only in persisted `convex_peak_r`. Correctness item.
+- WART: shared `metadata["wildcard"] = 1.0` sets `tags.is_wildcard` true on TREND rows — contaminates any split keyed on `is_wildcard`.
+
+**Corrections to the brief.** Peak was **14:19:00Z**, not ~07:00-08:00Z (at 07-08Z the trade was -0.64R to -0.11R). **Trough -0.7383R could not be reproduced from the fair, last or index series by either lane — I don't know where it comes from.** Measured: -0.6645R @04:40Z, -0.9915R @22:04Z, recorded `mae_r` -1.0055R at the stop.
+
+**Lane reconciliation.** Peak R 0.9458 (not 0.9523): `runtime.py` divides by the **live stop distance off the fill**, not metadata `sl_margin_pct`; A's denominator is the code's and reproduces `peak_r`/`mae_r` exactly. Completed 03:45 close is **1.4181** (both lanes' raw Min15), not 1.4212. Bar age at the scan 815s. Available balance 941.8833. 24h-clock exit -$10.0 to -$10.4 (04:13 minute ranged 1.3796-1.3817). Slot counterfactuals taken from the bot's own shadow ledger rather than replay, and the omitted 00:37Z row restored.
+
+**DECISION: no gate change, no env change, nothing shipped.**
+1. The arm-below-1R family stays **REFUTED** and closed — 55-cell and 90-cell grids; breakeven+cost lock @0.9R +$3.9/-$0.5, placebo p=0.53; breakeven stop k=0.4..1.0, all seven cells negative, best -$5.6/mo; arm below 1.0R -$5 to -$76. wc/ARM2's 0.75R exchange breakeven is WILDCARD-only and prices ~$0. Rows a/b/d above are that family in costume and are cited, not endorsed. The near-miss bucket is now 10 fills / 7 losers / -$74, exactly as the grids predicted.
+2. **PRE-REGISTERED (not shipped):** from 2026-09-19T09:43Z, record anchored entry vs `trend_gate_close` on every TREND fill. Claim to be tested: *completed-bar anchoring does not raise the peak-R distribution.* Reject at **n >= 30 fills** if mean |entry - gate_close| / sl_frac exceeds 0.05R **and** peak-R shifts in the same direction, out of sample, with a placebo on shuffled gate closes. Reads a field the bot already writes; no code, no risk. This is the entry-price variable, which the arm grids never held loose.
+3. Two zero-$ correctness fixes: the one-`open_position`-per-cycle log defect, and the `is_wildcard` tag on TREND rows.
+
+**FLAGGED, NOT ACTED ON.** `FUTURES_TREND_MAX_POSITIONS=2` blocked this signal three times on 09-19 (00:37, 02:25, 02:40). `trend.py`'s docstring measures 3 slots at +$16.12 with lower drawdown; the live env is 2; the shadow ledger's 28 resolved `slot_occupied` TREND rows sum +14.5R net, median +0.45R — un-sized, un-slipped, ignoring that a third position shrinks all three, and including the -1.153R row here. **I don't know why the env and the docstring disagree.** Needs its own pre-registered out-of-sample test.
+
+**Counts.** n=1 trade. 1,740 fair-price Min1 bars, 3,419 last-price Min1 bars, 0 gaps. Two independent Railway pulls with identical feature-store rows; 12 XRP trade-history rows; 54 XRP shadow rows; 4 deployments in window. Counterfactual n=1 throughout. Read-only review: no repo edits, no /data writes, no orders, no deploys.
