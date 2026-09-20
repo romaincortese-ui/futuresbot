@@ -25,6 +25,58 @@ increase wearing one's clothes.
 
 ---
 
+## TRIAL 22F — PRE-REGISTERED 2026-09-20, BEFORE THE FLAG WAS SET
+
+**Written before the env vars were changed.** Owner decision 2026-09-20: "let's remove the new cap so that trades like AKE
+can be entered. It was a trial and it failed. Let's go back to the old rule."
+
+### The change, in full
+
+    FUTURES_MAX_TRADE_RISK_PCT   0.886  ->  5      (the standing rule, 1R <= 5% of available)
+    FUTURES_TRIAL_LABEL          21F -> 22F
+    FUTURES_TRIAL_START_TS       1789902300 -> the second the flag is set (administrative)
+
+Nothing else. The 0.90R breakeven stop stays live and its trial carries over (see 21F). The round-up branch added the same
+day stays in the code but is DEFAULT OFF (`FUTURES_MAX_TRADE_RISK_ROUNDUP_PCT=0`), so live behaviour is exactly the old rule.
+
+### Why the cap was reverted, after 32 hours
+
+| | |
+|---|---|
+| What it was bought for | a hard per-trade loss ceiling of about 1% of balance (owner, 2026-09-19) |
+| What it cost, day one | **AKE_USDT 09-20 09:00: sized to ZERO** (2 contracts -> 0; one contract of size 1000 risks $9.46 against an $8.55 cap, 10.6% over). AKE ran +125% and traded through its +5R target: about **-$94.57 forgone**, a counterfactual, n=1 |
+| What it saved, day one | **EVAA_USDT: +$6.74** (the loss was -$4.48 instead of about -$11), n=1 |
+| The structural problem | the cap DELETES a trade whenever one minimum contract exceeds it, selecting on contract granularity rather than on anything about the trade. On a convex long-only sleeve whose return lives in the right tail, an arbitrary deletion is worse than a shrink |
+| Scope it had taken | 72 of 82 historical WILDCARD rows and 39 of 48 TREND rows carried realised risk above 0.886%, so the sleeve dials (2.41% / 1.205%) had become largely inert and WILDCARD ran at about 0.4x |
+
+**Recorded honestly: the revert is a decision on mechanism, not on measured P&L.** One saved trade and one forgone trade are
+an anecdote either way. What is not an anecdote is the zero-contract branch: it is deterministic arithmetic that recurs on
+any symbol whose minimum contract exceeds the cap (AKE, BTW, PONS, TUT at this equity), and it self-resolves only above about
+$1,291 of equity.
+
+### What 22F measures
+
+Unchanged from 20F/21F: the 20F primary (today's settings vs the 19F-start settings, paired daily replay) keeps running, and
+21F's breakeven-stop trial keeps its own primary, secondary and kill rules (K1 cumulative cut > $40, K2 any single cut > 2.0R,
+K3 a position bare > 5 min or twice, K4 a wrong-side amend, K5 the amend blocking the monitor > 30 s). Trial 21R (rotating
+slot) keeps K1-K6. Every stop-loss still gets a root-cause review. A deposit or withdrawal resets the trial.
+
+### Sizing after the revert, for the record
+
+1R is once again the sleeve dial x the regime scaler, capped at 5% of available: about **$23** on WILDCARD and **$11.75** on
+TREND at today's equity, against about **$8.50** under the cap. Losses go back to roughly -1% to -2.5% of equity, which is what
+the 2026-09-19 measurement said the ceiling was buying at about -$26 to +$14/month.
+
+**Administrative (recorded after the flag, not a result):** START_TS = `1789907100`, 2026-09-20T12:25:00Z.
+
+## TRIAL 21F — CLOSED 2026-09-20 (the owner reverted the cap it froze)
+
+**Ran 5 hours, 0 arms, no result.** The breakeven stop never fired: no position reached +0.90R (the bot was flat from 11:05Z
+except EVAA, which peaked at +0.086R). Nothing is known about the rule from 21F, so its pre-registration carries into 22F
+unchanged and its fill count starts there.
+
+---
+
 ## TRIAL 21F — PRE-REGISTERED 2026-09-20, BEFORE THE FLAG WAS SET
 
 **Written before the env var was changed. If any line below is edited after a result is seen, the trial is void.**

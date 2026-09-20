@@ -149,6 +149,8 @@ EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "b
 # trade record and the feature-store row.
 ENTRY_GATE_KEYS = ("atr_pct", "calm_ratio", "vol_z", "range_24h", "turnover_24h_usdt",
                    "candidate_rank", "candidate_field", "entry_lateness",
+                   "risk_capped_from_contracts", "risk_capped_contracts", "risk_cap_pct",
+                   "risk_cap_rounded_up",
                    "trend_roc_24h", "trend_gate_close", "trend_prior_close_extreme",
                    "trend_extreme_margin_pct")
 
@@ -9194,9 +9196,37 @@ class FuturesRuntime:
                 contracts=contracts, entry_price=sig.entry_price, sl_price=sig.sl_price,
                 contract_size=contract_size, equity_usdt=available_balance, max_risk_pct=max_risk_pct,
             )
+            # ROUND UP TO ONE MINIMUM CONTRACT (owner decision 2026-09-20). On a
+            # large-contract symbol one minimum contract can risk slightly more than the
+            # cap, and the cap then sizes the trade to ZERO - a deletion, not a shrink,
+            # selected by contract granularity rather than by anything about the trade.
+            # Measured: AKE_USDT 09-20 09:00, 2 contracts -> 0 (one contract risks $9.46
+            # against an $8.55 cap, 10.6% over); it then ran +125% through its +5R target.
+            # DEFAULT OFF (FUTURES_MAX_TRADE_RISK_ROUNDUP_PCT=0): the owner reverted the
+            # tight cap on 2026-09-20 rather than round up, so at the 5% cap this branch
+            # is inert. Kept because the deletion it prevents is a property of ANY tight
+            # cap, and set it to 20 to allow a fifth of overshoot if one ever returns.
+            rounded_up = 0.0
+            if capped < min_vol <= contracts:
+                roundup_pct = max(0.0, self._env_float("FUTURES_MAX_TRADE_RISK_ROUNDUP_PCT", 0.0))
+                stop_distance = abs(float(sig.entry_price) - float(sig.sl_price))
+                min_risk = stop_distance * contract_size * float(min_vol)
+                cap_risk = (max_risk_pct / 100.0) * float(available_balance)
+                if roundup_pct > 0 and cap_risk > 0 and min_risk <= cap_risk * (1.0 + roundup_pct / 100.0):
+                    log.warning("[RISK_SIZE] %s %s rounded up to min_vol %d: risk $%.2f is %.1f%% over "
+                                "the $%.2f cap (allowed up to %.0f%%)", kind, symbol, min_vol, min_risk,
+                                (min_risk / cap_risk - 1.0) * 100.0, cap_risk, roundup_pct)
+                    capped = int(min_vol)
+                    rounded_up = 1.0
             if capped != contracts:
                 log.info("[RISK_SIZE] %s %s contracts %d -> %d (cap %.3f%% of available $%.2f)",
                          kind, symbol, contracts, capped, max_risk_pct, available_balance)
+                self._last_risk_cap = {"risk_capped_from_contracts": float(contracts),
+                                       "risk_capped_contracts": float(capped),
+                                       "risk_cap_pct": float(max_risk_pct),
+                                       "risk_cap_rounded_up": rounded_up}
+            else:
+                self._last_risk_cap = {}
             contracts = capped
         if contracts < min_vol:
             log.info("[WILDCARD] %s contracts %d below min_vol %d — skip", symbol, contracts, min_vol)
@@ -9243,6 +9273,9 @@ class FuturesRuntime:
                 ("candidate_field", self._pending_candidate_field),
             ) if v is not None},
             "equity_at_open_usdt": self._last_known_equity(),
+            # What the per-trade risk cap did. Without these the one trade where it
+            # bound records risk_cap_bound=0.0, which is a DIFFERENT cap (margin 25%).
+            **{k: float(v) for k, v in (getattr(self, "_last_risk_cap", {}) or {}).items()},
             # Regime telemetry. Decision-free; see _majors_state.
             **self._majors_stamp(),
         }
