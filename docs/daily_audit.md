@@ -1,3 +1,165 @@
+# Daily Audit — 2026-09-20
+
+---
+
+## Automated Assessment (UTC 16:15)
+
+Equity **$960.46**, all cash, **0 open positions**, 0 open margin. Realised basis $971.25
+(09-19) -> $960.46: **-$10.79**, against exchange-realised **-$11.35** on 2 closes (the
+difference is funding/fee rounding in the bot's favour). No deposit, no withdrawal.
+Feature store 193 -> **195** (+2, reconciles exactly with the exchange's 2 closes).
+Logs 15:04-16:10Z: **no Traceback, no ERROR, no 5003/2015, no `[EXIT_RACE]`/`stale_bar`,
+no `[SIZE_TRIM]`**. WARNINGs are only the Prophet HTTP 422 and the calibration seed
+fallback (6 live trades < 15), both known. Tests **1382 passed**.
+
+**Config state verified live:** `FUTURES_MAX_TRADE_RISK_PCT=5` (the revert landed),
+`FUTURES_TRIAL_LABEL=22F`, `FUTURES_TRIAL_START_TS=1789907100` (2026-09-20T12:25Z),
+`FUTURES_CONVEX_BREAKEVEN_ARM_R=0.90` still armed, `FUTURES_WILDCARD_MAX_POSITIONS=3`,
+`USE_DRAWDOWN_KILL=1` (no longer the operator override flagged on 07-17).
+
+### 1. Closed trades: 2 since 09-19 16:10Z, both losers, **-$11.35 exchange / -1.62R**
+
+| close (UTC) | symbol | sleeve | lev | hold | R | $ | peak R | mae R | risk% | mult | exit |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 09-20 01:30 | XRP | TREND | x10 | 21.3h | **-1.10** | **-6.78** | +0.946 | -1.01 | 0.637 | 0.55 | **stop (EXCHANGE_CLOSE)** |
+| 09-20 10:40 | EVAA | WILDCARD | x1 | 0.2h | -0.52 | -4.48 | +0.086 | -0.49 | 0.876 | 0.92 | **CONVEX_EARLY_STOP** |
+
+**Reconcile: 2 exchange rows = 2 store rows.** No censoring. Both ref-listed. Worst
+|slippage| 12.3 bps (EVAA, favourable). Exit paths are both intended: the resting -1R
+stop, and the shipped early stop. **No unhandled convex exit path.**
+
+**Every SL root-caused (owner directive 2026-09-18):**
+
+- **XRP LONG x10, 09-19 04:13Z @1.4268 -> 09-20 01:30Z @1.3981.** Peak **+0.9458R**, then a
+  full **-1.10R**. This is the exact give-back the owner cited when pre-registering trial
+  21F; it is the *motivating* trade, not a test of the rule — the 0.90R breakeven stop was
+  not armed until 11:05Z, nine hours after XRP closed. The -1.10R against a -1.00R design is
+  fees + 21h of funding on an x10 hold, not stop slippage (fill 1.3981 vs stop 1.3984, three
+  ticks). **Gate check: no gate at fault.** It is the build-then-full-stop class, and it is
+  precisely what the breakeven stop carried into 22F exists to remove. No change proposed.
+- **EVAA LONG x1, 09-20 10:29Z @0.8102 -> 10:40Z @0.7653**, 12 minutes, -0.52R. Entered at
+  `entry_lateness=1.0` (the extreme), `entry_rsi=83.2`, 3h ROC +11.5%, `vol_z=1.315`, on a
+  thin **$2.23M** 24h turnover. Price reversed immediately and the early stop cut it at
+  -0.52R instead of -1R: the early stop **saved ~0.48R (~$4.1)** on this fill. **Gate check:
+  every gate behaved as designed** — this is the at-extreme entry the corpus already scores
+  as mildly negative (82 fills, -$0.69 mean vs -$0.31 without, `weak`, not actionable). Not
+  a bug, not a lever at n=1.
+
+### 1-OPEN. Open positions: **none.** Flat since 10:40Z.
+
+### 2. Learning loop
+
+**Conditional expectancy (195 rows, verdicts with n>=10 per group):**
+
+| condition | verdict | gap $ | with | without |
+|---|---|---|---|---|
+| hold>=120min | FAVOR | +2.654 | 122 / +0.525 / 53.3% | 73 / -2.129 / 34.2% |
+| hold<=30min | AVOID | -3.813 | 16 / -3.969 / 18.8% | 179 / -0.156 / 48.6% |
+| exit=stop | AVOID | -2.349 | 30 / -2.457 / 40.0% | 165 / -0.108 / 47.3% |
+| leverage<=4 | FAVOR | +0.131 | 118 / -0.417 / 48.3% | 77 / -0.548 / 42.9% |
+| stalled_reclaim (lat 0.85-0.99) | FAVOR | +0.267 | 18 / -0.227 / 55.6% | 177 / -0.494 / 45.2% |
+| regime_trimmed_hard (<0.5) | AVOID | **+0.139** | 27 / -0.349 / 37.0% | 168 / -0.488 / 47.6% |
+
+Three of these are **not usable as levers** and should stop being re-read as findings:
+`exit=stop` is tautological (stops lose by construction); `hold<=30min` now largely
+*measures the early stop*, which produces short holds on purpose; `regime_trimmed_hard`
+still carries an AVOID verdict while its dollar gap is **positive**, the second day running
+— it is unstable, not a signal.
+
+**`leverage>=7` flipped FAVOR -> weak in one day** (n=54 -> 55, OOS e=+0.34 -> -0.005). It
+was reported as a reversal of the 06-26 finding yesterday; it is not a finding at all. It is
+confounded (x7+ fills are TREND majors, and leverage is *derived* from stop distance, not
+chosen) and it is unstable. **Nothing proposed from the learning loop.**
+
+**Shadow ledger, 330 rows** (deduplicated symbol + side + bucket within 6h):
+
+| bucket | resolved | net R | reading |
+|---|---|---|---|
+| shadow_only | 44 | +16.43 | not a gate |
+| veto:ref_not_listed | 39 | **-13.35** | saving money |
+| side_disabled | 36 (+2 open) | **-9.68** | saving money |
+| slot_occupied | 26 | +9.46 | see below |
+| calm_shock | 26 (+2 open) | -2.12 | saving money |
+| below_trigger | 19 (+1 open) | +2.75 | mildly costing |
+| min_vol_skip | 16 | +12.37 | costing |
+| veto:crowded_shorts | 6 | +4.89 | costing, n<10 |
+
+**Slot cost: the metric is method-unstable and no proposal may rest on it.** The same
+`slot_occupied` rows have now been reported as **+9.47R (09-18) -> +3.47R/+4.06R (09-19) ->
++9.46R (today)**. Today's number is the raw `outcome` column, deduplicated; the 09-19 figure
+used an `outcome_net` column that **does not exist in the live schema**, so it cannot be
+reproduced. More to the point: **zero new `slot_occupied` rows arrived in the last 24h**
+(the last is 09-19 10:30Z), so nothing about the slot question moved today, and WILDCARD
+already runs 3 slots. Treat the slot ledger as unreadable until the cost-netting is defined
+in code rather than in an audit script.
+
+**Scan telemetry (15:04-16:10Z):**
+- WILDCARD: 50-51 movers/cycle, **0 candidates**. Rejections: `roc_below_min` **47-49**,
+  `no_pullback_resume` 1-3, `low_volume_z` 1-2. `deflated=34/48`.
+- TREND: 4 symbols, `roc_below_min` 2, `no_new_extreme` 2, `breakout_failed` 1.
+- No `[SIZE_TRIM]` lines in the window.
+
+### 1b. WILDCARD diagnosis
+
+**Dormant, and correctly so.** 96% of scanned movers fail `|3h ROC| >= MIN_ROC` — the
+band has no extreme movers, not a gate that is mis-set and not an execution failure (zero
+5003/2015 in the window, zero entry rejects). This is the regime, and per the standing
+rule the gate is **not** loosened to manufacture trades. One WILDCARD fill in 24h (EVAA),
+sleeve total 31 fills / **-0.54R** across 19F — not net-negative enough to trip the
+disable rule, not positive enough to defend. No wildcard proposal.
+
+### 3. Decision rules
+
+**Trial 22F (current label, by ENTRY time from 12:25Z):** **0 closes.** Nothing entered
+since the flag. No result, and none is possible yet.
+
+**Trial 21F: CLOSED with 0 arms**, as the owner recorded — confirmed independently here:
+zero fills entered between 11:05Z and 12:25Z.
+
+**Trial 19F (the running scoreboard, by ENTRY time):**
+
+    51 closes | netR -2.82 (SE of sum 6.47) | net$ -71.16 (SE 97.91 -- NOT quotable)
+    ex-best -4.71R (best XRP 09-14 +1.89R) | mean -0.055R/trade
+    TREND 20 fills -2.28R | WILDCARD 31 fills -0.54R
+    mean realised risk 1.416%, max 2.444%  -> still BELOW the [1.6%, 2.2%] band
+    max drawdown from peak close 11.90% ($1,045.71); now 8.15% below peak -- under the 20% flag
+    early stop fired 4 of 31 WILDCARD | exits: TP 0 | stop 17 | other 34
+
+**The cap revert is NOT a risk escalation — flagged because it is easy to read as one.**
+Only **one** fill in the entire corpus ever closed under the 0.886% cap (EVAA). 19F's other
+50 closes already ran at mean **1.426%** / max 2.444% risk, which is exactly what the revert
+restores. The sleeve dials are back to the profile that produced the 51-close record above;
+nothing new is being taken on.
+
+**Criterion 3 is still unreachable, and the revert did not fix it.** Yesterday's flag was
+that the 0.886% cap sat below the band floor of 1.6%. That cap is gone, and the mean realised
+risk is **still 1.416%**, because the *regime scaler* trims **38 of 51** fills to a mean
+**0.747x** (designed 2.41% WILDCARD x 0.747 = 1.80%, in band; designed 1.205% TREND x 0.747 =
+0.90%, far below). So criterion 3 fails for a second, independent reason. **The owner's
+09-19 question — how criterion 3 is scored — is still open.** Not editorialised, and the
+scaler is not proposed for change (it measured net-positive on live fills, 09-09).
+
+### 4. Exits
+**19F: TP 0 | stop 17 | other 34.** Lifetime TP 9 of 195. The trial-4 watch item (propose
+scaling TP down at wide stops if TP completions are <10% over >=15 trades and OTHER
+dominates) is **live and tripped on the arithmetic** — but it is not proposed today, because
+TREND already runs a 3R target (`tp_r=3.0` in the shadow rows), the 24h time stop is the
+real terminator of the "other" bucket, and 22F is four hours old. Carried as a watch item.
+
+### 5. Lever
+**None tested, deliberately.** Trial 22F is four hours old with zero fills; a tunable moved
+now is unscoreable and confounds the owner's revert. The two closes are fully root-caused and
+neither points at a gate. The suite is green and the logs are clean. This is a no-change day
+by design, not by omission.
+
+### 6. Shadow service
+Futures-shadow **stale, comparison suppressed pending resync** (action item already raised).
+
+### 7. Deploy
+**None.** No code, no env, no commit.
+
+---
+
 # Daily Audit — 2026-09-19
 
 ---

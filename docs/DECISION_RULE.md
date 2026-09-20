@@ -16363,3 +16363,49 @@ Every distinctive feature of this trade points the wrong way: thin-turnover, hig
 - Whether ~0.4x wildcard risk was the intended consequence of `FUTURES_MAX_TRADE_RISK_PCT=0.886`.
 
 Artifacts: `C:/Users/Rocot/AppData/Local/Temp/wc/EVAA/` — `answer.md`, `forA/`, `forB/`, `rules/`. Read-only throughout; no repo, /data, Railway or order writes.
+
+## 2026-09-20 - INDEPENDENT ASSESSMENT, 7 DAYS (09-14 to 09-20): THE 90% DAY DID NOT EXIST
+
+**Asked (owner):** a deep analysis of daily performance over the last 7 days, and what the 90%-win day teaches. Run by the independent
+assessor agent (no prior knowledge, told to treat this log as claims to verify), two assessors plus an adversarial reconciler.
+Full file: `assessments/daily_performance_2026-09-14_to_09-20.md`.
+
+**The premise was a reporting defect.** By exit UTC, 2026-09-17 closed **4 trades, 3 wins, +$16.54**. The "10 closes / 9 wins / +$55.86"
+headline was a **45.6-hour window** (09-15T16:10Z to 09-17T16:25Z) that widened because no 09-16 audit ran, while keeping a single-date
+title. The real 100% day is 09-16: **5 trades, 5 wins, +$30.39**, which is three ZEC fills in one leg plus two POWER shorts = two bets.
+
+| day (UTC) | n | W | net $ | avg R | 1R $ | stop rate |
+|---|---|---|---|---|---|---|
+| 09-14 | 12 | 6 | -22.79 | -0.048 | 13.65 | 50% |
+| 09-15 | 3 | 2 | +8.64 | +0.040 | 16.82 | 33% |
+| 09-16 | 5 | 5 | +30.39 | +0.568 | 10.56 | 0% |
+| 09-17 | 4 | 3 | +16.54 | +0.466 | 15.18 | 0% |
+| 09-18 | 6 | 4 | -3.01 | +0.097 | 10.30 | 17% |
+| 09-19 | 2 | 0 | -17.30 | -0.901 | 9.22 | 50% |
+| 09-20 | 2 | 0 | -11.26 | -0.809 | 7.34 | 50% |
+| **week** | **34** | **20** | **+1.22** | +0.041 | 12.43 | 29% |
+
+**Findings that stand (assessor, reconciled):**
+1. **Fees were 93% of gross.** Gross $16.87, fees $15.65. TREND's entire loss is its commission (gross -$8.08, fees $24.83). WILDCARD was
+   **gross-negative** at -$48.27 before fees - no exit change repairs a negative gross.
+2. **A day is its average R per fill.** Holding the other two terms at the mean: avg R moves the day by -$47 to +$38; fill count by -$7 to
+   +$3; $/R by -$2 to +$2. On 09-16/17 every position reached +0.5R and armed the trail; on 09-19/20 mean peak was 0.37R and 0.52R.
+3. **Nothing was visible before or early in the day.** 12 entry-time observables, best p 0.059 and pointing the wrong way; prior-day
+   signals p 0.081-0.45. The tempting "BTC range < 2.5% and ZEC up > 5%" rule had both thresholds chosen after seeing the good days.
+4. **A >= 9-of-10 win stretch happens in 4.6% of consecutive-10 windows historically** - about every three weeks. It is not remarkable.
+5. **The stake changed four times inside the window** ($/R fell 46%, $13.65 -> $7.34), so the days are not comparable to each other.
+6. **9 of 34 fills carried a manual /arm and all nine won; 5 were decisive.** About 40% of the good stretch's winners were exited by hand.
+7. **The regime split is the biggest number on the page.** Pre-deposit at 1R $2.30: +18.57R, +$46.51. Post-deposit at 1R $12.12:
+   -6.80R, **-$139.06**. Burn point estimate **-$278/mo on $960, interval [-$711, +$113]** - not established, but no parameter closes it.
+8. **Confirmed good:** the retention trail (every take-profit from 0.5R to 3.0R loses by 4R to 17R over 123 trades) and the ledger
+   (flat-book endpoints agree to $0.62 over 35 closes).
+
+**Criticism of this log, accepted:** R-denominated headlines average across a 6x stake change and answer a different question than
+"$ P&L, always"; "0 of 593 scans found the slots full" was WILDCARD-only (TREND had 5 slot_occupied refusals on 09-18/19).
+
+**Shipped today, zero dollars:** the daily routine is pinned to a fixed UTC day boundary, reports its window and trade count in the first
+note line, and a skipped day is reported as its own dated catch-up block.
+
+**Assessor recommendation, not yet decided by the owner:** freeze the configuration, report in dollars, and pre-register a WILDCARD
+stopping rule - 60 fills at a frozen stake, cut the sleeve if still negative - which resolves in 4-6 weeks. Stop running day-level studies:
+15 days at this stake cannot answer them.
