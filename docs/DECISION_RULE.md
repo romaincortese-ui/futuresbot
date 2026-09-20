@@ -16245,3 +16245,69 @@ by symbol. Both thresholds are statistically indistinguishable from zero on any 
 
 Read-only throughout: no repo edits, no /data writes, no orders, no Railway changes, no deploys.
 Artefacts: `BE75/answer.md`, `BE75/record.md`, `BE75/recon/r1.py`, `BE75/recon/r1.json`.
+
+## 2026-09-20 - EVAA WILDCARD EARLY STOP: ANOMALY REVIEW
+
+**Trade.** EVAA_USDT WILDCARD LONG. Entry 2026-09-20T10:28:37Z @ 0.8102 (signal 0.8112, slippage -12.3 bps favourable). Exit 10:40:33Z @ 0.7653, CONVEX_EARLY_STOP. **-$4.48 net, -0.52R** on $8.45 risk. 970 contracts, margin $78.59, leverage x1, hold 11.9 min, peak +0.086R (+$0.78).
+
+**Cause (specific, not a base rate).** Entry at the top tick of day three of a pump: 0.5827 -> 0.8182 = +40% in 24h, +59% over two days, on a coin that traded $351k/day on 09-17. The pump itself lifted 24h turnover to $2,230,337 and so cleared the $2.0M `FUTURES_WILDCARD_MIN_TURNOVER_USDT` floor — **the liquidity gate was satisfied by the event that triggered the entry**. The pullback-resume shape existed only inside the half-formed 10:15-10:30 bar (completed bars at that instant: `no_pullback_resume`, 0.8000 < 0.8043). Day high printed within 90 seconds of the fill (lanes read 52 s vs 82 s; minute bars cannot resolve it). EVAA -9.5% over the hold with BTC -0.03% and ETH -0.07% — idiosyncratic, not a market event. Execution clean both sides (exit +2.6 bps favourable, fees $0.12 = 2.8% of gross).
+
+**Exit verdict: the early stop was right.** -1R (0.7231) was first touched 11:00:00Z, **19.4 min after the exit**; low 0.6572/0.6270 = -1.7 to -1.8R.
+
+| outcome | net $ |
+|---|---|
+| actual early stop | **-$4.48** |
+| resting 3xATR stop | -$8.57 (saved **$4.09**) |
+| held to 24h clock, ~11:05-11:08 mark | -$14.49 to -$15.43 (saved **≈$10.9**) |
+
+**4th fire, 4th helped.** Trial 21F's breakeven-at-0.90R was irrelevant (peak 0.086R) and deployed 10:52:57Z, 13 min after the exit — not 11:05Z as the task text stated.
+
+**Gate tuning: REFUSED. 3 cells pre-registered before outcomes were read, 3 failed.**
+
+| cell | rule | primary | second stream | placebo p |
+|---|---|---|---|---|
+| T1 | turnover < $3.0M | +$13.26/mo [-73.8,+100.9] | -$27.12 | 0.696 |
+| T2 | sl_frac > 0.10 (= lev x1) | -$59.84/mo | -$20.12 | 1.000 |
+| T3 | turnover < $3M AND lateness >= 0.99 | -$6.74/mo | +$6.87 | 0.899 |
+
+Every distinctive feature of this trade points the wrong way: thin-turnover, high-ATR and leverage-x1 bands are each the *better* half of their split. EVAA's own band [$2.0M,$2.5M) is **positive** (E n=121 +0.043R; H n=44 +0.129R, 43% losers); the negative band is [$2.5M,$3.0M), *above* EVAA. A $2.5M floor gives +$4.96/mo on one stream, **-$50.96/mo** on the other. RSI cap (p=0.977) and pullback-depth already refuted — cited, not re-run. Consistent with the settled ~50-alternatives record.
+
+**Lateness gate: dead, and both forensics lanes mis-attributed it.** `entry_lateness` = 1.000 on 72% of live wildcard fills and 69-83% across replay streams computed on **completed** bars. The degeneracy comes from the pullback-resume detector, not the forming bar — so the forming-bar fix will NOT give it variance. Refusing lateness >= 0.99 costs -$20.49/mo (E), -$52.16 (H), -$97.94 (B) and deletes 68-82% of the sleeve; the refused trades are the better ones.
+
+**THE 0.886% CAP — first live evidence, and it is not about EVAA.**
+
+```
+[RISK_TARGETED] margin 115.79 -> 214.09 (risk $23.25 = 2.410%)
+[REGIME] eff=0.41 -> x0.92     [SIZE_TRIM] 214.09 -> 197.15
+[RISK_SIZE] WILDCARD EVAA_USDT contracts 2430 -> 970 (cap 0.886% of available $964.94)
+```
+0.399x. Saved **$6.74** on this loss; symmetrically costs $12.51 of a +1R and $63.60 of a +5R.
+
+**Same morning, the cap zeroed AKE_USDT.** Verified in the container log (09:00:23 and 09:08:26, `contracts 2 -> 0`, then `below min_vol 1 - skip`) and independently re-fetched from MEXC public klines: AKE contract size 1000, one minimum contract risks $9.46 against an $8.55 cap, so size floors to **zero**. AKE ran 0.0715 (09:00) -> **0.16078 at 10:31 (+125%)**; the resting +5R TP at 0.118785 was traded through at 10:21 (bar high 0.120399). Two contracts = **+$94.57 gross** forgone. Caveat: AKE round-tripped to 0.0555 by 11:27, below entry — the win exists only because the TP was resting. Four later AKE skips (09:45-10:30) were NOT cap-caused (no `[RISK_SIZE]` line; pre-existing margin zero).
+
+**Cap's first 24h: +$6.74 (EVAA) / -$94.57 (AKE). n=1 each — anecdote — but the AKE failure is deterministic arithmetic, not variance.** Scope: 3 of today's 90 scanned symbols blocked at a 15% stop (AKE, BTW, PONS), 0 at 10%; same tail as the historic `min_vol_skip` names; self-resolves above ~$1,291 equity.
+
+**Structural note on the cap.** `FUTURES_WILDCARD_RISK_PCT`=2.41% and `FUTURES_TREND_RISK_PCT`=1.205% both sit above the 0.886% cap, so the cap — not the sleeve dials — is now the binding risk setting. Feature store: 72/82 WILDCARD and 39/48 TREND historical rows carry `risk_pct_actual` above 0.886%. Live since the cap went in (09-19 09:43Z): **1 of 1 WILDCARD fills bound; 0 of 2 TREND fills** (NEAR 0.690%, XRP 0.637%). This reconciles the two lanes — lane B's "16/20 TREND" is a retrospective would-have-bound count, lane A's "TREND untouched" is the observed live count. The intended 2:1 wildcard:trend risk ratio compresses toward 1:1 going forward. **Whether running the wildcard sleeve at ~0.4x of its configured risk was the intent is unknown.**
+
+**DEFECTS FILED (correctness, no dollars claimed).**
+1. `runtime.py:7443` passes the raw kline frame to `detect_wildcard_signal`; `_drop_incomplete_klines` at 7712 is **TREND only**. The 09-19 fix never reached this sleeve. Replay reproduced every recorded gate value to the digit from the forming bar (0.8112 / +11.52% / RSI 83.2 / atr 0.036207 / sl_frac 0.108622 / calm 0.307 / x1). **The fix would not have avoided this trade** — same signal fires 87 s later at 0.8174, 0.89% worse. `wildcard.py`'s "completed bars, no look-ahead" docstring is wrong as wired.
+2. `ENTRY_GATE_KEYS` (`runtime.py:150-154`) does not carry `risk_capped_contracts` / `risk_capped_from_contracts` / `risk_cap_pct`. The one trade where the cap bound records `risk_cap_bound = 0.0` — a *different* cap (WILDCARD_MAX_MARGIN_PCT 25%, $241, did not bind), 0.0 on 130/130 rows. Row reads `margin_used 78.59 / margin_wanted 214.09 / risk_cap_bound 0.0`: self-contradictory, and the only surviving evidence is a log line the ring buffer will evict. **Fix before the cap is reviewed again.**
+3. `is_wildcard` is True on 180/195 feature rows including all 48 TREND rows — filter on `kind=='WILDCARD'`.
+4. `t_adverse_50` / `t_adverse_75` are censored by the early stop itself: 4 of the 5 sub-30-min -0.50R crossings ARE the fires. Recovery rate of a fast -0.5R excursion remains n=1 uncensored.
+5. `mae_r` (-0.4913) is less adverse than `early_stop_r_now` (-0.5177) on the same position; true intrabar MAE was -0.62R. Every wildcard MAE in the store is biased toward zero.
+6. `size_efficiency` 0.367 conflates the cap (0.399x) with the regime trim (0.92) — over-attributes to the cap by 8%.
+
+**DECISIONS.**
+- **No gate, env or code change from this review.** Nothing passed.
+- Leave the early stop / trial 21F running. 4/4.
+- Two telemetry/correctness fixes recommended to the owner: forming-bar read (sell as correctness only) and `ENTRY_GATE_KEYS` cap fields.
+- The cap's zero-contract branch is the only live question worth a decision; if changed at all ("round up to min_vol when overshoot < ~20%"), pre-register it — do not react to one counterfactual.
+- Re-ask turnover **2026-09-29** at n≈30 (`turnover_24h_usdt` persisted only since 09-18T16:11Z; 3 wildcard rows). Tag and price, refuse nothing, ask only "is [$2.5M,$3.0M) bad?".
+
+**OPEN / I DO NOT KNOW.**
+- A **trailing-median** liquidity test instead of trailing-24h — the only rule shape addressing the circularity; never priced, not in the settled ~50.
+- Whether a fast -0.5R excursion normally recovers (the early stop censors its own evidence).
+- Whether AKE's +5R survives the live exit stack under real latency.
+- Whether ~0.4x wildcard risk was the intended consequence of `FUTURES_MAX_TRADE_RISK_PCT=0.886`.
+
+Artifacts: `C:/Users/Rocot/AppData/Local/Temp/wc/EVAA/` — `answer.md`, `forA/`, `forB/`, `rules/`. Read-only throughout; no repo, /data, Railway or order writes.
