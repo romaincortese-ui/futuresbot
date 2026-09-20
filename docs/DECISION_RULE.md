@@ -16054,3 +16054,128 @@ Files: `DAYS/anat/`, `DAYS/cat/`, `DAYS/test/` (PREREG.md, results.md, results.j
 **FLAGGED, NOT ACTED ON.** `FUTURES_TREND_MAX_POSITIONS=2` blocked this signal three times on 09-19 (00:37, 02:25, 02:40). `trend.py`'s docstring measures 3 slots at +$16.12 with lower drawdown; the live env is 2; the shadow ledger's 28 resolved `slot_occupied` TREND rows sum +14.5R net, median +0.45R — un-sized, un-slipped, ignoring that a third position shrinks all three, and including the -1.153R row here. **I don't know why the env and the docstring disagree.** Needs its own pre-registered out-of-sample test.
 
 **Counts.** n=1 trade. 1,740 fair-price Min1 bars, 3,419 last-price Min1 bars, 0 gaps. Two independent Railway pulls with identical feature-store rows; 12 XRP trade-history rows; 54 XRP shadow rows; 4 deployments in window. Counterfactual n=1 throughout. Read-only review: no repo edits, no /data writes, no orders, no deploys.
+
+## 2026-09-20 - BREAKEVEN STOP AFTER A 0.75R PEAK: SAVED vs CUT
+
+**Question.** Owner's priority anomaly: trades build profit, never reach the 1.0R trail arm, close at a full stop.
+Nine such in 46 days. Priced: once the FAIR peak first reaches T (0.75 / 0.90), move the resting stop to
+entry + 0.19% round trip and leave it on the exchange. (a) what does it save, (b) what does it cut, (c) net $/mo.
+(b) had never been counted on live fills.
+
+**Two independent lanes.** engA (`BE75/engA`) and engB (`BE75/engB`). This record is the reconcile lane.
+
+### Harness check - both lanes pass
+
+Settled record: TREND breakeven k-grid k=0.4..1.0, 7/7 negative, best -$5.6/mo (389 fills / 357 d).
+- engA, Y2 frozen book (375 fills / 358 d): 7/7 <= 0, best **-$3.35/mo** at k=0.9.
+- engB, independent engine (380 fills / 358 d): 7/7 <= 0, best **-$3.53/mo** at k=0.9 (entry), -$2.10 (entry+costs).
+
+Same sign, same monotone shape, same magnitude, n within 2.3%. **Neither engine is disqualified.**
+
+### Defect found and resolved: engB walked the wrong price series
+
+engB walked the **last-price** kline. The bot's stops rest on **fair price** — `marketdata.py`
+`_trigger_trends_for_order_side` returns `lossTrend=2` (fair) for both sides, the explicit fix made after
+MARSCOIN 2026-09-08 was stopped for -$11.64 by a last-price spike the fair price never reached.
+
+Raw-bar resolution, ZEC_USDT 2026-09-09T04:39 (entry 1234.0, 1R = 31.129 in price):
+- LAST high 1265.18 -> peak +1.0017R (engB: arms at T=0.90)
+- FAIR high 1260.95 -> peak +0.8658R (engA: does not arm at 0.90)
+- bot's own recorded `peak_r` **0.8481** -> price 1260.40. **Fair is right.**
+
+Raw-bar resolution, SAGA_USDT 2026-09-15T17:25 (entry 0.02274, stop at 0.0227832):
+- LAST post-arm low 0.02271 -> fires, cut -$9.86
+- FAIR post-arm low 0.02284 -> **never touches**
+- engB's largest single cut is a last-price wick. It does not exist.
+
+Independent re-walk of all 120 Min1 fills on both series (`BE75/recon/r1.py`, `r1.json`):
+
+| T | series | armed | fired | saved | cut | net |
+|---|---|---|---|---|---|---|
+| 0.75 | FAIR | 63 | 10 | $99.25 | $3.99 | **+$95.26** |
+| 0.75 | LAST | 63 | 12 | $99.25 | $14.71 | +$84.54 |
+| 0.90 | FAIR | 58 | 4 | $27.65 | $1.13 | **+$26.52** |
+| 0.90 | LAST | 59 | 8 | $54.90 | $12.86 | +$42.05 |
+
+The FAIR row reproduces engA to the cent; the LAST row reproduces engB. Flips: SOL 08-21 (+$0.86) and
+SAGA 09-15 (+$9.86) fire only on last price at both T; ZEC 08-23 (+$1.00) and ZEC 09-09 (-$27.25) additionally
+only at T=0.90. **engA's live numbers stand; engB's live numbers are superseded.**
+Direction of the error: last price makes T=0.75 look worse (phantom cuts) and T=0.90 look better (phantom save).
+
+### Reconciled answer - live, fair price, n=120, 2026-08-20 19:14Z -> 2026-09-20 01:30Z (30.3 d)
+
+| T | armed | fired | SAVED | CUT | NET | $/mo @ today 1R | 95% CI | placebo p |
+|---|---|---|---|---|---|---|---|---|
+| 0.75 | 63 | 10 | +$99.25 (7) | -$3.99 (3) | +$95.26 | +$50 to +$67 | [+9, +141] | 0.033 |
+| 0.90 | 58 | 4 | +$27.65 (3) | -$1.13 (1) | +$26.52 | +$23 to +$30 | [-6, +86] | 0.128 |
+
+$/mo range spans the two 1R conventions: $8.55 (0.886% cap on $964.94 equity) to $10.93/$11.98 (median realised
+`risk_usdt` since 09-10).
+
+- **(a) Saved, T=0.75:** ONG 08-26, MARSCOIN 09-02, PONS 09-07, ZEC 09-09, IOST 09-11, BR 09-17, XRP 09-19.
+  At T=0.90: ONG, PONS, XRP only (ZEC 09-09 peaks 0.866 fair, does not arm).
+- **(b) Cut, T=0.75** — the number nobody had counted: ZEC 08-23 TREND +$1.00, HNT 08-29 WILDCARD +$1.13,
+  SKR 08-30 WILDCARD +$1.85. At T=0.90: HNT alone. All small trail-outs, largest +0.60R.
+  **Zero live winners built 0.75R, dipped to breakeven, and then reached the 3R target.**
+- Build-then-full-stop rate: 7/63 -> 0/63 at T=0.75; 3/58 -> 0/58 at T=0.90. Zero by construction.
+- Saved column contains no selection skill: a trade going from +T to -1R must cross entry+costs.
+
+### Corpora - the two lanes agree once windows are matched
+
+TREND MEXC year (engA "Y2" frozen n=375/358d; engB "FULL" n=380/361d — same book):
+
+| T | engA saved / cut | engB saved / cut | engA $/mo | engB $/mo |
+|---|---|---|---|---|
+| 0.75 | 21.1R (23) / 39.6R (39) | 21.1R (23) / 37.9R (37) | **-18.47** | **-21.99** |
+| 0.90 | ~10.5R (11) / ~13.6R (15) | 10.7R / 11.1R (25 fired) | **-3.35** | **-0.49** |
+
+Counts match 23/39 vs 23/37; magnitudes match within 4%. engB's mechanism holds in both books: at T=0.75 six
+trades reached the 3R target after building 0.75R and dipping through entry+costs (ZEC 2025-10-01, 10-31, 12-08,
+2026-02-14; XRP 2026-02-15; ETH 2026-03-15), -17.6R combined, more than the whole saved column. At T=0.90 only
+one such trade in the year.
+
+Other corpora: TREND Binance year (engA Y1) T=0.75 **+$8.53**/mo, T=0.90 **+$5.60** — sign flips by year.
+WILDCARD E 220d +0.0044 R/fill (engA) vs -0.0042 (engB) — both indistinguishable from zero.
+WILDCARD H 127d +$40 / +$36 — both positive. Binance WILDCARD year -$70/-$42 at 0.75 and -$22/-$30 at 0.90, but
+per-candidate and unslotted; at the bot's fill rate that is about -$4 to -$5/mo.
+Leave-one-symbol-out: dropping ZEC moves the TREND year from -$22 to -$2. **Sign is not stable anywhere.**
+engB: 0 of 314 sliding 45-day TREND windows reach the live T=0.75 figure; 9 of 314 reach T=0.90 (p=0.029).
+
+### Coverage limit
+
+MEXC Min1 retention now starts ~2026-08-20T18:00Z. 22 of 142 fills have no minute path on the exchange or in any
+cached kline file. At T=0.75, 12 of the 22 armed: 2 losers (certain save +1.660R) and 10 winners (unobservable
+cut, upper bound 7.569R). Missing block in [-5.91R, +1.66R] — the worst case erases the measured +5.81R.
+Checked and rejected as a defence: the 10 missing winners all peaked >= 1.07R, but peak >= 1.0R does **not**
+protect against firing — 3 of the 10 live fires had peak_r above 1.0 (the dip precedes the peak). The bound stands.
+
+### Ruling
+
+**Ship T=0.90. Do not ship T=0.75.**
+
+Rule: fair peak first touches +0.90R -> one-shot amend of the resting stop to entry x (1 +/- 0.0019), never moved
+again, `lossTrend=2`, both sleeves. Convex trail supersedes when its floor is higher. No in-process dependency
+after the amend.
+
+Rationale in dollars: forward-scaled, T=0.90 is -$0.3 to -$4/mo worst case against a +$23 to +$30/mo live read;
+T=0.75 is -$12 to -$22/mo worst case against +$50 to +$67/mo. Against a +/-$60/mo envelope, -$4 is affordable and
+-$22 is a third of the book. **Expected value of T=0.90 is approximately zero (+$5 to +$10/mo point estimate).**
+It is bought for the failure-mode removal and for being the first rule defending the 0-1R zone while the
+1-second monitor is blind, not for an edge. Not dressed up as one.
+
+Pre-registered trial, replacing 20F:
+- Primary: build-then-full-stop rate among fills reaching 0.90R, pre-registered 0 of N. Execution check only.
+- Secondary (the real measurement): the cut column. Baseline live 1 of 58 armed; corpus 22 of ~45 fired.
+- Kill rule: revert if cumulative cut > $40, or any single cut > 2.0R.
+- Length: 40 armed fills (~21 days at current rate) or the kill rule.
+- In parallel, read-only: shadow log at T=0.75 recording arm and touch without changing any order. Revisit 0.75
+  only on that evidence. The saved column needs no trial — it is arithmetic.
+
+### What is not known
+
+Whether the live month's 3-of-56 cut rate or the corpora's 40-60% cut share is the right prior for the next 30
+days. 120 fills cannot decide it. The 22 deleted fills are unrecoverable. The corpus sign is unstable by year and
+by symbol. Both thresholds are statistically indistinguishable from zero on any window long enough to measure.
+
+Read-only throughout: no repo edits, no /data writes, no orders, no Railway changes, no deploys.
+Artefacts: `BE75/answer.md`, `BE75/record.md`, `BE75/recon/r1.py`, `BE75/recon/r1.json`.
