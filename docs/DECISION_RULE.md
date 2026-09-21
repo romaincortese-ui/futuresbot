@@ -16899,3 +16899,112 @@ the next trigger or window question cheap.
 relative script path dropped two 184-byte Python "can't open file" error logs into the repo root
 before failing to start. Both deleted immediately; no repo file modified. Repo root re-verified clean
 in the verify lane.
+
+## 2026-09-21 - TREND 72h/5% GATE: REJECTED (kill criterion (a)); no live change
+
+**Question.** Replace the TREND entry (24h move >= 4% AND new 24h closing high) with
+**72h move >= 5% AND new 72h closing high**, same universe. Found post-hoc 2026-09-21 in a control arm of
+the majors-gate study (`wc/MAJG G3b|C2|share`).
+
+**Decision. Do not ship. No config change, no trial, no deploy.** Lanes: `wc/G72/build` (data),
+`wc/G72/test` (PREREG + battery), `wc/G72/vf` (independent verification). All read-only.
+
+### Dollars (1R = $11.75, corpus 2024-09-17 -> 2026-09-09, 23.75 mo, live config, rotation on, 2 slots)
+
+| | $/mo | fills/mo | $/fill | maxDD |
+|---|---|---|---|---|
+| incumbent 24h/4% | +30.08 | 53.8 | +0.559 | -621 |
+| candidate 72h/5% | +51.05 | 45.2 | +1.130 | -397 |
+| **delta** | **+20.98, CI [-4.61, +46.10]** | -8.6 | +0.571 | +224 |
+
+Y1 +33.52 / Y2 +8.19. Rotation off: +4.77 -> +31.47, delta +26.71 CI [-0.38, +52.69].
+
+### Why rejected
+- **(a) fires**: CI includes zero, on the discovery sample itself. The other six criteria do not fire.
+- **Plateau, not spike**: 27/29 alternative cells beat the live gate (mean +$17.09/mo); the candidate is
+  **below the family average** at rank #10 of 30. Rotation off: 29/29 beat it, worst +$12.43/mo.
+- **Unseen era Y0** (Binance, 2023-09-17 -> 2024-09-17, rotation forced off): incumbent -$64.55/mo,
+  candidate -$56.27/mo, delta +$8.28 CI [-23.68, +39.31]. **0 of 30 cells make money**; best -$4.00/mo.
+  Candidate ranks #22 of 30.
+- **33% of the gain is fees not paid**: delta net +20.98 = delta gross +14.09 + commission not paid
+  +6.89. Fee burden 56% -> 38% of gross. At 0.12% round trip the delta is +18.44; at 0.285%, +24.42.
+
+### Verified independently (own features, stop clamp, exit walk, replay, sizing, bootstrap; zero imports
+### from the build/test lanes) - `wc/G72/verify.md`
+- Incumbent **+30.075739692280628/mo** and candidate **+51.052965456290515/mo** reproduce to 10 d.p.;
+  delta +20.977225764, CI blk1 [-4.6136, +46.0977], blk7 [-7.5520, +46.1113]. Rotation picks identical
+  for all 362 refreshes. Sweep, LOSO, ex-top-5%, drawdown, Y0, year-level walk-forward: all exact.
+- **Causality PASS**: 180 tests, 0 mismatches on gate prefix-invariance, on
+  `margin72[i] = c[i]/max(c[i-288..i-1]) - 1` (window **ends at the decision bar**, bar itself excluded
+  from the max), and on exit prefix-invariance. Entry = the decision bar's own close; walk starts at i+1.
+- **Costs PASS**: charged **once**, as a round trip (0.19% = live `FUTURES_CONVEX_COST_PCT`). Max
+  deviation from a single round trip over 166,109 rows: 2.2e-16.
+- **PREREG predates the lane's results** (15:03:39 UTC vs earliest artifact 15:05) but **not the
+  discovery** - PREREG sec.0 states the discovery numbers were read first. Pre-analysis, not
+  pre-hypothesis. The corpus is the discovery sample; only Y0 and the tail are out of sample.
+
+### Two test-lane claims corrected
+- **Random deletion**: the conclusion holds (candidate is top ~1% of matched-fill-count random
+  thinnings) but the magnitude does not. Mine: mean **+$0.30/mo**, pct [-17.36, +18.15], **p = 0.0125**.
+  Lane: mean -$2.68, p = 0.0005. Random thinning is **neutral, not loss-making**, and p does not clear 0.01.
+- **Rolling walk-forward is a fold artifact.** Lane: +$32.03/mo CI [+5.84, +57.54] - the only interval in
+  the study excluding zero. I reproduce it with their folds (+31.78 [+6.46, +58.94]) but calendar-month
+  folds give +23.91 **[-3.83, +51.50]** and 6-month training +12.13 **[-18.60, +43.44]**.
+  **No interval in this study robustly excludes zero.** Candidate chosen in 0 of 17-21 folds, every scheme.
+
+### New finding (not in the test lane): the mechanism does not replicate out of sample
+Split the incumbent arm's own 796 ETH/XRP/ZEC fills by whether the bar would also pass the 72h gate.
+Day-clustered bootstrap:
+
+| sample | kept | refused | diff $/fill | 95% CI | p |
+|---|---|---|---|---|---|
+| corpus (discovery) | n 409, +$2.088 | n 387, -$1.700 | **+3.788** | [+1.857, +5.603] | <0.0001 |
+| Y1 / Y2 | +1.101 / +3.320 | -3.025 / -0.127 | +4.126 / +3.446 | [+1.97,+6.37] / [+0.42,+6.45] | 0.0004 / 0.023 |
+| **unseen Y0** | n 160, **-$2.227** | n 146, **-$2.875** | **+0.648** | **[-1.826, +3.182]** | **0.62** |
+
+Four times the power of the portfolio comparison. Strong in the discovery sample, both years. **Gone in
+the unseen era**, whose interval upper bound (+$3.18) sits *below* the corpus estimate (+$3.79).
+
+### Incidental: float knife-edge in the row builder
+3 of 4919 live-gate incumbent rows differ between `ROT/A/trades_rot.pkl` and a rebuild from
+`MAJ/build/data/bars_maj.pkl` **although the bars are bit-identical**. Cause: ATR14 last-bit differences
+(max rel 4.4e-12) move a stop from 46.12999999999991 to 46.13 where a bar low is exactly 46.13, flipping
+`low <= stop`. Exit bar moves up to 6 bars; one TRAIL row's r moves 0.78R. **None booked in either arm** -
+no reported number changes. Standing lesson: exact-equality touches on stop/trail levels are decided by
+float noise; never read a single trade as evidence.
+
+### Carried forward
+1. **Open defect, incumbent side, higher value than the gate**: the test lane reports the live gate
+   reconfirms 20/20 recent fills only on the **forming** bar, 10/20 on the completed bar. The corpus is
+   built on completed bars. Settle this before any further gate work.
+2. **Standing question**: the live 24h/4% gate ranks **#28 of 30** in its own family, in Y1, Y2 and Y0,
+   on two venues. Not a trade - a question about whether the gate is load-bearing or merely first.
+3. **Free forward record**: log 72h/5% signals in the shadow ledger beside the live gate, untraded.
+4. **Do not set a live trial.** Standard error +/-$12.94/mo over 23.75 months: an interval excluding zero
+   needs ~35 months forward; 80% power to detect +$20.98/mo needs ~71 months (5.9 years).
+5. **Test shape**: prefer the per-fill refused/kept statistic (n ~ 800) over per-month portfolio deltas
+   (n ~ 24) for anything in this family.
+
+### Unknowns, stated
+- Whether any of this survives a real out-of-sample year **on MEXC**. Y0 is Binance with a thin,
+  range-bound ZEC; the MEXC tail is 11 days and decides nothing.
+- Whether the incumbent's poor family ranking is era-specific - it holds in Y1, Y2, Y0 and two venues,
+  but always on the same three symbols.
+- What the live book did 2026-08-21 -> 2026-09-02; no readable TREND fill exists for that window.
+- C5b in Y2 (pool tape not on disk) - not bought, per the PREREG, once (a) fired.
+
+**Addendum 2026-09-21: the forming-bar alarm in the G72 study is a WINDOW ARTEFACT, not a live defect.**
+The study reconstructed the last 20 TREND fills, most of which predate the completed-bar fix (df0192e, live 2026-09-19T09:43Z).
+All 5 TREND fills entered AFTER the fix carry `trend_gate_close` - a field only the new code path writes - and each one
+reconciles to the raw MEXC klines exactly:
+
+| fill | completed bar | close vs recorded gate_close | 24h ROC | new 24h closing high | bar age at entry |
+|---|---|---|---|---|---|
+| ZEC 09-21 00:30:28 | 00:15-00:30 | 1531.91 = 1531.91 | +4.20% | yes | 28 s |
+| XRP 09-21 06:30:50 | 06:15-06:30 | 1.4372 = 1.4372 | +4.05% | yes | 50 s |
+| ETH 09-21 08:45:42 | 08:30-08:45 | 2699.34 = 2699.34 | +4.93% | yes | 42 s |
+| XRP 09-21 09:00:28 | 08:45-09:00 | 1.4761 = 1.4761 | +7.23% | yes | 28 s |
+| ZEC 09-21 11:46:02 | 11:30-11:45 | 1569.49 = 1569.49 | +8.74% | yes | 62 s |
+
+The live loop runs the completed-bar rule, scans within 28-62 s of each bar close, and re-anchors the order to the tick.
+Every corpus study in this series is measuring the bot that exists.
