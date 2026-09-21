@@ -16797,3 +16797,105 @@ not priced.
 
 Files: `wc/MAJG/answer.md`, `wc/MAJG/verify.md`, `wc/MAJG/grid/` (PREREG.md, results.md, cells.json,
 placebo.json), `wc/MAJG/controls/` (controls.md, symbols.json, corr.json), `wc/MAJG/audit/`.
+
+## 2026-09-21 — WILDCARD MOVE BANDS ACROSS WINDOWS (2-5% and neighbours): REJECTED — GRID IS A NULL
+
+**Question.** Owner: "What about 6h / 2% to 5%? Have we ever tested 2% to 5%?" — a band (floor AND
+ceiling) on a window longer than 3h.
+
+**Answer to the second half: NO.** Never, on any window. The 2026-09-21 TRIG grid tested 210
+threshold cells, floors only, lowest **5%** (`TRIG/grid/g01_grid.py:63`). The band work in WCF/WCR
+was **3h only**, floor **3%** (`WCF/PREREG.md:22`). The `BANDS` lists in WCF/WCR are **24h-range**
+bands, not ROC. **The nearest prior to the ask is 3h / 3–7%.** This lane is the first test of any ROC
+floor below 3% and the first band on any window other than 3h.
+
+**Verdict on the ask (6h, |ROC| in [2,5), replacement form, live exits):** **REJECTED.**
+
+| line | live $/mo | cell $/mo | Δ$/mo | 95% CI | resolves |
+|---|---|---|---|---|---|
+| E 220d MEXC | +48.78 | −210.50 | **−259.28** | [−491.69, −32.86] | yes, negative |
+| V independent | +26.22 | −210.50 | **−236.72** | [−466.31, −8.62] | yes, negative |
+| H 127d holdout | +78.66 | −279.27 | **−357.92** | [−692.77, −55.75] | yes, negative |
+| B Binance year | +90.18 | −168.29 | **−258.46** | [−459.54, −76.33] | yes, negative |
+| L live week | +478.23 | +210.45 | −267.78 | [−2498.85, +1956.02] | no, noise |
+
+Pooled E+H+B (23.4 mo): **−$276.46/mo [−404.72, −143.16]**. Per-fill mean R negative everywhere
+(t = −2.06 E, −2.57 H, −2.37 B). Fills/mo 235–301 against the live 138.
+
+**Kill criteria: 0 of 6 pass.** (a) E ≥ +$10 with CI excluding zero — FAIL (−$259). (b) placebo
+p ≤ 0.10 discounted over the grid — FAIL (nominal p = 0.026 but on the *wrong side* of the random
+deletion; best-of-N p = 0.936). (c) ≥ 3 of 4 quarters on E — FAIL (0 of 4: −32, −222, −481, −108,
+while live is positive in all four). (d) H > 0 — FAIL. (e) B > 0 — FAIL. (f) V agrees in sign with
+E — passes, both negative. Also fails the owner metric: +785 winners / +886 losers on E.
+
+**Floor and ceiling are separately guilty (E).** `6h ≥ 5%` **+$121.71** · `6h ≥ 2%` **−$116.97**
+(floor cost **−$238.68**) · `6h [2,5)` **−$210.50** (ceiling cost a further **−$93.53**). The live
+fills the ceiling refuses are worth **+$335 E, +$280 H, +$1,019 B** — it throws away the profitable
+core. The 28 live fills the band keeps (of 1,699) are worth **+$21**. Mechanism prior confirmed as
+registered.
+
+**Whole grid: 110 of 112 band cells lose. 0 significantly positive; 47 significantly negative
+(E 6, V 5, H 16, B 20). Best-of-N p = 0.936 — the grid is a null.** The only cell positive on any
+resolved line is `3h [5,8)` (E +$110, V +$135, both CIs straddling zero) and it is **negative on both
+out-of-sample lines** on independent re-derivation (H **−$109.70**, B **−$127.14**). That is KC2,
+i.e. the 6h/5% failure mode repeated. Variant (b) — the env-change form where the range screen
+follows the floor — is **worse**: E −$366.94 [−615.71, −117.16]. Union (band alongside live, sharing
+slots) also loses on every line: E −$196, V −$178, H −$408, B −$243.
+
+**VERIFICATION (independent, `wc/BANDS/verify.md`).** Selection and slot book re-implemented from
+scratch, importing neither `tools/pit_book.py` nor `build/s02_explode.py`.
+
+- **All five live baselines reproduce cent-exact** with independent code (+48.78 / +26.22 / +78.66 /
+  +90.18 / +478.23), fill counts to the unit.
+- **The headline cell reproduces cent-exact on all five lines**, including the day-block bootstrap
+  intervals; likewise the floor/ceiling split, variant (b), the four quarters, the owner metric, the
+  union, the grid-wide counts.
+- **The best cell was re-derived on the two lines it was not selected on** — H −$109.70, B −$127.14.
+- **PREREG predates results:** `PREREG.md` 15:31:03, first priced cell `grid_a.json` 15:33:47,
+  `results.md` 15:52:47; PREREG untouched since, and it quotes no delta, p or dollar outcome. Placebo
+  budget matches PREREG exactly (E N=28, V/H/B N=7).
+- **No look-ahead.** ROC, 24h range and turnover are trailing and inclusive of the decision bar; the
+  detector frame ends at `i+1`; outcome resolution starts at `i0+1`. The only outcome-touching rule —
+  dropping unresolved rows so they do not hold slots — is **inert on E/V/H/B (cands == resolved on
+  every cell checked)** and bites only on L, which is unmeasurable.
+
+**Two structural facts now settled.**
+
+1. **The trigger and the 24h-range screen are the same dial.** `runtime.py:7343` defaults
+   `FUTURES_WILDCARD_MIN_24H_RANGE` to the trigger. At ≥8% the coupling is **exactly inert** —
+   verified, the live book is identical at a 7% and an 8% screen, 999 fills / +$48.78 either way. At
+   2% it is not: E admits 1,484 extra candidates (4,367 → 5,851, 1.34×). **Standing note: never set
+   `MIN_ROC` below 7% without pinning `MIN_24H_RANGE` explicitly** — the coupling has now silently
+   changed the meaning of two studies.
+2. **There is no ceiling parameter in the runtime** (`MIN_ROC` is a floor; no `MAX_ROC` exists). A
+   band is not expressible live today, so a positive result would have been a build request, not a
+   config change. Nothing to build.
+
+**What this does NOT say.** It does not say the live 3h/8% trigger is optimal. `6h ≥ 5%` (+$122 E)
+and `3h [5,8)` (+$110 E, +$135 V) beat it on the 2026 MEXC data and fail on the 2025 MEXC holdout and
+the Binance year. That pattern is a statement about **regime**, not about the trigger, and it is the
+one live thread the grid leaves open — properly asked as "is there a forward-observable signal for
+which era we are in?", which is the owner's own north star. It is **not** a band question.
+
+**Honest limits.** The band was measured wearing the **live exit stack** (as asked); whether a 2–5%
+population behaves differently under exits designed for it was not searched — **I do not know**. The
+placebo's best-of-N draws are unpaired across cells, which makes the test **conservative** (it errs
+toward a null); immaterial here, E's observed max-Z +84.71 vs a null 95th percentile of +185.41.
+Variant (b) priced on E and L only. The E-vs-V warm-up convention still swings the 220-day incumbent
++$48.78 → +$26.22 and remains unarbitrated — it moves the baseline, not the sign. The external
+listing veto is absent from every line in both arms (conservative). B is Binance: falsification line,
+not forecast.
+
+**Also corrected for the record.** "The 220d replay found 3h 3–7% negative in all bands" (the
+`runtime.py` comment) conflicts with `docs/DECISION_RULE.md`, which records those bands as **flat**.
+Cite it as *flat-to-negative*. Immaterial to this verdict — 2–5% was measured directly.
+
+**Actions.** None. No repo edit, no `/data` write, no env change, no order, no deploy. Read-only lane
+throughout; everything written lives under `C:/Users/Rocot/AppData/Local/Temp/wc/BANDS/`. Keep the
+five streams — they carry 3h/6h/12h/24h ROC down to a 1.5% floor at $0.00 reproduction error and make
+the next trigger or window question cheap.
+
+**Incident, carried forward from the grid lane and re-checked:** two background jobs launched with a
+relative script path dropped two 184-byte Python "can't open file" error logs into the repo root
+before failing to start. Both deleted immediately; no repo file modified. Repo root re-verified clean
+in the verify lane.
