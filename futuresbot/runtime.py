@@ -2374,11 +2374,15 @@ class FuturesRuntime:
                                             symbol=position.symbol, **bounded)
             except TypeError:                      # a client without the retry knobs
                 self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
+            entry = float(position.entry_price or 0.0)
+            new_sl = self._snap_order_price(position.symbol, float(new_sl), entry=entry)
+            tp_price = (self._snap_order_price(position.symbol, float(position.tp_price), entry=entry)
+                        if position.tp_price else None)
             try:
                 self.client.place_position_tpsl(
                     position_id=position.position_id,
                     vol=int(position.contracts),
-                    take_profit_price=float(position.tp_price) if position.tp_price else None,
+                    take_profit_price=tp_price,
                     stop_loss_price=float(new_sl),
                     side=position.side,
                     **bounded,
@@ -2387,7 +2391,7 @@ class FuturesRuntime:
                 self.client.place_position_tpsl(
                     position_id=position.position_id,
                     vol=int(position.contracts),
-                    take_profit_price=float(position.tp_price) if position.tp_price else None,
+                    take_profit_price=tp_price,
                     stop_loss_price=float(new_sl),
                     side=position.side,
                 )
@@ -6846,11 +6850,15 @@ class FuturesRuntime:
                         md_c["be_stop_cancel_failed"] = float(
                             (self._metadata_float(md_c, "be_stop_cancel_failed") or 0.0) + 1.0)
                     log.warning("[EXIT_FAILED] %s pre-restore cancel failed: %s", position.symbol, exc)
+            entry = float(position.entry_price or 0.0)
+            stop_price = self._snap_order_price(position.symbol, stop_price, entry=entry)
+            tp_price = (self._snap_order_price(position.symbol, float(position.tp_price), entry=entry)
+                        if position.tp_price and position.tp_price > 0 else None)
             try:
                 self.client.place_position_tpsl(
                     position_id=str(position.position_id),
                     vol=int(position.contracts),
-                    take_profit_price=position.tp_price if position.tp_price > 0 else None,
+                    take_profit_price=tp_price,
                     stop_loss_price=stop_price,
                     side=position.side,
                     **knobs,
@@ -6859,7 +6867,7 @@ class FuturesRuntime:
                 self.client.place_position_tpsl(
                     position_id=str(position.position_id),
                     vol=int(position.contracts),
-                    take_profit_price=position.tp_price if position.tp_price > 0 else None,
+                    take_profit_price=tp_price,
                     stop_loss_price=stop_price,
                     side=position.side,
                 )
@@ -11511,12 +11519,57 @@ class FuturesRuntime:
             metadata["fill_anchored_tpsl_error"] = str(exc)[:160]
 
     def _tick_size_for_symbol(self, symbol: str) -> float:
+        """The symbol's priceUnit. Env first, then the exchange, then 0.01.
+
+        The env values are auto-populated at boot by _emit_contract_specs for the
+        ACTIVE symbols only, so every alt the convex sleeves trade - and XRP, which is
+        a TREND symbol but not in FUTURES_SYMBOLS - used to fall back to 0.01. That
+        fallback is wrong by two orders of magnitude on most alts, which is why prices
+        were sent unsnapped and /stoporder/place rejected them with code 2015
+        (XRP 2026-09-21: a stop at 1.4160756043497276 could not be re-placed at all)."""
         compact_key = f"TICK_SIZE_{symbol.upper().replace('_', '')}"
         normalized_key = f"TICK_SIZE_{self._normalize_symbol_for_env(symbol)}"
         tick_size = self._env_float(compact_key, 0.0)
         if tick_size <= 0.0:
-            tick_size = self._env_float(normalized_key, 0.01)
-        return tick_size if tick_size > 0.0 else 0.01
+            tick_size = self._env_float(normalized_key, 0.0)
+        if tick_size > 0.0:
+            return tick_size
+        cache = getattr(self, "_contract_tick_cache", None)
+        if cache is None:
+            cache = self._contract_tick_cache = {}
+        hit = cache.get(symbol)
+        if hit:
+            return hit
+        try:
+            detail = self.client.get_contract_detail(symbol) or {}
+            unit = float(detail.get("priceUnit") or detail.get("price_unit") or 0.0)
+        except Exception as exc:                   # pragma: no cover - fail to the old default
+            log.debug("tick lookup failed for %s: %s", symbol, exc)
+            unit = 0.0
+        if unit > 0:
+            cache[symbol] = unit
+            return unit
+        return 0.01
+
+    def _snap_order_price(self, symbol: str, price: float, *, entry: float) -> float:
+        """Snap to the tick WITHOUT crossing entry.
+
+        Rounding to nearest can push a breakeven stop (entry +/- 0.19%) to the wrong
+        side of entry on a coarse tick, which is how the 2026-09-20 snap attempt turned
+        a sub-dollar short's floor into a -12R stop. Preserve the sign of (price - entry):
+        above entry rounds up, below entry rounds down."""
+        try:
+            tick = self._tick_size_for_symbol(symbol)
+            if tick <= 0 or price <= 0:
+                return float(price)
+            import math
+            steps = price / tick
+            snapped = (math.ceil(steps) if price > entry else math.floor(steps)) * tick
+            decimals = max(0, -int(math.floor(math.log10(tick)))) if tick < 1 else 0
+            snapped = round(snapped, decimals + 2)
+            return float(snapped) if snapped > 0 else float(price)
+        except Exception:                          # pragma: no cover - never blocks an order
+            return float(price)
 
     def _snap_price_to_tick(self, symbol: str, price: float) -> float:
         tick_size = self._tick_size_for_symbol(symbol)
