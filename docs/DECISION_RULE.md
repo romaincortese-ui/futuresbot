@@ -16409,3 +16409,78 @@ note line, and a skipped day is reported as its own dated catch-up block.
 **Assessor recommendation, not yet decided by the owner:** freeze the configuration, report in dollars, and pre-register a WILDCARD
 stopping rule - 60 fills at a frozen stake, cut the sleeve if still negative - which resolves in 4-6 weeks. Stop running day-level studies:
 15 days at this stake cannot answer them.
+
+## 2026-09-21 - WILDCARD TRIGGER GRID (X% in Y hours + filters): NO CHANGE
+
+**Question.** Owner: over the last 7 days, would a different WILDCARD trigger than |3h ROC| >= 8% have produced better trades than the bot delivered live? Compare the 5 most relevant combinations.
+
+**Verdict: no combination ships. The trigger stays at 3h / 8%. 210 cells tried; the best is inside its own selection noise; all 5 finalists fail the kill criteria out of sample.**
+
+### Method
+
+- Read-only. Container pull of `/data/futures_runtime_state.json` at 11:30Z (build) and 12:07Z (verify, sha256 `17b5401475c8b3ef`). No repo edit, no order, no deploy.
+- Live baseline 09-14 -> 09-21: **n=17, all closed, +$27.86, +1.939R, mean +0.1140R/fill, 11/17 wins**. sd 0.810, se 0.196, 95% CI on mean R [-0.271, +0.499]; bootstrap total-$ band [-$61.7, +$109.6]. **Realised risk mean $13.93** (median $12.01, range $8.45-21.24), not $23.50 - the regime scaler's 0.50 floor bound on 7 of 17.
+- Point-in-time stream rebuilt as `wc/WCF/E/e03_candidates.py` with the trigger opened to |ROC| >= 4% and the look-back swept 1/2/3/4/6h: 719 rows, 281 outcome units, 664 resolved, 55 censored. 1,051 perps, 0 truncations.
+- **Comparator is the replay's own live-rule cell (3h|8%: 36 fills, +$108.69), never the live book.** The replay fills 2.1x as often as live and understates the matched 12 live fills by 1.83R (54%), so any replay-measured gain under ~2R (~$28) is inside its own error.
+- Grid: 210 cells = 7 thresholds {5,6,7,8,9,10,12}% x 5 windows {1,2,3,4,6}h x 6 variants (as-is / vol_z>=1.5 / calm<0.50 / turnover>=$5M / longs / shorts).
+- Out-of-sample: all four prebuilt lines rebuilt with an open trigger and all three windows, because every prebuilt set carries only 3h at 8%. Fidelity at the incumbent cell: H 587/587 identical, B 965/965 identical, V 1007/1007 identical, E Jaccard 0.990.
+
+### Results
+
+| # | cell | week $ | week d$ vs live rule | E 220d $/mo | H 127d $/mo | B yr $/mo | fails |
+|---|---|---|---|---|---|---|---|
+| — | 3h / 8% (incumbent) | +108.69 | — | — | — | — | — |
+| 1 | 6h / 5% | +354.21 | +245.52 | +99.49 [-82.9,+290.3] | **-106.74** | **-123.67** | a,b,c,d,e |
+| 2 | 3h / 7% | +92.52 | -16.17 | +79.71 [+2.3,+155.4] | **+109.71** | -25.58 | b,e |
+| 3 | 3h / 5% | +171.14 | +62.45 | +45.61 [-92.8,+188.9] | +101.00 | -92.64 | a,b,c,e |
+| 4 | 3h / 8% + calm<0.50 | +145.10 | +36.41 | +60.00 [-16.0,+131.3] | -3.01 | -42.15 | a,b,d,e |
+| 5 | 1h / 10% | +90.20 | -18.49 | +4.56 [-161.6,+170.6] | -22.39 | -108.21 | a,b,d,e |
+
+Kill criteria: (a) E >= +$10/mo, CI excluding 0; (b) placebo p <= 0.10; (c) >=3 of 4 quarters positive; (d) H > 0; (e) B > 0; (f) V sign = E. All five pass (f) only. Family-wise best-of-5 placebo p: E 0.349, V 0.428, H 0.067, B 0.103.
+
+### Why the week column is not money
+
+- **Best-of-210 null** (5,000 shuffles of outcomes among the 261 resolved booked units; the book never selects on outcome, so the null is exact): median random week's best cell = **+$265.8**, best d$ vs incumbent = **+$190.5**. Observed +$354.21 / +$245.52 -> **p = 0.175 / 0.279**. Block permutation preserving day-clustering: **p = 0.24 / 0.30** (worse, not better).
+- Per pick, number of the 210 cells reaching that score in a *random* week: #1 1.3 (P>=1 = 0.27), #3 39.5 (0.94), #4 55.9 (0.98), #2 and #5 ~100 (1.00). **Four of five are chance in >=94% of shuffled weeks.**
+- **Spearman rho(week ranking, holdout ranking) = -0.190.** Selecting on this week anti-predicts.
+- The week is two trades: SYN 09-16 (+4.99R) and APT 09-18 (+4.93R). Incumbent ex-SYN = **-$2.20**.
+- A cell needs n >= 48 for a +0.30R/fill effect to clear its own 2-se band; the whole baseline cell is n=46 resolved. **Nothing selected on this week can be significant on this week.**
+
+### Findings that carry forward
+
+- **6h/5% (the week's winner) is the out-of-sample worst.** -$106.74/mo H, -$123.67/mo B, added block negative on both. In common units it is **+$1,003/mo in sample against -$107/mo out - a 9.4x contradiction**, not the 2.3x a raw side-by-side suggests.
+- **3h/5% is WITHDRAWN, not merely unrecommended.** 18 of its 27 added fills (67%) sit in the settled 3h 3-7% band and carry **$78.02 of its $72.60** of added dollars - more than 100%. It re-runs a closed null. **6h/5% is half the same thing** (20 of 37 added fills, $114 of $275). 1h/10%: 5 of 10 added fills, $34.73 of $62.42.
+- **3h/8%+calm<0.50 is a near-duplicate of the baseline** (Jaccard 0.84, one added fill, five dropped). Its own deletion-matched null nearly swallows it (p = 0.077 E, 0.104 V, 0.387 H, 0.368 B). Value as a drawdown dial ($39.79 maxDD), not as P&L.
+- **3h/7% is the only cell free of refuted-band content and the only added block whose CI excludes zero:** +0.167 (E, n=212), +0.161 (V), +0.164 [+0.005,+0.323] (H, n=169) - then **-0.048 on a Binance year (n=484)**. It lost $16 on the week and was not chosen here; it is the existing shadow trigger.
+- Raw 3h ROC bands, no slot book: 7-8% = +0.126 E / +0.125 V / +0.118 H / **-0.062 [-0.117,-0.007] B (n=1,238)**. 5-6% negative on all four lines.
+- **Raising the bar is refuted a third time**: T >= 9/10/12% at 3h = -45/-5/-17 $/mo (E), -31/-74/-109 (H), -12/+3/-18 (bin).
+- **Longs-only refuted again**: -$24.6/mo E, -$47.0 H, +$6.1 bin. WILDCARD shorts KEEP.
+- **Capacity**: the two trades carrying the week are $3.87M and $4.42M deflated 24h turnover. A $5M floor deletes both. Whatever the winner measures, it lives below $5M.
+
+### Defects found by the verify lane (both cut against the picks)
+
+1. **The replay omits `FUTURES_CONVEX_BREAKEVEN_ARM_R=0.90`**, pre-registered 09-20 (trial 21F -> 22F) and carried by 0 of 17 live WILDCARD fills - so the replay is right about the week *as traded*, but every forward-looking d$ is priced under a superseded stack, and the error is cell-dependent. Re-priced: **#4 flips +$36.41 -> -$3.09**; #2 -$31.91, #3 +$44.75, #5 -$38.01, #1 +$242.32. **The breakeven arm helps the incumbent (+$39.50) more than any challenger.**
+2. **Scale mismatch in the picks table** (7.45-day raw $ set beside $/mo) understated the in-sample/out-of-sample contradiction on #1 by 4x.
+3. **`take()` applies the regime multiplier to P&L but not to committed margin** (baseline +$0.77, 6h/5% +$10.80 - ~4% of the headline, moves cells unevenly).
+4. **The low-threshold cells are not the intervention they model**: live's 24h-range prefilter is tied to the trigger (`min_move = min(shadow_roc, min_roc)`), so setting T=5% drops the range screen to 5% too and admits a larger pool than was graded. Unsized.
+5. The bot's own `r_multiple` tag disagrees with `pnl/risk` on 12 of 17 fills, by up to 0.12R. `pnl/risk` is the correct one; the two must never be mixed in a total.
+
+Clean checks: 210/210 cells reproduce independently; booked-set symmetric difference 0 on both re-derived cells; no look-ahead (max |rho| of any scan-time field vs net R = 0.123); censoring honest; slot cap, rank fall-through, MAX_SCAN and preemption all immaterial; the window rebinding is real (94 of 213 6h rows have |roc3h| < 4%).
+
+### Open / not known
+
+- **My E rebuild prices 8%->7% at +$576 total; `docs/DECISION_RULE.md` prices the same change on the same replay at +$66** (same quarter shape, 8.7x magnitude). No prebuilt 7% stream exists to arbitrate. Treat +$79.71/mo as unverified against the record, not a correction to it.
+- Whether the MEXC/Binance split on the 7-8% band is venue, era or universe. All three MEXC lines share one exchange and 2025-26; Binance is 2024-25. **I do not know.**
+- The E-vs-V warm-up convention (whether a symbol's first 260 bars are skipped) swings the 220-day incumbent **$48.78 -> $26.22/mo** - a bookkeeping choice worth more than the entire E-line effect of picks 3, 4 and 5.
+
+### Correction to the brief
+
+"The 220d replay found 3-7% negative in all bands" **does not match the source**. `docs/DECISION_RULE.md` records those bands as flat (6-7% +0.02..+0.07, 7-8% +0.015..+0.04, 8-9% +0.07, 9-12% +0.007, >=12% +0.047) and concludes "earlier entry buys turnover, not edge." This study reaches the same conclusion by a different route.
+
+### Decision
+
+**No change to FUTURES_WILDCARD_MIN_ROC, the look-back, or any companion filter.** The only instrument that can settle the one open item is the **3h/7% shadow log**, already running. Pre-registered promotion condition, set now: shadow added-block mean R > 0 with 95% CI excluding zero at **n >= 100**, AND the multi-window stream re-run on the 220-day E klines reconciling the +$576 / +$66 discrepancy. Failing either, 8% stands.
+
+Framing number, unchanged: lane E's own incumbent, on its own 220 days, is **+$48.78/mo with 95% CI [-$113.6, +$218.8]**. The replay cannot resolve the sleeve, let alone a change to it.
+
+Artefacts: `C:/Users/Rocot/AppData/Local/Temp/wc/TRIG/` - `build/` (stream 719 rows, baseline), `grid/` (210 cells, null, holdout), `oos/` (E/V/H/B rebuilds, kill criteria), `verify/` (independent re-derivation), `answer.md`, `record.md`.
