@@ -16484,3 +16484,158 @@ Clean checks: 210/210 cells reproduce independently; booked-set symmetric differ
 Framing number, unchanged: lane E's own incumbent, on its own 220 days, is **+$48.78/mo with 95% CI [-$113.6, +$218.8]**. The replay cannot resolve the sleeve, let alone a change to it.
 
 Artefacts: `C:/Users/Rocot/AppData/Local/Temp/wc/TRIG/` - `build/` (stream 719 rows, baseline), `grid/` (210 cells, null, holdout), `oos/` (E/V/H/B rebuilds, kill criteria), `verify/` (independent re-derivation), `answer.md`, `record.md`.
+
+## 2026-09-21 - TREND UNIVERSE: MAJORS x SLOT COUNT: DO NOT SHIP. 0 of 20 candidate cells beat live; best is -$12.08/mo [-30.0, +6.0] and fails all five kill criteria. The 3rd slot fails separately at -$10.63/mo.
+
+**Owner:** *"I think we need the majors in the TREND universe for sure. Why not?"*
+
+**What prompted it:** SOL is not in the universe and was said to have produced 5 fills over 2026-09-17..09-21 worth ~+5.08R on a 15-min approximation. SOL was chosen BECAUSE it ran. The selection bias is the point of the study.
+
+**PRE-REGISTERED** in `wc/MAJ/grid/PREREG.md`, written 11:31:13 UTC, the oldest file in the lane; every scored output is later (verified independently).
+
+**Read-only.** No repo file, no /data write, no order, no Railway change, no deploy. Outputs under `wc/MAJ/{build,grid,verify}/`. Network: 4 public MEXC kline requests, for the 09-17..09-21 re-derivation only.
+
+---
+
+### THE ANSWER IN ONE LINE
+
+> **NO CELL SHIPS.** 0 of 20 candidate cells beat live; 0 of 20 beat the incumbent universe at their own slot/rotation config.
+> - **Best cell:** +BTC,SOL / 2 slots / rotation on, **-$12.08/mo, 95% CI [-29.97, +5.96]**, fails **all five** kills.
+> - **Not a capacity problem:** with six slots and no per-bar entry limit the majors still cost **-$14.48/mo**.
+> - **The prompting week, re-derived with costs:** the live book would have banked **+$9.08**, not +5.08R (+$59.69).
+
+---
+
+### DESIGN
+
+- **Universes:** U0 ETH/XRP/ZEC (live) · U1 +SOL · U2 +BTC,SOL · U3 +BTC,SOL,BNB · U4 +BTC,SOL,BNB,DOGE · U5 BTC/ETH/SOL/BNB (majors only).
+- **Crossed with** slots {2,3} x rotation {off,on} = 24 cells. Rotation on = the shipped trial-21R rule only (D4 RANK, 48h, SHARED). Collision rule: a fixed universe member is dropped from the rotation pool and D4 ranks recomputed among the rest.
+- **Years:** Y1 2024-09-17 -> 2025-09-17 (Binance 15m, all symbols - MEXC Min15 retention is ~360 days), 11.99 mo. Y2 2025-09-17 -> 2026-09-09 (MEXC Min15), 11.76 mo. Pooled 23.75 mo.
+- **Stack unchanged:** ROC24 >= 4% AND close >= max prior 96 closes, long only, 3xATR14 with the live 20%-of-margin clamp, TP 3R, retention trail (arm 1R, retain 0.50, 0.75 above 3R), 24h clock, available-balance sizing, one position per symbol, one entry per 900s bar.
+- **Costs:** primary net of **0.19% taker round trip**; every cell re-priced at **0.285% + stop slipped 25% toward the exit bar's low** (e) and with trail exits slipped too (e2).
+- **Unit:** **1R = $11.75** (live TREND). $23.50 corpus model reported alongside.
+- **Primary statistic:** delta $/month vs the LIVE cell (U0 / 2 slots / rotation on), pooled, 1-day-block bootstrap 95% CI, 4000 reps. 7-day blocks reported but not decisive.
+
+### KILL CRITERIA AND THE BEST CELL (U2 / 2 slots / rotation on)
+
+| criterion | measured | verdict |
+|---|---|---|
+| (a) >= +$10/mo and CI clear of 0 | **-12.08/mo**, [-29.97, +5.96] | **FAIL** |
+| (b) best-of-N discounted placebo p <= 0.10 | **p = 0.996** (N = 20) | **FAIL** |
+| (c) same sign Y1 and Y2 | Y1 **+1.61**, Y2 **-26.03** | **FAIL** |
+| (d) maxDD no worse than U0 | -624 vs -621 | **FAIL** |
+| (e) $/fill falls <= a third | +0.305 vs +0.559 (**0.545x**) | **FAIL** |
+
+All five. Not a near miss.
+
+### THE GRID (rotation on; 1R = $11.75; live = +$30.08/mo, 53.8 fills/mo, $0.559/fill, maxDD -621)
+
+| universe | slots | $/mo | delta vs live | 95% CI | Y1 / Y2 | fills/mo | $/fill | maxDD |
+|---|---|---|---|---|---|---|---|---|
+| ETH/XRP/ZEC (live) | 2 | +30.08 | - | - | - | 53.8 | +0.559 | -621 |
+| ETH/XRP/ZEC | 3 | +19.45 | -10.63 | [-20.6, +0.1] | -13.4 / -7.8 | 59.2 | +0.329 | -744 |
+| +SOL | 2 | +17.95 | -12.13 | [-29.6, +5.6] | +2.9 / -27.4 | 58.3 | +0.308 | -623 |
+| +SOL | 3 | +8.58 | -21.49 | [-38.6, -4.1] | -19.5 / -23.5 | 66.9 | +0.128 | -777 |
+| +BTC,SOL | 2 | +18.00 | **-12.08** | [-30.0, +6.0] | +1.6 / -26.0 | 59.1 | +0.305 | -624 |
+| +BTC,SOL | 3 | +8.17 | -21.91 | [-40.5, -2.8] | -19.8 / -24.1 | 68.4 | +0.119 | -818 |
+| +BTC,SOL,BNB | 2 | +14.80 | -15.27 | [-35.5, +5.9] | -1.4 / -29.4 | 60.8 | +0.243 | -615 |
+| +BTC,SOL,BNB | 3 | +4.68 | -25.40 | [-45.6, -4.4] | -27.8 / -22.9 | 71.3 | +0.066 | -855 |
+| +BTC,SOL,BNB,DOGE | 2 | +13.95 | -16.13 | [-41.0, +9.1] | +3.5 / -36.2 | 63.8 | +0.219 | -717 |
+| +BTC,SOL,BNB,DOGE | 3 | +7.96 | -22.12 | [-47.5, +3.9] | -20.8 / -23.5 | 76.2 | +0.104 | -936 |
+| majors only | 2 | -8.06 | -38.14 | [-73.3, -3.5] | -3.4 / -73.5 | 44.0 | -0.183 | -772 |
+| majors only | 3 | -13.03 | -43.11 | [-79.3, -8.0] | -15.3 / -71.5 | 49.9 | -0.261 | -980 |
+
+Rotation-off cells are worse throughout (-25.3 to -58.5 vs live).
+
+### MECHANISM - IT IS NOT CONTENTION (settled this run)
+
+Relaxing every booking constraint does not rescue the majors:
+
+| universe | 2 slots | 3 | 4 | 6 | 6 slots + unlimited entries/bar |
+|---|---|---|---|---|---|
+| ETH/XRP/ZEC | **+30.08** | +19.45 | +20.77 | +20.70 | +28.76 |
+| +BTC,SOL | +18.00 | +8.17 | +0.22 | +2.30 | **+14.28** |
+| +4 majors | +13.95 | +7.96 | +3.00 | +0.07 | +9.41 |
+
+Decomposition of the -$12.08: the 342 new fills are worth **-$21.45/mo** (BTC/SOL's own 266 fills: -$18.06); the 216 displaced incumbent fills were worth **-$9.50/mo**, so displacement is the part that helps. **The majors' own signals lose money on this gate** - which is why buying capacity makes it worse, not better.
+
+Correlation: the four majors move together at **0.69 (Y1) / 0.78 (Y2)** vs 0.56/0.54 among ETH/XRP/ZEC. Every rotation-on major cell pushes ZEC's share of profit **above 100%** (1.22-2.92) and ex-ZEC dollars **negative** (-$3.02 to -$13.03/mo): adding majors makes the sleeve MORE ZEC-dependent.
+
+### PER-SYMBOL, EVERY GATE ROW TAKEN, NO CONTENTION, FLAT 1R
+
+| symbol | n | R/fill Y1 | R/fill Y2 | pooled | 95% CI (day-block) | $/fill | $/mo |
+|---|---|---|---|---|---|---|---|
+| ETH | 1031 | -0.004 | -0.068 | -0.026 | [-0.216, +0.155] | -0.31 | -13.5 |
+| XRP | 1119 | -0.001 | +0.104 | +0.042 | [-0.097, +0.173] | +0.50 | +23.5 |
+| ZEC | 2199 | -0.093 | +0.217 | +0.068 | [-0.048, +0.182] | +0.80 | +74.4 |
+| BTC | 467 | -0.190 | +0.062 | -0.083 | [-0.331, +0.157] | -0.97 | -19.1 |
+| **SOL** | 1418 | **-0.102** | **-0.113** | **-0.106** | [-0.249, +0.028] | -1.24 | -74.0 |
+| BNB | 665 | -0.293 | +0.138 | -0.074 | [-0.307, +0.148] | -0.87 | -24.5 |
+| DOGE | 1453 | +0.033 | +0.049 | +0.039 | [-0.095, +0.172] | +0.45 | +27.8 |
+
+SOL is the worst of the seven and is negative in both years independently. **No symbol's per-fill edge is distinguishable from zero** once the interval is clustered correctly (see DEFECTS).
+
+### PLACEBO - THE MAJORS ARE WORSE THAN RANDOM SYMBOLS
+
+3,210 alternative universes (exhaustive at +1 and +2). The majors sit in the **bottom half of the random-add distribution in 20 cells out of 20** (percentile 0.10-0.47). **Best-of-20 discounted p = 0.996** pooled (0.992 Y1, 0.996 Y2). The null's own best-of-20 typically beats live by **+$3.76/mo, 90th pct +$11.63** - so any "+$10/mo" produced by symbol-hunting in this space is indistinguishable from noise.
+
+Independent re-run of the exhaustive +1 placebo at 2 slots / rotation on: U0 = +$30.08, random single add median **+$22.99**, max **+$38.33**, **40%** of random adds beat U0. BTC 65th percentile, BNB 60th, DOGE 50th, **SOL 15th**.
+
+### THE PROMPTING WEEK, RE-DERIVED (2026-09-17 00:00 -> 09-21 12:00 UTC, live MEXC Min15, live gate and exits, with costs)
+
+**SOL fired 41 times, not 5.** Every signal taken: **+35.92R (~$422)** at flat $11.75. Inside a real 2-slot book:
+
+| book | fills | R net | $ @ $11.75 | with (e) |
+|---|---|---|---|---|
+| live universe, 2 slots | 12 | +3.274 | **+38.47** | +31.61 |
+| +SOL, 2 slots | 17 | +4.046 | **+47.55** | +36.31 |
+| live universe, 3 slots | 13 | +2.088 | +24.54 | +15.77 |
+| +SOL, 3 slots | 19 | +6.601 | +77.57 | +65.82 |
+
+**Adding SOL was worth +$9.08 over 4.5 days.** SOL's own 6 book fills made +5.12R (the +5.08R figure is about right for SOL's fills), but the book kept **2.2%** of SOL's standalone week: those fills crowded XRP from +4.29R/4 fills down to +0.93R/5, and ETH from +1.16R/2 down to +0.47R/1. A third slot on the incumbents alone **lost $13.93** that week. Inside the corpus, **10.3% of all 5-day windows (74 of 715)** are a >= +5.08R week for SOL - a 1-in-10 draw, and the other nine pay for it.
+
+### VERIFICATIONS
+
+- **Independent re-booking** (own booker, own sizing, own $/mo, no call into the lane's replay): U0/2/norot, U0/2/rot, U2/2/rot, U0/3/rot - **taken rows identical, max size diff 0.0, $/mo identical to every printed digit**. Chains back to `ROT/A/cells.json` INC and D4|48h|SHARED exactly.
+- **Invariants, all 24 cells, 29,767 fills:** 0 fills while the book is at capacity, 0 duplicate symbol open, 0 holds outside the 24h clock, 0 bars with two entries. Brute-forced on every fill.
+- **Costs:** all 166,109 tape rows satisfy `r = (px/E-1)/sl - 0.0019/sl`, max abs diff **0.0**. Fee charged **once**, as the round trip of two taker legs, matching `exits.py:estimated_round_trip_fees_usdt` and `FUTURES_CONVEX_COST_PCT=0.190`; more conservative than the repo's own backtest defaults (0.16%) and `cost_budget` (0.12%). (e) charges 0.285% once, not stacked. 0 rows breach the 20%-of-margin stop cap.
+- **Provenance:** PREREG is the oldest file in the lane; the self-reported half-risk bug fix changed only the sensitivity column - all 20 cells x 3 year columns of `placebo.json`'s stored observed values match the re-run `cells.json` to 1e-9.
+
+### DEFECTS FOUND IN THE GRID LANE (verdict unchanged)
+
+1. **Per-symbol intervals were ~2.5x too narrow.** `g5_symbols.py` / `g6_sol.py` used `mean +/- 1.96*std/sqrt(n)` over individual fills. Gate rows cluster at 4.8-6.7 fills per active day with overlapping holds. Day-block and week-block bootstraps widen every interval to cross zero. **Two published claims are retracted: "SOL is the only one whose interval excludes zero on the downside" and "ZEC is the only one whose interval excludes zero on the upside."** The cell-level primary used the correct day-block bootstrap and reproduces exactly.
+2. **Displacement dollars were printed with the wrong sign.** `results.md` says the 216 displaced fills were "worth +$9.50/month"; `diag.json` records **-9.4999...** and an independent count agrees. They were losers. This strengthens the case against the majors.
+3. **Stated mechanism was wrong.** "The binding constraint is the one-entry-per-900s-bar scan" - the bar rule refuses 35-92 rows per cell, the slot cap refuses 2,907-6,792. The 11% occupancy figure is bar-weighted time; gate rows arrive in bursts precisely when slots are held. Settled by the relax-everything test above: neither constraint is the cause.
+
+### SIDE FINDINGS WORTH CARRYING
+
+- **Rotation on is worth +$25.31/mo** on this corpus (U0/2/norot -> U0/2/rot) - larger than any universe change on the grid. Trial 21R is default-OFF with 3 live fills for -$2.29.
+- **The 3rd slot costs -$10.63/mo [-20.6, +0.1]** over 23.75 months and 1,406 fills, which **still disagrees with `trend.py`'s 63-day +$16.12 vs +$14.31**. 63 days is 5% of this sample and cannot settle it; the disagreement remains unexplained and `trend.py`'s measurement was not audited.
+- **U0 + BTC alone was never a grid cell.** Priced on the same statistic: **+$0.69/mo [-7.9, +9.5]**, Y1 +4.92 / Y2 -3.63, $/fill 1.006x, maxDD $11.6 better. The only non-negative add in the study - and it still fails kill (a) and kill (c), at the 65th percentile of a null whose maximum is +$38/mo. **Recorded as the closest call, explicitly NOT shippable.** Do not let "it didn't hurt" become "so let's add it."
+
+### REJECTED WITH MEASUREMENTS (add to the rejected list)
+
+| change | measured | why rejected |
+|---|---|---|
+| +SOL, 2 slots | -$12.13/mo [-29.6, +5.6] | fails (a)(b)(c)(e) |
+| +BTC,SOL, 2 slots | -$12.08/mo [-30.0, +6.0] | fails all five |
+| +BTC,SOL,BNB, 2 slots | -$15.27/mo | fails all five |
+| +all four majors, 2 slots | -$16.13/mo | fails all five |
+| majors-only universe | -$38.14/mo | fails all five, $/fill goes negative |
+| 3rd TREND slot (any universe) | -$10.63 to -$43.11/mo | fails (a); worse at every universe |
+| +BTC alone, 2 slots | +$0.69/mo [-7.9, +9.5] | fails (a) and (c); 65th pct of null |
+| 4 and 6 slots | +$20.77 / +$20.70 (U0) | below live at 2 slots |
+
+### WHAT IS NOT REFUTED
+
+- **A majors-specific gate.** The study held ROC24 >= 4% + 24h closing high fixed, and that gate is tuned on ETH/XRP/ZEC-like behaviour (BTC clears it 467 times to ZEC's 2,199). Read this as "majors on THIS gate lose", not "majors can never work". Needs its own pre-registration and out-of-sample test.
+- **Capacity.** Not modelled anywhere. It is the only honest reason to hold BTC/ETH and it is asserted, not measured. Trigger to revisit: a single TREND fill's notional becoming a measurable fraction of 15-minute depth.
+- **Testing SOL for free.** SOL is already a rotation-pool member and can be picked by the existing rotating slot on its own merits - reversible, costs nothing, generates live fills. That is the cheap test, not a permanent add.
+
+### LIMITS
+
+Survivorship in the pool; capacity/funding/borrow unmodelled; intrabar path resolved by 15m OHLC convention; Y1 is Binance for every symbol and **BNB is the weakest cross-venue match (corr 0.90, gap -0.077 R/fill, n=112), so any Y1 BNB effect under ~0.08 R/fill is venue noise**; two years are two regimes, not a sample of regimes; the 09-17..09-21 re-derivation is n=1 week, flat-1R, and could not reproduce the live rotating slot (no point-in-time pool past the corpus end).
+
+### FILES
+
+`wc/MAJ/build/` (bars, 9,478 gate rows, coverage, verify) - `wc/MAJ/grid/` (PREREG.md, cells, placebo, diag, symbols, sol, results) - `wc/MAJ/verify/` (v1_book, v2_inv, v3_mech, v4_sol, v5_add, v6_placebo, v7_btc) - `wc/MAJ/verify.md`, `wc/MAJ/answer.md`, `wc/MAJ/record.md`.
