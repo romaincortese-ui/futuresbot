@@ -16639,3 +16639,161 @@ Survivorship in the pool; capacity/funding/borrow unmodelled; intrabar path reso
 ### FILES
 
 `wc/MAJ/build/` (bars, 9,478 gate rows, coverage, verify) - `wc/MAJ/grid/` (PREREG.md, cells, placebo, diag, symbols, sol, results) - `wc/MAJ/verify/` (v1_book, v2_inv, v3_mech, v4_sol, v5_add, v6_placebo, v7_btc) - `wc/MAJ/verify.md`, `wc/MAJ/answer.md`, `wc/MAJ/record.md`.
+
+## 2026-09-21 - TREND: A MAJORS-SPECIFIC GATE: REFUTED, LINE CLOSED
+
+**Decision: no majors-specific gate ships. Do not add BTC/SOL/BNB/DOGE on any gate, shared or
+dedicated. Do not add a 3rd slot. Leave ETH on the live gate. Universe expansion is closed as a
+line of work.**
+
+### Question
+
+MAJ (2026-09-21, earlier) settled that adding the majors under the *live* gate loses in 20 of 20
+cells, and named the open hypothesis: the `24h >= 4% AND new 24h closing high` gate was fitted to
+ZEC-like behaviour (BTC clears it 467 times in two years against ZEC's 2,199). Owner asked: does a
+majors-specific gate turn them from a -$12/mo drag into a payer?
+
+### What was run
+
+Pre-registered before any outcome (`grid/PREREG.md`, 14:47:49; first outcome artefact 14:49:51).
+13 new gate families x {shared slots, dedicated 3rd slot} = 26 primary cells, plus G0 control,
+28 secondary "ETH both ways" cells and 14 incumbent-only controls. Two years (723 d = 23.755 mo),
+verified TREND corpus, live exits/stop/sizing, rotation ON, costed. 1R = $11.75. Baseline
++$30.08/mo. Then a controls lane separating gate from capacity from symbols, and a 300-trio random
+symbol null.
+
+Families: G1 fixed % (2.0/2.5/3.0/3.5); G2 vol-scaled (0.75-1.50 x sd30); G3 longer window
+(48h >= 4%, 72h >= 5%); G4 ATR-scaled (0.50-1.00 x ATR14 x sqrt96).
+
+### Result
+
+**All 26 primary cells negative.** Best `G1d/M/ded` (24h >= 3.5%, dedicated slot)
+**-$11.83/mo, CI [-31.78, +9.22]** - negative and indistinguishable from zero. The control
+`G0/M/ded` (live gate, dedicated slot) is -$12.53, so no new gate beats doing nothing by a
+distinguishable margin.
+
+Owner's six kill criteria, best cell: (a) pooled >= +$10 with CI excluding 0 - FAIL (-11.83,
+straddles); (b) placebo p <= 0.10 - FAIL (p 0.647); (c) same sign both years - FAIL (both negative,
+-9.0 / -14.7); (d) drawdown no worse - FAIL (-703 vs -621); (e) $/fill >= 2/3 of today - FAIL
+(+0.254 vs +0.373 threshold); (f) capacity doesn't explain it - FAIL (capacity is -4.93 of -11.83).
+**0 of 6. Cells passing 4 of the criteria anywhere in the 68-cell study: none.**
+
+### Why - the mechanism, which is arithmetic not statistics
+
+Under **11 of 14 gates the majors' GROSS $/fill is positive** (+$0.04 to +$0.52). Under **14 of 14
+the NET is negative**, because fee/fill runs **$1.09-$1.62**. The gate works directionally - G1d
+more than doubles the majors' gross edge - and is still 3x too small to pay the toll.
+
+The toll is a property of the instrument, not the entry. Stop = 3 x ATR, so a quiet coin gets a
+tight stop, so the same $1 of risk buys a bigger notional, so the 0.19% taker round trip costs more:
+
+```
+        ATR14%   stop%   fee $/fill
+BTC      0.52     1.56      1.64
+BNB      0.56     1.68      1.57
+ETH      0.65     1.94      1.28
+SOL      0.74     2.22      1.15
+XRP      0.89     2.68      1.05
+ZEC      1.24     3.70      0.75
+```
+
+**BTC costs 2.2x what ZEC costs per fill, permanently. No entry gate can touch that.**
+Book level: LIVE pays $38.68/mo of fees on $68.76 gross (56%); `MAJ/G1d/ded` pays $57.72 on $75.97
+(76%) - **+$19.04/mo of certain cost to harvest +$7.21/mo of uncertain gross.**
+
+### What the controls settled
+
+- **Capacity is not the constraint and not the cause.** A 3rd slot given to the *incumbents* loses
+  on its own: -$10.63 shared / -$4.93 at 2 entries per bar / -$6.56 dedicated to the rotator, every
+  CI straddling zero. **Both slots are full only 11% of bars.**
+- **The gate is worth nothing inside the majors cell: +$0.70/mo, CI [-12.21, +13.96].**
+- **The proposed mechanism was built and refuted directly.** G2b equalises clearance exactly as
+  asked (BTC 1,367 / ZEC 1,657 vs 467 / 2,199 live) and loses MORE: -$31.23 shared, -$31.17
+  dedicated. Equal clearance was the hypothesis; it is not the problem.
+- **The majors are ordinary, not uniquely bad.** 300 random trios, two years, matched source: majors
+  at the **35th percentile, p 0.647**. The real finding is larger - **only 16% of random three-symbol
+  additions are positive over two years, and the 95th-percentile trio adds just +$5.27/mo.**
+  **Adding three symbols is the loser, whoever the three are. Symbol expansion is the dead end.**
+- Concurrency: 63% -> 76% of fills run alongside another position; BTC-ETH 15m price correlation
+  0.87 (Y2). ZEC at 0.42-0.53 against everything is the only real diversifier in the book.
+
+### CORRECTION to the grid lane's headline
+
+The grid lane reported `p_max = 1.000` and wrote that the majors sit "in the worst third" and
+"reproduce MAJ's p 0.996 with the gate free to move". **That claim does not survive.** The grid's
+placebo is Y1-only, on a losing baseline (-$25.02/mo), with a max-over-26-cells statistic that
+inflates the random side. The two-year matched-source version gives **p 0.647**. Use 0.647. Never
+quote the p 1.000 figure again; the majors are not uniquely bad, and the reason they lose is the fee
+bill, not their symbol identity.
+
+Also: the additive decomposition `-11.83 = capacity -4.93 + gate +1.71 + interaction +1.22 +
+symbols -9.83` is a frame, not a set of facts. **Not one term is distinguishable from zero**, and the
+`symbols -9.83` term breaches the house reporting standard (SE 12.52 exceeds it). Carry it as
+[-33.80, +15.27].
+
+### Verification (independent auditor lane, `verify.md`, `audit/`)
+
+Own booking, sizing, scoring, bootstrap and fee code, written from the documented rules and importing
+none of the lane's machinery.
+
+- LIVE baseline **30.0757396923 $/mo, bit-identical**; five grid cells and ten controls cells
+  reproduce with **max abs difference 0.000e+00** on $/mo, delta, both years, $/fill, win, maxDD and
+  fills/mo; bootstrap CIs identical.
+- 300-trio arm A re-drawn and re-scored: majors -12.53, p 0.647, 35.3rd pct, median -8.19, p95
+  +5.27, 16.3% positive - identical to every printed digit.
+- **Costs charged once per round trip**: solving `r = raw/sl - fee/sl` over all 174,778 rows gives
+  fee = 0.0019 exactly (residual 0.000e+00); 0.00095, 0.0038 and 0 all fail. Matches the live
+  `FUTURES_CONVEX_COST_PCT = 0.190`.
+- **No look-ahead**: naive loop re-implementation of every gate feature matches to <= 8e-15 (FP
+  only); truncation test exact at 0.0; tripling all bars after i moves nothing at i, and tripling
+  bar i itself does not move `sd30[i]`.
+- **Dedicated slot cannot displace an incumbent signal**: verified in **all 14 gates** (the lane
+  probed 5) - group-0 taken set identical. The 12 "displaced" fills are FARTCOIN x4, PIPPIN x5,
+  SUI x2, LTC x1 - **zero incumbents**, all rotation-pick changes. Size dilution is real and small:
+  incumbent mean size 0.9314 -> 0.8817 on an identical 796-fill set.
+- PREREG predates every outcome artefact by ~2 minutes; no outcome file exists before it.
+- Read-only confirmed: no non-`.git` file in the repo touched, no `/data` writes, no network calls
+  from the audit lane.
+
+### Context that bounds all of this
+
+The LIVE book is **-$25/mo in Y1 and +$86/mo in Y2**, and **64 of its 1,278 fills carry +$91.54/mo -
+strip the top 5% and it is -$61.47/mo.** Every +-$10-20/mo estimate in this family rests on about
+five dozen trades. This is why a +-$12/mo question was never measurable here.
+
+### Open, NOT decided, needs its own pre-registration
+
+The tighter/longer gates on the **incumbents alone** are both the cheapest to run (fees 38-39% of
+gross vs 56%) and the least tail-dependent book in the study. `G3b` (72h >= 5% & new 72h high) on
+ETH/XRP/ZEC: **+$20.98/mo, CI [-4.61, +46.10]**, the only cell in 68 non-negative in both years
+(+33.5 / +8.2), drawdown -$397 vs -$621, $/fill +$1.13 vs +$0.56, on 9 fewer fills/mo. This is the
+north-star idea (refuse unsuitable days) appearing in a control run for another purpose.
+**Post-hoc, CI straddles zero, does not ship.** Time-to-verdict warning: two years gave a CI
+half-width of +-$25.4 on a +$20.98 estimate and the effect already fell from +33.5 to +8.2, so
+roughly **three or more clean years** would be needed for the lower bound to clear zero. Decide
+whether that is worth the clock against a +-$60/mo envelope before starting.
+
+### Standing rule adopted from this study
+
+**Cost screen, before any new symbol is simulated:** fee/fill = 1R x 0.0019 / (3 x ATR%). If that
+exceeds the symbol's plausible gross $/fill, stop. ZEC $0.75, XRP $1.05, SOL $1.15, ETH $1.28,
+BNB $1.57, BTC $1.64. **On a taker-fee, 3xATR-stop system you want volatile symbols, not famous
+ones.** This screen would have killed both MAJ and MAJG on day one.
+
+### Explicitly not done, and not to be done
+
+BTC-alone x 13 gates was not a pre-registered cell (MAJ measured BTC alone under the live gate at
++$0.69/mo [-7.9, +9.5], itself indistinguishable from zero). Within these cells BTC's own
+contribution is negative under every gate. Testing it now, after seeing this table, is exactly the
+fishing the pre-registration forbids. DOGE was not tested and is not addable later.
+
+### I do not know
+
+Whether G3b/G2d pay on the incumbents out of sample. Whether the live book's tail-dependence is
+stable or a two-year artifact. Whether maker/limit entry or a wider stop on low-ATR symbols - the
+only mechanisms that attack the actual constraint - would rescue the majors; neither is measured,
+both change the live exit stack, and limit entry on a breakout gate carries adverse selection I have
+not priced.
+
+Files: `wc/MAJG/answer.md`, `wc/MAJG/verify.md`, `wc/MAJG/grid/` (PREREG.md, results.md, cells.json,
+placebo.json), `wc/MAJG/controls/` (controls.md, symbols.json, corr.json), `wc/MAJG/audit/`.
