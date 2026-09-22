@@ -17283,3 +17283,89 @@ spread, re-created downstream of the risk-targeted solve that exists to remove i
 TREND on 1 of 21 fills and halves WILDCARD (60 of 87 fills shrunk, median 0.535x), overriding a dial that was
 deliberately set, at a priced **-$2.5 to -$7.4/month**. NOT DONE. The one genuine uncontrolled overshoot in the
 chain is the signal-anchored stop (~+$1-2/month of risk removed, deletes no trades); it gets its own diff.
+
+## 2026-09-22 - GIVEBACK: pricing the retention invariant. NOTHING SHIPS; the instrument is the blocker
+
+**Owner reframing, accepted and measured.** "Lose everything" means a trade that was +$18.10 closing red - the ROUND
+TRIP from peak, not the loss from entry. MARSCOIN: tape peak +$18.13 (0.14148 at 18:12Z), stop -$22.99, round trip
+**$41.09 = 21.2% of margin** ($41.40 with fees). Nothing armed: peak 0.7874R against a 0.90R arm.
+
+### The ledger in the owner's units - 147 peak-instrumented fills, 40 trading days, 08-08 -> 09-22
+| | $ |
+|---|---|
+| peak profit built | 1,042.31 |
+| realised | -113.79 |
+| **handed back** | **1,156.10** [CI95 733 - 1,661] |
+| invariant violations (peak >= $5, closed red) | **12** - $129.42 built became -$175.44 |
+
+**One violation every 3.3 trading days. 35 of 147 fills (24%) peaked >= 0.25R and closed red.** WILDCARD $666 handed
+back, TREND $490. **Not concentrated**: top-3 11.3%, top-10 29.2%; ZEC is 26% but spread over many fills - there is no
+one-symbol fix. **Half of the aggregate is not giveback at all**: $545 was profit that existed and evaporated, $611 was
+loss below entry that was never profit and no floor can reach it. On the population the owner means (peak >= $5) the
+split is **71/29 in his favour**. The recorded peak UNDERSTATES the tape on 111 of 143 fills, so these totals are a
+floor, not a ceiling.
+**MARSCOIN in context**: 2nd largest round trip of 147 in dollars, but **74th percentile as a share of its own margin -
+38 fills (26%) have already round-tripped that share or worse.** Ordinary behaviour; only the stake is new.
+
+### The menu, net of a frequency-matched random floor (raw figures flatter every cell)
+| rule | dGIVE/mo | dP&L/mo | excess over random | exchange rate | keeps built profit? |
+|---|---|---|---|---|---|
+| C2 arm-at-entry (control) | +779 | -10 | - | - | **$0. none. ever.** |
+| **F2 arm 0.60R retain 0.75** | +233 | -6 | +69 / -37 | **1.85 : 1** | **yes - 75% of peak** |
+| F2 arm 0.60R retain 0.50 | +165 | +64 | +1 / +33 | ~ random | yes - 50% of peak |
+| F1 breakeven arm 0.75R | +58 | +49 | +1 / +39 | ~ random | **$0** |
+| F1 breakeven arm 0.60R | +79 | +42 | **-24** / +22 | **below random** | **$0** |
+| F1 breakeven arm 0.50R | +112 | +4 | **-42** / -16 | **below random** | **$0** |
+| F5 giveback exit 40/50/60% (BANK) | +378 | - | not reproducible | - | fires 3 min after entry at +$0.59 |
+
+One cell survives contact with a placebo - **F2 0.60R/0.75 at $1.85 of giveback avoided per $1 of P&L given up**, the
+same number three independent routes reach. The cost, stated plainly: a 0.60R arm is placed into **85 of 147 fills,
+including 69 of the book's 70 winners**, to catch 16 red fills of which 6 are violations - and **6 violations never
+reach 0.60R at all**, so no floor on this menu touches them.
+
+### THE FINDING - the repo has been arguing about the wrong knob
+**Every breakeven rule returns $0 of built profit.** On MARSCOIN the 0.35R / 0.50R / 0.60R / 0.75R arms and arm-at-entry
+all place the same floor at 0.129636, all fire at 19:43Z, and all keep **+$0.06**. Only the RETENTION FRACTION keeps
+money: 0.60R/0.50 floors at 0.135435 (+$9.07), **0.60R/0.75 floors at 0.138458 and exits +$13.29 at 18:15Z**.
+"Don't let it become a big loss" and "don't let it stop being profitable" are different products. The breakeven family
+- two months of argument - sells only the first, and on the owner's own metric it sits BELOW a random floor at matched
+frequency.
+
+### Why nothing ships anyway
+1. **The primary metric is 85-100% mechanical**: a floor whose arm times are SHUFFLED ACROSS FILLS avoids as much
+   giveback as the real rule, and more on two cells of three. Giveback measures "ended sooner", not "protected profit".
+2. **No dP&L interval excludes zero** - every cell spans +-$85-100/mo on a +-$60/mo book. The denominator of the
+   exchange rate cannot be signed.
+3. **Every cell flips sign August -> September, all eight.** Every real cell is P&L-negative in winning weeks and
+   positive in losing weeks; the only cell positive in both is the placebo. Criterion (c) fails everywhere.
+4. **Drop-2 breaks every cell** (factors 2.8-7.9, four sign flips): ZEC 09-09 ($48.63) and IOST 09-11 ($44.59) carry
+   $54-72 of every cell's P&L gain. Criterion (e) fails everywhere.
+5. **`retain 0.75` silently disables the 3R ratchet** (`0.75 <= 0.75`), so the recommended cell is really "no ratchet,
+   retain 0.75 everywhere" - a family this repo prices at **-$133 to -$145/mo**.
+6. The retention axis above 0.50 has **no live ground truth**: three engines disagree by $85-$271/mo on the same cell.
+7. F5's numbers are not reproducible without an unregistered minimum-peak parameter; funding is modelled nowhere.
+
+### The sizing dial does NOT substitute
+WILDCARD 2.41% -> 1.205%: **dGIVE +$109/mo [+36, +194], dP&L +$19/mo [-18, +58]** - dollar cost about zero, and
+MARSCOIN's round trip would be $20.55 instead of $41.09. But **violations prevented: 0 of 12**; giveback in R unchanged;
+round trip as a share of margin 21.2% -> 21.2%. It halves the stake, it does not change one outcome. It answers "$41 is
+too much money", not "it stopped being profitable".
+
+### THE BLOCKER, and the one action
+**The bot cannot see its own peak well enough to floor it.** At the 17:59Z pull MARSCOIN's tape peak was 0.2969R and
+the bot had recorded **0.0887R - 0.208R / $4.79 invisible at the exact instant the arm test runs.** The population
+effect is small (0-6 extra crossings out of ~85), so this alone does not justify changing the exit rules - but it means
+today's "0.90R arm" is whatever a lagging point sample happens to see, and it is why three engines cannot agree on the
+retention axis.
+**Action: persist the per-position `r_now` poll series - one log line, no behaviour change.** Every disagreement in this
+study ($170/mo, $271/mo, +-$40/mo) is the same missing observable. With it, the only axis that would have kept the
+owner's $18.10 becomes measurable in 30 days.
+
+### Ruling
+**Nothing on the exit layer is worth its price today** - the price cannot be signed. **The cheapest point, if one is
+wanted: trail arm 0.60R with retain 0.75** (+$233/mo of built profit retained [+84, +298], 3 of 12 violations
+converted, 79 fills affected, own P&L -$6/mo live and -$24/mo in winning weeks, and it kills the 3R ratchet).
+Settled and to be treated as settled: **(1) the breakeven-arm family is the wrong instrument for a retention
+complaint - stop asking where the arm goes; (2) the sizing dial halves the dollars and prevents 0 of 12 violations;
+(3) fix the eyes before moving the floor.** Floor, not bank - F5 would have closed MARSCOIN at +$0.59 three minutes
+after entry, and the standing rule remains right.
