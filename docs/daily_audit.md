@@ -1,3 +1,206 @@
+# Daily Audit — 2026-09-21
+
+---
+
+## Automated Assessment (run 2026-09-22 07:00Z)
+
+**Window: 2026-09-21T00:00:00Z – 23:59:59Z, one complete UTC day, closed trades by exit
+time. 6 closes.** No gap since the 09-20 run (which ended 09-20T16:10Z; zero closes
+between 16:10Z and 00:00Z).
+
+Equity **$962.57** at 09-22 06:59Z (cash $891.49, open margin $55.52, unrealized
++$15.47). No deposit, no withdrawal. Realised basis: $960.46 (09-20) + $10.00 (09-21)
+− $23.31 (09-22 so far) + $15.47 unrealized = **$962.62**, against the exchange's
+$962.57 — a $0.05 fee-rounding difference. Feature store **195 → 204** (+9: 6 on
+09-21, 3 on 09-22). Tests **1387 passed**. No `Traceback`, `ERROR`, `5003`/`2015`,
+`[SIZE_TRIM]`, `[EXIT_RACE]`, `stale_bar` or `be_stop_bare` in the log tail.
+
+Config verified live: `FUTURES_TRIAL_LABEL=22F`, `FUTURES_TRIAL_START_TS=1789907100`,
+`FUTURES_MAX_TRADE_RISK_PCT=5`, `FUTURES_CONVEX_BREAKEVEN_ARM_R=0.90`,
+`FUTURES_TREND_SYMBOLS=ETH,XRP,ZEC` / `TREND_MAX_POSITIONS=2`,
+`FUTURES_WILDCARD_MAX_POSITIONS=3`, `USE_DRAWDOWN_KILL=1`.
+
+### 1. Closed trades: 6, all TREND LONG, 4 wins, **+$10.00 / +1.591R**
+
+| close (UTC) | symbol | sleeve | lev | hold | R | $ | peak R | mae R | risk% | exit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 07:32:30 | ZEC | TREND | x6 | 7.03h | **-1.045** | **-7.44** | +0.284 | -0.993 | 0.726 | **stop (EXCHANGE_CLOSE)** |
+| 08:56:25 | XRP | TREND | x10 | 2.43h | **+1.701** | **+9.39** | +2.309 | -0.580 | 0.577 | retention trail |
+| 09:52:09 | ETH | TREND | x10 | 1.11h | **+0.544** | **+2.95** | +1.347 | -0.043 | 0.589 | retention trail |
+| 15:18:31 | XRP | TREND | x8 | 6.30h | **+0.566** | **+6.30** | +1.019 | -0.132 | 1.137 | retention trail |
+| 15:20:07 | ZEC | TREND | x5 | 3.57h | **-1.030** | **-5.72** | +0.084 | -1.005 | 0.564 | **stop (EXCHANGE_CLOSE)** |
+| 23:28:39 | XRP | TREND | x8 | 5.23h | **+0.855** | **+4.52** | +1.868 | -0.349 | 0.544 | retention trail |
+
+**Reconcile: 6 exchange rows = 6 store rows. No censoring.** All `ref_listed=1`. Worst
+|slippage| 6.6 bps (ZEC, favourable). Both loss exits are the intended resting -1R stop;
+the four wins are `CONVEX_RETENTION_TRAIL`, the shipped floor rule. **No unhandled exit
+path.** WILDCARD and SQUEEZE: zero closes on 09-21.
+
+**Exits: TP 0 (0%) | stop 2 | trail 4.**
+
+**Every SL root-caused (owner directive):**
+- **ZEC 07:32** — entry 1533.50 (signal 1534.51, −6.6 bps favourable), RSI 66.5,
+  atr_pct 1.03%, breadth 0.879 (broad long tape). Ran to +0.28R, then rolled over;
+  t_adverse_25 = 57.8 min. Gate behaved as designed: a genuine trend entry in a tape
+  that turned. No execution defect.
+- **ZEC 15:20** — re-entry 11:46Z after the morning stop, entry 1564.66, **RSI 72.4
+  (stretched)**, peak +0.084R, adverse within 21 min, mae −1.005. Also a clean gate
+  pass; the symbol simply broke down twice.
+- **Pattern check:** ZEC is the weak pair — n=10 recent fills, netR **−1.17**
+  (avg −0.117) against XRP n=8 netR +2.27 and ETH n=4 netR +0.12. ZEC's atr_pct is
+  ~2x XRP/ETH, so its designed stop is 3.1–3.6% of price vs 1.4–2.3%. **Flagged, not
+  acted on:** the universe is operator-locked, and the majors-specific TREND gate was
+  already refuted (0 of 26 cells, commit df1a687). n=10 is nowhere near a verdict.
+
+**Give-back on the four trail exits:** combined peak +6.54R realised as +3.67R — 44%
+of built profit returned; worst is XRP 23:28 (peak +1.87R → +0.85R, −1.01R given
+back). This is the retention invariant behaving as specified (floor, not bank), and a
+tighter ratchet is the repeatedly-refuted lever (a +1R ratchet costs −12.3R on the
+trades reaching +2R). **Recorded as a watch item, not a proposal.**
+
+### 1-OPEN. Open positions: 1
+
+**UAI_USDT SHORT x1 (WILDCARD)**, opened 2026-09-21T16:41:09Z, **held 14.3h**.
+Entry 0.4957, last 0.3577. Risk $11.56 (sl_margin_pct 20.0, at the hard cap).
+- **Current +1.338R.** Peak **+1.407R** (Min15 low 0.3505) → **giveback −0.069R**.
+  Max adverse ~0 (high since entry 0.4891, never above entry).
+- TP 0.24955 is **30.2% below** last; SL 0.59892 is **67.4% above** last. `tp_margin_pct`
+  100 / `sl_margin_pct` 20 = a +5R target.
+- **Undersized by design:** `regime_size_multiplier` 0.50 — margin $55.52 against
+  $112.66 intended. On a position now +1.34R that scaler has cost about **$11.6** of
+  unrealized upside so far. Not a defect; the scaler is measured net-positive
+  (2026-09-09, +$27.20 over 8 closes).
+
+### 1a-bis. Learning loop
+
+**(a) Feature store** 204 rows, reconciles exactly with the exchange (195 + 6 + 3).
+Conditional expectancy on the 135 recent rows, n>=8 groups only:
+
+| condition | n | avg R | net R |
+|---|---|---|---|
+| sleeve TREND | 56 | +0.154 | +8.62 |
+| sleeve WILDCARD | 79 | +0.007 | +0.55 |
+| exit CONVEX_RETENTION_TRAIL | 54 | +0.712 | +38.47 |
+| exit EXCHANGE_CLOSE (stop) | 63 | −0.411 | −25.88 |
+| peak_r >= 0.9 | 66 | +1.056 | +69.70 |
+| peak_r < 0.9 | 69 | −0.877 | −60.52 |
+| leverage >= 7 | 32 | +0.356 | +11.40 |
+| leverage < 7 | 103 | −0.022 | −2.23 |
+
+No condition reaches AVOID/FAVOR on its own merits: the exit-rule and peak_r splits are
+tautological (they partition winners from losers), and leverage is an *output* of the
+sizing — high leverage means a tight designed stop, i.e. a major, i.e. the TREND sleeve.
+**It does, however, contradict the old "leverage>=7 reliably loses" note from the
+Stage-2 engine; that line should be treated as superseded, not inverted.** Propose-only,
+nothing applied.
+
+**(b) Shadow ledger** 337 rows. Resolved counterfactuals by reject reason:
+
+| reason | n | net R | avg R |
+|---|---|---|---|
+| side_disabled (shorts) | 111 | −40.63 | −0.366 |
+| slot_occupied | 46 | **+29.13** | +0.633 |
+| shadow_only | 46 | +16.20 | +0.352 |
+| veto:ref_not_listed | 43 | −15.93 | −0.370 |
+| calm_shock | 32 | +0.81 | +0.025 |
+| min_vol_skip | 21 | +20.19 | +0.961 |
+| below_trigger | 20 | +2.77 | +0.138 |
+| veto:crowded_shorts | 7 | +5.62 | +0.803 |
+| veto:crowded_longs | 5 | −1.81 | −0.363 |
+
+- **side_disabled −40.63R over 111 rows** is the strongest number in the file and it
+  confirms the long-only TREND decision emphatically: the blocked shorts would have lost.
+- **The external vetoes are SAVING money** where they matter (`ref_not_listed` −0.370R
+  avg over 43 resolved) — no veto-tuning proposal.
+- **Slot cost: +29.13R over 46 resolved, +1.67R over the last 14 days (15 rows).**
+  Positive, and past the >=10-row bar. But the dedicated slot-count study already
+  answered this out of sample (commit 5ac7149: 0 of 20 cells beat live; a 3rd TREND slot
+  costs −$10.63/mo), and the counterfactual is directional-only. **No slot proposal.**
+
+**(c) Scan telemetry** (log tail, 06:25–06:51Z): WILDCARD movers=62 scanned=62
+candidates=0, dominant rejection `roc_below_min` 57–58 of 62, then `no_pullback_resume`
+3–4, `rsi_exhausted`/`climax_wick` 1. TREND symbols=4 scanned=4, `roc_below_min` 2 /
+`no_new_extreme` 2. No `[SIZE_TRIM]` lines. Correct dormancy, not a blockage — WILDCARD
+did fire twice inside the last 24h (PHA, and UAI still open).
+
+**(d) Decision rule — trial 22F** (entry time >= 2026-09-20T12:25Z): **9 closes, net
+−0.486R / −$13.27; ex-best −2.187R / −$22.71.** Max drawdown from peak well under 20%.
+Nine closes is a long way short of the pre-registered length; no verdict.
+
+**Breakeven stop (21F's pre-registration, carried into 22F):** **5 fills armed at
++0.90R** (XRP 2.31, ETH 1.35, XRP 1.02, XRP 1.87, ETH 0.90). Primary: **build-then-
+full-stop 0 of 5** — the amend landed and rested every time. Secondary, the cut column:
+**$0.00 cumulative.** The one arm that resolved *at* breakeven (ETH, closed 09-22
+00:56Z at +$0.02) was replayed — after the exit ETH's low was 2714.55 against an
+original stop of 2696.20 and it has not traded back above the exit since, so it is
+neither a cut nor yet a save. **K1–K5 all clear.**
+
+### 1b. WILDCARD diagnosis
+
+Not dormant: PHA_USDT fired 09-22 04:26Z and UAI_USDT is open and +1.34R. Zero WILDCARD
+closes fell inside the 09-21 day, so the sleeve contributed nothing to the day's +$10.00.
+Scan gates are rejecting on `roc_below_min` (57–58 of 62 movers) — a quiet tape, which is
+the correct behaviour; **no gate loosening proposed.** No entry failures: zero 5003/2015
+in the logs (the tick-snapping fix a756e36 is shipped). Net over the recent window:
+79 fills, +0.55R — still not earning its complexity, still not net-negative enough to
+propose disabling.
+
+**Carry-forward for the 09-22 report:** PHA_USDT entered at `entry_lateness 0.899` —
+far outside the 0.50–0.70 deep-pullback band the ranker prefers — with 27.5 bps entry
+slippage, and went straight to the stop (mae −1.003, 1.12h, −$16.20). If a second late-
+lateness stop lands, a lateness ceiling becomes the lever worth pricing.
+
+### 2. Champion vs shadow
+
+**Shadow stale, comparison suppressed pending resync.**
+
+### 3. Lever tested — and REFUTED
+
+**Candidate:** a same-symbol cool-down after a stop. Motivated by ZEC stopping twice on
+09-21 (07:32, then a re-entry at 11:46Z that stopped at 15:20).
+
+**Measured on all 203 scorable store rows**, fills entered within H hours of a <=−0.9R
+stop on the same symbol:
+
+| H | after-stop n | avg R | clean n | clean avg R |
+|---|---|---|---|---|
+| 6h | 7 | **+0.083** | 196 | +0.074 |
+| 12h | 13 | **+0.032** | 190 | +0.077 |
+| 24h | 16 | **−0.092** | 187 | +0.088 |
+
+The sign is not stable across the window and the largest gap (24h, 0.18R on n=16) is
+inside noise. **Rejected — no change.** Add it to the rejected list.
+
+### 4–5. Validate / deploy
+
+Nothing to gate. **No deploy.** Live config unchanged.
+
+### 6. Data-integrity finding (process, affects future audits)
+
+`get_historical_positions("")` — the empty-symbol form — returned a **stale and
+incomplete** ledger this run: 60 rows ending at 09-21T15:20Z, silently missing the
+23:28Z XRP close that the feature store and the per-symbol call both had. Reading the
+day from that call alone would have reported **5 closes / +$5.48** instead of the real
+**6 closes / +$10.00**. **Audits must iterate `get_historical_positions(symbol)` per
+symbol and cross-check against the feature store.** This is the same failure class as
+the 09-17 window error: a quiet under-count that reads as a result.
+
+### 7. Verdict
+
+**+$10.00 on 6 TREND closes, 4 wins, +1.591R — a good day, and a normal one.** The
+sleeve did what it is built to do: two stops at exactly −1R, four trailed winners, no
+unhandled path, no execution defect. **No change deployed.** The one lever tested was
+refuted on its own data.
+
+**Changes live in the last 7 days, earning their keep:**
+- `FUTURES_MAX_TRADE_RISK_PCT=5` revert (09-20) — 9 fills, −0.486R. Too early; the
+  mechanism argument (no zero-sized trades) holds and no trade was deleted.
+- `FUTURES_CONVEX_BREAKEVEN_ARM_R=0.90` (09-20) — 5 arms, 0 build-then-full-stop,
+  $0.00 cut. **Earning its keep so far.**
+- Tick-snapping fix a756e36 (09-20) — zero 5003/2015 since. **Earning its keep.**
+
+---
+
 # Daily Audit — 2026-09-20
 
 ---
