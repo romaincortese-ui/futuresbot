@@ -17369,3 +17369,133 @@ Settled and to be treated as settled: **(1) the breakeven-arm family is the wron
 complaint - stop asking where the arm goes; (2) the sizing dial halves the dollars and prevents 0 of 12 violations;
 (3) fix the eyes before moving the floor.** Floor, not bank - F5 would have closed MARSCOIN at +$0.59 three minutes
 after entry, and the standing rule remains right.
+
+## 2026-09-23 - DAILY: how to rate the bot day by day, and when a bad day actually means act
+
+**Owner request.** "How can we assess its performance so that we understand when it actually needs adjusting? I don't
+want to keep doing incremental adjustments but bad days like today call for it." 8 lanes, read-only, incl. web research.
+
+**Answer: most days are unreadable, and the framework's job is to say so.** At 2-4 fills/day with a per-fill sd of
+1.57R, one day's P&L carries +-$35 of noise against a $10/month ship bar. Detecting a 25% change in the edge needs
+**44,551 fills**; detecting the $10/month that decides ship/no-ship needs **~240,000**. The book has 199.
+
+### The rule - three gates, all three required
+1. **A NAMED MECHANISM** - one of the six machine tripwires fired and you can point at the fill and say what broke.
+   Not "it lost money", not "four stops in a row".
+2. **IT SURVIVES BEING PRICED** - fixing it recovers **>= $10/month** at the current stake, computed BEFORE any code.
+   *(The only genuine defect in this book's life - the 08-06..08-10 episode, 4 gap-through stops and 7 fills sized at
+   two cents on a $142 account - prices at **~$3.80/month** and therefore FAILS this gate. That is the gate working.)*
+3. **THE FIX IS PRE-REGISTERED** - written with its falsifier and judgement date before it is applied. One change.
+
+**Standalone, for "is the edge gone" with no mechanism to point at: cumulative R since the last pre-registered change.**
+-1.4R is even odds and is worthless. **9:1 odds needs -13R to -17R cumulative = -$110 to -$200, i.e. 12-21% of the
+account.** 2026-09-22's -$45 is about a quarter of the way there. And the hard half: **at 9:1 there is no loss, at any
+sample size, that establishes "the edge quietly went to zero"** - the edge was never established in the first place
+(minimum track record length **896 fills ~ 12 months**; the book has 199 over 88 days).
+
+### The daily card - 11 lines, verdict last, NO ACTION on ~95% of days
+Three blocks that must never be mixed: **MACHINE** (integrity and mechanics, readable daily, act immediately),
+**MARKET** (context, no action is ever taken on it), **EDGE** (not readable in one day, and the card says so).
+2026-09-22 printed: `MACHINE OK 0 of 6 tripwires | MARKET broad | EDGE 16% of a 1-yr alarm | -4.83R entry / -4.04R
+exit | -$45.38 / -$36.67 | 1-in-28 day at 5 fills | >>> NO ACTION`. All four stops settled at -1.03/-1.05/-1.06/-1.16R
+inside a [-1.22,-0.92] band; sizing in band on every fill; 0 rejects, 0 orphans, 0 backfilled rows. **The same R-day at
+August's stake costs $9.03** - the $45 is a sizing decision already made and already measured as correct.
+Conventions fixed on the card itself: **P&L is ENTRY-dated primary** with the exit-dated figure always beside it (25%
+of fills straddle a UTC boundary; the two differ by $8.71 on 09-22), and **the decay meter is EXIT-ordered** because R
+is not known until close (the same meter reads 16% exit-ordered and 27% entry-ordered - the difference is real).
+
+### The ladder and its budget
+| rung | fires on | budget | historical |
+|---|---|---|---|
+| 0 NO ACTION | default | - | **86 of 88 days** |
+| 1 INVESTIGATE (a write-up, no authority to change anything) | any machine tripwire | 2-3/quarter | 4 episodes in 88d, **1 in the last 43** |
+| 2 CHANGE ONE THING | rung 1 returned DEFECT and gates 2+3 pass, or the decay CUSUM crosses h=10.48R | **<= 1/year** | **zero** - the CUSUM has never fired in 199 fills, lifetime peak 77% |
+| 3 HALT | capital or integrity only, never statistics | ~0 | zero |
+
+**Six machine tripwires**, binary, decidable from one fill, thresholds set outside the in-control range:
+M1 a stop settling outside **[-1.22,-0.92]R** (63 of 68 stops sit in [-1.16,-0.98], sd 0.038); M2 any fill below -1.5R;
+M3 realised risk% outside [0.35,3.0]; M4 entry slippage >100 bps on one fill; M5 an unsanctioned exit_reason or a
+backfilled row; M6 ledger != exchange closes, an orphan, or margin >= 45%.
+**Net advertised behaviour: about one write-up every six weeks and zero changes per year on current evidence.**
+
+### Reconciling with "every stop-loss is an anomaly"
+The directive is about ATTENTION, not authority. **93% of stops carry exactly one bit - "the stop worked"** (63 of 68
+inside a 0.18R band). The review's verdict picks the rung: CLEAN -> one line in the log; DEFECT -> rung 1;
+DESIGN (it worked as specified and you dislike the specification) -> logged and **counted on a tally**, never acted on
+alone; UNKNOWN -> rung 1, about the instrumentation. A stop review is forbidden to conclude "the gate should have
+refused this" (n=1 gate change), "the stop was too tight" (a design parameter, moves only through the replay gate), or
+"several in a row means something" (P(losing fill-day) = 0.522).
+
+### What daily assessment CANNOT do
+- **It cannot forecast.** netR today vs netR tomorrow **rho = +0.104, p = 0.418**; largest |rho| over 12 metrics x 2
+  horizons is 0.225 at p=0.147. **Bad days do not cluster.** Nothing on the card licenses "it will keep losing".
+- **It cannot distinguish "edge gone" from "nothing happened"**: on every detector tested ARL0/ARL1 for edge->0 is
+  **1.6 to 1.9** - the chart fires about as fast when nothing changed as when the whole edge evaporated. The two
+  hypotheses are 0.106R apart against a 1.57R sd.
+- **It cannot grade selection**: P(a taken signal beats a refused one) = **0.5004 over 58,307 pairs**.
+- **It cannot grade execution as a trend**: slippage has a 1-day se of +-32 bps; a sustained 25% shift needs 3,563
+  fill-days. Single-fill outlier check only.
+- **It cannot speak at all on 20% of days** - 12 of the last 60 had zero closes.
+- **Caveat on the framework itself: every threshold was frozen on 2026-09-22 using data ending 2026-09-22. There is
+  not one out-of-sample day.** No retrospective firing count here is a genuine test.
+
+### /report - keep, relabel, remove
+KEEP: ledger integrity vs exchange history (**zero false positives in 199 fills**, the single most valuable line in the
+command set); risk sizing %; backfilled-row count and /reconcile's orphan diff; the LIFETIME block (the only
+untruncated P&L source); the frozen-threshold notice and the **NA** vocabulary; the 7d gate cost from the shadow ledger.
+RELABEL: tail-loss COUNT (meaningless at 2-4 fills; worst-R is the valid half); closes/cadence (a liveness check, not a
+grade); the balance chart's flow detection (a deposit step absorbs that day's P&L - never read a flow day's P&L off it);
+any signed lifetime total -> the anytime-valid interval **+0.106R/fill, 95% CS [-0.437, +0.650]**, which stays valid
+under daily peeking; **/pnl's "Today" line is exit-dated off a 200-row cache and is the single most misleading figure
+in the command set.**
+REMOVE from any daily surface: arm rate, netR ex-best, regime coverage, ratchet, drawdown-as-a-level - all need 8-30
+closes and correctly print NA. **Do not build a composite process score**: one was built and it correlated **+0.50 with
+same-day netR** - P&L in a process costume, because a -1R stopped trade cannot reach +0.5R. The genuinely
+outcome-independent panel cannot tell 09-16 from 09-08 from 09-22, **and that is the correct answer.**
+
+### What the literature contributed
+One idea that changed the design: **specify a monitor by its average run length, not by an eyeballed threshold** - say
+"one false alarm per year" first, then solve for the threshold. Second: **rule adherence and outcome quality are
+different diagnoses** (execution-quality practice), which is the entire MACHINE/EDGE split. Sources worth the time:
+Bailey & Lopez de Prado on the Deflated Sharpe / minimum track record length (896 fills, ~12 months); the Google SRE
+Workbook on alerting on SLOs (steal the precision/recall/detection-time/reset-time structure, NOT the error budget - an
+error budget on P&L is a daily loss stop by another name); and the decision-quality vs outcome-quality "resulting"
+literature, whose standard countermeasure is a decision journal, which this repo already has.
+**Did not transfer, with the measurement:** the taken-vs-refused rank CUSUM (the literature lane's own lead
+recommendation - refuted at P=0.5004 over 58,307 pairs; it assumed a 0.5-sd selection edge, the measured one is 0.004,
+and ranks discard the right tail where a convex book's edge lives); the Siegmund ARL formula (normal-iid theory on
+skew +1.39 / excess kurtosis +2.01 day-clustered data - its own output was internally inconsistent, replaced by
+simulation); **Shewhart charts on daily P&L** (P(day <= -4.83R) is 1-in-180 at 2 fills, 1-in-22 at 4, 1-in-8 at 7 - any
+daily chart that does not condition on the fill count is measuring the fill count); EWMA (dominated by CUSUM);
+Page-Hinkley (algebraically identical to CUSUM); ADWIN/DDM (3 labels a day is not a stream); prop-firm tiered drawdown
+rules (capital policy, not inference - already priced at -$17 to -$37/month as day-level halts). The E[maxDD] envelope
+transferred but its published inputs did not: re-derived, the 40-day envelope is **14.8R typical / 28.8R at the 95th**,
+not 19.5R/37.7R - report drawdown as a percentile of its own envelope, never as a raw number.
+
+### The 09-08 evidence for the whole design
+On the worst dollar day in the book's life (-$77.16) the decay meter reached **44% of a once-a-year alarm**. Eight days
+later, on 09-16, **it was back to 0% with nothing changed.** The two most prominent historical alarms (07-25, 08-27)
+were followed by +16.39R over 30 days and +10.08R over 7.
+
+### Next step - 4 hours, and the trading path is not touched
+`build_daily_card()` + `daily_verdict()` in scorecard.py, `_build_daily_message()` in runtime.py, `/daily [date]`
+defaulting to yesterday - same NamedTuple, same Good/Bad/NA vocabulary, zero kline calls, backfillable over the whole
+feature store (3.0h); **one sentence in futures-daily-assessment/SKILL.md: "Print the DAILY CARD first. If the verdict
+is NO ACTION, skip DIAGNOSE and VALIDATE for the day" (0.25h - this is the line that changes behaviour, because the
+card must GATE the proposal machinery rather than merely describe the day)**; verify it reproduces the three mockups
+(0.75h). `/daily` does NOT go inside `/report`, which filters every row >= TRIAL_START and is trial-scoped by
+construction.
+**Runner-up, not both this week: verify the stop is actually on the book** (`stop_order_placed` / `stop_order_verified`
+/ `stop_price_actual`, ~2h). It is the one hole that is a CAPITAL risk rather than a measurement question - the
+-1.066R +- 0.038 stop band is the best instrument in the book and there is currently no independent confirmation the
+stop was ever on the exchange, only the R it settled at afterwards.
+**Third, when it has data: calibrate the 20F paired live-vs-replay daily delta** - matched pairs, so the market's daily
+draw cancels, already specified and running, needs no new instrumentation, only ~30 paired days. It is the best daily
+instrument this system could have and the study could not calibrate it because the paired replay series is not on disk.
+
+### Not known
+The sd of the 20F paired delta (the highest-value calibration in the study, and the one that could not be run); whether
+September's per-fill sd of 1.12 is the new stationary state (if it persists **every threshold here is ~40% too loose**);
+whether the August episode was one defect or two; whether process monitoring would earn its keep with order-rejects and
+stop-on-book instrumented (neither exists on disk, so it cannot be priced); and whether alarms are useless or mildly
+contrarian (forward-14d difference CI [-3.40, +3.12]R on ten alarm dates - one observation of one path).
