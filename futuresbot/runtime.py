@@ -143,7 +143,8 @@ BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "be_stop_failed",
                        "be_stop_attempts", "be_stop_wrong_side", "be_stop_no_position_id",
                        "be_stop_paper_price", "be_stop_bare", "be_stop_cancel_failed",
-                       "be_shadow_arm_r", "be_shadow_arm_ts", "be_shadow_touch_ts", "be_shadow_touch_r")
+                       "be_shadow_arm_r", "be_shadow_arm_ts", "be_shadow_touch_ts", "be_shadow_touch_r",
+                       "r_series_n", "r_series_peak_r", "r_series_peak_ts", "r_series_interval_s")
 
 # Entry gate values stamped on a position and copied, by name, to the closed
 # trade record and the feature-store row.
@@ -2688,6 +2689,7 @@ class FuturesRuntime:
         if gross is None:
             return False
         r_now = gross / risk_pct
+        self._record_r_sample(position, r_now)
         arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
         retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
         peak_r = self._metadata_float(md, "convex_peak_r") or 0.0
@@ -6047,6 +6049,7 @@ class FuturesRuntime:
             trade["pnl_usdt"] = pnl
             trade["pnl_pct"] = (pnl / orig_margin * 100.0) if orig_margin > 0 else trade["pnl_pct"]
         trade["tags"] = self._trade_attribution_tags(position, trade)
+        self._flush_r_series(position, trade)
         self._append_feature_store(trade, position)
         self.trade_history.append(trade)
         self._record_position_exit(position, trade)
@@ -9004,6 +9007,113 @@ class FuturesRuntime:
     def _news_path(self) -> str:
         base = os.path.dirname(self._shadow_ledger_path() or "/data/x")
         return os.path.join(base or "/data", "futures_news.jsonl")
+
+    # ---------------- polled R path (wc/GIVE, 2026-09-22) ----------------
+    # TELEMETRY ONLY. It never gates, sizes, arms or exits anything.
+    #
+    # Why it exists: the bot floors positions on `convex_peak_r`, which is a POINT
+    # SAMPLE of a polled fair price, and it lags the tape badly. At the 2026-09-22
+    # 17:59Z pull MARSCOIN's traded peak was 0.2969R while the bot had recorded
+    # 0.0887R - 0.208R, $4.79, invisible at the exact instant the arm test runs. That
+    # gap is why three offline engines disagree by $85-$271/month about the retention
+    # axis, which is the only axis that would keep built profit (every breakeven arm
+    # from 0.35R to arm-at-entry returns $0 of it - wc/GIVE section 4). Persisting what
+    # the bot actually SAW, at a known cadence, is what makes that axis measurable
+    # instead of arguable, and it lets an offline engine be calibrated to the live
+    # convention rather than guessing between wick and polled close.
+    def _r_series_path(self) -> str:
+        base = os.path.dirname(self._shadow_ledger_path() or "/data/x")
+        return os.path.join(base or "/data", "futures_r_series.jsonl")
+
+    def _record_r_sample(self, position: FuturesPosition, r_now: float) -> None:
+        """Append one polled R reading, at most one per FUTURES_R_SERIES_INTERVAL_SECONDS.
+
+        Each sample is [seconds since the first sample, R x 1000, RUNNING MAX R x 1000].
+        The running max is what the retention floor is actually derived from, so without
+        it an offline replay arms late and floors low; with it the replay is exact and
+        every row carries a free invariant - the last running-max column must equal
+        `peak_r_recorded`.
+
+        Cost, measured on the real snapshot rather than estimated: 55.7 B/sample per
+        serialised copy, and `_save_state` writes the primary position TWICE (the
+        `open_positions` map and the back-compat `open_position` slot) with indent=2, so
+        a full 24h position is about 162 KB of state, not 18 KB. On a median 4.5h hold it
+        is about +7% of the state file. Capped at FUTURES_R_SERIES_MAX_SAMPLES, which at
+        the default cadence is 26.7h - longer than the hard clock, so a live position
+        never reaches it; do NOT lower the interval without raising the cap, or the cap
+        would silently truncate the tail of every long hold. Never raises."""
+        if not self._flag("FUTURES_R_SERIES_ENABLED", default=True):
+            return
+        try:
+            md = position.metadata
+            if md is None:
+                md = position.metadata = {}
+            interval = max(5.0, self._env_float("FUTURES_R_SERIES_INTERVAL_SECONDS", 60.0))
+            now_ts = time.time()
+            if now_ts - float(md.get("r_series_last_ts") or 0.0) < interval:
+                return
+            series = md.get("r_series")
+            if not isinstance(series, list):
+                series = md["r_series"] = []
+            start = float(md.get("r_series_start_ts") or 0.0)
+            if start <= 0:
+                start = now_ts
+                md["r_series_start_ts"] = start
+                md["r_series_interval_s"] = float(interval)
+            cap = int(max(60.0, self._env_float("FUTURES_R_SERIES_MAX_SAMPLES", 1600.0)))
+            if len(series) < cap:
+                run_max = max(float(r_now), float(md.get("convex_peak_r") or -1e9))
+                series.append([int(max(0, now_ts - start)),
+                               int(round(float(r_now) * 1000.0)),
+                               int(round(run_max * 1000.0))])
+            md["r_series_last_ts"] = now_ts
+            md["r_series_n"] = float(len(series))
+            if float(r_now) > float(md.get("r_series_peak_r") if md.get("r_series_peak_r") is not None else -1e9):
+                md["r_series_peak_r"] = round(float(r_now), 4)
+                md["r_series_peak_ts"] = round(now_ts, 1)
+        except Exception:                          # pragma: no cover - telemetry never blocks
+            pass
+
+    def _flush_r_series(self, position: FuturesPosition, trade: dict) -> None:
+        """Write the closed position's R path as one JSONL row, then drop it from state.
+
+        Bounded by FUTURES_R_SERIES_MAX_MB so a telemetry file can never fill the volume
+        the bot trades from; past the bound it stops writing and says so once."""
+        md = position.metadata or {}
+        series = md.get("r_series")
+        try:
+            if not isinstance(series, list) or not series:
+                return
+            path = self._r_series_path()
+            max_mb = max(1.0, self._env_float("FUTURES_R_SERIES_MAX_MB", 64.0))
+            if os.path.exists(path) and os.path.getsize(path) > max_mb * 1024 * 1024:
+                if not getattr(self, "_r_series_full_warned", False):
+                    self._r_series_full_warned = True
+                    log.warning("[R_SERIES] %s is over %.0f MB - no longer recording",
+                                path, max_mb)
+                return
+            row = {
+                "symbol": position.symbol, "side": position.side,
+                "sleeve": trade.get("sleeve"), "entry_time": trade.get("entry_time"),
+                "exit_time": trade.get("exit_time"), "exit_reason": trade.get("exit_reason"),
+                "risk_usdt": trade.get("risk_usdt"), "pnl_usdt": trade.get("pnl_usdt"),
+                # convex_peak_r is the 1 Hz running max - the authoritative record of
+                # what the bot saw and floored on. r_series_peak_r is the 60s-decimated
+                # max of the same stream, <= it by construction; it is here only so a
+                # reader can measure the decimation, never as the peak.
+                "peak_r_recorded": md.get("convex_peak_r"),
+                "r_series_peak_r": md.get("r_series_peak_r"),
+                "start_ts": md.get("r_series_start_ts"),
+                "interval_s": md.get("r_series_interval_s"),
+                "series": series,
+            }
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, default=str) + "\n")
+        except Exception as exc:                   # pragma: no cover - telemetry never blocks
+            log.debug("[R_SERIES] write failed for %s: %s", position.symbol, exc)
+        finally:
+            if isinstance(series, list):
+                md.pop("r_series", None)           # the summary stays; the path has been written
 
     def _maybe_capture_news(self) -> None:
         """Kick off a news fetch in a DAEMON THREAD.
