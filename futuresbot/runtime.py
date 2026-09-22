@@ -152,7 +152,11 @@ ENTRY_GATE_KEYS = ("atr_pct", "calm_ratio", "vol_z", "range_24h", "turnover_24h_
                    "risk_capped_from_contracts", "risk_capped_contracts", "risk_cap_pct",
                    "risk_cap_rounded_up",
                    "trend_roc_24h", "trend_gate_close", "trend_prior_close_extreme",
-                   "trend_extreme_margin_pct")
+                   "trend_extreme_margin_pct",
+                   "trend_flag", "trend_flag_btc_24h", "trend_flag_btc_72h",
+                   "trend_flag_btc_168h", "trend_flag_dist_7d_high", "trend_flag_tp_r",
+                   "trend_flag_tp_capped", "trend_flag_age_s", "trend_flag_error",
+                   "trend_flag_tp_r_orig", "trend_flag_tp_price_orig")
 
 
 class FuturesRuntime:
@@ -1176,6 +1180,127 @@ class FuturesRuntime:
             return hit
         self._majors_cache = (now_ts, out)
         return self._majors_cache
+
+    _BTC_HOURLY_TTL_S = 600.0
+
+    def _btc_exhaustion_flag(self) -> tuple[bool, dict[str, float]]:
+        """(flagged, fields) - the post-rally EXHAUSTION state, on BTC 1h closes.
+
+        Pre-registered 2026-09-22 (docs/DECISION_RULE.md, wc/REGIME). Two legs, OR:
+          STALL: BTC 72h ROC >= +5% AND |BTC 24h ROC| < 1.5%   (the run stopped)
+          EXT  : BTC within 1% of its trailing 168h high AND 168h ROC >= +10%
+        On 1,155 TREND fills across three eras, flagged bars reach 1R MORE often than
+        unflagged ones (51.6% vs 47.7%) and have reached the 3R target 0 times out of
+        126, against 6.2% elsewhere (p = 3.1e-04). The entries are not worse; the right
+        tail is gone, because TREND's 3R tail is funded by the complex and there is
+        nothing left to fund it with. Hence a TARGET cap, not a refusal - refusing these
+        days prices between +$2 and -$21/month, capping the target prices at +$6/month
+        with a -$1.0 to -$1.6 downside if the regime is nothing.
+
+        Cached 10 minutes (one kline call). Fails SOFT: any error returns unflagged, so
+        a dead endpoint can never change the target on a live entry."""
+        now_ts = time.time()
+        hit = getattr(self, "_btc_flag_cache", None)
+        if hit is not None and now_ts - hit[0] < self._BTC_HOURLY_TTL_S:
+            flagged, fields = hit[1], dict(hit[2])
+            fields["trend_flag_age_s"] = round(max(0.0, now_ts - hit[0]), 1)
+            return flagged, fields
+        try:
+            # COMPLETED 15m closes - the exact frame wc/REGIME measured on (96/288/672
+            # bars). Two reasons, both blocking: get_klines returns the forming bar, so
+            # including it makes `dist` exactly 0 whenever BTC is printing its highest
+            # price of the week and the extension leg becomes self-satisfying; and
+            # hourly closes are a SUBSET of 15m closes, so an hourly 7d high is
+            # structurally <= the measured one and biases `dist` toward flagging on
+            # every bar. The 0-of-126 statistic belongs to the 15m flag.
+            frame = self.client.get_klines("BTC_USDT", interval="Min15",
+                                           start=int(now_ts) - 900 * 700,
+                                           end=int(now_ts))
+            frame = self._drop_incomplete_klines(frame, interval_seconds=900,
+                                                 now_ts=now_ts)
+            close = frame["close"].astype(float)
+            if len(close) < 673:
+                raise ValueError("short BTC 15m series: %d bars" % len(close))
+            last = float(close.iloc[-1])
+            roc24 = last / float(close.iloc[-97]) - 1.0
+            roc72 = last / float(close.iloc[-289]) - 1.0
+            roc168 = last / float(close.iloc[-673]) - 1.0
+            high168 = float(close.iloc[-672:].max())
+            dist = (last / high168 - 1.0) if high168 > 0 else -1.0
+            stall = roc72 >= 0.05 and abs(roc24) < 0.015
+            ext = dist >= -0.01 and roc168 >= 0.10
+            flagged = bool(stall or ext)
+            fields = {"trend_flag": 1.0 if flagged else 0.0,
+                      "trend_flag_btc_24h": round(roc24, 5),
+                      "trend_flag_btc_72h": round(roc72, 5),
+                      "trend_flag_btc_168h": round(roc168, 5),
+                      "trend_flag_dist_7d_high": round(dist, 5)}
+            self._btc_flag_cache = (now_ts, flagged, dict(fields))
+            fields["trend_flag_age_s"] = 0.0
+            return flagged, fields
+        except Exception as exc:                   # pragma: no cover - never blocks an entry
+            log.warning("[TREND_TP_CAP] BTC exhaustion flag unavailable: %s "
+                        "- entries proceed UNCAPPED for the next %ds", exc,
+                        int(self._BTC_HOURLY_TTL_S))
+            fields = {"trend_flag": 0.0, "trend_flag_error": 1.0}
+            self._btc_flag_cache = (now_ts, False, dict(fields))
+            return False, fields
+
+    @staticmethod
+    def _repriced_tp(sig: Any, tp_r: float) -> Any:
+        """Re-price tp_price to tp_r x the signal's OWN stop distance, same side.
+
+        The stop is untouched, so 1R - and therefore sizing, the trail, the breakeven
+        arm and every R-denominated record - is exactly what it was."""
+        entry = float(sig.entry_price)
+        dist = abs(entry - float(sig.sl_price))
+        if entry <= 0 or dist <= 0 or tp_r <= 0:
+            return sig
+        long_side = str(sig.side).upper() == "LONG"
+        tp = entry + dist * tp_r if long_side else entry - dist * tp_r
+        if tp <= 0:
+            return sig
+        return dataclasses.replace(sig, tp_price=float(tp),
+                                   tp_margin_pct=float(tp_r) * float(sig.sl_margin_pct))
+
+    def _apply_trend_tp_cap(self, sig: Any) -> Any:
+        """Cap a TREND target at FUTURES_TREND_FLAGGED_TP_R while BTC is exhausted.
+
+        Default 0.0 = OFF; the live value is the kill switch. Always stamps what BTC was
+        doing at the entry instant, flagged or not, so the pre-registered review (abandon
+        at n >= 10 if the cumulative delta <= 0) reads recorded fields rather than a
+        reconstruction."""
+        tp_r = self._env_float("FUTURES_TREND_FLAGGED_TP_R", 0.0)
+        if tp_r <= 0:
+            self._last_trend_flag = {}
+            return sig
+        flagged, fields = self._btc_exhaustion_flag()
+        if not fields:
+            self._last_trend_flag = {}
+            return sig
+        fields["trend_flag_tp_r"] = float(tp_r)
+        fields["trend_flag_tp_capped"] = 0.0
+        try:
+            fields["trend_flag_tp_r_orig"] = (float(sig.tp_margin_pct)
+                                              / float(sig.sl_margin_pct))
+            fields["trend_flag_tp_price_orig"] = float(sig.tp_price)
+        except Exception:                          # pragma: no cover - telemetry only
+            pass
+        if not flagged:
+            self._last_trend_flag = fields
+            return sig
+        capped = self._repriced_tp(sig, tp_r)
+        if capped is not sig:
+            fields["trend_flag_tp_capped"] = 1.0
+            log.warning("[TREND_TP_CAP] %s %s flagged (btc 24h %+.2f%% 72h %+.2f%% "
+                        "168h %+.2f%% dist7d %+.2f%%) - TP %.8f -> %.8f (%.2fR)",
+                        sig.side, sig.symbol, fields["trend_flag_btc_24h"] * 100.0,
+                        fields["trend_flag_btc_72h"] * 100.0,
+                        fields["trend_flag_btc_168h"] * 100.0,
+                        fields["trend_flag_dist_7d_high"] * 100.0,
+                        float(sig.tp_price), float(capped.tp_price), tp_r)
+        self._last_trend_flag = fields
+        return capped
 
     def _majors_stamp(self, max_age_s: float | None = None) -> dict[str, float]:
         """Majors values plus majors_age_s, the age of that sample at stamping."""
@@ -7773,6 +7898,7 @@ class FuturesRuntime:
                                  sig.side, sig.symbol, reason)
                         self._shadow_log_untaken(sig, "TREND", f"veto:{reason}")
                         continue
+                sig = self._apply_trend_tp_cap(sig)
                 if self._open_wildcard_position(sig, available, kind="TREND",
                                                 veto_checked=True):
                     return
@@ -9287,6 +9413,8 @@ class FuturesRuntime:
             # What the per-trade risk cap did. Without these the one trade where it
             # bound records risk_cap_bound=0.0, which is a DIFFERENT cap (margin 25%).
             **{k: float(v) for k, v in (getattr(self, "_last_risk_cap", {}) or {}).items()},
+            **({k: float(v) for k, v in (getattr(self, "_last_trend_flag", {}) or {}).items()}
+               if str(kind).upper() == "TREND" else {}),
             # Regime telemetry. Decision-free; see _majors_state.
             **self._majors_stamp(),
         }

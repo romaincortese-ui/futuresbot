@@ -17008,3 +17008,278 @@ reconciles to the raw MEXC klines exactly:
 
 The live loop runs the completed-bar rule, scans within 28-62 s of each bar close, and re-anchors the order to the tick.
 Every corpus study in this series is measuring the bot that exists.
+
+## 2026-09-22 - SFLIP: the PHA "echo trade" stop-loss, and the same trigger taken SHORT: NO CHANGE
+
+**Owner question.** A WILDCARD LONG stopped out overnight. Isolate the scenario precisely, then test entering the
+same triggers as a SHORT.
+
+**Verdict: the scenario is real and nameable. The short is not. Nothing ships.**
+
+### The trade
+PHA_USDT LONG, signal 0.05456, fill 0.05471 (+27.5 bps), 2026-09-22T04:26:48Z. 262 contracts, margin $143.34,
+risk $15.70. Exit 05:34:10Z at 0.04861 EXCHANGE_CLOSE, **-$16.20 = -1.06R**. Peak in its favour **+0.01R** - the
+fill was the highest print of the next hour.
+
+### The scenario - the ECHO TRADE
+PHA's real event was 09-21 08:00-11:00Z: **+52% on $2.4-2.5M per hour**, which set both the 24h and the 30-day
+high; 78% was given back by mid-afternoon. **17.5 hours later** a second leg lifted price 11% on about **one tenth**
+of that hourly flow. The trigger is a **scale-free 3h percentage**, so the echo registered identically to the original.
+Markers, with the sleeve's own percentile (n=96 live WILDCARD fills):
+
+| marker | PHA | pct |
+|---|---|---|
+| abs(1h ROC) at scan - last hour dead | 0.67% | p6 (p3.6 among longs) |
+| position in the 24h high-low span - middle, not edge | 0.576 | p17 among longs (median 0.83) |
+| entry-bar $/min vs the symbol's OWN 24h mean | **0.74x** ($5,866/min) | **p5 of 96** |
+| vol_z vs its 1.000 gate | 1.004 = **$83 of tape** | knife edge |
+| hour | 04:26Z | p15 |
+
+NOT unusual: trigger strength +8.69%/3h is **p41** (one of the weakest the sleeve takes); turnover $9-11M is **p58**;
+24h range 0.731 is p81 against a p90 of 0.95 and a shipped long cap of 2.00.
+**The detector is blind to marker 4**: vol_z's baseline is the trailing 20 bars, which *are* the lull, and calm_ratio
+was low because its denominator was the previous day's enormous range. Every gate was measured against the lull.
+**The kill:** 05:33-05:36, **-11.7% in four minutes on $153k into a $5k/min book**. Across 49 MEXC perps in that same
+15m bar the median was **+0.56%** and the worst other name -0.59%; PHA was **-11.65 sigma, 0 of 49 fell as far**, with
+BTC +0.25 ETH +0.49 SOL +0.72 XRP +0.55 ZEC +2.53. A single-name supply event in an **up** market.
+Live recognition sentence: *an overnight, low-flow, second-leg trigger bought in the middle of a stale range.*
+
+### The SHORT arm: 0 of 6 kill criteria pass
+Pre-registered ladder (wc/SFLIP/PREREG.md, written before any result): S0 all longs, S1 STALE (3h>=+8% and
+|1h ROC|<=2%), S2 EXTENDED (24h>=+25%), S3 ROUNDTRIP (24h range>=40% and <=75% of span), S4 = S1&S2&S3 (the PHA cell);
+treatments LONG / SKIP / SHORT with mirror geometry. Paired per-fill **d$ = SHORT - LONG**:
+
+| cell | E 220d | V | H 127d | B Binance yr |
+|---|---|---|---|---|
+| S0 ALL | -0.74 | -0.51 | -0.92 | -0.30 |
+| S1 STALE | +0.72 | +0.72 | **-1.78** | +2.50 |
+| S2 EXTENDED | -0.57 | -0.34 | -1.76 | -0.18 |
+| S3 ROUNDTRIP | +2.16 | +2.21 | **-2.23** | **-0.19** |
+| S4 (PHA cell) | +8.38 (n=5) | +8.38 (n=5) | **-15.04** (n=9) | **-68.83** (n=1) |
+
+Every d$/mo CI on every line and cell spans zero (largest, S3 E: +$61.37/mo [-78.2, +193.5]). Family-wise placebo
+p 0.295-0.345. S4 books **2/2/5/1** fills against the pre-registered n>=30 -> **UNPOWERED**, and fires 0.28 fills/month
+on E, so it would need **+$36 per booked fill** to move $10/month; the largest per-fill delta anywhere with n>=30 is
++$2.50. **Arithmetically incapable**, whatever its sign.
+
+### Two results that close the question permanently
+1. **The side is not a choice.** `wildcard.py:243` `side = "LONG" if roc > 0 else "SHORT"`, and the pullback-resume
+   gate demands `cur>prev and prev<prev2` for a long, the strict mirror for a short. **0 of 1153 mirror shorts is a bar
+   this detector could ever emit as a short.** Every SHORT dollar here is a geometry counterfactual at a forced entry;
+   shipping one needs a NEW ENTRY RULE. No WILDCARD side-flip study can ship without one.
+2. **A randomly seeded ladder scores the same.** Building the identical 5-level ladder around a RANDOMLY CHOSEN losing
+   WILDCARD long gives a best cell of **+$40.82/month at the median** (p90 +$71.79) against PHA's +$43.96;
+   **p = 0.17-0.46 across four null constructions**. Nothing about this signature is distinguishable from an arbitrary
+   one. The top of that null is `hour <= 5 refused` at +$124.63/month - a covariate the prereg barred as a level.
+   **Standing rule from now on: any rule seeded by one observed loss is priced against this null before it is discussed.**
+
+### Also established
+- **S0 reproduces wc/FLIP**: the blanket flip is negative on all four lines (-$118/-$82/-$183/-$47 per month).
+- **S3 is one-third already-shipped content**: 58% of its rows sit in the settled 24h-range [50%,100%) band and 9% are
+  range>=200%, refused live since 09-19. Against a post-ship baseline S3 SKIP falls +$43.96 -> +$24.71/mo [-35.4,+83.3],
+  and five trades of 205 carry 88% of it (+$5.04 with those five dropped).
+- **Live book, 97 WILDCARD fills over 48 days: -$73.72, day-block CI [-$236, +$65]**, 47.4% winners. On that book the
+  **shorts have lost more than the longs: -$45.39 on 27 fills vs -$28.32 on 70.**
+- Seed anecdote only: SKIP saves $16.20; the mirror short was still open at the end of tape (floor +$0.04 exchange /
+  +$13.11 software trail, mark +$21.59 at 07:15Z) and **its entire value is the same nine minutes that killed the long** -
+  before 05:32 its peak was 0.47R, under both the 0.90R breakeven arm and the 1.00R trail arm.
+
+### Defects found (measured, none fixed here)
+1. **Fee tier unverified**: the ledger books exactly **8.0 bps/side** while the contract advertises `takerFeeRate 0.0002`.
+   **$0.162/fill ~ $10/month live, ~$22/month at replay fill rates** - above the ship bar, settled by one statement.
+2. **The stop is built off the SIGNAL price, the position off the FILL**, so slippage buys un-designed risk: here
+   $15.70 against a designed $15.35, **+2.29%**. Two 1R denominators therefore coexist on every row (`risk_usdt`
+   signal-based vs `tags.r_multiple` fill-based); the gap equals the entry slippage, so it is largest where entry went worst.
+3. **Live WILDCARD scans the forming bar; all four replay lines use completed bars.** On the last bar completed before
+   the fill the 3h ROC reads **+6.660%, below the 8% trigger** - the seed trade would not exist under the convention
+   every evidence line uses. Corpus-wide size of that divergence: **unknown**.
+4. **Wick vs polled close in the offline `resolve()`**: 17.3% of E LONG outcomes change and the candidate pool moves
+   **$348.78/month**. The split convention (resting orders on the wick, software exits on the polled close) reproduces
+   the live trade to the cent; the all-wick convention **understates WILDCARD long losses by up to 0.5R per fill**.
+5. **Y0 does not exist for this sleeve** - `bars_y0.pkl` holds only ETH/XRP/ZEC/BTC/SOL, and WILDCARD excludes majors.
+   **B is the only genuinely unseen, different-venue WILDCARD line.** And **V is not independent of E** (same klines,
+   same window, literally the same rows in S1/S4), so criterion (b) is effectively a one-line test on H.
+6. Funding is modelled nowhere (sized at $9.69/month on E's pool; sign unknown). Survivorship in E/V/H is unbounded
+   in principle from those pulls (delisted-inside-window symbols leave no file); on B the bias is ~-$27.65/mo on E's
+   counts - the one bias pointing the study's way, and it still cannot rescue S3.
+7. `peak_r` is computed on the fair/mark price, not last trade (0.0133 exceeds the 1m high of 0.0083R).
+8. PREREG and the brief both printed the stop as 0.04885; the live stop is **0.0487164** (signal-based). Corrected here.
+
+### Ruling
+**Do not short it. Do not build a refusal around it. Change nothing in the trading rules.** The stop-loss is
+root-caused per the standing directive and the description is true; it is not a tradeable rule, and this study is the
+evidence that it is not. On the north star, refusal has now failed at the **market-state** (wc/MKT, wc/ONE), **day**
+(wc/DAYS), **trigger** (wc/TRIG), **gate** (wc/LOAD) and now **signature** resolutions. Next item is the instrument,
+not a hypothesis: **verify the account's realised taker fee tier** ($10-22/month, read-only, minutes).
+
+## 2026-09-22 - REGIME: the post-rally stall day. Hypothesis REFUTED as stated, real as refined, tradeable only as a TARGET
+
+**Owner directive.** "I reject all the previous studies concluding we shouldn't adopt different patterns considering the
+market trend. There definitely is a market trend where the bot does extremely poorly and it's the days right after a
+huge increase in the major symbols." Ten lanes, read-only. Full answer at wc/REGIME/answer.md.
+
+### The hypothesis as stated: REFUTED, on held-out live fills
+The stall cell on the live book is **in-sample**: every live fill in "BTC 3d >= +5% and flat" is dated 09-20/21/22.
+Outside the week that produced the belief (98 fills, 06-27 -> 08-28, no BTC tags, never used to form it):
+
+| held-out live cell | n | $/fill | win% |
+|---|---|---|---|
+| the stall cell | 7 | **+0.92** | 29% |
+| post-rally (BTC 3d >= +5%) | 22 | **+1.55** | 55% |
+| deep post-rally (BTC 3d >= +14%) | 11 | **+2.67** | **73%** |
+| everything else | 76 | +0.13 | 41% |
+
+Stall difference **+$0.51/fill [90% -2.69, +7.87], p=0.935**, sign OPPOSITE to the prediction. Under the live gate on
+three independent candidate books (35,063 labelled rows) the cell sits at or above baseline. Priced as refusal:
+**stall days -$4.40/mo, post-rally days -$19.87/mo.** The two best days in book history (08-21 +$15.89, 08-22 +$29.11)
+sit inside a BTC 3-day +13% to +21% run.
+
+### The refinement that survives: STALLED, not post-rally - and TREND only
+Within the post-rally cell, stall minus running is **-$3.62/fill [-7.23, -0.15]** on TREND. The construct is fragile:
+the sign flips on SOL (+1.43), on a 2-day window (+1.10) and on a 24h clock shift (+0.27); its own bootstrap is
+**-$1.88/fill [-5.02, +1.35], p=0.238**; one randomly drawn regime in five looks this bad. **The EXT leg (BTC within 1%
+of its 168h high with 168h ROC >= +10%) is the sturdier half** and carries 89 of the 126 flagged fills.
+
+### What actually survived everything: the tail is amputated, the entries are not
+1,155 TREND fills, three eras, flagged bars vs the rest:
+
+| | flagged | rest |
+|---|---|---|
+| stop rate | 46.8% | 45.6% |
+| reach >= 0.5R | **68.3%** | 65.4% |
+| reach >= 1R | **51.6%** | 47.7% |
+| reach >= 2R | 2.4% | 13.9% |
+| **reach >= 3R (the TP)** | **0 of 126** | **64 of 1,029 (6.2%)** |
+| peak capture on winners | 43% | 57% |
+
+P(0 of 126 | 6.2%) = **3.1e-04**. The entries are slightly BETTER on flagged bars; the bot holds out for a target that
+has not printed once in three years on those bars. Mechanism: TREND is paid by a 3R tail funded by the complex; when
+BTC has spent 5-14% of its fuel in three days and gone flat, there is nothing left to pay the tail. WILDCARD is
+untouched because it is paid by alt-specific blow-offs.
+
+### The ship candidate: cap the TREND take-profit at 1R on flagged bars
+Flag = BTC 72h ROC >= +5% with |BTC 24h ROC| < 1.5%, OR BTC within 1% of its trailing 168h high with 168h ROC >= +10%,
+evaluated on BTC 1h closes **at the instant the TREND entry fires**. TREND only. Nothing else changes.
+- **+$6/month** at today's 1R and live fill rate (5.7 flagged fills/mo). Corpus +$5.85/mo [+4.03, +7.88]; paired
+  per-fill **+0.148R, sd 0.196, t=8.48**. Positive in **3/3 eras including the profitable one** (+8.17/+6.31/+3.02).
+- **Cost if the regime is nothing: -$1.0 to -$1.6/month** (the same cap on unflagged bars costs -$0.44/fill).
+- The same cap applied to EVERY bar is **-$6.82/mo pooled, -$41/mo in the profitable era** - it only works where the
+  tail is already gone, which is what makes it a regime result rather than a preference.
+- Placebos: capping the same number of random bars, and random whole days: **0 of 400 reps reached it, p < 0.003**.
+- Kill rule: **abandon at any n >= 10 if the cumulative delta <= 0.** Verdict **2026-10-29** on live fills, or
+  **2026-10-08** with flagged-bar shadow logging (12.9/mo instead of 5.7).
+- Live so far: 8 flagged TREND fills since 08-20, +0.86R and **+$1.42** (the two winners ran at 1R=$0.56 and $2.34, the
+  seven losers at $5.50-7.50 - the stake moved 13x inside the sample; never quote the R without the dollars here).
+- **Below the $10/month bar. Insurance, not edge.** Do NOT extend to WILDCARD: the same family costs it $16-18/month.
+
+### Two things worth more than every regime lever combined
+1. **Effective per-trade risk is not the configured 1.205%.** Measured on 143 fills: p10 0.55% / median 1.20% /
+   p90 2.24% / **max 2.51%, half of all fills above target**. The base solve is ~2.41% and only the regime scaler pulls
+   it down, so **per-trade risk is currently set by a Kaufman-efficiency momentum score, not by a risk budget.**
+   Capping it is compliance with a number already chosen, not a bet. (Independently, P2 in the commissioned assessment.)
+2. **Report studies in risk-normalised dollars (R x median risk $), not booked P&L.** Both fields are already on every
+   row, it applies retroactively to every past study, and it cuts the standard error **27.8% = 22 days of trading, free.**
+
+### New information - and the surprise that inverts the build order
+- **OI direction beats every price transform.** On bars where BTC is up on 24h: **OI expanding -$1.47/fill (n=2,539)
+  vs OI contracting +$0.50/fill (n=2,444)**; gap **-$1.97 [-3.91, -0.11], p=0.039**, sign holds 3/3 eras, survives
+  BTC-ROC and funding terciles. Matched price refusals price at +$1.87/mo (BTC ROC) and -$0.89/mo (symbol ROC) against
+  +$17.83/mo for OI. Mechanism: a breakout funded by fresh leverage must be paid for; one on contracting OI is already
+  being paid for by trapped shorts. **NOT REPLICATED as a size dial** (+$34.85/mo of the gain sits in the two losing
+  eras vs +$0.70/mo in the profitable one) - the variable is real, the dial is a leverage dial.
+- **The data is not a 30-day wait.** Bybit /v5/market/open-interest returns 15m/1h OI back >= 2 years (26,994 hourly
+  BTC points in 38s); taker buy/sell flow is field 9 of the Binance klines already parsed; fair/index basis is in
+  premiumIndexKlines back to 2023. **82 of the 85 symbols this book has ever traded (96%) are on Bybit or Binance.**
+  Three of the assessment's four information classes are BACKFILLABLE this week. Only order-book depth needs new writes.
+- **WILDCARD reselection on flagged days** (candidate's |1h ROC| >= 1.5% in the trigger direction AND alt beating BTC on
+  24h): pooled **+$15.72/mo [+0.65, +34.58]**, placebo p 0.020 / 0.043, both filters specified OUTSIDE the data that
+  tests them. Refuses PHA and MUBARAK today. Needs the 2020-2024 Binance rebuild before it can ship.
+- **Fair/last dislocation is the cheapest assessment idea** and testable tonight: signed premium in the trade direction
+  is monotone against dollars (-10..0bps -$0.84/fill, 0..+10 -$1.94, +10..+30 -$2.75, **>=+30bps -$6.18**), and it is
+  the one gate that would have refused MUBARAK (+47.8 bps). n=5 in the extreme cell: NOT ESTABLISHED.
+
+### Refuted / dead, recorded so they are not re-run
+- **The failed-breakout reversal sleeve (assessment section 6.7): DEAD.** Built with the unmodified live exit walker,
+  verified against an independent short walker at max |dR| = 0.0: **-$1.96/fill over 2,845 candidates, -$56/month,
+  negative 3/3 eras, worst inside the flagged cell (-$2.90/fill)**. Shorting a failed breakout is indistinguishable
+  from shorting a random bar in the same window (-$2.04).
+- **Long/short asymmetry on post-rally days: DEAD.** MEXC 2026 -0.44R, Binance 2024-25 +0.15R. The 111 TREND SHORT
+  shadow signals run **-0.485R each, 32% wins**, eleven consecutive stop-outs on 09-20 alone.
+- **Relative strength as an entry rule: KILLED.** alt24h - BTC24h >= +5pp looked superb (+$2.86/fill, p=0.0000) until a
+  plain ROC threshold refusing the same fraction did better (+$17.93/mo vs +$7.13). It is a relabelled ROC floor.
+- **"Halt TREND when BTC 72h <= -5%" and "halt on volatility compression < 0.74": REFUTED at live fidelity** - both
+  invert sign on the real ETH/XRP/ZEC universe.
+- **The TREND stand-down headline (+$5.56/mo) was 60% placebo artefact**: against a row-count-matched placebo the
+  regime-specific increment is **+$2.0 to +$2.3/mo, p=0.235**.
+
+### Today, for the record
+Seven positions opened (not five - MARSCOIN 12:12Z and ZEC 16:45Z are also today's and still open). Median peak
+**0.042R against a book median of 0.821R**; median time to first adverse tick **5.1 min vs 16.7**; slippage **27.5 bps
+vs 8.2**. All long. **No lever in this study would have saved a cent of it** - the refusal arm evaluated point-in-time
+refuses only NEAR and XRP (-$14.26) and takes the day's first loser anyway. Point-in-time, BTC's 24h ROC at the AKE
+03:45Z entry was **+4.93%** (the RUNNING cell, which makes money) and the extension leg was FALSE at every entry;
+the flag toggled three times within the day, and **54% of flagged fill-days are mixed within the day**. The day is a
+**-4.83R draw, 1.8 sigma, 1-in-32 on R** - it wears a $45 price tag because the stake is 10x what it was when the edge
+was measured (at August's stake it costs -$4.33). The one recoverable item is an exit: **MUBARAK never touched its
+designed stop** (low 0.06057 vs stop 0.058865), peaked at +1.39R, and the convex early stop took it at 5.9 minutes for
+-$7.77 against a trail outcome of ~+$10.34 - **cost ~$18, fire #5 of that rule's pre-registered n>=20 review.**
+
+### Ruling
+**The regime is real, TREND-only, and not tradeable as a refusal - only as a target.** Cap the TREND TP at 1R on
+flagged bars as bounded-cost insurance (+$6/mo, -$1.3/mo if the regime is nothing, auto-killed at n>=10 on a negative
+cumulative delta). Fix effective per-trade risk to the configured 1.205%. Switch reporting to risk-normalised dollars.
+Then spend an afternoon backfilling OI, taker flow and basis rather than a month waiting for them.
+
+### 2026-09-22 - TREND TP CAP: shipped, with the review procedure written down first
+
+Shipped after a 4-lane release gate (wc/TPCAP) returned FIX-FIRST. Live knob
+**FUTURES_TREND_FLAGGED_TP_R=1.0**; code default 0.0, so the knob is the kill switch.
+
+**The flag, exactly as implemented** (`FuturesRuntime._btc_exhaustion_flag`): BTC **completed 15m closes**,
+offsets 96 / 288 / 672 bars, trailing 7d high over the last 672 completed closes. Flag =
+`(72h ROC >= +5% AND |24h ROC| < 1.5%)` OR `(dist_7d_high >= -1% AND 168h ROC >= +10%)`. Cached 10 minutes;
+a failed evaluation is negative-cached for the TTL, logs a WARNING and stamps `trend_flag_error=1.0`, and
+entries proceed UNCAPPED. Four defects were fixed before deploy, each of which would have invalidated the
+measurement or the review:
+1. the frame included the **forming bar**, making the extension leg self-satisfying whenever BTC printed a
+   new high tick (`dist` exactly 0);
+2. the frame was **hourly**, and hourly closes are a subset of 15m closes, so the 7d high was structurally
+   too low and `dist` was biased toward flagging on every bar - the 0-of-126 statistic belongs to the 15m flag;
+3. `tp_margin_pct` kept its 3R value after the target moved, so `_classify_exit_kind` would have filed every
+   completed 1R target as a non-completion and fed the TP-completion tripwire (~3 rows/month, one-directional);
+4. a failed BTC fetch was not cached, so a stalled endpoint would be retried once per candidate (~47s each,
+   up to ~3 minutes) on the thread that also runs the position monitor - parking the trail, the breakeven arm
+   and the early stop for both sleeves.
+
+**REVIEW PROCEDURE - pre-registered before the first capped close.** The naive delta is DEGENERATE: a capped
+trade closes at its own target, so its realised R is ~1.0 by construction and "delta vs itself" is identically
+zero. Every capped fill therefore stamps `trend_flag_tp_r_orig` and `trend_flag_tp_price_orig`. The delta is
+computed by REPLAY: from the recorded entry, run Min1 klines forward to the 24h hard close under the live exit
+stack with `tp_r` restored to `trend_flag_tp_r_orig`, using the wc/SFLIP split convention (resting orders
+resolve on the wick, software exits on the polled close), and take
+`delta_$ = realised_capped - realised_replayed`. Rows where the capped trade exited on the stop, the early
+stop or the trail below 1R have a provably zero delta and need no replay - only capped-and-filled rows do.
+**Kill: abandon at any n >= 10 flagged fills if the cumulative delta <= 0.** Review date 2026-10-29 at the
+live rate of 5.7 flagged fills/month. If fewer than 15 flagged fills have accumulated by 2026-12-31 the cell
+is worth under $3/month and the line closes permanently.
+
+**RING-FENCE:** rows with `trend_flag_tp_capped == 1.0` are EXCLUDED from the TP-completion tripwire
+(the pre-registered retain 0.30 -> 0.25 action). A 1R target completing is not evidence about a 3R target.
+
+**Page in the first 48h:** any TREND close with `trend_flag_tp_capped=1.0`, `peak_r >= 1.00` and a
+non-take-profit exit (first occurrence, not the tenth); `be_stop_bare` or `be_stop_failed` on a capped
+position; a TREND open carrying `trend_flag_error=1.0`; any `trend_flag_tp_capped` on a non-TREND row.
+Known and accepted: `_restore_exchange_tpsl` has a wrong-side fallback for the stop but none for the TP, and
+the capped target now sits 0.10R above the breakeven arm, so a cancel-then-place race is newly exposed there.
+Outcome is a rejection, an alert and a market close - survivable; its own diff.
+
+**SIZING - recorded, not changed.** `FUTURES_WILDCARD_RISK_PCT = 0.0241` and `FUTURES_TREND_RISK_PCT = 0.01205`:
+the WILDCARD dial is set to exactly twice TREND's. Effective per-trade risk runs BELOW both dials, ~0.66-0.68x,
+because the regime scaler (~0.80 median), the available-margin-not-equity base (~0.90) and contract truncation
+all shrink it; entry slippage offsets ~+2% (median, +11% tail) because the stop is anchored to the SIGNAL price
+while the position is built from the FILL. The real defect is DISPERSION: p10 0.55% to ~2.5% of equity, a 4.4x
+spread, re-created downstream of the risk-targeted solve that exists to remove it.
+**A book-wide `FUTURES_MAX_TRADE_RISK_PCT=1.205` is NOT compliance with a configured number** - it touches
+TREND on 1 of 21 fills and halves WILDCARD (60 of 87 fills shrunk, median 0.535x), overriding a dial that was
+deliberately set, at a priced **-$2.5 to -$7.4/month**. NOT DONE. The one genuine uncontrolled overshoot in the
+chain is the signal-anchored stop (~+$1-2/month of risk removed, deletes no trades); it gets its own diff.
