@@ -34,6 +34,14 @@ def _by(kpis, name):
     return next(k for k in kpis if k.name == name)
 
 
+@pytest.fixture(autouse=True)
+def _dials(monkeypatch):
+    """Pin the dials these tests were written against. The KPI reads the LIVE dial per
+    sleeve from the environment, so the tests must say which dial they mean."""
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0241")
+    monkeypatch.setenv("FUTURES_TREND_RISK_PCT", "0.01205")
+
+
 # --- integrity gates everything -------------------------------------------
 
 def test_a_missing_ledger_row_is_bad_and_dominates_the_summary():
@@ -65,12 +73,25 @@ def test_base_risk_at_target_is_good():
     assert _by(kpis, "Risk sizing").verdict == "Good"
 
 
-def test_base_risk_at_the_old_level_voids_the_trial():
-    """1.87% pre-scaler is the OLD setting. Seeing it means the change did not
-    take, whatever the P&L says."""
+def test_base_risk_off_the_live_dial_voids_the_trial():
+    """A base that does not match the live dial means the change did not take,
+    whatever the P&L says."""
     kpis = build_scorecard([_row(base=1.87)] * 5, days=5.0)
     k = _by(kpis, "Risk sizing")
     assert k.verdict == "Bad" and "VOIDS" in k.note
+
+
+def test_the_kpi_follows_the_dial_when_it_moves(monkeypatch):
+    """2026-09-23: WILDCARD 2.41% -> 1.87%. A hard-coded 2.41 target would have graded
+    every correct entry Bad and declared the trial void."""
+    monkeypatch.setenv("FUTURES_WILDCARD_RISK_PCT", "0.0187")
+    assert _by(build_scorecard([_row(base=1.87)] * 5, days=5.0), "Risk sizing").verdict == "Good"
+    assert _by(build_scorecard([_row(base=2.41)] * 5, days=5.0), "Risk sizing").verdict == "Bad"
+
+
+def test_trend_rows_are_graded_against_the_trend_dial():
+    rows = [_row(base=1.205, kind="TREND")] * 3 + [_row(base=2.41)] * 3
+    assert _by(build_scorecard(rows, days=5.0), "Risk sizing").verdict == "Good"
 
 
 def test_a_low_REALISED_risk_in_chop_is_not_a_failure():

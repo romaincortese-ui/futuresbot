@@ -49,7 +49,30 @@ BASE_WORST_R = -3.79
 BASE_RISK_PCT = 1.46
 BASE_CLOSES_PER_DAY = 1.09
 TARGET_RISK_PCT = 1.87          # long-run MEAN after the regime scaler
-BASE_RISK_PCT_TARGET = 2.41     # FUTURES_WILDCARD_RISK_PCT, pre-scaler
+
+
+def _dial_pct(kind: Any) -> float:
+    """The LIVE pre-scaler risk dial for a row's sleeve, in percent.
+
+    Read from the environment at call time, with the runtime's own fallback chain
+    (_entry_margin: FUTURES_<SLEEVE>_RISK_PCT, else FUTURES_WILDCARD_RISK_PCT, else
+    0.0187). This used to be a constant, BASE_RISK_PCT_TARGET = 2.41, which had two
+    defects: every TREND entry was graded against WILDCARD's dial, and moving the dial
+    (2.41% -> 1.87% on 2026-09-23, after the wc/ASSESS Kelly finding) would have graded
+    every correct entry Bad and printed that the trial was VOID."""
+    import os
+
+    def _env(name: str) -> float:
+        try:
+            return max(0.0, float(os.environ.get(name) or 0.0))
+        except ValueError:
+            return 0.0
+
+    wildcard = _env("FUTURES_WILDCARD_RISK_PCT") or 0.0187
+    key = "".join(ch for ch in str(kind or "").upper() if ch.isalnum())
+    if key and key != "WILDCARD":
+        return (_env("FUTURES_%s_RISK_PCT" % key) or wildcard) * 100.0
+    return wildcard * 100.0
 
 
 class KPI(NamedTuple):
@@ -152,26 +175,30 @@ def build_scorecard(rows: Sequence[Mapping[str, Any]], *, days: float,
     # regime are we in", and only the first is the trial's criterion.
     #
     # The direct test is the pre-scaler base: margin_wanted x sl_margin_pct /
-    # available, which should equal BASE_RISK_PCT_TARGET on every entry
+    # available, which should equal THE LIVE DIAL FOR THAT ROW'S SLEEVE on every entry
     # regardless of regime. Verified on the first three post-change entries:
     # TUT 24.349, ZEC 17.676, ZEN 19.967, all exact.
-    bases = []
+    bases, dials = [], []
     for r in rows:
         want = _f(r.get("margin_wanted"))
         slm = _f(r.get("sl_margin_pct"))
         av = _f(r.get("equity_at_entry") or r.get("equity_at_open_usdt"))
         if want > 0 and slm > 0 and av > 0:
             bases.append(want * slm / 100.0 / av * 100.0)
+            dials.append(_dial_pct(r.get("kind")))
     realised = [_f(r.get("risk_pct_actual")) for r in rows if _f(r.get("risk_pct_actual")) > 0]
     med_real = _median(realised) if realised else 0.0
     if len(bases) < 2:
         out.append(KPI("Risk sizing", f"{len(bases)} stamped", "NA",
-                       f"need 2+; base target {BASE_RISK_PCT_TARGET:.2f}% pre-scaler"))
+                       f"need 2+; base target {_dial_pct('WILDCARD'):.2f}% pre-scaler "
+                       f"(the live dial)"))
     else:
         med = _median(bases)
-        ok = abs(med - BASE_RISK_PCT_TARGET) <= 0.15
+        gap = _median([b - d for b, d in zip(bases, dials)])
+        ok = abs(gap) <= 0.15
         out.append(KPI("Risk sizing", f"base {med:.2f}%", "Good" if ok else "Bad",
-                       f"pre-scaler target {BASE_RISK_PCT_TARGET:.2f}%; off by more "
+                       f"pre-scaler target {_median(dials):.2f}% (each row against its "
+                       f"own sleeve's live dial); off by more "
                        f"than 0.15 VOIDS the trial. Realised after the regime "
                        f"scaler: {med_real:.2f}% (long-run mean {TARGET_RISK_PCT:.2f}%, "
                        f"lower in chop BY DESIGN)"))
