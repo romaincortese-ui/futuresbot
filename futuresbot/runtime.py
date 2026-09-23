@@ -146,6 +146,7 @@ EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "b
                        "be_shadow_arm_r", "be_shadow_arm_ts", "be_shadow_touch_ts", "be_shadow_touch_r",
                        "r_series_n", "r_series_peak_r", "r_series_peak_ts", "r_series_interval_s",
                        "t_adverse_60", "t_adverse_70", "t_adverse_80", "t_adverse_90",
+                       "trough_frozen_ts",
                        "stop_book_state", "stop_book_price", "stop_book_price_gap_bps",
                        "stop_book_checks", "stop_book_absent_checks",
                        "stop_book_unreadable_checks", "stop_book_bare_seconds",
@@ -2316,6 +2317,41 @@ class FuturesRuntime:
                       (0.70, "t_adverse_70"), (0.75, "t_adverse_75"), (0.80, "t_adverse_80"),
                       (0.90, "t_adverse_90"))
 
+    def _note_trough(self, position: FuturesPosition, r_now: float,
+                     current_price: float | None) -> None:
+        """Worst excursion while the position is actually HELD. Decision-free.
+
+        Frozen on the first poll at or through the effective stop (the breakeven price
+        once armed, else the designed stop). From that tick the exchange stop has fired -
+        it triggers on the same fair price this poll reads - so the bot is watching a
+        position it no longer holds until reconciliation notices, a minute or two later in
+        a fast market. Updating through that lag wrote a trough deeper than the trade ever
+        held: ZEC 2026-09-23 filled at -1.07R and recorded mae_r -1.67R, because ZEC kept
+        falling to -1.92R while the close was being detected.
+
+        The crossing poll itself is still recorded, so a genuine gap through the stop is
+        kept at its real depth rather than clamped away. With no usable stop price the
+        trough is never frozen, which is the old behaviour.
+        """
+        md = position.metadata
+        if md is None:
+            md = position.metadata = {}
+        if md.get("trough_frozen_ts"):
+            return
+        trough_r = self._metadata_float(md, "convex_trough_r")
+        if trough_r is None or r_now < trough_r:
+            md["convex_trough_r"] = round(r_now, 4)
+        try:
+            stop = float(self._effective_stop_price(position) or 0.0)
+            px = float(current_price or 0.0)
+        except Exception:                          # telemetry: never blocks a poll
+            return
+        if stop <= 0 or px <= 0:
+            return
+        crossed = px <= stop if str(position.side).upper() == "LONG" else px >= stop
+        if crossed:
+            md["trough_frozen_ts"] = round(time.time(), 1)
+
     def _stamp_adverse_marks(self, position: FuturesPosition, r_now: float,
                              elapsed_min: float) -> bool:
         """First time this position reached each depth in _ADVERSE_MARKS, in minutes.
@@ -2435,11 +2471,7 @@ class FuturesRuntime:
         # the trail never runs, so the trade record kept a trough from before the cut.
         # BR 2026-09-17 recorded mae_r -0.18R and was cut at -0.61R. Same denominator as
         # the trail, same decision-free write.
-        trough_r = self._metadata_float(md, "convex_trough_r")
-        if trough_r is None or r_now < trough_r:
-            if position.metadata is None:
-                position.metadata = {}
-            position.metadata["convex_trough_r"] = round(r_now, 4)
+        self._note_trough(position, r_now, current_price)
         # SHADOW DIAGNOSTIC — runs whether or not the rule is armed.
         if self._stamp_adverse_marks(position, r_now, elapsed_min):
             self._save_state()
@@ -2738,9 +2770,7 @@ class FuturesRuntime:
         # not the same trade if one went straight there and the other first sat
         # at -0.9R: the second nearly stopped out, and nothing recorded it.
         # Decision-free, written on the same poll as the peak. Added 2026-09-01.
-        trough_r = self._metadata_float(md, "convex_trough_r")
-        if trough_r is None or r_now < trough_r:
-            position.metadata["convex_trough_r"] = round(r_now, 4)
+        self._note_trough(position, r_now, current_price)
         # Breakeven stop: proved-itself protection BELOW the arm, resting on the
         # exchange. Runs on every poll (the new-peak branch below returns early).
         try:
