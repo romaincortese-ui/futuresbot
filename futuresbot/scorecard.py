@@ -361,8 +361,10 @@ SANCTIONED_EXITS = frozenset({
 # updated at entry - the same meter reads 16% exit-ordered and 27% entry-ordered
 # for 2026-09-22, and exit order is the correct one). h is calibrated to fire
 # about once a year on a book that has not changed. It has never fired in 199
-# fills; its lifetime peak is 77%, on 2026-07-25, which was followed by +16.39R
-# over the next 30 days.
+# fills; its lifetime peak is 89%, on 2026-07-30. NOTE: four independent calibrations
+# of the same k returned h = 4.14, 5.05, 8.0 and 10.48, so the card does NOT claim a
+# firing rate - it prints the percentage and leaves the rate to be measured. Nothing
+# below 100% is an instruction to do anything.
 DECAY_K_R = 0.50
 DECAY_H_R = 10.48
 # FROZEN, like every other threshold here: the mean per-fill R of the 191 convex fills
@@ -582,14 +584,18 @@ def build_daily_card(rows: Sequence[Mapping[str, Any]], *, day: str,
     else:
         market = "broad" if _median(breadths) >= 0.45 else "narrow"
 
-    if frac >= 1.0:
-        verdict = "CHANGE ONE THING"
-    elif fired:
+    # A NAMED MECHANISM OUTRANKS A STATISTIC. Reading the meter first relabels a real
+    # stop defect as an edge verdict, which is exactly the confusion this card exists to
+    # prevent: a tripwire points at a fill and says what broke, the meter points at
+    # nothing and says "maybe".
+    if fired:
         verdict = "INVESTIGATE"
+    elif frac >= 1.0:
+        verdict = "CHANGE ONE THING"
+    elif frac >= 0.40:
+        verdict = "NO ACTION - meter elevated"
     else:
         verdict = "NO ACTION"
-    if frac >= 0.40 and verdict == "NO ACTION":
-        verdict = "NO ACTION - meter elevated"
 
     lines = [
         "DAILY %s  00:00-24:00Z" % day,
@@ -598,7 +604,7 @@ def build_daily_card(rows: Sequence[Mapping[str, Any]], *, day: str,
         "",
         "MACHINE   %-15s %d of 6 tripwires" % ("OK" if not fired else "CHECK", len(fired)),
         "MARKET    %-15s context only" % market,
-        "EDGE      %-15s of a 1-yr alarm" % ("%.0f%%" % (frac * 100.0)),
+        "EDGE      %-15s of the alarm level" % ("%.0f%%" % (frac * 100.0)),
         "",
         "  %-13s /  %+.2fR exit" % ("%+.2fR entry" % sum(ent_r), sum(ext_r)),
         "  %-13s /  %s" % ("%s$%.2f" % ("-" if ent_usd < 0 else "+", abs(ent_usd)),

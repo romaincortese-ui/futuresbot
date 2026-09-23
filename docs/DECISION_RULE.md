@@ -17552,3 +17552,54 @@ card gates the proposal machinery rather than merely describing the day.
 true in patches for slippage, so the card reports on what it has rather than claiming full coverage. The thresholds
 still have zero out-of-sample days, and if the trailing per-fill sd stays near September's 1.12R rather than 1.57R
 they are about 40% too loose and must be re-derived.
+
+### 2026-09-23 - STOP-ON-BOOK: the stop is now an observable, and two silent defects went with it
+
+Shipped shadow-only: the bot now asks the exchange whether a stop is actually resting on each open position, and
+records the answer. It reads, it records, it does nothing else - no order, no close, no alert. Kill switch
+`FUTURES_STOP_BOOK_VERIFY_ENABLED=0`; cadence `FUTURES_STOP_BOOK_INTERVAL_SECONDS` (default 300, floor 30), bounded to
+one attempt and 4s because it runs on the thread that also manages open positions.
+
+**Why.** The -1.066R +- 0.038 stop band is the best instrument in this book and it measures only where a stop SETTLED,
+after the fact. Nothing confirmed a stop was ever on the exchange while the position was open. That is a capital
+question: on 2026-09-21 a MEXC 2015 precision error left an XRP position with no resting stop for about six minutes,
+and `_move_exchange_stop` cancels before it places, so the breakeven amend opens a bare window BY CONSTRUCTION. The
+amend now sets a due stamp so the check looks again 3s later - a due stamp, never a sleep.
+
+**Three-valued on purpose: SEEN / ABSENT / UNREADABLE.** Collapsing an unreadable endpoint into "bare" would
+manufacture exactly the false alarm this exists to catch. Recorded per position and carried to the closed trade record:
+`stop_book_state`, `stop_book_price` (what the EXCHANGE holds), `stop_book_price_gap_bps` against
+`_effective_stop_price` (so an armed breakeven reads 0, not 190 bps), `stop_book_checks`, `stop_book_absent_checks`,
+`stop_book_unreadable_checks`, `stop_book_bare_seconds`, `stop_book_bare_max_seconds`, `stop_book_seen_ts`.
+**`stop_book_bare_seconds` is the deliverable.** It is a directly observable capital fact with no standard error -
+the kind of thing a daily card CAN grade, unlike the edge. No alert ships until a week of shadow data sets the
+tolerance and the unreadable rate; a threshold chosen in advance here would be an invention.
+
+**The read-only probe against the live account, 2026-09-23, which is what the implementation is built on** (both
+positions open at the time):
+- `data` comes back as a BARE LIST from this endpoint. The same endpoint returns `{"data":{"resultList":[...]}}`
+  elsewhere in MEXC's API.
+- **SUPERSEDED ORDERS STAY IN THE LIST.** MARSCOIN returned six rows for one position: one with `state=1,
+  isFinished=0` carrying the current stop, and five finished ones carrying older prices - including the pre-breakeven
+  stop. ZEC returned twenty.
+- Live rows carry `state=1, isFinished=0` and `vol=0`; finished ones carry state 2 or 3 with `isFinished=1` and the
+  real vol. Do not validate on vol.
+
+**TWO LIVE DEFECTS FOUND AND FIXED IN THE SAME CHANGE, both silent:**
+1. **`_resting_stop_for` handled the bare-list shape only.** On the paginated shape it returned 0.0 for every adopted
+   position, and `/reconcile` then fell back to the 20% margin default as that position's **R denominator** - so every
+   number computed from an adopted position's R was wrong, with nothing in the record saying so.
+2. **It returned the FIRST row matching the position id, finished or not.** With superseded orders in the list that is
+   a coin flip on whether you read the stop that is actually protecting the position - and after a breakeven amend the
+   stale row carries the ORIGINAL stop, which is exactly the number that would make a protected position look
+   unprotected, or the reverse.
+Both now go through one normaliser, `marketdata.normalise_stop_orders`, which also serves a caller holding an older
+client - the fallback applies the same rules rather than silently answering "no stop found".
+**A missing field never reads as finished**: rows are excluded only when POSITIVELY finished, because reporting a
+healthy position as bare is the failure mode this whole check exists to prevent.
+
+**Also observed on the probe, incidentally:** both open positions were carrying armed breakeven stops on the exchange -
+MARSCOIN at 0.12964 against entry 0.12939, ZEC at 1557.61 against entry 1554.65, both entry +0.19%. The 0.90R arm had
+fired on both and the exchange was holding the floor.
+
+Tests: `tests/test_stop_on_book.py` (16). Suite 1456 passing.

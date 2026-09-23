@@ -170,11 +170,31 @@ def test_the_decay_meter_accumulates_on_a_bad_run_and_decays_on_an_ordinary_one(
 
 
 def test_the_meter_crossing_its_threshold_escalates_one_rung():
-    rows = _pool() + [_row("2026-09-2%d" % ((i % 9) + 1), r=-3.0, hour=(i % 20) + 1)
+    """Only when nothing broke: a machine tripwire outranks the meter, because it can
+    point at a fill and say what happened and the meter cannot."""
+    rows = _pool() + [_row("2026-09-1%d" % ((i % 9) + 1), r=-1.4, hour=(i % 20) + 1,
+                           exit_kind="TIMEOUT", exit_reason="CONVEX_TIME_STOP")
                       for i in range(20)]
     card = S.build_daily_card(rows, day="2026-09-22")
     assert S.decay_meter(rows)[1] >= 1.0
+    assert card.tripwires == []
     assert card.verdict == "CHANGE ONE THING"
+
+
+def test_a_named_mechanism_outranks_the_meter():
+    rows = _pool() + [_row("2026-09-1%d" % ((i % 9) + 1), r=-1.4, hour=(i % 20) + 1,
+                           exit_kind="TIMEOUT", exit_reason="CONVEX_TIME_STOP")
+                      for i in range(20)] + [_row("2026-09-22", r=-1.64, exit_kind="STOP")]
+    card = S.build_daily_card(rows, day="2026-09-22")
+    assert S.decay_meter(rows)[1] >= 1.0
+    assert any(t.startswith("M1") for t in card.tripwires)
+    assert card.verdict == "INVESTIGATE"
+
+
+def test_the_card_does_not_claim_a_firing_rate_it_cannot_defend():
+    """Four independent calibrations of the same k returned h = 4.14, 5.05, 8.0, 10.48."""
+    card = S.build_daily_card(_pool() + [_row("2026-09-22")], day="2026-09-22")
+    assert "1-yr" not in chr(10).join(card.lines)
 
 
 def test_an_elevated_meter_says_so_without_demanding_action():

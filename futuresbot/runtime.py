@@ -144,7 +144,11 @@ EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "b
                        "be_stop_attempts", "be_stop_wrong_side", "be_stop_no_position_id",
                        "be_stop_paper_price", "be_stop_bare", "be_stop_cancel_failed",
                        "be_shadow_arm_r", "be_shadow_arm_ts", "be_shadow_touch_ts", "be_shadow_touch_r",
-                       "r_series_n", "r_series_peak_r", "r_series_peak_ts", "r_series_interval_s")
+                       "r_series_n", "r_series_peak_r", "r_series_peak_ts", "r_series_interval_s",
+                       "stop_book_state", "stop_book_price", "stop_book_price_gap_bps",
+                       "stop_book_checks", "stop_book_absent_checks",
+                       "stop_book_unreadable_checks", "stop_book_bare_seconds",
+                       "stop_book_bare_max_seconds", "stop_book_seen_ts")
 
 # Entry gate values stamped on a position and copied, by name, to the closed
 # trade record and the feature-store row.
@@ -2635,6 +2639,10 @@ class FuturesRuntime:
             md["be_stop_price"] = float(be_price)
             md["be_stop_ts"] = time.time()
             md["be_stop_armed_peak_r"] = round(peak_r, 4)
+            # Ask the stop-on-book check to look again shortly: the amend cancels before
+            # it places, so this is the one moment the position is bare BY CONSTRUCTION
+            # and the only moment worth paying a read for. A due stamp, never a sleep.
+            md["stop_book_due_ts"] = time.time() + 3.0
             log.warning("[BREAKEVEN_STOP] %s peak %.2fR -> resting stop %s (entry %s, attempt %d)",
                         position.symbol, peak_r, self._format_price(be_price),
                         self._format_price(entry), attempts + 1)
@@ -6698,6 +6706,7 @@ class FuturesRuntime:
                 # Before the price guard: a bare position whose price is unreadable (WS
                 # down, halted symbol) is the one that must not wait for a quote.
                 self._repair_bare_stop(position, current_price if current_price > 0 else None)
+                self._verify_stop_on_book(position)
             except Exception as exc:               # pragma: no cover - never breaks the monitor
                 log.debug("bare-stop repair failed for %s: %s", position.symbol, exc)
             if current_price <= 0:
@@ -7042,6 +7051,84 @@ class FuturesRuntime:
         except Exception:
             return True
 
+    # ---------------- stop-on-book verification (wc/CARD, 2026-09-23) -------------
+    # SHADOW ONLY. It reads, it records, it never places, cancels, closes or alerts.
+    #
+    # Why: the -1.066R +- 0.038 stop band is the best instrument in this book, and it
+    # measures only where a stop SETTLED - after the fact. Nothing confirms a stop was
+    # ever resting on the exchange while the position was open. That is a capital
+    # question, not a measurement one: on 2026-09-21 a MEXC 2015 precision error left an
+    # XRP position with no resting stop for about six minutes, and `_move_exchange_stop`
+    # cancels before it places, which opens a window by construction.
+    #
+    # Three-valued on purpose. ABSENT and UNREADABLE are different facts and collapsing
+    # them into "bare" would manufacture exactly the false alarm this exists to catch.
+    def _verify_stop_on_book(self, position: FuturesPosition) -> str | None:
+        """SEEN / ABSENT / UNREADABLE, recorded on the position. Never raises.
+
+        Bounded to one attempt and 4s because it runs on the thread that also manages
+        open positions; an earlier unbounded read parked that thread for 94s and then
+        300s. Returns None when it did not run."""
+        if self.config.paper_trade:
+            return None
+        if not self._flag("FUTURES_STOP_BOOK_VERIFY_ENABLED", default=True):
+            return None
+        md = position.metadata
+        if md is None:
+            md = position.metadata = {}
+        now_ts = time.time()
+        # A due stamp in the PAST forces a check now - that is how the entry path and a
+        # breakeven amend ask for one a few seconds later without a sleep. A due stamp in
+        # the future is not yet due. Everything else is throttled to the interval.
+        due = float(md.get("stop_book_due_ts") or 0.0)
+        interval = max(30.0, self._env_float("FUTURES_STOP_BOOK_INTERVAL_SECONDS", 300.0))
+        last = float(md.get("stop_book_checked_ts") or 0.0)
+        forced = 0.0 < due <= now_ts
+        if not forced and now_ts - last < interval:
+            return None
+        try:
+            rows = self.client.get_stop_orders(position.symbol, attempts=1, timeout=4.0)
+            state, price, oid = "ABSENT", 0.0, ""
+            for row in rows:
+                if str(row.get("positionId") or "") != str(position.position_id or ""):
+                    continue
+                sl = float(row.get("stopLossPrice") or 0.0)
+                if sl > 0:
+                    state, price, oid = "SEEN", sl, str(row.get("id") or "")
+                    break
+        except Exception as exc:
+            log.debug("[STOP_BOOK] %s unreadable: %s", position.symbol, exc)
+            state, price, oid = "UNREADABLE", 0.0, ""
+
+        prev_ts = last or float(md.get("stop_book_first_ts") or now_ts)
+        md.setdefault("stop_book_first_ts", now_ts)
+        md["stop_book_checked_ts"] = round(now_ts, 1)
+        md["stop_book_due_ts"] = 0.0
+        md["stop_book_checks"] = float(md.get("stop_book_checks") or 0.0) + 1.0
+        md["stop_book_state"] = {"SEEN": 1.0, "ABSENT": 0.0}.get(state, -1.0)
+        if state == "SEEN":
+            md["stop_book_seen_ts"] = round(now_ts, 1)
+            md["stop_book_price"] = price
+            md["stop_book_order_id"] = oid
+            want = self._effective_stop_price(position)
+            if want > 0 and price > 0:
+                md["stop_book_price_gap_bps"] = round((price - want) / want * 10000.0, 2)
+        elif state == "ABSENT":
+            md["stop_book_absent_checks"] = float(md.get("stop_book_absent_checks") or 0.0) + 1.0
+            gap = max(0.0, now_ts - prev_ts)
+            md["stop_book_bare_seconds"] = round(
+                float(md.get("stop_book_bare_seconds") or 0.0) + gap, 1)
+            md["stop_book_bare_max_seconds"] = round(
+                max(float(md.get("stop_book_bare_max_seconds") or 0.0), gap), 1)
+            log.warning("[STOP_BOOK] %s %s has NO resting stop on the exchange "
+                        "(check %d, cumulative bare %.0fs) - shadow only, nothing "
+                        "was placed or closed", position.symbol, position.side,
+                        int(md["stop_book_checks"]), md["stop_book_bare_seconds"])
+        else:
+            md["stop_book_unreadable_checks"] = float(
+                md.get("stop_book_unreadable_checks") or 0.0) + 1.0
+        return state
+
     @staticmethod
     def _effective_stop_price(position: FuturesPosition) -> float:
         """The stop the exchange should be holding: the breakeven price once this
@@ -7290,12 +7377,17 @@ class FuturesRuntime:
     def _resting_stop_for(self, symbol: str, position_id: str) -> tuple[float, float]:
         """Best-effort read of a position's resting SL/TP (stoporder list).
         Returns (sl_price, tp_price); 0.0 when unavailable."""
+        from futuresbot.marketdata import normalise_stop_orders
         try:
-            payload = self.client.private_get("/api/v1/private/stoporder/list/orders", {"symbol": symbol, "page_num": 1, "page_size": 20})
+            rows = self.client.get_stop_orders(symbol)
+        except AttributeError:                 # a client without the helper, same rules
+            try:
+                rows = normalise_stop_orders(self.client.private_get(
+                    "/api/v1/private/stoporder/list/orders",
+                    {"symbol": symbol, "page_num": 1, "page_size": 20}))
+            except Exception:
+                return 0.0, 0.0
         except Exception:
-            return 0.0, 0.0
-        rows = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(rows, list):
             return 0.0, 0.0
         for row in rows:
             if str(row.get("positionId") or "") != str(position_id):

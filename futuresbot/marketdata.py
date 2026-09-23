@@ -74,6 +74,48 @@ def build_contract_frame(payload: dict[str, Any]) -> pd.DataFrame:
     return frame.dropna(subset=required)
 
 
+def normalise_stop_orders(payload: Any, *, live_only: bool = True) -> list[dict[str, Any]]:
+    """Both payload shapes, superseded orders dropped. Module level so a caller holding
+    an older client can apply the SAME normalisation to a raw private_get instead of
+    silently falling back to "no stop found", which is the failure this replaced."""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, dict):
+        data = data.get("resultList") or data.get("result_list") or []
+    rows = [r for r in (data or []) if isinstance(r, dict)]
+    return [r for r in rows if _stop_order_is_live(r)] if live_only else rows
+
+
+def _stop_order_is_live(row: dict[str, Any]) -> bool:
+    """Exclude orders that are POSITIVELY finished, not everything unrecognised.
+
+    A missing field must never read as "finished": that would report a healthy position
+    as having no stop, which is the false alarm the whole stop-on-book check exists to
+    avoid. Live rows on this account carry state=1 and isFinished=0; superseded ones
+    carry state 2 or 3 with isFinished=1.
+    """
+    if _truthy(row.get("isFinished")):
+        return False
+    state = row.get("state")
+    if state is None:
+        return True
+    try:
+        return int(state) == 1
+    except (TypeError, ValueError):
+        return True
+
+
+def _truthy(value: Any) -> bool:
+    """MEXC returns 0/1 ints here, but a string "0" must not read as True."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no")
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return bool(value)
+
+
 class MexcFuturesClient:
     def __init__(self, config: FuturesConfig):
         self.config = config
@@ -148,6 +190,34 @@ class MexcFuturesClient:
             hook(reason, path, str(error), self.auth_error_streak)
         except Exception:  # pragma: no cover - alerting must never break trading
             log.exception("auth-failure hook raised")
+
+    def get_stop_orders(self, symbol: str, *, live_only: bool = True,
+                        attempts: int | None = None,
+                        timeout: float | None = None) -> list[dict[str, Any]]:
+        """Resting stop/TP orders for one symbol, normalised.
+
+        Two things this endpoint does that cost money if you get them wrong, both
+        verified against the live account on 2026-09-23:
+
+        1. `data` comes back as a BARE LIST here, but the same endpoint elsewhere in
+           MEXC's API returns {"data": {"resultList": [...]}}. Code that handles only
+           one shape silently reads "no stop" on the other - which is how
+           `_resting_stop_for` gave every adopted position a 0.0 stop and therefore the
+           20% default as its R denominator.
+        2. SUPERSEDED ORDERS STAY IN THE LIST. A live MARSCOIN position returned six
+           rows: one with `state=1, isFinished=0` carrying the CURRENT stop, and five
+           finished ones carrying older prices, including the pre-breakeven stop. Taking
+           the first row that matches the position id is a coin flip on whether you read
+           the stop that is actually protecting the position.
+        """
+        try:
+            payload = self.private_get("/api/v1/private/stoporder/list/orders",
+                                       {"symbol": symbol, "page_num": 1, "page_size": 20},
+                                       attempts=attempts, timeout=timeout)
+        except TypeError:                      # pragma: no cover - older client stub
+            payload = self.private_get("/api/v1/private/stoporder/list/orders",
+                                       {"symbol": symbol, "page_num": 1, "page_size": 20})
+        return normalise_stop_orders(payload, live_only=live_only)
 
     def private_get(self, path: str, params: dict[str, Any] | None = None,
                     *, attempts: int | None = None, timeout: float | None = None) -> Any:
