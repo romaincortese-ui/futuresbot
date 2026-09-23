@@ -17678,3 +17678,108 @@ every future trade is a ladder data point on the feed the stop triggers on; and 
 -0.61R). Pre-registered review: after 60 TREND trades have touched -0.8R (~2.5 months), count how many still closed as
 winners; the 6-year data predicts ~5. <= 1 -> reopen TREND -0.8R as a STUDY (P = 0.026 under the 6-year rate); >= 3 ->
 closed. WILDCARD gets no reopen trigger - the corpora already cover >5,000 candidate trades.
+
+## 2026-09-23 - IMPARTIAL ASSESSMENT + REPLAY AUDIT: no edge established; replay grade D; WILDCARD dial above growth-optimal on today's edges
+
+**Owner request.** An impartial assessment with significant focus on the replay mechanics ("all our decisions are based on
+it"), and his intuition that studies ignore how a loss shrinks the balance and therefore later trades. Eight read-only
+lanes plus an adversarial check; fresh account snapshot 2026-09-23 ~16:30Z. Full answer: wc/ASSESS/answer.md (lane
+artefacts in wc/ASSESS/{A..G,V}).
+
+### Performance
+Since 06-27 the two live sleeves closed **176 trades for +16.65R, +0.095R/trade (95% CI -0.13 to +0.40)** - worth
++$120/mo [-$74, +$435] at today's balance and dials, but resting mostly on June to early-August trades. **Current setup
+(since 08-08, 155 trades): +$69/mo [-$185, +$309] at a fixed stake, ~+$31/mo compounded.** WILDCARD averages -0.001R
+per trade in that window (its dollars came from the scaler happening to size winners larger, corr +0.08, n.s.); TREND
++0.078R/trade, +$29/mo [-$58, +$186] over 62 trades. **Realised: -$98.63 on those trades**, because the 09-04 deposit
+multiplied the stake ~6x just before 81 trades averaging -0.136R [-0.41, -0.006]. Account since opening: -$363.92 after
+$250 of fees, mostly before 06-26. Time-weighted return +26.4% while the account lost $100.61 - realised dollars across
+deposits mostly measure deposit timing. **No edge is established**: every interval includes zero, both sleeves are
+negative in R without their five best trades, month-to-month swings are ~$180-235. NOT ESTABLISHED whether the
+post-deposit losses are decay, regime or luck (~2 se, split chosen after the fact).
+
+### The owner's intuition - where it is right, where it is not
+- **The literal channel is tiny: -$3.08 over 176 trades.** For sequential fixed-fraction trades final wealth is a
+  product, so order cannot matter; a loss also shrinks the next loss (saved ~$14 in the post-deposit run).
+- **Its long-run form is not tiny: variance drag ~$22/mo at $949 on today's dials** ($18 WILDCARD, $4.5 TREND) - about
+  the size of WILDCARD's edge since 08-08. **On thin edges a fixed-stake "+$X/month" overstates the typical 12-month
+  outcome 1.8-2.6x.** Replay lines fixed -> compounded: E +$48.78 -> +$20.51; V +$26.22 -> **-$0.43**; H +$78.66 ->
+  +$58.77; B +$90.18 -> +$75.27.
+- **Free-margin sizing under overlap:** available averages 0.926x cash (min 0.72x): -$7.5/mo, plus +-$13/mo of order
+  noise. **Limits delete trades** as the balance falls: 8 minimum-contract skips in 30 days; the per-trade cap zeroed
+  AKE on 09-20. No replay models either.
+- **Expected dollars are not biased** (compounded mean >= fixed-stake mean with a positive edge), and **exit/filter
+  rankings do not change** (agree within ~$5/mo). What moved the dollars was stake timing: -$220, ~70x the literal
+  effect. The record found the fixed-stake problem three times (08-22, standing rule 6 on 09-08, 09-09) and never
+  applied the fix.
+
+### Kelly - NOT ESTABLISHED (every interval starts at 0)
+Growth-optimal WILDCARD dial: live since 08-08 **1.65-1.80%**; replay E/H on fair price 1.55% / 1.80%; replay B 2.55%;
+full live record 7.0-7.8%. **On the edges closest to today, 2.41% is 1.3-1.55x full Kelly** - which removes the growth
+case for the 08-22 raise, itself built on a +659% replay later shown to be broken. TREND at 1.205% is below its
+live-record optimum (3.4%, CI 0 to ~25%), but the pooled 3-year data put TREND's optimum at zero (P = 0.78).
+**Halving WILDCARD to 1.205%: median -$10 to +$1.6/mo (noise); mean -$9 to -$26 only if the edge is real; P(losing half
+the account within 12 months) 22-66% -> 0.3-8%.**
+
+### The replay - GRADE D
+Trust it to REJECT challengers and to compare exit rules on the SAME trades; not for absolute dollars, entries, gates,
+triggers or the stake.
+| layer | grade | evidence |
+|---|---|---|
+| exits, same trade | B- | corr 0.91-0.92 with live, 81% within 0.1R, 4/4 rule effects carry over; on FAIR price 70/70 exit types match |
+| WILDCARD entries | F | 2.1-2.3x live fills; only 26-55% overlap |
+| TREND entries | C | fixed 09-19; 6 matched trades since |
+| sizing in studies | F | fixed stake; a chain reproducing live to -$1.85 over 151 trades exists and no study uses it |
+| absolute dollars | F | live minus replay -$258/mo [-746, +183]; weekly slope 0.10 [-2.9, +1.1] |
+Three causes: (1) **a different population** - live WILDCARD scans the FORMING bar; 25-28% of live fills cannot exist in
+any dataset and 24% of replay candidates are trades live can never take (they are the replay's best, +0.26R, se 0.13);
+-$175 of the one-month live/replay gap; (2) **the wrong exit price** - stops and software exits act on FAIR price,
+replays read last-price wicks: ~+-0.1R/trade (~+-$180/mo), flipping H's baseline (+$78.66 -> -$25.92), the trail, the
+breakeven stop and the early stop; (3) **fixed stake**. **63 separate re-implementations of the exit logic; no replay
+runs the bot's own exit or sizing code - what the record calls "validated" is mostly replay agreeing with replay.**
+Sound: the detectors are the live code; costs match live within 0.03R; same-bar ordering, 1m vs 15m, signal-anchored
+stops and funding (+$2.93 lifetime) are all negligible.
+**Discount rule until repaired:** an exit change priced on fair price x0.3-0.45; on wicks, sign unreliable; an entry,
+gate or trigger change priced on completed bars: **treat as 0**; absolute level: no calibration exists. A replay
+improvement needs ~$25-35/mo to mean +$10 live.
+
+### Past decisions under corrected mechanics
+| decision | record said | corrected | status |
+|---|---|---|---|
+| WILDCARD dial 1.87% -> 2.41% (08-22) | +659% in 208d on a later-broken replay | 1.3-1.55x growth-optimal; median gain vs 1.205% -$1.6 to +$10 | **growth case gone - a risk preference only** |
+| early stop -0.5R/30min (09-08) | +$90.55 to +$114.90/mo in-sample | -$16.7 [-33,-1.4] on completed bars; +$10 to +$33 counting forming-bar fills (n=16) | **shrinks 3-10x; NOT ESTABLISHED** |
+| breakeven stop 0.90R (09-20) | -$4 to +$30, "free insurance" | E +$13.6, H -$21.2, B -$17.3 (each CI excludes 0) | **dollar case gone; sign depends on dataset** |
+| listing veto | vetoed rows -0.278R | -0.16R [-0.41,+0.10] under live exits (~$57/mo less saving) | **shrinks; no longer significant** |
+| gate/trigger dollars from replay E | $/mo at 2.1-4x live fills | exposure effect; fills overstated 2.1-2.3x | **not citable** until entries replay on the forming bar |
+| retain 0.50 (08-29) | +$5.8 vs 0.30 | +$12.2 [-6,+30]; live fills prefer 0.30 by $8 | unchanged, n.s. |
+| TREND at 1.205% (09-12) | "evidence symmetric" | pooled 3y -$21.7/mo median; latest year +$161; live +$29 [-58,+186] | **unresolved** |
+| TREND 1R target cap (09-22) | +$5.85 | **+$7.6 [+4.3, +11.3], positive in all 3 years** | **survives** |
+Struck by the adversarial lane (claims that did NOT survive): "2.41% gains nothing on the median" as a dollar claim;
+"the breakeven stop now loses money"; "the 200% cap now loses money" (~$0); "two entry filters clear $10/mo compounded"
+(a random deletion of the same count gives the same bonus); "the replay fills 4x live" (2.1-2.3x); "forming-bar-only
+fills lose -0.41R" (with the exchange's R: -0.08R [-0.49, +0.75] - only the direction survives); "the listing veto is
+the only significant filter"; "the loss is deposit timing, not the strategy" (NOT ESTABLISHED).
+
+### Improvements, ranked by dollars you can count on
+1. **Fees** - the only lever whose sign is certain: TREND pays 0.06R/trade in fees (3x WILDCARD, tight stops on
+   majors). A venue at <= 0.05% taker for TREND's majors: +$11/mo (TREND) to +$18 (both), [+$10, +$23]. Unknown whether
+   WILDCARD's coins list elsewhere or whether MEXC has a cheaper API tier. 2h to check; build 20-40h; any new account is
+   opened by the owner.
+2. **WILDCARD entries on completed bars only** (as TREND since 09-19): +$20 to +$100, [~-$180, +$120], NOT ESTABLISHED,
+   UNPOWERED live; if adopted, re-test the early stop. 10-20h, pre-registered, on Binance 1m for replay B's year with
+   delisted symbols.
+3. **TREND without the retention trail (or arm >= 2R):** in-sample +$85 [-$28, +$204], one bull market, NOT
+   ESTABLISHED. 4-6h on cached Y0/Y1/Y2.
+4. **WILDCARD dial 2.41% -> 1.205%:** a risk decision, not a dollar ship (see Kelly).
+5. **Replay repair:** preserve the data, an acceptance scorer, fair-price exits, compounding by default - 20-25h; $0
+   direct, makes ~$100-340/mo of past verdicts gradeable.
+
+### Next step and standing rules
+**Next step: preserve the evidence (3-5h, no live change).** 8 cited wc/ study folders are already gone from %TEMP%;
+MEXC fair-price 15m bars reach back only to 2025-09-28 and the start moves forward daily; replay H's data is starting
+to drop. Copy wc/ out of %TEMP%, cache fair- and last-price 15m bars for the E and H symbol sets, and start a daily
+archive of 1m bars, the scan journal, the shadow ledger and the feature store.
+**Study rules from now on:** `compound=True` on free margin; report the fixed-stake mean, the compounded median and an
+interval; convert to dollars at the live fill rate; test every entry filter against a random deletion of the same
+count; no new gate or trigger study on completed-bar data; no configuration change other than the dial until the
+scorer has graded the replay; judge trials in R and time-weighted return so a deposit no longer resets them.
