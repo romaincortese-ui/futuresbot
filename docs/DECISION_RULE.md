@@ -17603,3 +17603,78 @@ MARSCOIN at 0.12964 against entry 0.12939, ZEC at 1557.61 against entry 1554.65,
 fired on both and the exchange was holding the floor.
 
 Tests: `tests/test_stop_on_book.py` (16). Suite 1456 passing.
+
+## 2026-09-23 - SL LADDER: stop at -0.5R ... -0.9R vs -1R. NO SWEET SPOT, NOTHING SHIPS
+
+**Owner question.** "Test SL at -0.5R to -0.90R to see if there is a sweet spot to optimize $ P&L in comparison to the
+current -1R. My intuition is the wins are too small compared to the SL losses." Six lanes (live book on 1m, WILDCARD
+corpora E/V/H/B through the slot book, 6-year TREND 1m corpus, code mechanics, adversarial). Read-only.
+
+**Verdict: keep -1R on both sleeves. WILDCARD gets monotonically worse the tighter the stop; TREND is flat and slightly
+negative at every rung. No rung on either sleeve passes the kill criteria.**
+
+### The intuition, answered
+| measure | avg win | avg loss | wins too small? |
+|---|---|---|---|
+| booked dollars, 152 convex fills | +$6.91 | -$7.73 | **yes** |
+| R, same fills | +1.13R | -0.97R | no |
+| same fills at a constant stake ($4.04/R) | +$4.57 | -$3.90 | no |
+| since the 09-04 deposit, in R | +0.80R | -0.91R | yes |
+| TREND, 6 years, in R | +0.96R | -0.93R | about even |
+
+**The dollar gap is entirely stake drift, not the stop.** The average 1R was $8.27 on losers and $7.33 on winners; the
+top third of trades by stake lost $200 while the other two thirds made $79. A full stop books -1.074R, of which the
+0.074R is fees plus ~0.02R of slippage - the stop fills as designed. **Where the intuition holds in R (since the
+deposit), the cause is the size of the WINS: 54 of 72 winners exit on the retention trail at an average +0.73R.** Small
+wins come from the exit stack, not from the stop. That is a separate question and was not tested here.
+
+### The ladder - change in $/month vs -1R, ANCHORED (same size, same exits, only the exchange stop moves)
+**WILDCARD**, pooled over E + H + B (1R ~ $23): -0.9R **-3** [-33,+26] | -0.8R **-10** [-43,+23] | -0.7R **-20**
+[-59,+19] | -0.6R **-31** [-77,+15] | -0.5R **-46** [-99,+7]. Winners killed / losers trimmed at -0.8R: 81 / 805;
+breakeven needs ~10 trims per killed winner and the data deliver 9.9. Live book (77 fills, 1.06 months): every rung
+negative or ~0, intervals ~$200/mo wide, sign flips around the deposit (-0.8R: -$41 before, +$40 after).
+**TREND**, main years 2023-26 on Binance 1m ($11.51/R, 1,179 trades): -0.9R **-2.2** [-9.4,+4.4] | -0.8R **-3.3**
+[-12.0,+5.0] | -0.7R **-2.7** [-13.7,+7.4] | -0.6R **-4.5** [-18.5,+8.6] | -0.5R **-6.9** [-23.4,+9.0]; 2020-23 agrees
+(-0.0 to -12.8). Each killed winner costs ~$21, each trimmed stop saves ~$2.30; breakeven needs 9 trims per kill and
+six years deliver 9.8. **A tighter stop just swaps one loss for another.**
+Adjusted p for the best rung: WILDCARD 0.52-0.84 on the corpora, 0.66 live; TREND 0.90.
+
+### Why touching -0.8R predicts nothing
+WILDCARD trades that touch -0.8R after the first 30 minutes finish at -0.76R to -0.86R against -0.84R booked by the
+stop, and 7-12% of them finish positive. **The settled "-0.79R average 4h after a stop" holds at -1R; at -0.8R what
+happens next is a coin flip.**
+
+### Why the seed's "free ~9R at -0.8R" disappeared
+- mae_r is ACCURATE on the fair price the stop triggers on (winners off by -0.005R on average; one extra winner killed,
+  USELESS 09-04, $5). The MARSCOIN lag was on the PEAK and on last price, not on the worst price.
+- mae_r exists only from 09-01, and those are the book's mildest winners: 4.7% dipped to -0.7R vs 17.2% before 09-01,
+  because the early stop had already filtered them. That selection is what made -0.8R look free.
+- Stop slippage is a fixed amount in R, mostly fees: a -kR stop books -(k+0.04)R on WILDCARD, -(k+0.07)R on TREND.
+- On the seed's 90 rows the +9.29R gross shrinks to +3.86R before any of the corpus evidence is applied.
+
+### Implementation matters more than the rung
+(a) ANCHORED - what the owner asked for, priced above. (b) NAIVE - the obvious one-line change, because the runtime
+measures R from the LIVE stop: at -0.8R the trail would arm after 0.8R, breakeven at 0.72R (below the already-rejected
+0.75R), the early stop would move to -0.4R (priced at -$86/mo), and at -0.5R the early stop silently switches off on
+about half of fills. (b) is worse at nearly every rung: -$25 to -$134/mo on WILDCARD E. (c) RESIZED (change
+SL_ATR_MULT) - already settled as worse; cross-check agrees (-$6 to -$42/mo TREND, -$16 to -$154/mo WILDCARD E).
+**Even (a) has a trap:** the exchange stop is attached to the entry order and set from the SIGNAL price, not the fill;
+that alone turns WILDCARD -0.7R from +$29 into -$52.
+
+### Named
+NOT REPLICATED: TREND live gains at -0.7/-0.8/-0.9R (+$37/+$31/+$16) - the 6-year data gives -$2.7/-$3.3/-$2.2 and the
+same dates are negative at every rung; WILDCARD Binance -0.8R (+$12.3; E -$9, H -$75). UNPOWERED: TREND live (26
+affected fills, no winner killed, so the bootstrap cannot produce a downside and its p=0.000 means nothing); WILDCARD
+live; TREND in principle (a 1-in-9 vs 1-in-9.8 balance no live sample can separate). REFUTED: WILDCARD -0.7R at +$29,
+full-book TREND -0.8R at +$22.5 (+$5.5 once SOL 08-20's missing hours are restored), the seed's free 9R. The two
+most attractive rungs hang on a 0-or-1 tick rounding (TUT 08-22 survives -0.7R by 0.003 of a tick; NEAR 09-18 survives
+-0.8R by one tick). Not known: whether MEXC triggers at exactly the stop price, whether slippage past -0.8R matches
+-1R, whether MEXC enforces a hidden minimum stop distance.
+
+### Proposed, not applied (needs the owner's go-ahead - it is a code change, $0 of P&L)
+Extend `_ADVERSE_MARKS` (runtime.py:2306) to record touches of -0.6/-0.7/-0.8/-0.9R by name on every convex fill, so
+every future trade is a ladder data point on the feed the stop triggers on; and fix a found defect in the same change -
+**`convex_trough_r` is not written on the check where the early stop fires** (BR 09-17 recorded -0.18R but fired at
+-0.61R). Pre-registered review: after 60 TREND trades have touched -0.8R (~2.5 months), count how many still closed as
+winners; the 6-year data predicts ~5. <= 1 -> reopen TREND -0.8R as a STUDY (P = 0.026 under the 6-year rate); >= 3 ->
+closed. WILDCARD gets no reopen trigger - the corpora already cover >5,000 candidate trades.
