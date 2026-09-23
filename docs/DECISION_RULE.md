@@ -17499,3 +17499,56 @@ September's per-fill sd of 1.12 is the new stationary state (if it persists **ev
 whether the August episode was one defect or two; whether process monitoring would earn its keep with order-rejects and
 stop-on-book instrumented (neither exists on disk, so it cannot be priced); and whether alarms are useless or mildly
 contrarian (forward-14d difference CI [-3.40, +3.12]R on ten alarm dates - one observation of one path).
+
+### 2026-09-23 - DAILY CARD SHIPPED, with seven corrections to the study that specified it
+
+`/daily [today|YYYY-MM-DD]` is live, defaulting to yesterday. `build_daily_card()` in scorecard.py; it is deliberately
+NOT folded into /report, which filters every row to `ts >= TRIAL_START` and is trial-scoped by construction.
+The release gate (wc/CARD, 4 lanes) returned FIX-FIRST on seven defects, each of which changed whether the card told
+the truth or what it would make the owner do. All seven fixed before deploy; suite 1438 passing.
+
+1. **The decay meter estimated its own reference mean from the stream it monitored.** A CUSUM with a moving reference
+   is not a CUSUM: the mean-to-date ran 0.18R above the book mean in late July, which **manufactured four crossings of
+   a once-a-year threshold - one of them on a day with no tripwire at all** - and made the meter structurally blind to
+   the slow decay it exists to catch, because a decaying edge drags the reference down with it. The reference is now a
+   frozen constant, **DECAY_MU_R = 0.1009** (the mean per-fill R of the 191 convex fills to 2026-09-22).
+2. **M6 could print a false ledger alarm on a clean day - the most damaging thing this card could do.** Four unguarded
+   paths: an empty first page left `exch = 0` rather than unknown, so the card would print "ledger 3 vs exchange 0";
+   the recorded side counted convex sleeves while the exchange side counted every close on the account (**13 days in
+   this book carry a non-convex close**); the page walk assumed newest-first ordering that nothing in the repo
+   establishes; and one row with a missing `updateTime` broke the walk on page 1. The walk now must **positively prove
+   it saw past the start of the day or report nothing**, and the comparison is like-for-like.
+3. **M1 graded the wrong population.** Its band was derived on stops (`exit_kind == "STOP"`, 71 rows) but selected on
+   `exit_reason`, which caught 89 rows because EXCHANGE_CLOSE is the book's catch-all - including a -3.79R gap and 18
+   rows whose exit_kind is not even known. **10 firings on 6 days became 5 on 3.**
+4. **M5's whitelist was a list of history, so it accused a working machine.** It held the ten exit reasons that
+   happened to occur in 88 days; the legacy exit ladder reaches eleven more on a convex position, and
+   `PEAK_PROFIT_LOCK` / `PEAK_PROTECTION_GAP_EXIT` are **the same rule** exiting in profit or at a loss - one was
+   sanctioned and the other said INVESTIGATE. A backfilled row now fires M5 once, not twice.
+5. **Entry dates collapsed onto exit dates before 2026-08-07.** `hold_hours` is absent on 32 of 191 convex rows and
+   `_f(None)` is 0.0; `hold_min` is present on all 191 and was never consulted. 7 of those 32 genuinely straddle
+   midnight.
+6. **/daily ran unbounded network calls on the cycle thread**, which also manages open positions - up to ~4 minutes of
+   stall in the worst case. Bounded to one attempt and 5s.
+7. **The card's best line was dead.** `stake_note` was a parameter no caller passed, so *"the same R-day at the book's
+   median stake is $X"* - the line the study called the point of the 09-22 card - never reached a human. Now passed.
+   `HALT_DRAWDOWN_R` was referenced nowhere and the HALT verdict was unreachable; both removed rather than left as
+   documentation of something that does not happen.
+
+**Corrections to the study's own record, measured on the 191 convex fills:** the meter's lifetime peak is **89% on
+2026-07-30, not 77% on 07-25**; 2026-09-08 reads **43%**, not 44%; M1 fires on **3 days** (07-25, 08-08, 08-10), not
+"4 times all inside 08-06..08-10".
+
+**Verdict profile over the 68 days with activity, after the fixes: 56 NO ACTION / 4 NO ACTION-meter-elevated /
+8 INVESTIGATE / 0 CHANGE ONE THING**, peak meter 89%, zero crossings. Every INVESTIGATE is a real event: the
+gap-through/sizing episode (07-25, 07-27, 08-08, 08-10), three backfilled rows from the ledger-censoring era (07-30,
+08-14, 08-21), and the +510 bps BTR slippage outlier (09-11). **Only one firing in the last 43 days.**
+
+**The routine now gates on it.** `futures-daily-assessment/SKILL.md` opens with step 0: run the card first, and **if
+it says NO ACTION, skip DIAGNOSE and VALIDATE entirely for the day.** That is the line that changes behaviour - the
+card gates the proposal machinery rather than merely describing the day.
+
+**Known and accepted, not blocking:** `risk_pct_actual` is absent on 48 of 191 rows (M3 blind there) and the same is
+true in patches for slippage, so the card reports on what it has rather than claiming full coverage. The thresholds
+still have zero out-of-sample days, and if the trailing per-fill sd stays near September's 1.12R rather than 1.57R
+they are about 40% too loose and must be re-derived.

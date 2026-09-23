@@ -38,7 +38,10 @@ def _chart(vals, now=None):
 
 def test_one_point_per_day_using_the_LAST_close():
     """The reader asks where the account ENDED each day, not its mean."""
-    now = time.time()
+    # Anchored at midday, not at time.time(): both rows must land on the SAME UTC
+    # day or the test is asserting the clock. Run between 00:00 and 01:00Z it used
+    # to split them across two days and fail.
+    now = (time.time() // 86400) * 86400 + 43200.0
     rows = [{"ts": now - 3600, "equity_at_close_usdt": 100.0},
             {"ts": now - 60, "equity_at_close_usdt": 150.0}]
     pts = daily_balances(rows, days=7, now_ts=now)

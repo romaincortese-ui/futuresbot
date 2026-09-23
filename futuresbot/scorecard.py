@@ -302,3 +302,326 @@ def overall(kpis: Sequence[KPI]) -> str:
     if not good:
         return "TOO EARLY — not enough closes to judge anything yet"
     return f"ON TRACK — {len(good)} good, nothing failing"
+
+
+# ---------------------------------------------------------------------------
+# THE DAILY CARD (wc/DAILY, pre-registered 2026-09-23)
+# ---------------------------------------------------------------------------
+# The scorecard above grades a TRIAL. This grades a DAY, and the two are
+# different objects: at 2-4 fills a day with a per-fill sd of 1.57R, one day's
+# P&L carries about +-$35 of noise against a $10/month ship bar. Detecting a 25%
+# change in the edge needs 44,551 fills; detecting the $10/month that decides
+# ship/no-ship needs about 240,000. The book has 199. So the card does NOT grade
+# the edge daily. It grades the MACHINE, prints the day's draw as a percentile so
+# an ordinary bad day is visibly ordinary, and says NO ACTION - which is the
+# correct answer on about 95% of days, including the worst dollar day in this
+# book's life (2026-09-08, -$77.16, which reached 44% of a once-a-year alarm and
+# was back to 0% eight days later with nothing changed).
+#
+# Three blocks that must never be mixed:
+#   MACHINE - integrity and mechanics. Readable daily. Act when it fails.
+#   MARKET  - context. NO ACTION IS EVER TAKEN ON THIS BLOCK.
+#   EDGE    - not readable in one day, and the card says so rather than implying
+#             a verdict it cannot support.
+#
+# Every threshold below was frozen on 2026-09-22 from 199 live fills, and each is
+# set OUTSIDE the in-control range rather than at a percentile, so a healthy book
+# does not trip it. THERE IS NOT ONE OUT-OF-SAMPLE DAY YET: the retrospective
+# firing counts in docs/DECISION_RULE.md are in-control estimates, not a test.
+# If the trailing per-fill sd moves more than 25% from 1.57R these must be
+# re-derived - September alone ran 1.12R, which would make them ~40% too loose.
+
+# M1 - a STOP that settles outside this band is a defect (gap, wrong stop price,
+# wrong sizing), not a loss. 63 of 68 live stops settled in [-1.16, -0.98], sd
+# 0.038. Fired 4 times in 88 days, all inside 2026-08-06..08-10.
+STOP_BAND_R = (-1.22, -0.92)
+# M2 - 196 of 199 fills settled at or above -1.5R.
+FILL_FLOOR_R = -1.5
+# M3 - realised risk as a % of equity. All 145 rows since 2026-08-11 sit inside.
+RISK_PCT_BAND = (0.35, 3.0)
+# M4 - one fill's entry slippage. TREND p98 is 14 bps, WILDCARD p98 is 89 bps.
+# Fired once in 88 days (2026-09-10, +510 bps).
+SLIP_MAX_BPS = 100.0
+# M6 - portfolio margin as a % of equity.
+MARGIN_HALT_PCT = 45.0
+# Exit reasons the machine is allowed to produce. Anything else is M5.
+SANCTIONED_EXITS = frozenset({
+    "EXCHANGE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "MANUAL_CLOSE",
+    "CONVEX_RETENTION_TRAIL", "CONVEX_RUNNER_TRAIL", "CONVEX_TIME_STOP",
+    "CONVEX_EARLY_STOP", "CONVEX_PREEMPTED", "PEAK_PROFIT_LOCK",
+    # reachable on a convex position through the legacy exit ladder, and therefore
+    # not evidence of anything when they appear
+    "PEAK_PROTECTION_GAP_EXIT", "BREAKEVEN_PROFIT_LOCK",
+    "BREAKEVEN_PROTECTION_GAP_EXIT", "ADVERSE_PEAK_TRAIL", "MID_PROFIT_LOCK",
+    "TRAILING_TAKE_PROFIT", "HOURLY_TAKE_PROFIT", "STAGNATION_EXIT",
+    "MARGIN_LOSS_EXIT", "STOP_RISK_CAP_EXIT", "LIQ_BUFFER",
+})
+# The decay meter: a one-sided CUSUM on per-fill R, in R units, EXIT-ORDERED
+# (R is not known until a trade closes, so a sequential statistic cannot be
+# updated at entry - the same meter reads 16% exit-ordered and 27% entry-ordered
+# for 2026-09-22, and exit order is the correct one). h is calibrated to fire
+# about once a year on a book that has not changed. It has never fired in 199
+# fills; its lifetime peak is 77%, on 2026-07-25, which was followed by +16.39R
+# over the next 30 days.
+DECAY_K_R = 0.50
+DECAY_H_R = 10.48
+# FROZEN, like every other threshold here: the mean per-fill R of the 191 convex fills
+# to 2026-09-22. Re-derive it only with a note saying what changed and why.
+DECAY_MU_R = 0.1009
+CONVEX_KINDS = frozenset({"WILDCARD", "TREND", "SQUEEZE", "SNIPER"})
+
+
+class DailyCard(NamedTuple):
+    lines: list[str]        # the card itself - eleven lines, verdict last
+    detail: list[str]       # the second message, on request
+    verdict: str            # NO ACTION | INVESTIGATE | CHANGE ONE THING
+    tripwires: list[str]    # the machine tripwires that fired, by name
+
+
+def _day_key(ts: float) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _opened_at(r: Mapping[str, Any]) -> float:
+    """Entry stamp of a close row; `ts` is the EXIT stamp.
+
+    hold_hours is missing on every row before 2026-08-07, where hold_min is present;
+    without the fallback those rows silently date their entry to their exit."""
+    hold_s = _f(r.get("hold_hours")) * 3600.0
+    if hold_s <= 0:
+        hold_s = _f(r.get("hold_min")) * 60.0
+    return _f(r.get("ts")) - hold_s
+
+
+def _r_of(r: Mapping[str, Any]) -> float | None:
+    """R for one fill, preferring the measured ratio over the stored tag.
+
+    pnl/risk is the correct one: the bot's own `r_multiple` disagreed with it on
+    12 of 17 fills in the trial-19 window, by up to 0.12R, because the two use
+    different denominators (signal-anchored vs fill-anchored). Never mix them
+    inside one total.
+    """
+    risk = _f(r.get("risk_usdt"))
+    if risk > 0:
+        return _f(r.get("pnl_usdt")) / risk
+    v = r.get("r_multiple")
+    return None if v is None else _f(v)
+
+
+def decay_meter(rows: Sequence[Mapping[str, Any]], *, until_ts: float | None = None
+                ) -> tuple[float, float]:
+    """(CUSUM value in R, fraction of the alarm threshold), exit-ordered.
+
+    C_i = max(0, C_{i-1} - (R_i - DECAY_MU_R) - k). It accumulates only while fills
+    come in worse than the frozen reference by more than k, and decays to zero on
+    an ordinary one, which is why the worst dollar day in the book's history
+    (2026-09-08, -$77.16) reached 43% and returned to 0% eight days later without
+    anything being changed. Measured over the 191 convex fills to 2026-09-22: zero
+    crossings, peak 89% on 2026-07-30.
+
+    The reference is a CONSTANT and must stay one. Estimating it from the stream it
+    monitors manufactured four crossings of a once-a-year threshold, one of them on a
+    day with no tripwire at all, and would hide exactly the slow decay this is for.
+    """
+    c = 0.0
+    for r in sorted(rows, key=lambda x: _f(x.get("ts"))):
+        if until_ts is not None and _f(r.get("ts")) > until_ts:
+            break
+        rr = _r_of(r)
+        if rr is None:
+            continue
+        c = max(0.0, c - (rr - DECAY_MU_R) - DECAY_K_R)
+    return c, (c / DECAY_H_R if DECAY_H_R > 0 else 0.0)
+
+
+def day_draw(net_r: float, n_fills: int, pool: Sequence[float],
+             *, draws: int = 20000, seed: int = 0) -> str:
+    """How ordinary the day's draw was, CONDITIONAL ON THE FILL COUNT.
+
+    Any daily chart that does not condition on the fill count is measuring the
+    fill count: P(a day <= -4.83R) is 1-in-180 at 2 fills, 1-in-22 at 4 and
+    1-in-8 at 7. Fixed seed, so the same day always prints the same number.
+    """
+    import random
+    if n_fills <= 0 or len(pool) < 5:
+        return ""
+    rng = random.Random(seed)
+    hits = 0
+    for _ in range(draws):
+        if sum(rng.choice(pool) for _ in range(n_fills)) <= net_r:
+            hits += 1
+    p = max(hits, 1) / float(draws)
+    if p < 0.5:
+        return "1-in-%d day at %d fills" % (round(1.0 / p), n_fills)
+    return "%.0fth pct at %d fills" % (p * 100.0, n_fills)
+
+
+def _tripwires(day_rows: Sequence[Mapping[str, Any]], *,
+               exchange_closes: int | None, recorded_closes: int | None,
+               margin_pct: float | None) -> tuple[list[str], list[str]]:
+    """(fired, detail lines). Six binary checks, each decidable from one fill."""
+    fired: list[str] = []
+    detail: list[str] = []
+
+    stops = [r for r in day_rows
+             if str(r.get("exit_kind") or "").upper() == "STOP"
+             and (_r_of(r) or 0.0) < 0]
+    srs = [x for x in (_r_of(r) for r in stops) if x is not None]
+    if not srs:
+        detail.append("  stops     none today                    band NA")
+    else:
+        bad = [x for x in srs if not (STOP_BAND_R[0] <= x <= STOP_BAND_R[1])]
+        if bad:
+            fired.append("M1 stop outside [%.2f,%.2f]R: %s"
+                         % (STOP_BAND_R[0], STOP_BAND_R[1],
+                            ", ".join("%.2f" % x for x in bad)))
+        detail.append("  stops     %s   band [%.2f,%.2f]"
+                      % (" ".join("%.2f" % x for x in srs), *STOP_BAND_R))
+
+    deep = [(r.get("symbol"), x) for r in day_rows
+            for x in [_r_of(r)] if x is not None and x < FILL_FLOOR_R]
+    if deep:
+        fired.append("M2 fill below %.1fR: %s"
+                     % (FILL_FLOOR_R, ", ".join("%s %.2f" % d for d in deep)))
+
+    risks = [_f(r.get("risk_pct_actual")) for r in day_rows
+             if r.get("risk_pct_actual") is not None]
+    if risks:
+        out = [x for x in risks if not (RISK_PCT_BAND[0] <= x <= RISK_PCT_BAND[1])]
+        if out:
+            fired.append("M3 risk%% outside [%.2f,%.1f]: %s"
+                         % (*RISK_PCT_BAND, ", ".join("%.2f" % x for x in out)))
+        detail.append("  risk%%     %.2f - %.2f                    band [%.2f, %.1f]"
+                      % (min(risks), max(risks), *RISK_PCT_BAND))
+
+    slips = [(r.get("symbol"), _f(r.get("entry_slippage_bps"))) for r in day_rows
+             if r.get("entry_slippage_bps") is not None]
+    # SIGNED: entry_slippage_bps is already side-adjusted and positive means the
+    # fill was WORSE than the signal price (runtime.py ~9665). A favourable fill is
+    # not a defect - grading |slippage| fired M4 on 2026-09-16, a five-for-five day
+    # whose worst "offence" was a WILDCARD entry filling 107 bps in our favour.
+    hot = [s for s in slips if s[1] > SLIP_MAX_BPS]
+    if hot:
+        fired.append("M4 slippage over %.0f bps: %s"
+                     % (SLIP_MAX_BPS, ", ".join("%s %+.0f" % s for s in hot)))
+    if slips:
+        detail.append("  slippage  %+.0f to %+.0f bps                 limit %.0f"
+                      % (min(s[1] for s in slips), max(s[1] for s in slips), SLIP_MAX_BPS))
+
+    odd = sorted({str(r.get("exit_reason") or "?").upper()
+                  .replace("_RECONSTRUCTED", "") for r in day_rows}
+                 - SANCTIONED_EXITS)
+    recon = sum(1 for r in day_rows if _f(r.get("reconstructed")) > 0
+                or "RECONSTRUCTED" in str(r.get("exit_reason") or "").upper())
+    if odd or recon:
+        fired.append("M5 unsanctioned exit or backfilled row: %s%s"
+                     % (", ".join(odd) or "-", " (%d backfilled)" % recon if recon else ""))
+    if day_rows:
+        detail.append("  exits     %s"
+                      % ", ".join(sorted({str(r.get("exit_reason") or "?") for r in day_rows})))
+
+    if exchange_closes is not None and recorded_closes is not None:
+        if recorded_closes != exchange_closes:
+            fired.append("M6 ledger %d vs exchange %d" % (recorded_closes, exchange_closes))
+        detail.append("  ledger    %d recorded = %d exchange closes"
+                      % (recorded_closes, exchange_closes))
+    else:
+        detail.append("  ledger    not checked - exchange history unavailable")
+    if margin_pct is not None:
+        if margin_pct >= MARGIN_HALT_PCT:
+            fired.append("M6 portfolio margin %.0f%% >= %.0f%%" % (margin_pct, MARGIN_HALT_PCT))
+        detail.append("  margin    %.0f%% of equity                   halt at %.0f%%"
+                      % (margin_pct, MARGIN_HALT_PCT))
+    return fired, detail
+
+
+def build_daily_card(rows: Sequence[Mapping[str, Any]], *, day: str,
+                     exchange_closes: int | None = None,
+                     recorded_closes: int | None = None,
+                     open_positions: int = 0,
+                     refused: int | None = None,
+                     margin_pct: float | None = None,
+                     stake_note: str = "") -> DailyCard:
+    """The card for one UTC day, built from the feature store alone.
+
+    P&L is ENTRY-DATED PRIMARY - the card grades decisions, and the decision was
+    made at entry - with the exit-dated figure always printed beside it, because
+    25% of fills straddle a UTC boundary and the two differed by $8.71 on the day
+    this card was designed around. The decay meter is exit-ordered by necessity.
+    """
+    conv = [r for r in rows if str(r.get("kind") or "").upper() in CONVEX_KINDS]
+    entered = [r for r in conv if _day_key(_opened_at(r)) == day]
+    exited = [r for r in conv if _day_key(_f(r.get("ts"))) == day]
+    upto = [r for r in conv if _day_key(_f(r.get("ts"))) <= day]
+
+    ent_r = [x for x in (_r_of(r) for r in entered) if x is not None]
+    ext_r = [x for x in (_r_of(r) for r in exited) if x is not None]
+    ent_usd = sum(_f(r.get("pnl_usdt")) for r in entered)
+    ext_usd = sum(_f(r.get("pnl_usdt")) for r in exited)
+
+    # The ledger check must compare LIKE WITH LIKE: the exchange counts every close on
+    # the account, so the recorded side has to be every settled row, not the convex
+    # subset the rest of the card grades. Passing the convex count would fire a false
+    # M6 on all 13 days in this book that carry a non-convex close, and a false ledger
+    # alarm is the fastest way to teach the reader to ignore the card.
+    all_exited = sum(1 for r in rows if _day_key(_f(r.get("ts"))) == day)
+    fired, mach_detail = _tripwires(
+        exited, exchange_closes=exchange_closes,
+        recorded_closes=(recorded_closes if recorded_closes is not None else all_exited)
+        if exchange_closes is not None else None,
+        margin_pct=margin_pct)
+
+    cusum, frac = decay_meter(upto)
+    pool = [x for x in (_r_of(r) for r in upto) if x is not None]
+    draw = day_draw(sum(ent_r), len(ent_r), pool)
+
+    breadths = [_f(r.get("breadth_24h")) for r in entered if r.get("breadth_24h") is not None]
+    if not breadths:
+        market = "--"
+    else:
+        market = "broad" if _median(breadths) >= 0.45 else "narrow"
+
+    if frac >= 1.0:
+        verdict = "CHANGE ONE THING"
+    elif fired:
+        verdict = "INVESTIGATE"
+    else:
+        verdict = "NO ACTION"
+    if frac >= 0.40 and verdict == "NO ACTION":
+        verdict = "NO ACTION - meter elevated"
+
+    lines = [
+        "DAILY %s  00:00-24:00Z" % day,
+        "%d in / %d out / %d open%s" % (len(entered), len(exited), open_positions,
+                                        " / %d refused" % refused if refused is not None else ""),
+        "",
+        "MACHINE   %-15s %d of 6 tripwires" % ("OK" if not fired else "CHECK", len(fired)),
+        "MARKET    %-15s context only" % market,
+        "EDGE      %-15s of a 1-yr alarm" % ("%.0f%%" % (frac * 100.0)),
+        "",
+        "  %-13s /  %+.2fR exit" % ("%+.2fR entry" % sum(ent_r), sum(ext_r)),
+        "  %-13s /  %s" % ("%s$%.2f" % ("-" if ent_usd < 0 else "+", abs(ent_usd)),
+                             "%s$%.2f" % ("-" if ext_usd < 0 else "+", abs(ext_usd))),
+        "  %s" % (draw or "no fills entered"),
+        "",
+        ">>> %s" % verdict,
+    ]
+
+    detail = ["MACHINE"] + mach_detail
+    for f in fired:
+        detail.append("  ! " + f)
+    detail += [
+        "",
+        "MARKET  (no action is ever taken on this block)",
+        "  breadth %s" % ("%.2f" % _median(breadths) if breadths else "--"),
+        "",
+        "EDGE  (not readable in one day - this is the honest part)",
+        "  decay meter  %.2f of %.2fR = %.0f%%" % (cusum, DECAY_H_R, frac * 100.0),
+        "  a day cannot see a $10/month change: that needs ~240,000 fills.",
+        "  cumulative R since the last change is the number that decides;",
+        "  9:1 odds that something changed needs -13R to -17R.",
+    ]
+    if stake_note:
+        detail.append("  " + stake_note)
+    return DailyCard(lines=lines, detail=detail, verdict=verdict, tripwires=fired)

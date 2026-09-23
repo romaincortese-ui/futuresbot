@@ -4217,6 +4217,118 @@ class FuturesRuntime:
                 "max peak before cut <b>{:+.2f}R</b> \u00b7 cut above 1R: <b>{}</b>{}"
                 .format(len(fires), "" if len(fires) == 1 else "s", mean_r, worst, above, flag))
 
+    def _build_daily_message(self, day: str | None = None) -> str:
+        """/daily - one UTC day, graded on the MACHINE rather than on the money.
+
+        Deliberately NOT part of /report: /report filters every row to
+        `ts >= TRIAL_START` and is trial-scoped by construction, so mixing a daily
+        object into it would create a third convention on top of the two
+        (entry-dated, exit-dated) this command already has to keep straight.
+
+        Defaults to YESTERDAY, because a partial day grades a partial sample and
+        this whole card exists to stop small samples being read as verdicts.
+        `/daily today` and `/daily YYYY-MM-DD` are both accepted.
+        """
+        from futuresbot.scorecard import build_daily_card
+
+        now = datetime.now(timezone.utc)
+        key = (day or "").strip().lower()
+        if key in ("", "yesterday"):
+            target = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        elif key == "today":
+            target = now.strftime("%Y-%m-%d")
+        else:
+            try:
+                target = datetime.strptime(key, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except ValueError:
+                return "❓ <b>/daily</b> — use <code>/daily</code>, <code>/daily today</code> or <code>/daily YYYY-MM-DD</code>."
+
+        rows = self._feature_rows_cached()
+
+        # Exchange truth for the ledger check, bounded to a handful of pages: one
+        # day of closes never needs the 60-page walk /report does, and this command
+        # is meant to be cheap enough to run every morning.
+        exch = None
+        try:
+            start = datetime.strptime(target, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            lo, hi = start.timestamp(), start.timestamp() + 86400.0
+            # The walk must prove it saw the whole day or report NOTHING. An empty
+            # first page used to leave exch=0, which is not None, so the card printed
+            # "ledger 3 vs exchange 0" on a clean day - the single most damaging false
+            # alarm it could produce. Bounded to one attempt and 5s because /daily runs
+            # on the cycle thread, which also manages open positions.
+            seen, page, complete = 0, 1, False
+            while page <= 5:
+                payload = self.client.private_get(
+                    "/api/v1/private/position/list/history_positions",
+                    {"page_num": page, "page_size": 100}, attempts=1, timeout=5.0)
+                data = payload.get("data", {}) if isinstance(payload, dict) else {}
+                batch = data if isinstance(data, list) else (data.get("resultList") or [])
+                if not batch:
+                    break
+                stamps = [float(r.get("updateTime") or 0) / 1000.0 for r in batch]
+                seen += sum(1 for t in stamps if lo <= t < hi)
+                if any(0 < t < lo for t in stamps):
+                    complete = True                        # positively walked past the day
+                    break
+                page += 1
+            exch = seen if complete else None
+        except Exception as exc:                           # pragma: no cover - fails soft
+            log.debug("daily: exchange history unavailable: %s", exc)
+
+        refused = None
+        try:
+            from futuresbot import shadow_ledger as shadow
+            refused = sum(1 for r in shadow.load_rows(self._shadow_ledger_path())
+                          if datetime.fromtimestamp(float(r.get("ts") or 0.0),
+                                                    tz=timezone.utc).strftime("%Y-%m-%d") == target)
+        except Exception as exc:                           # pragma: no cover
+            log.debug("daily: shadow ledger unavailable: %s", exc)
+
+        equity = float(self._last_known_equity() or 0.0)
+        margin = sum(float(getattr(p, "margin_usdt", 0.0) or 0.0)
+                     for p in self.open_positions.values())
+        # What the same day would have cost at the stake this book used to run. Most
+        # apparent "performance change" here is stake change: the median risk per fill
+        # moved more than 13x inside the sample, so a dollar total compared across that
+        # path is comparing sizing decisions, not performance.
+        note = ""
+        try:
+            from futuresbot.scorecard import CONVEX_KINDS, _day_key, _f, _opened_at, _r_of
+            day_r = sum(x for x in (_r_of(r) for r in rows
+                                    if str(r.get("kind") or "").upper() in CONVEX_KINDS
+                                    and _day_key(_opened_at(r)) == target)
+                        if x is not None)
+            prior = sorted(_f(r.get("risk_usdt")) for r in rows
+                           if _day_key(_f(r.get("ts"))) < target and _f(r.get("risk_usdt")) > 0)
+            if prior and abs(day_r) > 0.01:
+                med = prior[len(prior) // 2]
+                note = ("the same R-day at the book's median stake ($%.2f/R) is $%+.2f"
+                        % (med, day_r * med))
+        except Exception as exc:                           # pragma: no cover - a note only
+            log.debug("daily: stake note unavailable: %s", exc)
+
+        card = build_daily_card(
+            rows, day=target, exchange_closes=exch,
+            open_positions=len(self.open_positions),
+            refused=refused, stake_note=note,
+            margin_pct=(margin / equity * 100.0) if equity > 0 else None)
+
+        body = "\n".join(card.lines)
+        out = ["<code>%s</code>" % html.escape(body), ""]
+        if card.tripwires:
+            out.append("<b>Tripwires</b>")
+            for t in card.tripwires:
+                out.append("• " + html.escape(t))
+            out.append("")
+        out.append("<code>%s</code>" % html.escape("\n".join(card.detail)))
+        out.append("")
+        out.append("<i>The card grades the MACHINE. It cannot grade the edge in one "
+                   "day — that needs 30-60 fills — and it says NO ACTION on about "
+                   "95% of days by design, including the worst dollar day this book "
+                   "has had. Thresholds frozen 2026-09-22; see DECISION_RULE.md.</i>")
+        return "\n".join(out)
+
     def _build_report_message(self) -> str:
         """/report — the pre-registered scorecard, plus the context to read it in.
 
@@ -4691,7 +4803,7 @@ class FuturesRuntime:
         self._save_state()
 
     def _commands_hint(self) -> str:
-        return "/status /why /pnl /report /simulation /logs /reconcile /pause /resume /arm [SYMBOL] /close [SYMBOL|all] /help"
+        return "/status /why /pnl /daily /report /simulation /logs /reconcile /pause /resume /arm [SYMBOL] /close [SYMBOL|all] /help"
 
     def _build_help_message(self) -> str:
         return (
@@ -4700,6 +4812,10 @@ class FuturesRuntime:
             "/status — Futures status and every open position\n"
             "/why — Why no trade: slots, last scan, and the gate that stopped each 24h/48h top mover\n"
             "/pnl — Realized and open futures P&L across all symbols\n"
+            "/daily [today|YYYY-MM-DD] — One UTC day, graded on the MACHINE: "
+            "integrity, stops in band, sizing, slippage, and the day's draw as a "
+            "percentile. Says NO ACTION on ~95% of days on purpose — a day cannot "
+            "grade the edge. Defaults to yesterday\n"
             "/logs — Recent runtime activity\n"
             "/reconcile — Adopt any untracked MEXC open positions into bot state (orphan recovery)\n"
             "/pause — Pause new entries (open positions stay managed)\n"
@@ -5155,6 +5271,9 @@ class FuturesRuntime:
                     elif command == "/pnl":
                         self._notify(self._build_pnl_message())
                         self._record_activity("Telegram: /pnl")
+                    elif command == "/daily":
+                        self._notify(self._build_daily_message(arg))
+                        self._record_activity("Telegram: /daily")
                     elif command == "/report":
                         self._notify(self._build_report_message())
                         self._record_activity("Telegram: /report")
