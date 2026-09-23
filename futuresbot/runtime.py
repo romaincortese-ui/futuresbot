@@ -145,6 +145,7 @@ EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "b
                        "be_stop_paper_price", "be_stop_bare", "be_stop_cancel_failed",
                        "be_shadow_arm_r", "be_shadow_arm_ts", "be_shadow_touch_ts", "be_shadow_touch_r",
                        "r_series_n", "r_series_peak_r", "r_series_peak_ts", "r_series_interval_s",
+                       "t_adverse_60", "t_adverse_70", "t_adverse_80", "t_adverse_90",
                        "stop_book_state", "stop_book_price", "stop_book_price_gap_bps",
                        "stop_book_checks", "stop_book_absent_checks",
                        "stop_book_unreadable_checks", "stop_book_bare_seconds",
@@ -2303,15 +2304,25 @@ class FuturesRuntime:
     # $304/mo) and walk-forward says X must never be refit from the same 77 rows
     # it was read off. Recording time-to-depth on live fills makes the axis
     # tunable from data the bot gathers itself, at zero behavioural cost.
-    _ADVERSE_MARKS = ((0.25, "t_adverse_25"), (0.50, "t_adverse_50"), (0.75, "t_adverse_75"))
+    #
+    # 2026-09-23 (wc/SL): extended with the -0.6 / -0.7 / -0.8 / -0.9R rungs of the stop
+    # ladder, so every future fill is a data point on the price feed the stop actually
+    # triggers on. The ladder was priced on six years of 1m TREND data and three
+    # WILDCARD corpora and no rung shipped; the pre-registered review is to count, after
+    # 60 TREND fills have touched -0.8R, how many of them still closed as winners. The
+    # six-year data predicts about 5. <= 1 reopens TREND -0.8R as a study (P = 0.026
+    # under the six-year rate); >= 3 closes it.
+    _ADVERSE_MARKS = ((0.25, "t_adverse_25"), (0.50, "t_adverse_50"), (0.60, "t_adverse_60"),
+                      (0.70, "t_adverse_70"), (0.75, "t_adverse_75"), (0.80, "t_adverse_80"),
+                      (0.90, "t_adverse_90"))
 
     def _stamp_adverse_marks(self, position: FuturesPosition, r_now: float,
                              elapsed_min: float) -> bool:
-        """First time this position reached -0.25R / -0.50R / -0.75R, in minutes.
+        """First time this position reached each depth in _ADVERSE_MARKS, in minutes.
 
         Decision-free: written, never read by any entry or exit path. Stamped once
-        per depth, so at most three writes per position. Returns True when a mark
-        was newly set, so the caller can persist.
+        per depth, so at most one write per depth per position. Returns True when a
+        mark was newly set, so the caller can persist.
         """
         md = position.metadata
         if md is None:
@@ -2419,6 +2430,16 @@ class FuturesRuntime:
         if gross is None or not math.isfinite(gross):
             return False
         r_now = gross / risk_pct
+        # THE TROUGH, on this poll too. `convex_trough_r` used to be written only by the
+        # trail, which runs AFTER this function; on the poll where the early stop fires
+        # the trail never runs, so the trade record kept a trough from before the cut.
+        # BR 2026-09-17 recorded mae_r -0.18R and was cut at -0.61R. Same denominator as
+        # the trail, same decision-free write.
+        trough_r = self._metadata_float(md, "convex_trough_r")
+        if trough_r is None or r_now < trough_r:
+            if position.metadata is None:
+                position.metadata = {}
+            position.metadata["convex_trough_r"] = round(r_now, 4)
         # SHADOW DIAGNOSTIC — runs whether or not the rule is armed.
         if self._stamp_adverse_marks(position, r_now, elapsed_min):
             self._save_state()
