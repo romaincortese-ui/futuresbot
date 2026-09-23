@@ -61,9 +61,25 @@ def _cenv(name: str, default: float) -> float:
         return float(default)
 
 
-def convex_arm_r() -> float:
-    """Peak R at which the retention trail arms. Live: FUTURES_CONVEX_TRAIL_ARM_R."""
-    return _cenv("FUTURES_CONVEX_TRAIL_ARM_R", CONVEX_ARM_R)
+def convex_arm_r(sleeve: str | None = None) -> float:
+    """Peak R at which the retention trail arms. Live: FUTURES_CONVEX_TRAIL_ARM_R,
+    overridden for TREND by FUTURES_TREND_TRAIL_ARM_R when set - the same fallback
+    runtime._trail_arm_r_for applies. No sleeve = the shared arm, as before."""
+    shared = _cenv("FUTURES_CONVEX_TRAIL_ARM_R", CONVEX_ARM_R)
+    if str(sleeve or "").upper() == "TREND":
+        return _cenv("FUTURES_TREND_TRAIL_ARM_R", shared)
+    return shared
+
+
+def convex_trail_enabled(sleeve: str | None = None) -> bool:
+    """False only for TREND under FUTURES_TREND_TRAIL_ENABLED=0, mirroring
+    runtime._trail_enabled_for. The master FUTURES_CONVEX_RUNNER_TRAIL switch has
+    never been mirrored here and is still not: only the TREND switch is added, so
+    no row scores differently while it is unset."""
+    if str(sleeve or "").upper() != "TREND":
+        return True
+    raw = os.environ.get("FUTURES_TREND_TRAIL_ENABLED", "1")
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def convex_retain(peak_r: float) -> float:
@@ -251,7 +267,11 @@ def _resolved(row: dict[str, Any], outcome: float, kind: str, ts: float,
         # row, a scorecard can detect the mix instead of an audit having to.
         out["trail_retain"] = round(_cenv("FUTURES_CONVEX_TRAIL_RETAIN_FRAC",
                                           CONVEX_RETAIN), 3)
-        out["trail_arm_r"] = round(convex_arm_r(), 3)
+        out["trail_arm_r"] = round(convex_arm_r(row.get("sleeve")), 3)
+        if not convex_trail_enabled(row.get("sleeve")):
+            # Stamped only when the TREND trail is off, so rows scored under the
+            # shared policy carry exactly the keys they always did.
+            out["trail_enabled"] = 0
         out["trail_ratchet_r"] = round(_cenv("FUTURES_CONVEX_TRAIL_RATCHET_R", 3.0), 3)
         out["trail_ratchet_retain"] = round(_cenv("FUTURES_CONVEX_TRAIL_RATCHET_RETAIN",
                                                   0.75), 3)
@@ -282,7 +302,8 @@ def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], n
     if one_r <= 0:
         return _resolved(row, 0.0, "degenerate", now_ts, convex=convex)
     floor_min = convex_cost_floor_mult() * cost_r(row)
-    arm_r = convex_arm_r()
+    arm_r = convex_arm_r(row.get("sleeve"))
+    trail_on = convex_trail_enabled(row.get("sleeve"))
     seen = False
     last_mark = entry
     peak_r = 0.0
@@ -299,7 +320,7 @@ def resolve_outcome(row: dict[str, Any], bars: list[tuple[int, float, float]], n
         if ts - float(row["ts"]) > horizon_s:
             break
         seen = True
-        armed = convex and peak_r >= arm_r
+        armed = convex and trail_on and peak_r >= arm_r
         level = max(convex_retain(peak_r) * peak_r, floor_min) if armed else 0.0
         # An armed position's retention floor sits ABOVE its hard stop, so on a
         # bar spanning both, the floor is what price reaches first — live polls

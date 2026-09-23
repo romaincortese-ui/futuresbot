@@ -163,7 +163,11 @@ ENTRY_GATE_KEYS = ("atr_pct", "calm_ratio", "vol_z", "range_24h", "turnover_24h_
                    "trend_flag", "trend_flag_btc_24h", "trend_flag_btc_72h",
                    "trend_flag_btc_168h", "trend_flag_dist_7d_high", "trend_flag_tp_r",
                    "trend_flag_tp_capped", "trend_flag_age_s", "trend_flag_error",
-                   "trend_flag_tp_r_orig", "trend_flag_tp_price_orig")
+                   "trend_flag_tp_r_orig", "trend_flag_tp_price_orig",
+                   # WILDCARD bar convention (FUTURES_WILDCARD_COMPLETED_BARS): 1.0
+                   # completed / 0.0 forming, and under completed bars the gate bar's
+                   # own close and its age at the scan. Lets the book be split later.
+                   "wildcard_completed_bars", "wildcard_gate_close", "wildcard_bar_age_s")
 
 
 class FuturesRuntime:
@@ -1665,6 +1669,67 @@ class FuturesRuntime:
         return (self._sleeve_kind(position) in ("WILDCARD", "SQUEEZE", "TREND")
                 and self._flag("FUTURES_WILDCARD_CONVEX_EXIT_ENABLED", default=False))
 
+    # ------------------------------------------------------------------
+    # PER-SLEEVE TRAIL / BREAKEVEN OVERRIDES (TREND only), 2026-09-23.
+    #
+    # The retention trail and the breakeven stop are shared by WILDCARD, SQUEEZE
+    # and TREND and read one set of env vars (DECISION_RULE: "a per-sleeve arm
+    # is code"). The impartial assessment of 2026-09-23 ranked "TREND without
+    # the retention trail (or arming at >= 2R)" third: in-sample +$85/month
+    # [-$28, +$204], NOT ESTABLISHED - one bull market, expect heavy shrinkage.
+    # The reasoning is structural: a trend-follower earns in the right tail and
+    # the 1R-arm / 50% floor cuts it (live trail exits, both sleeves: mean peak
+    # +1.51R, exit +0.70R). These three accessors let that be TESTED and, if the
+    # pre-registered test passes, switched on by env alone. Every one falls back
+    # to the shared value when its TREND variable is unset, so nothing changes by
+    # default, and only a TREND position ever reads a TREND variable, so no value
+    # of them can reach WILDCARD or SQUEEZE (the arm family is refuted there:
+    # DECISION_RULE, four grids).
+    # ------------------------------------------------------------------
+    def _trail_enabled_for(self, position: FuturesPosition) -> bool:
+        """Whether the retention trail may fire on THIS position.
+
+        FUTURES_CONVEX_RUNNER_TRAIL stays the master switch: off is off for every
+        sleeve, exactly as before. FUTURES_TREND_TRAIL_ENABLED (default 1) sits
+        under it and switches the trail off for TREND alone. With it off a TREND
+        position keeps its -1R stop, its TP (3R, or 1R while BTC is flagged
+        exhausted), the breakeven stop and the 24h clock - the variant the
+        assessment priced was stop + TP + 24h clock."""
+        if not self._flag("FUTURES_CONVEX_RUNNER_TRAIL", default=True):
+            return False
+        if self._sleeve_kind(position) == "TREND":
+            return self._flag("FUTURES_TREND_TRAIL_ENABLED", default=True)
+        return True
+
+    def _trail_arm_r_for(self, position: FuturesPosition) -> float:
+        """Peak R at which the retention trail arms on THIS position.
+
+        FUTURES_TREND_TRAIL_ARM_R overrides the shared FUTURES_CONVEX_TRAIL_ARM_R
+        (default 1.0) on TREND and falls back to it when unset. Only the GATE
+        moves: once armed, the floor is the same retain x peak with the same 3R
+        ratchet and cost floor, so the retention invariant holds at any arm."""
+        shared = self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0)
+        if self._sleeve_kind(position) == "TREND":
+            return max(0.0, self._env_float("FUTURES_TREND_TRAIL_ARM_R", shared))
+        return max(0.0, shared)
+
+    def _breakeven_arm_r_for(self, position: FuturesPosition) -> float:
+        """Peak R at which the breakeven stop arms on THIS position (0 = off).
+
+        FUTURES_TREND_BREAKEVEN_ARM_R overrides the shared
+        FUTURES_CONVEX_BREAKEVEN_ARM_R (live 0.90) on TREND, falling back to it
+        when unset. The trail switch deliberately does NOT carry the breakeven
+        stop with it: that is a separate mechanism with its own owner decision
+        (2026-09-20, trial 21F) and its own pre-registered kill, and the
+        assessment says leave it alone. It is separately switchable for ONE
+        reason: the in-sample figure behind this test (lane D's counterfactual,
+        resting orders only) had no breakeven stop, so the test must be able to
+        reproduce that variant as well as the one that keeps it."""
+        shared = self._env_float("FUTURES_CONVEX_BREAKEVEN_ARM_R", 0.0)
+        if self._sleeve_kind(position) == "TREND":
+            return max(0.0, self._env_float("FUTURES_TREND_BREAKEVEN_ARM_R", shared))
+        return max(0.0, shared)
+
     def _skips_discretionary_locks(self, position: FuturesPosition) -> bool:
         """The profit-lock / micro-lock stack is PMT machinery: its triggers are
         denominated in MARGIN percent, which only means the same thing across
@@ -2091,12 +2156,13 @@ class FuturesRuntime:
         like the trail's own arithmetic.
 
         Returns None when the trail cannot fire at all - non-convex,
-        FUTURES_CONVEX_RUNNER_TRAIL off, or no usable stop distance - rather than
-        printing a floor that will never be reached.
+        FUTURES_CONVEX_RUNNER_TRAIL off, FUTURES_TREND_TRAIL_ENABLED=0 on a TREND
+        position, or no usable stop distance - rather than printing a floor that
+        will never be reached.
         """
         if not self._is_wildcard_convex(position):
             return None
-        if not self._flag("FUTURES_CONVEX_RUNNER_TRAIL", default=True):
+        if not self._trail_enabled_for(position):
             return None
         one_r = self._position_stop_risk_usdt(position)
         try:
@@ -2110,7 +2176,9 @@ class FuturesRuntime:
         if not math.isfinite(peak_r):
             return None
         peak_r = max(0.0, peak_r)
-        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
+        # The arm THIS position trails at (TREND may carry its own), so "arms at
+        # $X" cannot disagree with the gate the exit path applies.
+        arm_r = self._trail_arm_r_for(position)
         retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
         peak_usd = peak_r * one_r
         # Mirrors the exit path's manual-arm bypass. Without this the row would
@@ -2650,7 +2718,10 @@ class FuturesRuntime:
                     md["be_shadow_touch_r"] = round(r_now, 4)
                     self._save_state()      # a touch on a down poll is not saved elsewhere
 
-        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_BREAKEVEN_ARM_R", 0.0))
+        # Per-sleeve: FUTURES_TREND_BREAKEVEN_ARM_R overrides the shared arm on TREND
+        # only (0 = off there) and falls back to it when unset. The shadow threshold
+        # above stays shared - it is measurement and sends nothing.
+        arm_r = self._breakeven_arm_r_for(position)
         if arm_r <= 0 or peak_r < arm_r or md.get("be_stop_price") or md.get("be_stop_paper_price"):
             return
         # WRONG-SIDE GUARD, the same one the PMT profit-lock carries (runtime.py
@@ -2751,7 +2822,7 @@ class FuturesRuntime:
             return False
         r_now = gross / risk_pct
         self._record_r_sample(position, r_now)
-        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
+        arm_r = self._trail_arm_r_for(position)     # shared arm unless TREND overrides it
         retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
         peak_r = self._metadata_float(md, "convex_peak_r") or 0.0
         if peak_r > 0 and "trail_migrated" not in md and "trail_mode" not in md:
@@ -2791,6 +2862,17 @@ class FuturesRuntime:
             except Exception as exc:  # notification must never break the trail
                 log.debug("record-peak notify failed: %s", exc)
             self._save_state()
+            return False
+        # TREND-ONLY SWITCH (FUTURES_TREND_TRAIL_ENABLED, default on). It sits HERE,
+        # not beside the master switch at the top, on purpose: nothing above this
+        # line is the trail. The R series, the trough, the peak and the breakeven
+        # stop keep running with the TREND trail off - the peak feeds the feature
+        # store and the breakeven arm, and turning the trail off must not silently
+        # turn the breakeven stop off with it (it has its own switch,
+        # FUTURES_TREND_BREAKEVEN_ARM_R). The master switch returning at the top
+        # still takes all of it, as it always has. A /arm cannot re-enable a
+        # switched-off trail, the same as under the master switch.
+        if not self._trail_enabled_for(position):
             return False
         # /arm bypasses the ARM GATE and nothing else. Everything below - the
         # retain fraction, the 3R ratchet, the cost floor, the disable branch -
@@ -3158,6 +3240,10 @@ class FuturesRuntime:
         if chg < ctx["min_move"]:
             label = "24h range" if ctx["range_prefilter"] else "24h move"
             return "quiet", f"{label} {chg * 100:.0f}% under {ctx['min_move'] * 100:.0f}%"
+        if frame is not None and self._wildcard_completed_bars():
+            # Mirror the scan's bar convention, or /why calls a forming-bar signal
+            # "live" that the completed-bar scan will never take.
+            frame = self._drop_incomplete_klines(frame, interval_seconds=900)
         if frame is None or len(frame) < ROC_BARS + 2:
             return "data", "no kline data"
         reasons: list[str] = []
@@ -3787,14 +3873,21 @@ class FuturesRuntime:
             if override and override > 0:
                 base_retain = override
         retain = self._trail_retain_for(r_now, base_retain)
-        armed_now = r_now >= 1.0 or bool(md_peak.get("manual_arm"))
+        # The arm and switch THIS position trails under. A TREND position with its
+        # trail off has no floor, and a message quoting one is the surface read at
+        # 3am disagreeing with the exit path. Identical to the old literal 1.0 while
+        # FUTURES_CONVEX_TRAIL_ARM_R is unset (it is, live) and no TREND flag is set.
+        trail_on = self._trail_enabled_for(position)
+        arm_gate = self._trail_arm_r_for(position)
+        armed_now = trail_on and (r_now >= arm_gate or bool(md_peak.get("manual_arm")))
         floor_usd = max(0.0, retain * r_now) * one_r_usd if armed_now else 0.0
         position.metadata["record_peak_notified"] = 1.0
         self._notify(
             f"🏆 <b>{html.escape(position.symbol)}</b> unrealized <b>${peak_usd:+.2f}</b> "
             f"({r_now:+.2f}R) — above every close this week (best ${best:+.2f})."
             + (f"\nFloor locked at <b>${floor_usd:+.2f}</b>." if floor_usd > 0
-               else "\nTrail arms at +1R.")
+               else f"\nTrail arms at +{arm_gate:g}R." if trail_on
+               else "\nNo trail on this sleeve — stop, target, breakeven and clock only.")
         )
 
     def _sniper_study_line(self, variant_name: str, target_fills: int = 25) -> str | None:
@@ -4796,7 +4889,8 @@ class FuturesRuntime:
         if wildcard_enabled():
             message_parts.append(
                 f"🎲 <b>Wildcard</b> {wildcard_max_positions()} slot(s) | scan every "
-                f"<b>{wildcard_scan_interval_seconds()}s</b> | "
+                + ("<b>completed 15m bar</b> | " if self._wildcard_completed_bars() else
+                   f"<b>{wildcard_scan_interval_seconds()}s</b> | ") +
                 f"excl. top-{int(self._env_float('FUTURES_WILDCARD_EXCLUDE_TOP_TURNOVER', 24.0))} "
                 f"turnover")
         off_sleeves = [n for n, on in (("PMT", not pmt_blocked and pmt_strategy_enabled()),
@@ -5055,8 +5149,10 @@ class FuturesRuntime:
         if position is None:
             return False, f"No open position for {candidates[-1]}."
         sym = position.symbol
+        # Per-sleeve: a TREND position under FUTURES_TREND_TRAIL_ENABLED=0 has no
+        # trail for /arm to arm - the exit path returns before the gate.
         if (not self._is_wildcard_convex(position)
-                or not self._flag("FUTURES_CONVEX_RUNNER_TRAIL", default=True)):
+                or not self._trail_enabled_for(position)):
             return False, (f"{sym} is not managed by the retention trail (sleeve "
                            f"{self._sleeve_kind(position)}, or the trail is disabled). "
                            "Arming would change nothing.")
@@ -5118,7 +5214,7 @@ class FuturesRuntime:
         r_book = book_gross / risk_pct
         stored_peak = self._metadata_float(md, "convex_peak_r") or 0.0
         peak_r = max(stored_peak, r_now)
-        arm_r = max(0.0, self._env_float("FUTURES_CONVEX_TRAIL_ARM_R", 1.0))
+        arm_r = self._trail_arm_r_for(position)     # the gate the exit path applies
         retain = self._env_float("FUTURES_CONVEX_TRAIL_RETAIN_FRAC", 0.30)
         retain_cfg = retain
         # The legacy giveback branch (retain<=0, kept reachable for rollback) subtracts
@@ -7689,7 +7785,21 @@ class FuturesRuntime:
             return
         self._refresh_non_crypto_universe()
         now_t = time.time()
-        if now_t - self._last_wildcard_scan_at < wildcard_scan_interval_seconds():
+        # BAR CONVENTION (FUTURES_WILDCARD_COMPLETED_BARS, default 0 = forming bar,
+        # today's behaviour). Live scans the FORMING 15m bar and every replay line
+        # uses completed ones, so 25-28% of live fills exist in no dataset (assessment
+        # 2026-09-23, item 2: +$20 to +$100/mo, interval ~[-$180, +$120], NOT
+        # ESTABLISHED - the owner flips this only on the pre-registered test). When
+        # on, the detector reads COMPLETED bars, so its input changes only at a bar
+        # close: scan once per bar at the first cycle after the close, as TREND has
+        # since 2026-09-19. The 450 s clock existed to catch a forming-bar condition
+        # with a ~5% duty cycle; a completed bar has nothing to catch between closes,
+        # and a scan landing mid-bar would only be refused as stale_bar below.
+        completed_bars = self._wildcard_completed_bars()
+        if completed_bars:
+            if self._last_wildcard_scan_at >= (now_t // 900) * 900:
+                return
+        elif now_t - self._last_wildcard_scan_at < wildcard_scan_interval_seconds():
             return
         self._last_wildcard_scan_at = now_t
         # Slot occupied: still SCAN, so the candidate we cannot take is logged to
@@ -7715,6 +7825,11 @@ class FuturesRuntime:
             # trailing 24h window, so |3h ROC| >= X implies range24 >= X. Nothing
             # that could fire the trigger can be filtered out. Measured live:
             # pool 11 -> 20 symbols, zero dropped.
+            # Still lossless under FUTURES_WILDCARD_COMPLETED_BARS: the completed 3h
+            # window ends at most FUTURES_WILDCARD_MAX_BAR_AGE_SECONDS before the
+            # ticker read, so it lies inside the ticker's trailing 24h too. The
+            # ticker itself (this screen, and the long range cap's mover_range) is
+            # read at scan time under BOTH conventions - it is not a bar.
             range_prefilter = self._flag("FUTURES_WILDCARD_RANGE_PREFILTER", default=True)
             min_roc = max(0.0, self._env_float("FUTURES_WILDCARD_MIN_ROC", 0.08))
             # SUB-TRIGGER SHADOW LOGGING (2026-09-01). The 220d replay found the
@@ -7813,6 +7928,10 @@ class FuturesRuntime:
                         # here: recorded, not read. Added 2026-09-01.
                         "turnover_24h_usdt": float(turn),
                         "range_24h": float(chg),
+                        # Which bar convention produced this row: 1.0 completed,
+                        # 0.0 forming. Stamped under BOTH, so the live book and the
+                        # shadow ledger can be split by convention after a switch.
+                        "wildcard_completed_bars": 1.0 if completed_bars else 0.0,
                     }
             movers.sort(reverse=True)
             # TICKER SNAPSHOT (2026-09-01). The replay could not reproduce the
@@ -7848,11 +7967,44 @@ class FuturesRuntime:
                     continue
                 scanned += 1
                 reasons: list[str] = []
-                sig = detect_wildcard_signal(df, sym, reasons, min_roc=scan_roc)
+                # get_klines includes the forming bar. Flag off: the detector gets
+                # `df` itself, exactly as before. Flag on: completed bars only, so
+                # the ROC trigger, the pullback-resume shape, RSI, the wick and
+                # blow-off guards, the volume z and calm_ratio (the calm-shock
+                # filter's input) are all decided on settled bars - the convention
+                # every replay line uses (DECISION_RULE 2026-09-20 defect 1: EVAA's
+                # resume shape existed only inside the half-formed bar).
+                frame = (self._drop_incomplete_klines(df, interval_seconds=900, now_ts=now_t)
+                         if completed_bars else df)
+                sig = detect_wildcard_signal(frame, sym, reasons, min_roc=scan_roc)
                 for r in reasons:
                     hist[r] = hist.get(r, 0) + 1
                 if sig is not None:
-                    lat = self._entry_lateness(df, sig.side)
+                    # On the detector's own frame: lateness feeds the rank key, so
+                    # candidates are ordered on the bars that approved them.
+                    lat = self._entry_lateness(frame, sig.side)
+                    if completed_bars:
+                        # Re-price at the latest tick keeping the stop and target
+                        # DISTANCES (the TREND helper is sleeve-agnostic), so sizing
+                        # and the per-trade risk cap describe the order actually sent.
+                        # roc_pct stays the gate's value: the external veto and the
+                        # rank key keep reading the trigger that fired.
+                        sig = self._anchor_trend_signal(sig, df, frame)
+                        check_t = time.time()
+                        att = self._wildcard_attribution.setdefault(sym, {})
+                        att["wildcard_gate_close"] = float(getattr(sig, "gate_close", None)
+                                                           or sig.entry_price)
+                        age = self._completed_bar_age(frame, check_t)
+                        if age is not None:
+                            att["wildcard_bar_age_s"] = round(age, 1)
+                        refused = self._wildcard_signal_stale(sig, frame, check_t)
+                        if refused:
+                            # Refused BEFORE the candidate list, as TREND does, and
+                            # shadow-logged so the refusals keep being priced.
+                            hist[refused] = hist.get(refused, 0) + 1
+                            self._pending_entry_lateness = lat
+                            self._shadow_log_untaken(sig, "WILDCARD", refused)
+                            continue
                     cands.append((self._wildcard_rank_key(sig, lat), sig, lat))
             cands.sort(key=lambda x: x[0], reverse=True)
             # SUB-TRIGGER REFUSAL. Filtered HERE for the same reason long-only
@@ -8209,6 +8361,60 @@ class FuturesRuntime:
                                        tp_price=float(sig.tp_price) * k, gate_close=e)
         except Exception:                          # pragma: no cover - never blocks a scan
             return sig
+
+    @classmethod
+    def _wildcard_completed_bars(cls) -> bool:
+        """FUTURES_WILDCARD_COMPLETED_BARS: WILDCARD decides on COMPLETED 15m bars.
+
+        Default OFF - today's forming-bar read is unchanged. Assessment 2026-09-23
+        item 2: +$20 to +$100/mo, interval ~[-$180, +$120], NOT ESTABLISHED. It is
+        switched on only on the pre-registered forming- vs completed-bar test, and if
+        it is, the early stop must be re-tested (-$17 [-33, -1] on completed-bar trades)."""
+        return cls._flag("FUTURES_WILDCARD_COMPLETED_BARS", default=False)
+
+    @staticmethod
+    def _completed_bar_age(closed: pd.DataFrame, now_t: float) -> float | None:
+        """Seconds since the last bar of `closed` (a 15m frame) closed; None if unknowable."""
+        try:
+            if isinstance(closed.index, pd.DatetimeIndex) and len(closed):
+                return float(now_t) - (pd.Timestamp(closed.index[-1]).timestamp() + 900.0)
+        except Exception:                          # pragma: no cover - never blocks a scan
+            pass
+        return None
+
+    def _wildcard_signal_stale(self, sig: Any, closed: pd.DataFrame, now_t: float) -> str | None:
+        """Why a completed-bar WILDCARD signal may no longer be taken, or None.
+
+        The WILDCARD twin of _trend_signal_stale, used only under
+        FUTURES_WILDCARD_COMPLETED_BARS.
+
+        stale_bar: the gate bar closed more than FUTURES_WILDCARD_MAX_BAR_AGE_SECONDS
+        (180 s, floor 60) ago - a restart or a slow cycle landed mid-bar - so the
+        latest tick is not the moment the gates approved.
+        resume_failed: the "move already reversed" guard. The entry shape is
+        pullback-resume, and the resume is the gate bar closing back through the
+        pullback bar's close. If the tick is already back through that close, the
+        resume the detector approved no longer exists at the order price - the analog
+        of TREND's breakout_failed. It re-checks only a resume that existed on the
+        completed bars, so with FUTURES_WILDCARD_REQUIRE_PULLBACK=0 it adds no filter
+        of its own. The other gates are not re-read at the tick, as for TREND."""
+        try:
+            age = self._completed_bar_age(closed, now_t)
+            max_age = max(60.0, self._env_float("FUTURES_WILDCARD_MAX_BAR_AGE_SECONDS", 180.0))
+            if age is not None and age > max_age:
+                return "stale_bar"
+            c = closed["close"].astype(float)
+            if len(c) >= 2:
+                prev = float(c.iloc[-2])
+                gate = float(getattr(sig, "gate_close", None) or sig.entry_price)
+                px = float(sig.entry_price)
+                if sig.side == "LONG" and gate > prev and px <= prev:
+                    return "resume_failed"
+                if sig.side == "SHORT" and gate < prev and px >= prev:
+                    return "resume_failed"
+        except Exception:                          # pragma: no cover - never blocks a scan
+            return None
+        return None
 
     def _maybe_scan_squeeze(self) -> None:
         """Coiled-Spring strategy: scan the LIQUID universe for a volatility
@@ -8811,7 +9017,8 @@ class FuturesRuntime:
             lines.append("⚠️ <b>wildcard sleeve is not scanning</b> "
                          f"({'paused' if self._paused else 'disabled'}) — "
                          "everything below is historical")
-        elif not snap or scan_age > 2 * wildcard_scan_interval_seconds() / 60.0:
+        elif not snap or scan_age > 2 * (900 if self._wildcard_completed_bars()   # once per bar
+                                         else wildcard_scan_interval_seconds()) / 60.0:
             lines.append(f"⚠️ <b>last scan {scan_age:.0f}m ago</b> — the scanner may "
                          "have stalled; treat the lines below with that in mind")
         if top24:

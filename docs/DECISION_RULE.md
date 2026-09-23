@@ -17783,3 +17783,80 @@ archive of 1m bars, the scan journal, the shadow ledger and the feature store.
 interval; convert to dollars at the live fill rate; test every entry filter against a random deletion of the same
 count; no new gate or trigger study on completed-bar data; no configuration change other than the dial until the
 scorer has graded the replay; judge trials in R and time-weighted return so a deposit no longer resets them.
+
+## 2026-09-23 - THE EXPANDER'S FIVE IMPROVEMENTS: built; one live change (the dial); two flags built OFF after failing their tests
+
+Owner request: "implement all 5 improvements suggested by the Expander" (from the IMPARTIAL ASSESSMENT above). Ten
+lanes (wc/EXP), plus a release gate that assembled every delivery on a copy of the repo and re-derived both tests.
+Live P&L effect of this work: **$0/month by design**. The only live change is item 4, which the owner made himself.
+
+**4. WILDCARD risk dial 2.41% -> 1.87%** (owner's choice between 1.205% and 1.87%), live 2026-09-23 18:10Z. `/report`'s
+Risk sizing KPI now grades each row against its OWN sleeve's live dial read from the environment - the old hard-coded
+2.41 target graded TREND against WILDCARD's dial and would have graded every correctly sized entry Bad and declared the
+trial VOID after the change. `futuresbot/replay/sizing.LIVE_DIALS` records the change; add every future dial move there.
+
+**2. WILDCARD entries on completed bars - built, OFF, UNPOWERED / NOT ESTABLISHED.** `FUTURES_WILDCARD_COMPLETED_BARS`
+(default 0 = today). At 1: one WILDCARD scan per closed 15m bar, the detector never sees the forming bar, the entry is
+re-priced at the latest tick, and a signal is refused when its bar closed more than
+`FUTURES_WILDCARD_MAX_BAR_AGE_SECONDS` (180s) ago or the move has already reversed. At 0 every WILDCARD row now carries
+`wildcard_completed_bars=0.0` - telemetry only. Pre-registered test (hash 896062e8..., verified): replay B's Binance year
+with 32 delisted symbols, mark-price stops, compounded from $949 at 1.87%: **+$45.80/mo [-41.60, +276.14]**, fixed stake
++$39.22 [-27.90, +107.65]; criterion (a) FAILS, (b)-(e) pass. Release gate re-derivation: +$42.3 [-43.8, +293.9], P(gain
+<= 0) = 0.21. **The gain is MORE trades, not better ones**: 1.7-2x the fills on a replay edge of +0.06R/trade while live
+shows -0.001R since 08-08; held to the same fill count it is +$6.69/mo on Binance and **-$34.52/mo on MEXC**, and one
+quarter (June-September 2025) carries all of it. The early stop on completed-bar trades: -$25.95/mo [-155.79, +32.45],
+NOT ESTABLISHED. **Keep the flag at 0.**
+
+**3. TREND retention-trail variants - built, OFF, NOT ESTABLISHED.** TREND-only overrides, unset = today:
+`FUTURES_TREND_TRAIL_ENABLED` (1), `FUTURES_TREND_TRAIL_ARM_R` (shared 1.0R), `FUTURES_TREND_BREAKEVEN_ARM_R` (0.90R).
+WILDCARD and SQUEEZE unaffected; the breakeven stop stays on when the TREND trail is off. Test on Y0/Y1/Y2, 1m exits on
+Binance mark price, compounded from $949 at 1.205% (pre-registration written first, no hash recorded):
+| variant | $/mo [95%] | failed |
+|---|---|---|
+| trail off | +$9.25 [-5.60, +26.45] | (a); (d) ZEC carries all of it, -$0.84 without ZEC |
+| arm 2R | +$9.97 [-1.12, +26.10] | (a) by a hair; (b) Y0 negative |
+| arm 1.5R | +$6.35 [-3.93, +18.87] | (a), (b) |
+| trail off, no breakeven (the assessment's "+$85") | +$19.05 [-1.52, +49.44] | (a), (d) |
+On MEXC's own fair price (Y2) trail-off turns -$8.56 and 2R shrinks to +$4.04. **Under the old last-price convention
+arm-2R would have PASSED all four criteria (+$12.45 [+1.94, +31.71]) - the repaired replay caught a false positive.**
+**Leave all three TREND flags UNSET, and never create them empty: `_flag` reads an empty string as OFF, so
+`FUTURES_TREND_TRAIL_ENABLED=""` would switch TREND's trail off.** Do not re-test arm-2R on Y0-Y2.
+
+**1. Fees - research only.** MEXC has no cheaper route: the API taker rate is fixed at 0.08% and overrides promotions and
+MX discounts (173 of 173 legs paid it); the first volume tier needs ~$10M/month against ~$70k. Cheapest real saving:
+move TREND to Binance or OKX at 0.05% taker, **+$14.1/mo [+13.4, +15.8]** (+$16.5 paying in BNB; ~+$12 after first-year
+incidents). It clears +$10 only while TREND makes >= 40 fills/month (recent live 57; the three replayed years 26-40).
+Rejected: moving WILDCARD (+$2 to +$7) and maker-first entries (TREND -$3.5/mo, WILDCARD -$7.6/mo once missed fills are
+priced). Cost if pursued: a 35-55h connector, ~$300 of capital on the new venue, a second API key, and TREND's live
+record restarts. **Gate on two facts only the owner can supply: that he may legally trade perps on Binance/OKX, and
+that live TREND holds >= 40 fills/month.** Nobody in this work created an account or handled a credential.
+
+**5. Replay repair - built in full, offline.** `futuresbot/replay/`: `sizing.py` (the live sizing chain - reproduces the
+live book to **-$1.66 over 151 fills**, 148/151 within 5% of live 1R; without the recorded streak multiplier the gap is
+-$14, without integer contracts only 77% size correctly), `exits.py` (stops on FAIR price, TP on last - agrees exactly
+with the bot's own exit methods on 70 live fills and 300 random paths), `bars.py` (a cache that never stores the forming
+bar), `acceptance.py` (the scorer); `tools/replay_acceptance.py` (weekly grade) and `tools/archive_evidence.py` (daily
+evidence archive). Saved: a year of 15m fair- and last-price bars for 622 symbols (37.8M bars, 519 MB), and today's 1m
+fair/last bars for 93 symbols, under C:/Users/Rocot/futuresbot-evidence/.
+| layer | old replay | repaired replay (09-01..09-22) |
+|---|---|---|
+| entries, WILDCARD | FAIL: 2.10x fills, recall 0.55, precision 0.26 | PASS (marginal): 0.98x, recall 0.78 [0.64, 0.88], precision 0.80 [0.66, 0.89] |
+| entries, TREND | FAIL | FAIL by construction - live used forming bars until 09-19 10:41Z; first fair grade ~09-27 |
+| exits on live's own entries | corr 0.92 | PASS: corr 0.999, 93.5% within 0.1R |
+| exits end-to-end | FAIL: corr 0.86 | FAIL: corr 0.83, 64% within 0.1R (rebuilt stops flip outcomes: PONS, a 3% stop difference decided -1.02R vs +0.49R) |
+| sizing | PASS | PASS: 93% within 5%, +$5.6/mo |
+| dollars | FAIL | FAIL: -$265/mo [-645, +87] - the 14 manually-intervened live fills (+$133) cannot be replayed |
+The WILDCARD entry PASS holds only because live's recorded refusals are applied; without them recall 0.72 / precision
+0.60, so it cannot yet grade a NEW entry rule. **Two scorer defects fixed at integration:** D1 - the exit bias was
+graded pooled across sleeves, so TREND's -0.007R diluted WILDCARD's -0.047R/fill (~$56/mo of overstatement,
+[$31, $86]) into a pass; it is now graded per sleeve (>= 20 pairs each, otherwise reported not graded). D2 - DOLLARS was
+graded on its point estimate against +-$35 while its interval runs +-$180; it now PASSES only when the whole 95% interval
+sits inside the bar, FAILS only when it sits entirely outside, otherwise INSUFFICIENT. **Open: D3** - the scorer has no
+schedule of which bar convention live used when (a `LIVE_CONVENTIONS` step schedule like `LIVE_DIALS`); until then TREND
+entry grades before ~09-27 are FAIL by construction.
+
+**Deployed as one commit, behaviour-neutral at default:** the release gate ran the bot's own exit methods on 3,000 random
+paths through the original and the patched runtime.py - 0 differences; the live container has `FUTURES_CONVEX_RUNNER_TRAIL`
+and `FUTURES_CONVEX_TRAIL_ARM_R` unset, which is what the defaults assume. T and its replay patch (T2) must always ship
+together: T alone fails `test_live_exit_parameters_and_defaults_match_the_resolver`. The daily archive's env whitelist now
+includes the new WILDCARD and TREND flags, so a live flip would reach the archive's drift check.

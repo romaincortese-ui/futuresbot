@@ -209,7 +209,10 @@ def detect_wildcard_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] 
                            min_roc: float | None = None) -> WildcardSignal | None:
     """V1 pullback-resume + exhaustion guard. Returns a signal or None.
 
-    Gates (all on completed bars, no look-ahead):
+    Gates (on the LAST bar of `frame`, whatever the caller passes. The live scan
+    passes the FORMING 15m bar unless FUTURES_WILDCARD_COMPLETED_BARS=1, which
+    trims it first - the "completed bars" this line used to claim were never wired;
+    DECISION_RULE 2026-09-20 defect 1):
       1. EXTREME move: |3h ROC| >= FUTURES_WILDCARD_MIN_ROC (0.08). Pass
          `min_roc` to override, which the scan uses to detect BELOW the live
          trigger for shadow-logging only. A signal produced under a lowered
