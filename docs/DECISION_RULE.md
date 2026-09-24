@@ -18010,3 +18010,46 @@ current-era line that carries P(losing half the account in 12 months) = 15.2% an
 betting that WILDCARD's pre-08-08 edge returns; the full-record line (23 pre-08-08 fills at +0.56R) is the one on which
 1.87% pays. Revisit if a 25% drawdown from the 2026-09-24 balance occurs. Also decided: ship the safety commit (C26, N1,
 C19, C04, C21 + scorer D3; C12 held back) and make /arm refuse TREND positions.
+
+### 2026-09-24 - SAFETY COMMIT: C26, N1, C19, C04, C21, /arm refuses TREND, scorer D3 (C12 held back)
+
+Owner-approved ops bundle from the ranked list (wc/RANK item 4 plus item 1's code half). No trading rule changes;
+work in C:/Users/Rocot/futuresbot-evidence/wc/SAFE (three build lanes, integration, a four-lens adversarial release gate
+that BLOCKED on 2 blockers + 5 majors, one fix round re-verified independently, then a round-2 check). Suite 1597 -> 1793.
+Live env read-only (values never printed): **0 blank variables among 217**, so the empty-value semantics change nothing
+at deploy.
+- **C26** - a blank or whitespace-only variable now reads as UNSET (its default), never OFF: config.env_bool,
+  runtime._flag, ~20 direct reads in runtime.py, the module helpers (strategy, wildcard, sniper, squeeze, pmt_strategy,
+  calibration, ...), replay/exits._parse_flag (mirrors live), and main.py's 143 production defaults (`_setdefault`: a
+  blank value no longer survives as OFF for the ~40 switches main.py turns on). Non-blank spellings parse exactly as
+  before. Closed: a blank USE_OPEN_POSITION_GUARD switched off the 1s monitor; a blank FUTURES_SNIPER_SHADOW_ONLY put
+  sniper live; a blank *_LONG_ONLY allowed shorts; a blank FUTURES_CONVEX_RUNNER_TRAIL removed the breakeven stop.
+  The "never blank a Railway variable" workaround is retired once this deploys (deleting stays the cleaner habit).
+- **N1** - the stop-on-book ABSENT branch now saves state, so a restart can no longer erase the bare readings K3 reads.
+- **C19** - R-path samples are saved at most once a minute per position, so a restart loses <= 60s of path, not up to
+  38%. Cost: one state write per minute per open position (~10 ms, main thread); state file +~210 KB for a 24h position.
+- **C04** - a failed software close whose stop was restored is LATCHED with its exit reason; for 60s
+  (CLOSE_RETRY_BACKOFF_SECONDS) the restored stop is left on the book and nothing else acts on the position, then the
+  latched close is retried (even if its condition lapsed; the restore re-evaluates breakeven at that moment). One
+  "Close Failed, Stop Restored" alert per episode. A latched position is never a preemption victim. /close and the
+  LIQ_BUFFER force-close now restore the stop after a failed close order - only if their own cancel succeeded.
+  Side effect: a stuck close no longer aborts the whole main cycle.
+- **C21** - a position re-adopted (boot recovery or /reconcile) with its resting stop at/through entry on the profit
+  side records that stop as be_stop_price (be_stop_adopted=1) and takes the 20%-of-margin fallback as its designed stop,
+  so R is no longer inflated 5-15x. The exchange stop is never loosened: the in-process backup stop, the restore path
+  and the partial-bank runner stop all keep the breakeven price for adopted positions.
+- **/arm refuses TREND** with the reason (resampled -$103 [-172, -30] over 7 arms); WILDCARD and other sleeves unchanged.
+- **D3** - futuresbot/replay/acceptance.LIVE_CONVENTIONS (WILDCARD forming throughout; TREND forming -> completed at
+  **2026-09-19 09:43Z**, the df0192e deploy - the record's "10:41Z" was local time; 48/48 and 14/14 fills agree). ENTRIES
+  (and end-to-end EXITS) grade only windows where live and the replay read the same bar; too few fills -> NOT GRADED.
+  R3 evidence: TREND entries FAIL -> NOT GRADED (8 post-cutover fills < 20); WILDCARD PASS unchanged byte for byte.
+  **D3 is closed.** TREND entries get a real grade once a replay window holds >= 20 post-cutover TREND fills.
+**Held back:** C12 (needs the MEXC error codes of the ZEC 09-19 / XRP 09-20 races).
+**Follow-ups recorded, not built (each ~$0 expected):** (1) /close whose cancel raised AFTER it had cancelled leaves the
+position bare until the software exits close it - the stop-on-book check only records it (fix: on cancel-fail + close-fail,
+read the book and restore on ABSENT); (2) the C04 latch has no expiry and suppresses other exit rules while it waits
+(intended: it keeps trying to get out); (3) a monitor pause > 120s can re-alert inside one episode; (4) /status shows an
+adopted position's 20% fallback as "Risk at SL"; (5) adopted positions carry be_stop_price - exclude be_stop_adopted rows
+from breakeven-stop (trial 21F) measurements; (6) a TREND position re-adopted by /reconcile loses its trend marker, so
+/arm would not recognise it; (7) the DOLLARS layer still compounds the pre-cutover TREND replay population.
+**Deploy:** push only with no position open (a TIA_USDT TREND long was open at commit time).

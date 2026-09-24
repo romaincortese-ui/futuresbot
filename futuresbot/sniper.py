@@ -60,7 +60,9 @@ def _f(name: str, default: float) -> float:
 
 def _b(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
-    return default if raw is None else raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+    if raw is None or raw.strip() == "":       # empty reads as unset (C26)
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def sniper_enabled() -> bool:

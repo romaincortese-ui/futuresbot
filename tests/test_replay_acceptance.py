@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import random
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -18,15 +19,15 @@ FIXTURE = Path(__file__).parent / "fixtures" / "replay_live_book_0813_0923.json"
 T0 = 1_788_000_000.0          # 2026-08-29, inside the fixed-dial part of LIVE_DIALS (both sleeves 2.41%)
 
 
-def _live_book(n_wc=30, n_tr=24, seed=1, start_cash=1000.0):
+def _live_book(n_wc=30, n_tr=24, seed=1, start_cash=1000.0, t0=T0):
     """Synthetic live history whose recorded 1R, dollars and available balance are exactly what the live chain gives,
     i.e. what the bot would have written to the feature store."""
     rng = random.Random(seed)
     trades = []
     for k, (sleeve, n) in enumerate((("WILDCARD", n_wc), ("TREND", n_tr))):
         for i in range(n):
-            t0 = T0 + i * 7200.0 + k * 1800.0
-            trades.append(Trade(t_open=t0, t_close=t0 + 3000.0, sleeve=sleeve, r=rng.choice([-1.0, -0.5, 0.4, 2.0]),
+            ts = t0 + i * 7200.0 + k * 1800.0
+            trades.append(Trade(t_open=ts, t_close=ts + 3000.0, sleeve=sleeve, r=rng.choice([-1.0, -0.5, 0.4, 2.0]),
                                 stop_frac=0.04 + 0.01 * (i % 3), leverage=3.0, entry_price=1.0 + i,
                                 spec=ContractSpec(0.01, 1), regime_mult=1.0, symbol=f"S{k}{i}_USDT", side="LONG"))
     res = simulate(trades, start_cash, live_config())
@@ -53,7 +54,8 @@ def test_a_replay_identical_to_live_passes_every_layer_with_zero_dollar_gap():
     """The scorer's zero point: live's own trades, live's own exits, re-priced through the engine, must PASS all layers
     and the dollar gap must be ~0 - otherwise the dollar bar would be charging the scorer's own error to the replay."""
     live = _live_book()
-    rep = _grade(live, _as_replay(live))
+    # the replay IS live's own fills, so it read what live read at T0 (08-29): the forming bar on both sleeves (D3)
+    rep = _grade(live, _as_replay(live), replay_conventions={"WILDCARD": acc.FORMING, "TREND": acc.FORMING})
     assert [x.verdict for x in rep.layers] == ["PASS"] * 5
     d = _layer(rep, "DOLLARS")
     assert abs(d.info["gap_usd"]) < 1e-6
@@ -281,3 +283,123 @@ def test_dollars_are_graded_on_the_interval_not_the_point_estimate():
     bar = acc.THRESHOLDS["dollars"]["gap_max_per_month"]
     want = "PASS" if (-bar <= lo and hi <= bar) else ("FAIL" if (hi < -bar or lo > bar) else "INSUFFICIENT")
     assert wide.verdict == want
+
+
+# ---- release gate D3 (2026-09-24): live's bar convention changed over time; a replay reads one ---------------------
+CUT = datetime(2026, 9, 19, 9, 43, tzinfo=timezone.utc).timestamp()      # df0192e live: TREND on completed bars
+
+
+def _trend_fills(t_first, n, step=7200.0):
+    return [acc.Fill(sym=f"T{i}_USDT", side="LONG", sleeve="TREND", t_open=t_first + i * step,
+                     t_close=t_first + i * step + 3000.0, r=0.5) for i in range(n)]
+
+
+def test_the_live_convention_schedule_at_its_boundaries():
+    """Each entry is in force from its start (the LIVE_DIALS rule): the cutover instant itself is completed-bar."""
+    assert acc.LIVE_CONVENTIONS["TREND"][1] == (CUT, acc.COMPLETED)
+    assert acc.live_convention("TREND", CUT - 0.001) == acc.FORMING
+    assert acc.live_convention("TREND", CUT) == acc.COMPLETED
+    assert acc.live_convention("trend", CUT + 365 * 86400.0) == acc.COMPLETED
+    assert acc.live_convention("TREND", 0.0) == acc.FORMING
+    assert acc.live_convention("WILDCARD", CUT - 1) == acc.live_convention("WILDCARD", 2e9) == acc.FORMING
+    assert acc.live_convention("TREND", -1.0) is None and acc.live_convention("SNIPER", CUT) is None
+    assert all([a for a, _ in s] == sorted(a for a, _ in s) for s in acc.LIVE_CONVENTIONS.values())
+    assert not acc.same_convention("TREND", CUT - 1, acc.COMPLETED) and acc.same_convention("TREND", CUT, acc.COMPLETED)
+    assert acc.same_convention("TREND", CUT - 1, None)                 # nothing declared: compare everywhere
+    assert acc.REPLAY_CONVENTIONS == {"WILDCARD": acc.FORMING, "TREND": acc.COMPLETED}
+
+
+def test_a_trend_book_straddling_the_cutover_is_graded_on_post_cutover_fills_only():
+    """Live TREND read the forming bar until 09-19 09:43Z: a completed-bar replay reproduces every later fill but takes
+    a different population before it (here one bar late). Before D3 that FAILED by construction; now the pre-cutover
+    fills are excluded and counted, and the rest is graded."""
+    live = _trend_fills(CUT - 22 * 7200.0 + 60.0, 44)                    # 22 fills before the cutover, 22 after
+    rp = [acc.Fill(**{**f.__dict__, "t_open": f.t_open + (960.0 if f.t_open < CUT else 0.0)}) for f in live]
+    assert acc.score_entries(live, rp, "TREND").verdict == "FAIL"        # graded on every fill, as before D3
+    e = acc.score_entries(live, rp, "TREND", replay_convention=acc.COMPLETED)
+    assert (e.verdict, e.n, e.info["matched"]) == ("PASS", 22, 22)
+    assert e.info["excluded_bar_convention"] == {"live": 22, "replay": 22}
+    assert any(n.startswith("22 live / 22 replay fills excluded") and "completed from 2026-09-19 09:43Z" in n
+               for n in e.notes)
+    # fewer post-cutover fills than the entries minimum (the 09-01..09-22 evidence: 31 before, 8 after): NOT GRADED
+    few = acc.score_entries(live[:30], rp[:30], "TREND", replay_convention=acc.COMPLETED)
+    assert (few.verdict, few.n) == ("NOT GRADED", 8)
+    assert few.notes[0] == "NOT GRADED: 8 live fills where live also read the completed bar, below the 20-fill minimum"
+
+
+def test_grade_applies_the_schedule_by_default():
+    """Through grade() with the default REPLAY_CONVENTIONS, on a sized book straddling the cutover."""
+    t0 = CUT - 22 * 7200.0 - 1800.0 + 60.0                               # TREND fill i opens at CUT + (i - 22) x 2h + 60 s
+    live = _live_book(n_wc=30, n_tr=44, t0=t0)
+    rep = acc.grade(live, _as_replay(live), since=t0 - 60, until=t0 + 400000.0, n_boot=200)
+    e = _layer(rep, "ENTRIES", "TREND")
+    assert (e.verdict, e.n, e.info["excluded_bar_convention"]) == ("PASS", 22, {"live": 22, "replay": 22})
+    assert _layer(rep, "ENTRIES", "WILDCARD").n == 30
+
+
+def test_an_all_pre_cutover_trend_window_is_not_graded_with_the_reason_not_failed():
+    live = _live_book()                                                  # 08-29: live TREND read the forming bar
+    rp = [f if f.sleeve == "WILDCARD" else acc.Fill(**{**f.__dict__, "t_open": f.t_open + 960.0})
+          for f in _as_replay(live)]
+    rep = _grade(live, rp)
+    e = _layer(rep, "ENTRIES", "TREND")
+    assert (e.verdict, e.n) == ("NOT GRADED", 0)
+    assert e.notes[0].startswith("NOT GRADED: 0 live fills") and "24 live / 24 replay fills excluded" in e.notes[1]
+    assert "ENTRIES TREND: NOT GRADED" in acc.format_report(rep)
+    # declared as reading the forming bar, the same replay is graded on every fill - and fails, as before D3
+    assert _layer(_grade(live, rp, replay_conventions={"TREND": acc.FORMING}), "ENTRIES", "TREND").verdict == "FAIL"
+
+
+def test_wildcard_entry_grades_are_unchanged_by_the_schedule():
+    """Live WILDCARD read the forming bar throughout and so does the repaired replay: every fill stays graded, so the
+    marginal PASS that rests on live's recorded refusals does not move. A replay declared to read completed bars (a
+    WILDCARD live never ran) keeps its FAIL by construction, with a note, instead of turning NOT GRADED."""
+    live = _live_book()
+    extra = [acc.Fill(sym=f"X{i}_USDT", side="LONG", sleeve="WILDCARD", t_open=T0 + 600.0 + i * 3600.0,
+                      t_close=T0 + 1800.0 + i * 3600.0, r=0.5, stop_frac=0.05, leverage=3.0) for i in range(40)]
+    for rp, want in ((_as_replay(live)[:-3], "PASS"), (_as_replay(live) + extra, "FAIL")):
+        base = acc.score_entries(live, rp, "WILDCARD")
+        for conv in (acc.FORMING, acc.COMPLETED):
+            now = acc.score_entries(live, rp, "WILDCARD", replay_convention=conv)
+            assert (now.verdict, now.n, now.info, now.checks) == (want, base.n, base.info, base.checks)
+            assert bool(now.notes) == (conv == acc.COMPLETED)
+    assert _layer(_grade(live, _as_replay(live)), "ENTRIES", "WILDCARD").verdict == "PASS"
+
+
+def test_end_to_end_exit_pairs_follow_the_schedule_but_an_exits_file_does_not():
+    """End-to-end exit pairs are built on the replay's own entries, so a pre-cutover TREND pair joins two different
+    entries; an exits file runs the replay's exit engine on live's own entries and needs no filter."""
+    live = _live_book()
+    rp = [acc.Fill(**{**f.__dict__, "r": f.r - (0.5 if f.sleeve == "TREND" else 0.0)}) for f in _as_replay(live)]
+    x = _layer(_grade(live, rp), "EXITS")
+    assert x.verdict == "PASS" and x.info["pairs_by_sleeve"] == {"WILDCARD": 30}
+    assert any(n.startswith("24 live / 24 replay fills excluded") for n in x.notes)
+    xf = _layer(_grade(live, _as_replay(live), exits=rp), "EXITS")
+    assert xf.verdict == "FAIL" and xf.info["pairs_by_sleeve"] == {"WILDCARD": 30, "TREND": 24} and not xf.notes
+
+
+def test_tool_takes_the_replay_conventions(tmp_path, capsys):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import replay_acceptance as tool
+
+    live = _live_book()
+    fs = tmp_path / "futures_feature_store.jsonl"
+    fs.write_text("\n".join(json.dumps({
+        "ts": f.t_close, "hold_min": (f.t_close - f.t_open) / 60.0, "symbol": f.sym, "side": f.side, "kind": f.sleeve,
+        "leverage": f.leverage, "pnl_usdt": f.usd, "risk_usdt": f.risk_usdt, "sl_margin_pct": f.stop_frac * f.leverage * 100,
+        "regime_size_mult": 1.0, "equity_at_entry": f.available_at_entry, "entry_price": f.entry_price}) for f in live),
+        encoding="utf-8")
+    rp = tmp_path / "replay.json"
+    rp.write_text(json.dumps([{"sym": f.sym, "side": f.side, "sleeve": f.sleeve, "ts": f.t_open, "exit_ts": f.t_close,
+                               "net": f.r, "sl_frac": f.stop_frac, "lev": f.leverage} for f in live]), encoding="utf-8")
+    args = ["--feature-store", str(fs), "--replay", str(rp), "--since", str(T0 - 60), "--until", str(T0 + 400000),
+            "--n-boot", "50"]
+    assert tool.main(args) == 0
+    assert "ENTRIES TREND: NOT GRADED" in capsys.readouterr().out     # default: TREND replay on completed bars
+    assert tool.main(args + ["--replay-conventions", "trend=forming"]) == 0
+    assert "ENTRIES TREND: PASS" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        tool.main(args + ["--replay-conventions", "TREND=closed"])
+    with pytest.raises(SystemExit):                                    # an unknown sleeve key
+        tool.main(args + ["--replay-conventions", "TRND=forming"])

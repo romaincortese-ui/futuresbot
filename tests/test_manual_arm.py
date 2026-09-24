@@ -792,3 +792,52 @@ def test_closed_trade_separates_the_arm_anchor_from_the_true_peak(tmp_path, monk
     assert trade["manual_arm_anchor_r"] == pytest.approx(0.60, abs=0.01)
     assert trade["manual_arm_anchor_r"] == trade["manual_arm_peak_r"]
     assert trade["manual_arm_true_peak_r"] == pytest.approx(0.85)
+
+
+# --- owner rule 2026-09-24: /arm refuses TREND -----------------------------
+
+def test_trend_is_refused_with_the_reason_and_nothing_changes(tmp_path):
+    """Manual TREND arming graded D (resampled -$103 [-172, -30] over 7 arms). Same
+    trade as the happy path (+0.60R, below the gate), TREND marker only."""
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    position = _pos(symbol="BTC_USDT",
+                    metadata={"wildcard": 1.0, "trend": 1.0, "sl_margin_pct": 100.0})
+    runtime.open_positions["BTC_USDT"] = position
+    _refuses(runtime, position, "BTC", "TREND positions can't be armed manually")
+    ok, message = runtime._manual_arm("BTC")
+    assert "owner rule 2026-09-24" in message and "resampled -$103 [-172, -30] over 7 arms" in message
+    assert "automatic exits stay in place" in message
+    assert "manual_arm" not in position.metadata
+    assert not (tmp_path / "state.json").exists()                 # nothing persisted
+
+
+def test_trend_refusal_reaches_telegram(tmp_path):
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    sent: list[str] = []
+    runtime._notify = lambda message, parse_mode="HTML": sent.append(message)
+    position = _pos(symbol="BTC_USDT",
+                    metadata={"wildcard": 1.0, "trend": 1.0, "sl_margin_pct": 100.0})
+    runtime.open_positions["BTC_USDT"] = position
+    runtime.telegram.get_updates = lambda **kwargs: [
+        {"update_id": 1, "message": {"chat": {"id": "1"}, "text": "/arm btc"}},
+    ]
+    runtime._handle_telegram_commands()
+    assert any("⚠️ <b>Manual Arm</b>" in m and "owner rule 2026-09-24" in m for m in sent)
+    assert "manual_arm" not in position.metadata
+
+
+@pytest.mark.parametrize("marker", [None, "squeeze"])
+def test_wildcard_and_squeeze_still_arm_as_before(tmp_path, marker):
+    runtime = _runtime(tmp_path, _Client(price=106.0))
+    md = {"wildcard": 1.0, "sl_margin_pct": 100.0}
+    if marker:
+        md[marker] = 1.0
+    position = _pos(metadata=md)
+    runtime.open_positions["ZEC_USDT"] = position
+    ok, message = runtime._manual_arm("ZEC")
+    assert ok is True and "+0.30R" in message
+    assert position.metadata["manual_arm"] == 1.0
+
+
+def test_help_says_trend_is_refused(tmp_path):
+    assert "Refuses TREND" in _runtime(tmp_path)._build_help_message()

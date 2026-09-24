@@ -306,16 +306,16 @@ def test_trend_arm_2r_is_what_status_and_messages_quote(tmp_path, monkeypatch):
     assert rt._sent[-1].endswith("\nTrail arms at +2R.")
 
 
-def test_manual_arm_on_trend_stamps_the_trend_arm(tmp_path, monkeypatch):
-    """/arm measures "below the gate" against the gate the exit path applies, and
-    records it: the manual_arm_decisive filter at close compares against it."""
+def test_manual_arm_on_trend_is_refused(tmp_path, monkeypatch):
+    """Owner rule 2026-09-24: /arm refuses TREND outright (manual TREND arming
+    graded D), even below a moved TREND gate where it used to stamp the arm."""
     monkeypatch.setenv("FUTURES_TREND_TRAIL_ARM_R", "2.0")
     rt = _runtime(tmp_path, _Client(price=115.0))                   # +1.5R
     trend = _pos("TREND")
     rt.open_positions[trend.symbol] = trend
-    ok, _ = rt._manual_arm(trend.symbol)
-    assert ok is True
-    assert trend.metadata["manual_arm_arm_r"] == pytest.approx(2.0)
+    ok, message = rt._manual_arm(trend.symbol)
+    assert ok is False and "owner rule 2026-09-24" in message
+    assert "manual_arm" not in trend.metadata and "manual_arm_arm_r" not in trend.metadata
 
 
 # --- the TREND breakeven override -------------------------------------------

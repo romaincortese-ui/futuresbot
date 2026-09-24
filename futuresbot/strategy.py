@@ -136,7 +136,7 @@ def _env_float(name: str, default: float) -> float:
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
-    if raw is None:
+    if raw is None or raw.strip() == "":       # empty reads as unset (C26)
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
@@ -945,7 +945,8 @@ def score_btc_futures_setup(
     # on pullbacks to EMA20 without requiring a fresh coil breakout. This
     # captures continuation setups that classic coil-breakout logic misses
     # once the trend is already underway.
-    continuation_enabled = os.environ.get("FUTURES_CONTINUATION_ENABLED", "true").lower() == "true"
+    continuation_raw = os.environ.get("FUTURES_CONTINUATION_ENABLED", "")
+    continuation_enabled = (continuation_raw if continuation_raw.strip() else "true").lower() == "true"
     continuation_ema_pullback_upper = _env_float("FUTURES_CONTINUATION_PULLBACK_UPPER_ATR", 1.0)
     continuation_ema_pullback_lower = _env_float("FUTURES_CONTINUATION_PULLBACK_LOWER_ATR", 0.4)
     continuation_trend_24h_mult = _env_float("FUTURES_CONTINUATION_TREND_24H_MULT", 1.2)

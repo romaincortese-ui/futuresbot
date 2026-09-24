@@ -133,7 +133,7 @@ def _parse_float(raw: Any, default: float) -> float:
 
 def _parse_flag(raw: Any, default: bool) -> bool:
     """FuturesRuntime._flag's parse, applied to a mapping."""
-    value = ("1" if default else "0") if raw is None else str(raw)
+    value = ("1" if default else "0") if raw is None or str(raw).strip() == "" else str(raw)
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 

@@ -98,7 +98,7 @@ def detect_squeeze_signal(frame: pd.DataFrame, symbol: str, reasons: list[str] |
     # which can carry stale highs from before volatility collapsed).
     rb = min(coil, int(_f("FUTURES_SQUEEZE_RANGE_LB", 6)))
     coil_hi = float(h.iloc[-(rb + 1):-1].max()); coil_lo = float(l.iloc[-(rb + 1):-1].min())
-    long_only = os.environ.get("FUTURES_SQUEEZE_LONG_ONLY", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+    long_only = (os.environ.get("FUTURES_SQUEEZE_LONG_ONLY", "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
     if cur > coil_hi:
         side, s = "LONG", 1
     elif cur < coil_lo and not long_only:

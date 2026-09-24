@@ -10,9 +10,15 @@ import json
 import os
 from types import SimpleNamespace
 
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
+
 import pytest
 
 from futuresbot import runtime as rt_mod
+from futuresbot.config import FuturesConfig
+from futuresbot.models import FuturesPosition
 from futuresbot.runtime import EXIT_TELEMETRY_KEYS, FuturesRuntime
 
 
@@ -161,5 +167,122 @@ def test_it_changes_no_exit_decision():
     """The sampler must sit between r_now and the arm test without touching either."""
     src = inspect.getsource(FuturesRuntime._record_r_sample)
     body = src.split('"""')[2]                       # the code, not the docstring
-    for forbidden in ("close_position", "place_", "cancel_", "sl_price", "tp_price", "_save_state"):
+    # _save_state is allowed since C19 (2026-09-24): persisting the path is the fix for
+    # a restart erasing it. It writes state; it decides nothing.
+    for forbidden in ("close_position", "place_", "cancel_", "sl_price", "tp_price"):
         assert forbidden not in body
+
+
+# ---- C19: the path survives a restart (2026-09-24) ---------------------------------------
+# State was saved only on events, so a restart lost every sample since the last one -
+# measured 2026-09-23: 38% of ZEC's path and 25% of MARSCOIN's, mostly the post-peak fade.
+
+def test_each_sample_is_saved_at_the_default_cadence(tmp_path, monkeypatch):
+    t = {"now": 1_790_000_000.0}
+    monkeypatch.setattr(rt_mod, "time", SimpleNamespace(time=lambda: t["now"]))
+    rt = _rt(tmp_path, FUTURES_R_SERIES_INTERVAL_SECONDS=60.0)
+    rt._save_state = MagicMock()
+    p = _pos()
+    for r in (0.10, 0.40, 0.20):
+        rt._record_r_sample(p, r)
+        t["now"] += 60.0
+    assert rt._save_state.call_count == 3
+
+
+def test_saves_are_at_most_one_a_minute_even_at_a_faster_cadence(tmp_path, clock):
+    rt = _rt(tmp_path, FUTURES_R_SERIES_INTERVAL_SECONDS=5.0)   # the floor; the clock steps 10s
+    saved_at = []
+    rt._save_state = lambda: saved_at.append(clock.t)
+    p = _pos()
+    for i in range(12):                                          # 12 samples over 110s
+        rt._record_r_sample(p, i / 10.0)
+    assert p.metadata["r_series_n"] == 12
+    assert len(saved_at) == 2
+    assert saved_at[1] - saved_at[0] >= 60.0
+
+
+def test_a_saved_stamp_from_the_future_does_not_suppress_saves(tmp_path, monkeypatch):
+    """A backward clock step (or state from a host whose clock ran ahead) must not
+    silence the saves until the wall clock catches up with the stamp."""
+    t = {"now": 1_790_000_000.0}
+    monkeypatch.setattr(rt_mod, "time", SimpleNamespace(time=lambda: t["now"]))
+    rt = _rt(tmp_path, FUTURES_R_SERIES_INTERVAL_SECONDS=60.0)
+    rt._save_state = MagicMock()
+    p = _pos()
+    p.metadata["r_series_saved_ts"] = t["now"] + 3600.0
+    rt._record_r_sample(p, 0.1)
+    assert rt._save_state.call_count == 1
+
+
+def test_no_save_without_a_new_sample(tmp_path):
+    rt = _rt(tmp_path, FUTURES_R_SERIES_INTERVAL_SECONDS=600.0)
+    rt._save_state = MagicMock()
+    p = _pos()
+    rt._record_r_sample(p, 0.1)
+    rt._record_r_sample(p, 0.9)                                  # inside the interval
+    assert rt._save_state.call_count == 1
+
+
+def test_a_failed_save_never_raises(tmp_path):
+    rt = _rt(tmp_path, FUTURES_R_SERIES_INTERVAL_SECONDS=0.0)
+    rt._save_state = MagicMock(side_effect=OSError("disk full"))
+    p = _pos()
+    rt._record_r_sample(p, 0.5)
+    assert p.metadata["r_series_n"] == 1
+
+
+class _Client:
+    def get_open_positions(self, symbol=None):
+        return [{"positionType": 1, "holdVol": 10}]
+
+    def get_account_asset(self, currency: str = "USDT"):
+        return {"availableBalance": "1000", "equity": "1000"}
+
+    def get_updates(self, *, offset=None, limit: int = 5, timeout: int = 0):
+        return []
+
+
+def _real_runtime(tmp_path):
+    cfg = replace(FuturesConfig.from_env(), symbol="BTC_USDT", symbols=("BTC_USDT",),
+                  runtime_state_file=str(tmp_path / "state.json"),
+                  status_file=str(tmp_path / "status.json"),
+                  telegram_token="t", telegram_chat_id="1", paper_trade=False)
+    rt = FuturesRuntime(cfg, _Client())
+    rt._shadow_ledger_path = lambda: str(tmp_path / "shadow.jsonl")
+    return rt
+
+
+def test_the_samples_survive_a_restart_and_flush_writes_one_row(tmp_path, monkeypatch):
+    monkeypatch.delenv("FUTURES_R_SERIES_INTERVAL_SECONDS", raising=False)
+    rt = _real_runtime(tmp_path)
+    pos = FuturesPosition(symbol="ZEC_USDT", side="LONG", entry_price=100.0, contracts=10,
+                          contract_size=1.0, leverage=5, margin_usdt=200.0, tp_price=110.0,
+                          sl_price=98.0, position_id="7", order_id="1",
+                          opened_at=datetime.now(timezone.utc) - timedelta(hours=1),
+                          score=96.0, certainty=0.9, entry_signal="WILDCARD_LONG",
+                          metadata={"wildcard": 1.0})
+    rt.open_positions[pos.symbol] = pos
+    real_time = rt_mod.time
+    t = {"now": real_time.time()}
+    monkeypatch.setattr(rt_mod, "time", SimpleNamespace(time=lambda: t["now"],
+                                                       monotonic=real_time.monotonic))
+    for r in (0.10, 0.60, 0.35, 0.05):                           # a peak, then the fade
+        rt._record_r_sample(pos, r)
+        t["now"] += 61.0
+    before = [list(pt) for pt in pos.metadata["r_series"]]
+    assert len(before) == 4
+
+    # the process dies here: no event-driven save ran after the first sample
+    monkeypatch.setattr(rt_mod, "time", real_time)
+    rt2 = _real_runtime(tmp_path)                                # boots from the state file
+    restored = rt2.open_positions["ZEC_USDT"]
+    assert restored.metadata["r_series"] == before              # every sample, fade included
+    assert restored.metadata["r_series_n"] == 4.0
+    assert restored.metadata["r_series_start_ts"] == pos.metadata["r_series_start_ts"]
+
+    trade = {"sleeve": "WILDCARD", "exit_reason": "EXCHANGE_CLOSE", "pnl_usdt": 1.0}
+    rt2._flush_r_series(restored, trade)
+    rt2._flush_r_series(restored, trade)                         # a second call writes nothing
+    rows = [json.loads(line) for line in open(tmp_path / "futures_r_series.jsonl", encoding="utf-8")]
+    assert len(rows) == 1
+    assert rows[0]["series"] == before

@@ -136,6 +136,16 @@ PMT_EXCHANGE_PROFIT_LOCK_STOP_GROSS_PCT_KEY = "pmt_exchange_profit_lock_stop_gro
 PMT_EXCHANGE_PROFIT_LOCK_PEAK_GROSS_PCT_KEY = "pmt_exchange_profit_lock_peak_gross_pnl_pct"
 PMT_EXCHANGE_PROFIT_LOCK_ERROR_AT_KEY = "pmt_exchange_profit_lock_error_at"
 BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
+# A software close that failed after its exchange stop was put back: the wall-clock
+# time of that failure. Retries leave the restored stop resting this long before
+# cancelling it again (owner decision 2026-09-24, C04).
+CLOSE_FAILED_TS_KEY = "close_failed_ts"
+# ...and the exit that failed: LATCHED, so the retry after the backoff closes with it
+# whether or not its trigger still holds. Cleared only by a close that goes through.
+CLOSE_FAILED_REASON_KEY = "close_failed_reason"
+CLOSE_RETRY_BACKOFF_SECONDS = 60.0
+# The designed stop /reconcile assumes when no usable stop rests: 20% of margin.
+ADOPT_FALLBACK_SL_MARGIN_PCT = 20.0
 
 
 # Breakeven-stop and shadow telemetry, copied by name to the closed trade record
@@ -143,6 +153,7 @@ BREAKEVEN_PROFIT_LOCK_ARMED_KEY = "breakeven_profit_lock_armed"
 EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "be_stop_failed",
                        "be_stop_attempts", "be_stop_wrong_side", "be_stop_no_position_id",
                        "be_stop_paper_price", "be_stop_bare", "be_stop_cancel_failed",
+                       "be_stop_adopted",
                        "be_shadow_arm_r", "be_shadow_arm_ts", "be_shadow_touch_ts", "be_shadow_touch_r",
                        "r_series_n", "r_series_peak_r", "r_series_peak_ts", "r_series_interval_s",
                        "t_adverse_60", "t_adverse_70", "t_adverse_80", "t_adverse_90",
@@ -603,7 +614,7 @@ class FuturesRuntime:
         import os as _os
         import time as _time
 
-        if _os.environ.get("USE_OI_OBSERVATIONS", "1").strip().lower() in {"0", "false", "no", "off", ""}:
+        if (_os.environ.get("USE_OI_OBSERVATIONS", "").strip() or "1").lower() in {"0", "false", "no", "off"}:
             return
         if not self.config.redis_url:
             return
@@ -633,8 +644,8 @@ class FuturesRuntime:
         # Default-ON. Opt out with USE_FUNDING_OBSERVATIONS_PUBLISH=0.
         import os as _os
 
-        if _os.environ.get("USE_FUNDING_OBSERVATIONS_PUBLISH", "1").strip().lower() in {
-            "0", "false", "no", "off", ""
+        if (_os.environ.get("USE_FUNDING_OBSERVATIONS_PUBLISH", "").strip() or "1").lower() in {
+            "0", "false", "no", "off"
         }:
             return
         if not self.config.redis_url:
@@ -1627,6 +1638,11 @@ class FuturesRuntime:
 
             new_sl = breakeven_stop_price(float(position.entry_price), position.side)
             improves = new_sl > float(position.sl_price or 0) if position.side == "LONG" else new_sl < float(position.sl_price or 1e18)
+            # Nor below a resting breakeven stop: an ADOPTED one leaves sl_price at the
+            # 20%-of-margin fallback, so beating sl_price alone could loosen it.
+            be_resting = self._metadata_float(metadata, "be_stop_price") or 0.0
+            if be_resting > 0:
+                improves = improves and (new_sl > be_resting if position.side == "LONG" else new_sl < be_resting)
             if improves:
                 position.sl_price = new_sl
                 metadata["runner_breakeven_sl"] = float(new_sl)
@@ -1834,7 +1850,7 @@ class FuturesRuntime:
         # protected even when the micro lock doesn't apply.
         # Only active while the main peak lock has not yet armed (peak < 4%).
         # Gate: FUTURES_MID_PROFIT_LOCK_ENABLED (default 1).
-        if not pmt_strategy_enabled() and os.environ.get("FUTURES_MID_PROFIT_LOCK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
+        if not pmt_strategy_enabled() and (os.environ.get("FUTURES_MID_PROFIT_LOCK_ENABLED", "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}:
             mid_trigger_pct = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_TRIGGER_PCT", 3.0))
             mid_min_tp_progress = max(0.0, self._env_float("FUTURES_MID_PROFIT_LOCK_MIN_TP_PROGRESS", 0.30))
             mid_progress = self._tp_progress(position, current_price)
@@ -2950,7 +2966,7 @@ class FuturesRuntime:
     def _micro_lock_exit(self, position: FuturesPosition, current_price: float) -> bool:
         if self._skips_discretionary_locks(position):
             return False
-        if os.environ.get("FUTURES_MICRO_LOCK_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+        if (os.environ.get("FUTURES_MICRO_LOCK_ENABLED", "").strip() or "1").lower() not in {"1", "true", "yes", "y", "on"}:
             return False
         micro_exit, changed = evaluate_micro_lock_tick(
             position,
@@ -3011,9 +3027,9 @@ class FuturesRuntime:
         return label
 
     def _adverse_peak_trail_exit(self, position: FuturesPosition, current_price: float) -> bool:
-        if os.environ.get("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+        if (os.environ.get("FUTURES_ADVERSE_PEAK_TRAIL_ENABLED", "").strip() or "1").lower() not in {"1", "true", "yes", "y", "on"}:
             return False
-        if os.environ.get("FUTURES_ADVERSE_TRAIL_SIDEWAYS_ONLY", "1").strip().lower() in {"1", "true", "yes", "y", "on"}:
+        if (os.environ.get("FUTURES_ADVERSE_TRAIL_SIDEWAYS_ONLY", "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}:
             label = self._spot_regime_label_for(position.symbol)
             if label is not None and label != "SIDEWAYS":
                 return False
@@ -3046,7 +3062,7 @@ class FuturesRuntime:
         return False
 
     def _no_progress_loss_exit(self, position: FuturesPosition, current_price: float, now: datetime | None = None) -> bool:
-        if os.environ.get("FUTURES_NO_PROGRESS_EXIT_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "y", "on"}:
+        if (os.environ.get("FUTURES_NO_PROGRESS_EXIT_ENABLED", "").strip() or "1").lower() not in {"1", "true", "yes", "y", "on"}:
             return False
         max_stop_risk_pct = max(0.0, self._env_margin_fraction("FUTURES_MAX_STOP_RISK_PCT_OF_MARGIN", 0.0))
         if max_stop_risk_pct > 0:
@@ -4974,7 +4990,8 @@ class FuturesRuntime:
             "/pause — Pause new entries (open positions stay managed)\n"
             "/resume — Resume new entries\n"
             "/arm SYMBOL — Arm the retention trail now, below the automatic arm "
-            "(e.g. /arm ZEC). Floors at 50% of the CURRENT value; never lowers a floor\n"
+            "(e.g. /arm ZEC). Floors at 50% of the CURRENT value; never lowers a floor. "
+            "Refuses TREND positions\n"
             "/arm SYMBOL GIVEBACK — Arm with your own giveback (e.g. /arm ZEC 0.20 "
             "floors at 80% of the CURRENT value, then ratchets up on new highs)\n"
             "/close — Close the first open position\n"
@@ -5040,6 +5057,7 @@ class FuturesRuntime:
             current_price = self.client.get_fair_price(position.symbol)
         except Exception as exc:
             log.debug("Futures fair price fetch failed for %s: %s", position.symbol, exc)
+        own_price = current_price or None       # never another symbol's price for the restore
         if not current_price:
             current_price = self._get_reference_price()
         if self.config.paper_trade:
@@ -5048,20 +5066,33 @@ class FuturesRuntime:
             self._save_state()
             self._record_activity(f"Manual close: {position.side} {position.symbol} @ {current_price:,.2f}")
             return True, f"Closed paper {position.side} {position.symbol} at ${current_price:,.2f}."
+        stop_cancelled = False
         try:
             self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
+            stop_cancelled = True
         except Exception as exc:
             log.debug("Futures cancel_all_tpsl failed before manual close: %s", exc)
         position_mode = self._live_position_mode()
-        order = self.client.close_position(
-            symbol=position.symbol,
-            side=self._close_side(position, position_mode=position_mode),
-            vol=position.contracts,
-            leverage=position.leverage,
-            open_type=self.config.open_type,
-            position_mode=position_mode,
-            position_id=position.position_id or None,
-        )
+        try:
+            order = self.client.close_position(
+                symbol=position.symbol,
+                side=self._close_side(position, position_mode=position_mode),
+                vol=position.contracts,
+                leverage=position.leverage,
+                open_type=self.config.open_type,
+                position_mode=position_mode,
+                position_id=position.position_id or None,
+            )
+        except Exception:
+            # If the stop was cancelled above, put it back before the error propagates, as
+            # the software close does (C04-2). Inside a stuck-close backoff nothing else
+            # would touch this position for up to a minute. After a failed cancel the stop
+            # is most likely still resting: restoring then would duplicate it, or record a
+            # false be_stop_bare that K3 reads. (A cancel that raised after it had in fact
+            # cancelled is not caught here - recorded follow-up, 2026-09-24.)
+            if stop_cancelled:
+                self._restore_exchange_tpsl(position, current_price=own_price)
+            raise
         order_id = str(order.get("orderId") or "")
         exit_price = current_price
         if order_id:
@@ -5156,6 +5187,13 @@ class FuturesRuntime:
             return False, (f"{sym} is not managed by the retention trail (sleeve "
                            f"{self._sleeve_kind(position)}, or the trail is disabled). "
                            "Arming would change nothing.")
+        # Owner rule 2026-09-24: manual TREND arming graded D, resampled -$103
+        # [-172, -30] over 7 arms. The sleeve is read from the position's own
+        # marker; a re-adopted TREND position has lost it and reads as WILDCARD.
+        if self._sleeve_kind(position) == "TREND":
+            return False, (f"TREND positions can't be armed manually (owner rule 2026-09-24: "
+                           f"manual TREND arming resampled -$103 [-172, -30] over 7 arms). {sym}'s automatic "
+                           "exits stay in place.")
         if not isinstance(position.metadata, dict):
             position.metadata = {}
         md = position.metadata
@@ -6127,6 +6165,9 @@ class FuturesRuntime:
                 certainty=0.0,
                 entry_signal="RECOVERED",
             )
+            recovered.sl_price = self._adoption_stop(recovered.side, recovered.entry_price,
+                                                     recovered.leverage, recovered.sl_price,
+                                                     recovered.metadata)
             self._register_position(recovered)
             log.info("Recovered untracked live position for %s", sym)
 
@@ -6713,6 +6754,13 @@ class FuturesRuntime:
     def _hourly_exit(self, position: FuturesPosition, current_price: float, now: datetime | None = None) -> bool:
         if self._strategies_retired():
             return False
+        # A LATCHED CLOSE GOES FIRST (C04). A close that failed with its stop restored
+        # is retried with the same reason once the backoff ends, whether or not its
+        # trigger still holds: a decided exit is delayed, never dropped (a bounce, or a
+        # time window closing, used to drop it). Until then nothing else runs.
+        latched = position.metadata.get(CLOSE_FAILED_REASON_KEY) if isinstance(position.metadata, dict) else None
+        if latched:
+            return self._close_position_for_exit(position, current_price=current_price, reason=str(latched))
         scoped = self._config_for_symbol(position.symbol)
         metadata = position.metadata or {}
         # CONVEX EXITS FIRST — before the PMT branch below, which RETURNS and
@@ -6753,7 +6801,7 @@ class FuturesRuntime:
             return True
         if self._no_progress_loss_exit(position, current_price, now=now):
             return True
-        stagnation_enabled = os.environ.get("FUTURES_STAGNATION_EXIT_ENABLED", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+        stagnation_enabled = (os.environ.get("FUTURES_STAGNATION_EXIT_ENABLED", "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
         if stagnation_enabled:
             should_close, changed, reason = evaluate_stagnation_exit(
                 position,
@@ -6765,7 +6813,7 @@ class FuturesRuntime:
                 retrace_fraction=self._env_float("FUTURES_STAGNATION_EXIT_RETRACE_FRACTION", 0.65),
                 min_net_pnl_pct=self._env_float("FUTURES_STAGNATION_EXIT_MIN_NET_PNL_PCT", -2.50),
                 taker_fee_rate=self.get_symbol_taker_fee_rate(position.symbol),
-                require_chase_watch=os.environ.get("FUTURES_STAGNATION_EXIT_REQUIRE_CHASE_WATCH", "1").strip().lower() in {"1", "true", "yes", "y", "on"},
+                require_chase_watch=(os.environ.get("FUTURES_STAGNATION_EXIT_REQUIRE_CHASE_WATCH", "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"},
             )
             if should_close:
                 net_pnl_pct = self._position_net_pnl_pct(position, current_price)
@@ -6808,10 +6856,10 @@ class FuturesRuntime:
         return self._fixed_take_profit_exit(position, current_price=current_price, scoped=scoped)
 
     def _open_position_guard_enabled(self) -> bool:
-        return os.environ.get("USE_OPEN_POSITION_GUARD", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+        return (os.environ.get("USE_OPEN_POSITION_GUARD", "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
 
     def _futures_fair_price_ws_enabled(self) -> bool:
-        return os.environ.get("USE_FUTURES_FAIR_PRICE_WS", "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+        return (os.environ.get("USE_FUTURES_FAIR_PRICE_WS", "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
 
     def _sync_open_position_price_subscriptions(self) -> None:
         if not self._futures_fair_price_ws_enabled():
@@ -6970,18 +7018,23 @@ class FuturesRuntime:
         Each level is now gated independently, so a position that has a real
         stop but no target is still stopped out properly.
         """
-        has_sl = position.sl_price > 0.0
+        sl = float(position.sl_price or 0.0)
+        # An ADOPTED breakeven stop leaves sl_price at the 20%-of-margin fallback (the R
+        # denominator); this in-process backup stands where the exchange stop rests (C21).
+        if isinstance(position.metadata, dict) and position.metadata.get("be_stop_adopted"):
+            sl = self._effective_stop_price(position)
+        has_sl = sl > 0.0
         has_tp = position.tp_price > 0.0
         if not has_sl and not has_tp:
             return False
         if position.side == "LONG":
-            if has_sl and current_price <= position.sl_price:
-                return self._close_position_for_exit(position, current_price=position.sl_price, reason="STOP_LOSS")
+            if has_sl and current_price <= sl:
+                return self._close_position_for_exit(position, current_price=sl, reason="STOP_LOSS")
             if has_tp and current_price >= position.tp_price:
                 return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
             return False
-        if has_sl and current_price >= position.sl_price:
-            return self._close_position_for_exit(position, current_price=position.sl_price, reason="STOP_LOSS")
+        if has_sl and current_price >= sl:
+            return self._close_position_for_exit(position, current_price=sl, reason="STOP_LOSS")
         if has_tp and current_price <= position.tp_price:
             return self._close_position_for_exit(position, current_price=position.tp_price, reason="TAKE_PROFIT")
         return False
@@ -7271,6 +7324,13 @@ class FuturesRuntime:
                         "(check %d, cumulative bare %.0fs) - shadow only, nothing "
                         "was placed or closed", position.symbol, position.side,
                         int(md["stop_book_checks"]), md["stop_book_bare_seconds"])
+            # Persisted now (N1): K3 reads these readings and state is otherwise saved
+            # only on events, so a restart could erase them. Once per check (forced checks
+            # after an entry or a breakeven amend come sooner than the interval).
+            try:
+                self._save_state()
+            except Exception as exc:               # pragma: no cover - never raises
+                log.debug("[STOP_BOOK] %s state save failed: %s", position.symbol, exc)
         else:
             md["stop_book_unreadable_checks"] = float(
                 md.get("stop_book_unreadable_checks") or 0.0) + 1.0
@@ -7306,7 +7366,12 @@ class FuturesRuntime:
             # A breakeven floor sits ~50x closer to the market than the designed stop, so
             # by the time a close fails the market may already be through it. Re-placing
             # it there is rejected (or fills at once); fall back to the designed stop.
-            if current_price and current_price > 0 and stop_price != float(position.sl_price or 0.0):
+            # Not for an ADOPTED breakeven stop: its sl_price is the 20%-of-margin
+            # fallback, not a stop that ever rested, so falling back would loosen what
+            # the exchange held. It retries at breakeven, as before adoption changed.
+            adopted_be = isinstance(position.metadata, dict) and bool(position.metadata.get("be_stop_adopted"))
+            if (current_price and current_price > 0 and not adopted_be
+                    and stop_price != float(position.sl_price or 0.0)):
                 is_long = str(position.side).upper() == "LONG"
                 if (stop_price >= current_price) if is_long else (stop_price <= current_price):
                     log.warning("[EXIT_FAILED] %s breakeven floor %s is through the market %s; "
@@ -7382,12 +7447,56 @@ class FuturesRuntime:
             )
             return False
 
+    def _note_close_failed(self, position: FuturesPosition, *, reason: str, exc: Exception) -> None:
+        """A close failed and its exchange stop was put back: stamp when, so retries
+        leave that stop resting for CLOSE_RETRY_BACKOFF_SECONDS, latch the exit so the
+        retry closes with it, and alert ONCE per stuck-close episode (a stamp older
+        than two backoffs, or none, starts a new episode). Never raises: the caller is
+        about to propagate the real failure."""
+        try:
+            if not isinstance(position.metadata, dict):
+                position.metadata = {}
+            md = position.metadata
+            now_ts = time.time()
+            last = self._metadata_float(md, CLOSE_FAILED_TS_KEY) or 0.0
+            first = not (last and 0.0 <= now_ts - last < 2.0 * CLOSE_RETRY_BACKOFF_SECONDS)
+            md[CLOSE_FAILED_TS_KEY] = now_ts
+            md.setdefault(CLOSE_FAILED_REASON_KEY, str(reason))
+            self._save_state()
+            if first:
+                self._notify_once(
+                    f"futures_close_failed_stop_restored_{position.symbol}_{position.position_id}",
+                    f"⚠️ <b>Futures Close Failed, Stop Restored</b> [{self._mode_label()}]\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"<b>{html.escape(str(position.symbol))}</b> {html.escape(str(reason))}: the "
+                    f"close was rejected and the exchange stop is back in place. The bot retries "
+                    f"this close every {CLOSE_RETRY_BACKOFF_SECONDS:.0f}s until it goes through, "
+                    f"leaving the stop resting in between.\n"
+                    f"<code>{html.escape(str(exc))[:200]}</code>",
+                )
+        except Exception as note_exc:  # pragma: no cover — diagnostics only
+            log.warning("[EXIT_FAILED] %s close-failure stamp not recorded: %s",
+                        position.symbol, note_exc)
+
     def _close_position_for_exit(self, position: FuturesPosition, *, current_price: float, reason: str) -> bool:
         if self.config.paper_trade:
             self._close_history_trade(position, exit_price=current_price, reason=reason)
             self._clear_position(position.symbol)
             self._save_state()
             return True
+        # A STUCK CLOSE MUST NOT STRIP ITS OWN STOP EVERY SECOND. The 1s monitor retries
+        # a failed exit on every poll, and each retry cancelled the stop the previous
+        # one had just restored: the position sat with no exchange stop 70-98% of the
+        # time. For CLOSE_RETRY_BACKOFF_SECONDS after a failure whose stop was restored,
+        # a retry leaves that stop alone and does not raise. Wall-clock and persisted,
+        # so a stamp from before a restart blocks for the rest of its window only; a
+        # stamp in the future (clock step) blocks nothing.
+        md_close = position.metadata if isinstance(position.metadata, dict) else {}
+        failed_at = self._metadata_float(md_close, CLOSE_FAILED_TS_KEY) or 0.0
+        if failed_at and 0.0 <= time.time() - failed_at < CLOSE_RETRY_BACKOFF_SECONDS:
+            log.debug("[EXIT_FAILED] %s %s close deferred: the restored stop stands until "
+                      "the %.0fs backoff ends", position.symbol, reason, CLOSE_RETRY_BACKOFF_SECONDS)
+            return False
         self.client.cancel_all_tpsl(position_id=position.position_id, symbol=position.symbol)
         position_mode = self._live_position_mode()
         try:
@@ -7400,15 +7509,22 @@ class FuturesRuntime:
                 position_mode=position_mode,
                 position_id=position.position_id or None,
             )
-        except Exception:
+        except Exception as exc:
             # THE BRACKET IS ALREADY GONE. cancel_all_tpsl is all-or-nothing, so
             # between it and a filled close the position rests on the exchange with
             # no stop; only the in-process monitor stands behind it, and that dies
             # with the process. Put the stop back before the error propagates, so a
             # failed close (rate limit, maintenance, a redeploy landing here) cannot
             # leave an unprotected position overnight.
-            self._restore_exchange_tpsl(position, current_price=current_price)
+            # A failed eviction is not stamped: nothing retries it (it pairs only with
+            # the entry that just failed), so there is no retry loop to hold back.
+            if (self._restore_exchange_tpsl(position, current_price=current_price)
+                    and reason != "CONVEX_PREEMPTED"):
+                self._note_close_failed(position, reason=reason, exc=exc)
             raise
+        if isinstance(position.metadata, dict):
+            position.metadata.pop(CLOSE_FAILED_TS_KEY, None)
+            position.metadata.pop(CLOSE_FAILED_REASON_KEY, None)
         order_id = str(order.get("orderId") or "")
         if order_id:
             detail = self.client.get_order(order_id)
@@ -7545,6 +7661,28 @@ class FuturesRuntime:
                 return 0.0, 0.0
         return 0.0, 0.0
 
+    def _adoption_stop(self, side: str, entry: float, leverage: float,
+                       resting_sl: float, metadata: dict[str, Any]) -> float:
+        """The sl_price to adopt a position with, given the stop resting on the exchange.
+
+        A resting stop AT OR PAST ENTRY ON THE PROFIT SIDE is the breakeven stop (armed at
+        0.90R), not the designed one. Read as sl_price - the R denominator - it shrank 1R
+        5-15x: the trail armed at once and the 3R ratchet fired on a ~0.6% move. So it is
+        recorded as the ARMED breakeven stop, which the breakeven code never re-arms or
+        moves and every re-placing path reads through `_effective_stop_price`, and
+        sl_price takes the fallback /reconcile uses when no stop rests (20% of margin).
+        A loss-side stop is the designed stop and comes back unchanged."""
+        is_long = str(side).upper() == "LONG"
+        if resting_sl <= 0 or entry <= 0 or leverage <= 0:
+            return resting_sl
+        if (resting_sl < entry) if is_long else (resting_sl > entry):
+            return resting_sl
+        metadata["be_stop_price"] = float(resting_sl)
+        metadata["be_stop_ts"] = time.time()
+        metadata["be_stop_adopted"] = 1.0
+        move = ADOPT_FALLBACK_SL_MARGIN_PCT / 100.0 / float(leverage)
+        return entry * (1.0 - move) if is_long else entry * (1.0 + move)
+
     def _reconcile_orphans_message(self) -> str:
         """/reconcile — read every MEXC open position and ADOPT any the bot is
         not tracking into local state (so its exit logic takes over). Exchange
@@ -7581,13 +7719,16 @@ class FuturesRuntime:
                 contract_size = float(self.client.get_contract_detail(sym).get("contractSize", 0.0001) or 0.0001)
             except Exception:
                 contract_size = 0.0001
-            sl_price, tp_price = self._resting_stop_for(sym, pid)
-            sl_margin = abs(entry - sl_price) / entry * lev * 100.0 if sl_price > 0 else 20.0
+            resting_sl, tp_price = self._resting_stop_for(sym, pid)
+            be_fields: dict[str, Any] = {}
+            sl_price = self._adoption_stop(side_name, entry, lev, resting_sl, be_fields)
+            sl_margin = abs(entry - sl_price) / entry * lev * 100.0 if sl_price > 0 else ADOPT_FALLBACK_SL_MARGIN_PCT
             tp_margin = abs(tp_price - entry) / entry * lev * 100.0 if tp_price > 0 else sl_margin * 5.0
             is_wc = sym not in set(self.config.symbols)
             metadata: dict[str, Any] = {
                 "pmt_stop_first": 1.0, "adopted": 1.0,
                 "sl_margin_pct": round(sl_margin, 4), "tp_margin_pct": round(tp_margin, 4),
+                **be_fields,
             }
             if is_wc:
                 metadata["wildcard"] = 1.0
@@ -7601,7 +7742,9 @@ class FuturesRuntime:
             )
             self._register_position(position)
             tag = "🎲" if is_wc else "•"
-            stop_txt = self._format_price(sl_price) if sl_price > 0 else "NONE ⚠️"
+            stop_txt = self._format_price(resting_sl) if resting_sl > 0 else "NONE ⚠️"
+            if be_fields:
+                stop_txt += " (breakeven)"
             adopted.append(f"{tag} {side_name} {html.escape(sym)} x{lev} | entry {self._format_price(entry)} | SL {stop_txt}")
             if sl_price <= 0:
                 no_stop.append(sym)
@@ -7658,6 +7801,8 @@ class FuturesRuntime:
                 continue                       # never touch another sleeve's book
             if pos.symbol == getattr(incoming, "symbol", None):
                 continue                       # not the same symbol
+            if isinstance(pos.metadata, dict) and pos.metadata.get(CLOSE_FAILED_REASON_KEY):
+                continue                       # its own close is stuck and latched
             age_h = self._hold_hours(pos)
             if age_h is None or age_h * 60.0 < min_age:
                 continue                       # a fresh entry gets its chance;
@@ -8818,7 +8963,7 @@ class FuturesRuntime:
         findings + shadow counterfactual scorecard. Marker-file throttled
         (survives redeploys via the /data volume). Fail-soft; never trades."""
         try:
-            if os.environ.get("FUTURES_LEARNING_DIGEST_ENABLED", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+            if (os.environ.get("FUTURES_LEARNING_DIGEST_ENABLED", "").strip() or "1").lower() not in {"1", "true", "yes", "on"}:
                 return
             days = max(1.0, self._env_float("FUTURES_LEARNING_DIGEST_DAYS", 7.0))
             marker = self._feature_store_path.parent / "learning_digest_marker.txt"
@@ -9510,7 +9655,12 @@ class FuturesRuntime:
         is about +7% of the state file. Capped at FUTURES_R_SERIES_MAX_SAMPLES, which at
         the default cadence is 26.7h - longer than the hard clock, so a live position
         never reaches it; do NOT lower the interval without raising the cap, or the cap
-        would silently truncate the tail of every long hold. Never raises."""
+        would silently truncate the tail of every long hold. Never raises.
+
+        Each recorded sample is persisted through `_save_state`, at most once per 60s per
+        position (C19): state was otherwise saved only on events, so a restart lost every
+        sample since the last one - measured 2026-09-23, 38% of ZEC's path and 25% of
+        MARSCOIN's, mostly the post-peak fade."""
         if not self._flag("FUTURES_R_SERIES_ENABLED", default=True):
             return
         try:
@@ -9530,7 +9680,8 @@ class FuturesRuntime:
                 md["r_series_start_ts"] = start
                 md["r_series_interval_s"] = float(interval)
             cap = int(max(60.0, self._env_float("FUTURES_R_SERIES_MAX_SAMPLES", 1600.0)))
-            if len(series) < cap:
+            appended = len(series) < cap
+            if appended:
                 run_max = max(float(r_now), float(md.get("convex_peak_r") or -1e9))
                 series.append([int(max(0, now_ts - start)),
                                int(round(float(r_now) * 1000.0)),
@@ -9540,6 +9691,9 @@ class FuturesRuntime:
             if float(r_now) > float(md.get("r_series_peak_r") if md.get("r_series_peak_r") is not None else -1e9):
                 md["r_series_peak_r"] = round(float(r_now), 4)
                 md["r_series_peak_ts"] = round(now_ts, 1)
+            if appended and not 0.0 <= now_ts - float(md.get("r_series_saved_ts") or 0.0) < 60.0:
+                md["r_series_saved_ts"] = now_ts
+                self._save_state()
         except Exception:                          # pragma: no cover - telemetry never blocks
             pass
 
@@ -10207,7 +10361,7 @@ class FuturesRuntime:
 
     def _missed_opportunity_enabled(self) -> bool:
         raw = os.environ.get("FUTURES_MISSED_OPPORTUNITY_REPORT_ENABLED", "1")
-        return str(raw or "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+        return (str(raw or "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
 
     def _prune_missed_opportunities(self, now_ts: float | None = None) -> None:
         if not self.missed_opportunities:
@@ -11132,8 +11286,10 @@ class FuturesRuntime:
     def _flag(name: str, default: bool = False) -> bool:
         import os
 
+        # Empty or whitespace-only reads as UNSET (C26): blanking a Railway variable
+        # must not silently switch off a default-on switch.
         default_value = "1" if default else "0"
-        return os.environ.get(name, default_value).strip().lower() in {"1", "true", "yes", "y", "on"}
+        return (os.environ.get(name, "").strip() or default_value).lower() in {"1", "true", "yes", "y", "on"}
 
     def _strategies_retired(self) -> bool:
         return self._flag("FUTURES_STRATEGIES_RETIRED")
@@ -11664,7 +11820,7 @@ class FuturesRuntime:
     def _regime_breakout_hold_override(self, classification: Any, signal: Any) -> bool:
         import os
 
-        enabled = str(os.environ.get("REGIME_ALLOW_BREAKOUT_HOLD_VOL_SHOCK", "1")).strip().lower() in {
+        enabled = (str(os.environ.get("REGIME_ALLOW_BREAKOUT_HOLD_VOL_SHOCK", "")).strip() or "1").lower() in {
             "1",
             "true",
             "yes",
@@ -11698,7 +11854,7 @@ class FuturesRuntime:
     def _regime_level_break_override(self, classification: Any, signal: Any) -> bool:
         import os
 
-        enabled = str(os.environ.get("REGIME_ALLOW_LEVEL_BREAK_VOL_SHOCK", "1")).strip().lower() in {
+        enabled = (str(os.environ.get("REGIME_ALLOW_LEVEL_BREAK_VOL_SHOCK", "")).strip() or "1").lower() in {
             "1",
             "true",
             "yes",
@@ -12688,7 +12844,7 @@ class FuturesRuntime:
 
     def _execution_canary_enabled(self) -> bool:
         raw = os.environ.get("FUTURES_EXECUTION_CANARY_ENABLED", "1")
-        return str(raw or "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+        return (str(raw or "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
 
     def _should_attach_execution_canary(self, *, mode: str) -> bool:
         if not self._execution_canary_enabled():
@@ -12884,7 +13040,7 @@ class FuturesRuntime:
 
     def _capital_scaling_enabled(self) -> bool:
         raw = os.environ.get("FUTURES_CAPITAL_SCALING_ENABLED", "1")
-        return str(raw or "1").strip().lower() in {"1", "true", "yes", "y", "on"}
+        return (str(raw or "").strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
 
     def _capital_scaling_multiplier(self) -> tuple[float, dict[str, Any]]:
         if not self._capital_scaling_enabled():
@@ -12893,7 +13049,7 @@ class FuturesRuntime:
         step_trades = max(1, int(self._env_float("FUTURES_CAPITAL_SCALE_STEP_TRADES", 5.0)))
         increment = max(0.0, self._env_float("FUTURES_CAPITAL_SCALE_INCREMENT", 0.25))
         max_mult = max(1.0, self._env_float("FUTURES_CAPITAL_SCALE_MAX_MULT", 2.0))
-        require_live = str(os.environ.get("FUTURES_CAPITAL_SCALE_REQUIRE_LIVE", "1") or "1").strip().lower() in {
+        require_live = (str(os.environ.get("FUTURES_CAPITAL_SCALE_REQUIRE_LIVE", "") or "").strip() or "1").lower() in {
             "1", "true", "yes", "y", "on"
         }
         max_entry_slippage = max(0.0, self._env_float("FUTURES_CAPITAL_SCALE_MAX_ENTRY_SLIPPAGE_BPS", 8.0))
@@ -13944,7 +14100,8 @@ class FuturesRuntime:
 
         import os as _os
 
-        check_on = str(_os.environ.get("FUTURES_EXCHANGE_SPEC_CHECK", "true")).lower() in {
+        check_on_raw = _os.environ.get("FUTURES_EXCHANGE_SPEC_CHECK", "")
+        check_on = str(check_on_raw if check_on_raw.strip() else "true").lower() in {
             "1",
             "true",
             "yes",
@@ -13952,7 +14109,8 @@ class FuturesRuntime:
         }
         if not check_on:
             return
-        strict = str(_os.environ.get("FUTURES_EXCHANGE_SPEC_STRICT", "true")).lower() in {
+        strict_raw = _os.environ.get("FUTURES_EXCHANGE_SPEC_STRICT", "")
+        strict = str(strict_raw if strict_raw.strip() else "true").lower() in {
             "1",
             "true",
             "yes",

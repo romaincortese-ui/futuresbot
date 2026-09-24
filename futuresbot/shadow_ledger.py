@@ -78,8 +78,8 @@ def convex_trail_enabled(sleeve: str | None = None) -> bool:
     no row scores differently while it is unset."""
     if str(sleeve or "").upper() != "TREND":
         return True
-    raw = os.environ.get("FUTURES_TREND_TRAIL_ENABLED", "1")
-    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    raw = os.environ.get("FUTURES_TREND_TRAIL_ENABLED", "")
+    return (str(raw).strip() or "1").lower() in {"1", "true", "yes", "y", "on"}
 
 
 def convex_retain(peak_r: float) -> float:

@@ -116,6 +116,27 @@ def test_no_matching_order_is_absent_and_starts_the_bare_clock():
     assert "stop_book_bare_seconds" in p.metadata
 
 
+def test_an_absent_reading_is_saved_at_once():
+    """N1: kill rule K3 reads the bare readings, and state is otherwise saved only on
+    events, so a restart before the next one erased them."""
+    rt = _rt([dict(LIVE, positionId="9999")])
+    rt._save_state = MagicMock()
+    p = _pos()
+    assert rt._verify_stop_on_book(p) == "ABSENT"
+    rt._save_state.assert_called_once()
+    rt._save_state.side_effect = OSError("disk full")          # a failed save never raises
+    p.metadata["stop_book_due_ts"] = time.time() - 1
+    assert rt._verify_stop_on_book(p) == "ABSENT"
+    assert p.metadata["stop_book_absent_checks"] == 2.0
+
+
+def test_a_seen_reading_does_not_save():
+    rt = _rt([LIVE])
+    rt._save_state = MagicMock()
+    assert rt._verify_stop_on_book(_pos()) == "SEEN"
+    rt._save_state.assert_not_called()
+
+
 def test_an_unreadable_endpoint_is_not_called_bare():
     """ABSENT and UNREADABLE are different facts; collapsing them manufactures exactly
     the false alarm this exists to catch."""

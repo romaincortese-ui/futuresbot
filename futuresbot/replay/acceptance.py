@@ -18,12 +18,18 @@ THE THREE LAYERS
            free margin, from live's cash at the window start, with live's flows - must land near live's dollars.
            Every replay is re-priced by the engine, whatever stake it booked itself: compounding by default.
 
+BAR CONVENTION (release gate D3). Live's entry scans did not always read the same 15m bar (LIVE_CONVENTIONS), and a
+replay reads one per sleeve (REPLAY_CONVENTIONS, or what the caller declares). ENTRIES, and EXITS when its pairs come
+from the replay's own entries, compare only fills where the two agree; the rest are excluded and counted, and a sleeve
+left below its minimum is NOT GRADED with the reason - a pre-09-19 TREND window no longer FAILS by construction.
+
 Thresholds live in THRESHOLDS below, each with the measurement that justifies it. The lane that set them (wc/EXP/R1)
 found no thresholds in the assessment's remediation design (wc/ASSESS/G defines the measurements, not the bars), so
 the bars are set here from the measured values that separate today's replay from the repaired variants.
 """
 from __future__ import annotations
 
+import bisect
 import json
 import math
 import random
@@ -39,11 +45,53 @@ from futuresbot.replay.sizing import (
     SizingConfig,
     Trade,
     _as_flows,
+    _utc,
     live_config,
     simulate,
 )
 
 GRADED_SLEEVES = ("WILDCARD", "TREND")
+
+# Which 15m bar each sleeve's entry scan reads: ordered (start_epoch, convention) entries, each in force from its start
+# (the sizing.LIVE_DIALS idiom). A replay is compared with live only where the two read the same bar (release gate D3).
+#   TREND read the FORMING bar until df0192e went live 2026-09-19 09:43Z (deploy ce375477; the commit is stamped
+#     10:41 +01:00, which the record also quotes as "10:41Z"), COMPLETED bars since: every later TREND fill carries
+#     trend_gate_close, a field only the completed-bar path writes, and none before it does.
+#   WILDCARD reads the forming bar throughout: FUTURES_WILDCARD_COMPLETED_BARS was built OFF 2026-09-23 and is unset
+#     live. If it is ever set, add its start here, or the scorer will grade the wrong population from that date.
+FORMING, COMPLETED = "forming", "completed"
+LIVE_CONVENTIONS: dict[str, tuple[tuple[float, str], ...]] = {
+    "WILDCARD": ((0.0, FORMING),),
+    "TREND": ((0.0, FORMING), (_utc(2026, 9, 19, 9, 43), COMPLETED)),
+}
+# The repaired replay (wc/EXP/R3): WILDCARD books the forming-bar signals at live's logged scan instants; TREND runs the
+# live detector on completed 15m bars (futuresbot.replay.bars never stores the forming bar). A replay built another way
+# declares its own: grade(replay_conventions=...), tools/replay_acceptance.py --replay-conventions.
+REPLAY_CONVENTIONS: dict[str, str] = {"WILDCARD": FORMING, "TREND": COMPLETED}
+
+
+def live_convention(sleeve: str, t: float) -> str | None:
+    """The bar live's `sleeve` entry scan read at epoch `t`; None when no schedule covers it."""
+    sched = LIVE_CONVENTIONS.get(sleeve.upper(), ())
+    k = bisect.bisect_right([a for a, _ in sched], float(t))
+    return sched[k - 1][1] if k else None
+
+
+def same_convention(sleeve: str, t: float, replay_convention: str | None) -> bool:
+    """True where live's scan read the replay's bar at `t`. With no declared replay convention, or one live NEVER used for
+    the sleeve, every fill compares (as before D3): D3 excludes windows of live's own history, it does not excuse a
+    replay of a bot live never ran - a completed-bar WILDCARD replay still FAILS entries, the population the bars were
+    set on."""
+    sched = LIVE_CONVENTIONS.get(sleeve.upper(), ())
+    if replay_convention is None or all(c != replay_convention for _, c in sched):
+        return True
+    return live_convention(sleeve, t) == replay_convention
+
+
+def _schedule_text(sleeve: str) -> str:
+    iso = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+    return ", ".join(c if a <= 0 else f"{c} from {iso(a)}" for a, c in LIVE_CONVENTIONS.get(sleeve.upper(), ()))
+
 
 # Live sl_margin_pct median ("0.12 balance_fraction x 15.6% median sl_margin", runtime._entry_margin). Only used to
 # lock margin for a replay fill that carries no stop at all; the scorer notes how many fills needed it.
@@ -331,7 +379,7 @@ class LayerResult:
     layer: str
     scope: str
     n: int
-    verdict: str              # PASS | FAIL | INSUFFICIENT
+    verdict: str              # PASS | FAIL | INSUFFICIENT | NOT GRADED (D3: too few fills where live read the replay's bar)
     checks: list[Check] = field(default_factory=list)
     info: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
@@ -348,10 +396,12 @@ def _verdict(n: int, n_min: float, checks: Sequence[Check]) -> str:
 
 
 def score_entries(live: Sequence[Fill], replay: Sequence[Fill], sleeve: str,
-                  th: Mapping[str, float] | None = None) -> LayerResult:
+                  th: Mapping[str, float] | None = None, replay_convention: str | None = None) -> LayerResult:
     th = th or THRESHOLDS["entries"]
-    lv = [f for f in live if f.sleeve == sleeve]
-    rp = [f for f in replay if f.sleeve == sleeve]
+    lv = [f for f in live if f.sleeve == sleeve and same_convention(sleeve, f.t_open, replay_convention)]
+    rp = [f for f in replay if f.sleeve == sleeve and same_convention(sleeve, f.t_open, replay_convention)]
+    x_lv = sum(1 for f in live if f.sleeve == sleeve) - len(lv)
+    x_rp = sum(1 for f in replay if f.sleeve == sleeve) - len(rp)
     pairs, lo, ro = match_fills(lv, rp, th["match_tol_s"])
     k = len(pairs)
     ratio = len(rp) / len(lv) if lv else None
@@ -364,13 +414,27 @@ def score_entries(live: Sequence[Fill], replay: Sequence[Fill], sleeve: str,
         Check("precision", precision, f">= {th['precision_min']:.2f}",
               None if precision is None else precision >= th["precision_min"]),
     ]
-    return LayerResult("ENTRIES", sleeve, len(lv), _verdict(len(lv), th["min_live"], checks), checks,
-                       info={"live": len(lv), "replay": len(rp), "matched": k,
-                             "recall_ci95": _wilson(k, len(lv)), "precision_ci95": _wilson(k, len(rp)),
-                             "live_R": sum(f.r for f in lv if f.r is not None),
-                             "replay_R": sum(f.r for f in rp if f.r is not None),
-                             "live_only_R": sum(f.r for f in lo if f.r is not None),
-                             "replay_only_R": sum(f.r for f in ro if f.r is not None)})
+    lr = LayerResult("ENTRIES", sleeve, len(lv), _verdict(len(lv), th["min_live"], checks), checks,
+                     info={"live": len(lv), "replay": len(rp), "matched": k,
+                           "recall_ci95": _wilson(k, len(lv)), "precision_ci95": _wilson(k, len(rp)),
+                           "live_R": sum(f.r for f in lv if f.r is not None),
+                           "replay_R": sum(f.r for f in rp if f.r is not None),
+                           "live_only_R": sum(f.r for f in lo if f.r is not None),
+                           "replay_only_R": sum(f.r for f in ro if f.r is not None)})
+    sched = LIVE_CONVENTIONS.get(sleeve.upper(), ())
+    if replay_convention and sched and all(c != replay_convention for _, c in sched):
+        lr.notes.append(f"live {sleeve} never read the {replay_convention} bar ({_schedule_text(sleeve)}): graded on "
+                        "every fill - a replay of a bot live never ran fails by construction")
+    if x_lv or x_rp:
+        # D3: fills where live read another bar than the replay are a different population, not a replay error.
+        lr.info["excluded_bar_convention"] = {"live": x_lv, "replay": x_rp}
+        lr.notes.append(f"{x_lv} live / {x_rp} replay fills excluded: live's scan did not read the replay's "
+                        f"{replay_convention} bar then (live {sleeve}: {_schedule_text(sleeve)})")
+        if len(lv) < th["min_live"]:
+            lr.verdict = "NOT GRADED"
+            lr.notes.insert(0, f"NOT GRADED: {len(lv)} live fills where live also read the {replay_convention} bar, "
+                               f"below the {th['min_live']:.0f}-fill minimum")
+    return lr
 
 
 def score_exits(live: Sequence[Fill], exits: Sequence[Fill], th: Mapping[str, float] | None = None,
@@ -592,11 +656,13 @@ class Report:
 def grade(live_all: Sequence[Fill], replay: Sequence[Fill], *, since: float, until: float,
           exits: Sequence[Fill] | None = None, flows: Iterable[Any] = (), start_cash: float | None = None,
           sleeves: Sequence[str] = GRADED_SLEEVES, config: SizingConfig | None = None,
-          n_boot: int = 2000) -> Report:
+          n_boot: int = 2000, replay_conventions: Mapping[str, str] | None = None) -> Report:
     """Grade `replay` against live over [since, until). `live_all` is every live fill (all kinds; the non-graded ones
-    become cash flows). With start_cash=None the window start moves back to the latest flat instant (see flat_start)."""
+    become cash flows). With start_cash=None the window start moves back to the latest flat instant (see flat_start).
+    `replay_conventions` {sleeve: FORMING|COMPLETED} is the bar the replay's entries read (default REPLAY_CONVENTIONS)."""
     notes: list[str] = []
     cfg = config or live_config()
+    conv = {k.upper(): v for k, v in (REPLAY_CONVENTIONS if replay_conventions is None else replay_conventions).items()}
     sl = {s.upper() for s in sleeves}
     sized = {k.upper() for k in cfg.dials}          # sleeves the sizing chain prices (a dial exists for them)
     flows_l = _as_flows(flows)
@@ -625,8 +691,17 @@ def grade(live_all: Sequence[Fill], replay: Sequence[Fill], *, since: float, unt
     carried = [f for f in live_sized if not (since <= f.t_open and f.sleeve in sl)]
     rp = [f for f in replay if since <= f.t_open < until and f.sleeve in sl]
     ex = [f for f in (exits if exits is not None else rp) if since <= f.t_open < until and f.sleeve in sl]
-    layers = [score_entries(live, rp, s) for s in sleeves]
-    layers.append(score_exits(live, ex, n_boot=n_boot))
+    layers = [score_entries(live, rp, s, replay_convention=conv.get(s.upper())) for s in sleeves]
+    # End-to-end exit pairs are built on the replay's own entries, so they carry its bar convention too (D3); an exits
+    # file runs on live's own entries and compares everywhere.
+    xl, xe = live, ex
+    if exits is None:
+        same = lambda f: same_convention(f.sleeve, f.t_open, conv.get(f.sleeve))
+        xl, xe = [f for f in live if same(f)], [f for f in ex if same(f)]
+    layers.append(score_exits(xl, xe, n_boot=n_boot))
+    if len(xl) < len(live) or len(xe) < len(ex):
+        layers[-1].notes.append(f"{len(live) - len(xl)} live / {len(ex) - len(xe)} replay fills excluded from the "
+                                "end-to-end pairs: live's scan did not read the replay's bar then (D3)")
     layers.append(score_sizing(live_sized, start_cash, fl, path_days, cfg))
     layers.append(score_dollars(live, rp, start_cash, fl, days, cfg, n_boot=n_boot, carried=carried))
     return Report((since, until), days, start_cash, layers, notes)

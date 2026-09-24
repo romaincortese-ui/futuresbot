@@ -167,7 +167,7 @@ def env_str(name: str, default: str = "") -> str:
 
 def env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
-    if value is None:
+    if value is None or value.strip() == "":       # empty reads as unset (C26)
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 

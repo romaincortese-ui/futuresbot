@@ -30,6 +30,10 @@ available balance departs from the engine's.
 
 DIALS: the engine prices history with futuresbot.replay.sizing.LIVE_DIALS. When the owner changes a dial, add the
 change there, or the SIZING layer fails from that date - which is the intended alarm.
+
+BAR CONVENTION (D3): entries are compared only where live's scan read the same 15m bar as the replay
+(acceptance.LIVE_CONVENTIONS vs the replay's). The default is the repaired replay's (WILDCARD forming, TREND completed);
+declare another with --replay-conventions TREND=forming,WILDCARD=forming.
 """
 from __future__ import annotations
 
@@ -110,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--until", help="window end (ISO or epoch s); default now")
     ap.add_argument("--days", type=float, default=28.0)
     ap.add_argument("--sleeves", default="WILDCARD,TREND", help="sleeves the replay models")
+    ap.add_argument("--replay-conventions", default="",
+                    help="SLEEVE=forming|completed,... the 15m bar the replay's entries read (default: "
+                         + ",".join(f"{k}={v}" for k, v in acc.REPLAY_CONVENTIONS.items()) + ")")
     ap.add_argument("--start-cash", type=float, help="live cash at --since (default: inferred at the latest flat instant)")
     ap.add_argument("--n-boot", type=int, default=2000)
     ap.add_argument("--title", default="")
@@ -134,8 +141,15 @@ def main(argv: list[str] | None = None) -> int:
     replay = acc.replay_fills_from_rows(_load_json_list(a.replay))
     exits = acc.replay_fills_from_rows(_load_json_list(a.exits)) if a.exits else None
     flows = _load_json_list(a.flows) if a.flows else []
+    conv = dict(acc.REPLAY_CONVENTIONS)
+    for kv in (x.strip() for x in a.replay_conventions.split(",") if x.strip()):
+        k, _, v = kv.partition("=")
+        if v.strip().lower() not in (acc.FORMING, acc.COMPLETED) or k.strip().upper() not in acc.GRADED_SLEEVES:
+            ap.error(f"--replay-conventions: {kv!r} is not SLEEVE={acc.FORMING}|{acc.COMPLETED}")
+        conv[k.strip().upper()] = v.strip().lower()
     rep = acc.grade(live, replay, since=since, until=until, exits=exits, flows=flows, start_cash=a.start_cash,
-                    sleeves=[s.strip().upper() for s in a.sleeves.split(",") if s.strip()], n_boot=a.n_boot)
+                    sleeves=[s.strip().upper() for s in a.sleeves.split(",") if s.strip()], n_boot=a.n_boot,
+                    replay_conventions=conv)
     print(acc.format_report(rep, a.title))
     if a.json_out:
         with open(a.json_out, "w", encoding="utf-8") as fh:
