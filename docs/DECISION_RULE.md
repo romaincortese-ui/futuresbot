@@ -18001,3 +18001,12 @@ for C07 (TREND at 2.41%).
 off, the TREND 1R cap, the 0.90R breakeven while K3 holds, C03, C17, C09, C11); both built-OFF flags; all 56 confirmed
 rejections. **Do not quote** the mechanical WILDCARD arming rule, the "+-$3.40" dial comparison, lane D's +$78.29 for the
 breakeven stop, any absolute replay $/month, or pre-repair entry figures.
+
+### 2026-09-24 - OWNER DECISION: WILDCARD dial stays at 1.87%, with the corrected odds in view
+
+Asked after the ruin odds were reconciled (above), the owner chose to **keep FUTURES_WILDCARD_RISK_PCT=0.0187**. On the
+current-era line that carries P(losing half the account in 12 months) = 15.2% and P(a 25% drawdown) = 51.5%, against 3.7% /
+31.0% at 1.205%, for no measurable median dollar difference (-$7.57 [-29.18, +76.94]/mo). It is a deliberate risk choice,
+betting that WILDCARD's pre-08-08 edge returns; the full-record line (23 pre-08-08 fills at +0.56R) is the one on which
+1.87% pays. Revisit if a 25% drawdown from the 2026-09-24 balance occurs. Also decided: ship the safety commit (C26, N1,
+C19, C04, C21 + scorer D3; C12 held back) and make /arm refuse TREND positions.
