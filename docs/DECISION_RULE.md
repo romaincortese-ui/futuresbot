@@ -17860,3 +17860,21 @@ paths through the original and the patched runtime.py - 0 differences; the live 
 and `FUTURES_CONVEX_TRAIL_ARM_R` unset, which is what the defaults assume. T and its replay patch (T2) must always ship
 together: T alone fails `test_live_exit_parameters_and_defaults_match_the_resolver`. The daily archive's env whitelist now
 includes the new WILDCARD and TREND flags, so a live flip would reach the archive's drift check.
+
+## 2026-09-24 - INVESTIGATE (daily card 09-23, M4): MARSCOIN +121 bps entry slippage - NOT A DEFECT
+
+**Fill:** MARSCOIN_USDT WILDCARD LONG x1, signal 09-22 12:12:15Z, closed 09-23 03:32Z (+0.55R / +$11.51,
+retention trail). Signal price 0.12784, fill 0.12939 = **+121 bps**, first M4 firing since BTR 09-10.
+Graded on the 09-23 card because the card reads slippage on the day's closes; the 09-22 card ran while it was open.
+
+**Mechanism: scan-to-fill latency in a fast minute, not book impact or a pricing bug.** The scan began 12:11:57Z and
+emitted the candidate at 12:12:15Z (~18 s over 56 movers). 0.12784 is exactly the 12:11 Min1 close; the 12:12 minute
+ran 0.12784 -> 0.1296 high -> 0.12932 close, and the fill (0.12939) is that minute's price at order time. The order
+was $194 notional against ~$8k/min turnover, so it did not move the book. Risk was stamped at the fill (2.39% vs 2.41%
+targeted), so the stop distance and 1R were correct; the slippage cost ~$2.35 (~0.10R) and the trade still won.
+
+**Aggregate check ($ test):** WILDCARD entry slippage over 45 instrumented fills (20.6 days) is mean +19 bps, median
++12, SE 12.5 (1.5 SE from zero), $8.57 total = ~$12/month; 2 of 45 above 100 bps. TREND: mean -0.1 bps on 42.
+Removing latency would recover only part of that, and the mean is not distinguishable from zero, so a fix is not shown
+to clear $10/month. **Verdict: no defect. Nothing changed.** If WILDCARD mean slippage holds above +15 bps at n >= 90,
+the scan-latency question (re-quote the ticker immediately before the order) reopens as a pre-registered study.

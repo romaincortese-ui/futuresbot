@@ -1,3 +1,152 @@
+# Daily Audit — 2026-09-23
+
+---
+
+## Automated Assessment (run 2026-09-24 17:30Z)
+
+**Window: 2026-09-23T00:00:00Z – 23:59:59Z by exit time. 6 closes, 4 wins.**
+
+**Daily card (`/daily 2026-09-23`): INVESTIGATE.** 1 of 6 tripwires: **M4 slippage, MARSCOIN +121 bps**.
+Ledger 6 recorded = 6 exchange closes. Stop −1.07R inside the band. Risk 0.62–2.43% of equity. Exits
+CONVEX_EARLY_STOP, CONVEX_RETENTION_TRAIL and EXCHANGE_CLOSE, all sanctioned. Draw is a 1-in-3 day at 4 fills.
+Decay meter 8%. **The root cause is written in DECISION_RULE.md (2026-09-24): scan-to-fill latency (~18 s)
+during a +1.2% minute on a $194 order. No book impact, and risk was stamped at the fill. NOT A DEFECT.**
+WILDCARD mean slippage is +19 bps ± 12.5 over 45 fills (~$12/month), not distinguishable from zero. INVESTIGATE
+carries no authority to change anything, so **no lever was proposed and nothing was deployed.**
+
+### 1. Closed trades: 6, **+$11.95 realised / +0.07R by exit** (card: +$12.11 / +0.09R exit, −1.19R by entry)
+
+| exit Z | sym | sleeve | side x | entry → exit | R | $ | exit |
+|---|---|---|---|---|---|---|---|
+| 01:39 | ZEC | TREND | L x5 | 1554.65 → 1600.21 | +0.76 | +4.72 | retention trail (peak +1.63) |
+| 03:32 | MARSCOIN | WILDCARD | L x1 | 0.12939 → 0.13728 | +0.55 | +11.42 | retention trail (peak +1.06) |
+| 05:08 | XRP | TREND | L x8 | 1.621 → 1.624 | +0.01 | +0.09 | breakeven stop (peak +0.92) |
+| 06:52 | SAGA | WILDCARD | L x2 | 0.04544 → 0.04702 | +0.44 | +9.99 | retention trail (peak +0.57) |
+| 14:12 | ZEC | TREND | L x6 | 1651.98 → 1596.69 | −1.10 | −6.37 | **−1R stop** |
+| 17:52 | BR | WILDCARD | S x1 | 0.9253 → 1.00277 | −0.59 | −7.90 | early stop (9 min) |
+
+By sleeve: TREND −0.33R / −$1.56 on 3, WILDCARD +0.40R / +$13.51 on 3. Exits: TP 0, stop 1, other 5.
+
+**SL root cause: ZEC 14:12, TREND LONG x6, −1.10R.** Entered 11:00Z at 1651.98 (slippage +7.9 bps, RSI 64,
+24h +9.9%, regime ×0.51). That was the retest just after the 10:00 hour wicked to 1685 and closed at 1652,
+so the entry bought a spent spike. The peak was +0.03R. The 14:00 hour flushed to 1548, and the resting stop
+filled at 1596.69 (−1.10R, inside the band). The −1.67R MAE is the move after the stop filled. **Mechanism: the
+same no-follow-through breakout pattern as the two XRP stops on 09-22. No defect.**
+**BR early stop:** the short came 9 minutes after a −9% flush (lateness 1.0, RSI 31). BR then squeezed +25% to
+1.163 by 18:25. The early stop cut the loss at −0.59R where the −1R stop would have been hit, saving about $5.5.
+
+### 1-OPEN. TIA LONG x4 (TREND), open since 09-24 16:30Z
+
+Held 0.9h at −0.29R (peak +0.12R, giveback −0.41R). TP 0.5676 is +15.2% away and the SL 0.4765 is −3.2% away.
+Margin was $61.06 intended and $61.19 actual, at dial risk 1.205% (no trim), so it is not undersized.
+Equity is **$921.08** (−$3.03 unrealised).
+
+### 1a-bis. Learning loop
+
+Feature store **216 rows**, and the ledger reconciles for 09-23 (6 = 6). Conditional expectancy found no new
+actionable condition. The FAVOR/AVOID hits are hold-time and exit-kind conditions, which are outcomes, not entry
+filters. Shadow ledger 362 rows, net of cost: `slot_occupied` +20.32R/46, `side_disabled` −63.5R/127,
+`veto:*` −13.97R/56 (the vetoes are still saving), `min_vol_skip` +19.78R/21. No proposal: step 3 does not
+open on INVESTIGATE.
+**Trial 22F** (by entry, ≥ 09-20T12:25Z): **21 closes, net −4.53R / −$35.97, ex-best −6.24R**. Exits: 9 STOP,
+12 OTHER, 0 TP. No verdict.
+**Drawdown:** $921.08 against the 30-day peak of $1,183.57 is **−22.2%**, above the 20% flag line
+(USE_DRAWDOWN_KILL=0 is the operator's override). No capital flow since 09-23; the drop from $949 is BR (−7.90),
+VVV on 09-24 (−16.82) and the TIA mark.
+
+### 1b. WILDCARD (a)(b)
+
+Not dormant (3 closes on 09-23). The latest scan (09-24 17:25Z) had 55 movers and **0 candidates**
+(`roc_below_min` 53, `no_pullback_resume` 2), which is correct in a quiet tape. There were no 5003/2015
+rejects and no Traceback in the last 5,000 log lines. One [SIZE_TRIM] (VVV ×0.91, 09-24).
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine and a slightly positive dollar day, with one slippage outlier explained and closed.** The
+drawdown flag is the item to watch: −22% from the peak with the kill switch overridden. That is the operator's call.
+
+---
+
+# Daily Audit — 2026-09-22 (full day, final)
+
+---
+
+## Automated Assessment (run 2026-09-23 16:15Z)
+
+**Window: 2026-09-22T00:00:00Z – 23:59:59Z by exit time. 8 closes.** The first 7 (to
+17:05Z) were covered by the partial report below and are not re-analysed; **1 new close**
+(XRP 22:02). Full-day totals replace the partial ones.
+
+**Daily card (`/daily 2026-09-22`, pre-registered scorecard): NO ACTION.** 0 of 6
+tripwires. Ledger 8 recorded = 8 exchange closes. Stops −1.03/−1.03/−1.09/−1.10/−1.08R,
+inside [−1.22, −0.92]. Risk 0.45–1.61% of equity, inside [0.35, 3.0]. Slippage −11 to
++68 bps, under the 100 limit. Exits: CONVEX_EARLY_STOP, CONVEX_RETENTION_TRAIL,
+EXCHANGE_CLOSE, all sanctioned. Draw is **a 1-in-9 day at 8 fills**. Decay meter 22% of
+the alarm level. By rule, steps 1a-bis(a), 1b(c), 3 and 4 are skipped: **nothing proposed**.
+
+### 1. Closed trades: 8, 1 win, **−$41.30 / −5.09R** by exit (−$33.76 / −4.57R by entry)
+
+Sleeves: **TREND −4.30R / −$26.01** on 5, **WILDCARD −0.81R / −$15.29** on 3.
+Exits: **TP 0 | stop 5 | other 3** (breakeven 1, early stop 1, trail 1).
+
+**New SL root-caused — XRP 22:02:04, TREND LONG x8, −1.07R / −$4.63.** Entered ~19:31Z
+at 1.6023, RSI 66.7, 24h move +6.98%, fill −4.4 bps (favourable), `regime_size_mult`
+0.52 (risk $4.27 = 0.45% of equity). Peak **+0.02R**, stopped out after 2.5h at 1.5635.
+Breadth 0.75, BTC 24h flat. **Mechanism: a breakout with no follow-through.** The fill,
+size and stop all worked as designed, and the regime scaler had already halved the size.
+Second XRP stop of the day (14:31 was bought at RSI 85.7). **No defect.**
+
+### 1-OPEN. Open positions: none now
+
+MARSCOIN (open at 17:05Z, −0.14R) closed 09-23 03:32 at **+0.55R / +$11.51** and ZEC
+closed 09-23 01:39 at **+0.76R / +$4.73**, both on the retention trail; both count in
+09-23. Equity **$949.00**, 0 positions (16:14Z).
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **214 rows**, reconciles with the exchange for 09-22 (8 = 8). Shadow ledger
+343 rows (2 unresolved): `slot_occupied` +29.13R/46, `side_disabled` −40.63R/111,
+`veto:ref_not_listed` −15.93R/43 (the veto is still saving), `min_vol_skip` +20.19R/21.
+Unchanged since the 17:05Z run.
+
+**Trial 22F** (scored by entry, ≥ 2026-09-20T12:25Z): **19 closes, net −2.87R / −$11.25,
+ex-best −4.57R**. Exits 8 STOP / 11 OTHER, TP 0. Short of the pre-registered length.
+**No verdict.**
+
+**Drawdown:** $949.00 against the 30-day peak of $1,183.57 is **−19.8%**, back under the
+20% flag line (it was −21.8% at 17:05Z, with unrealised marks included).
+
+### 1b. WILDCARD (a)(b)
+
+Not dormant (3 closes on 09-22). Latest scan (09-23 16:14Z): 74 movers, **0 candidates**
+(`roc_below_min` 60, `no_pullback_resume` 13, `vertical_blowoff` 1). This is correct
+dormancy in a quiet tape. No 5003/2015 in the recent log tail.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None. It was a NO ACTION day.
+
+### 7. Verdict
+
+**Bad dollar day, healthy machine.** The scorecard found no tripwire. The one new loss
+is a clean −1R TREND stop on a breakout that did not follow through. The rotation watch
+item from the partial report still applies (the rotation cell is n=6 lifetime, below the
+n≥10 bar). Changes from the last 7 days are unchanged from the 17:05Z entry. Telegram sent.
+
+---
+
 # Daily Audit — 2026-09-22
 
 ---
