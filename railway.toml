@@ -1,5 +1,28 @@
 [build]
 builder = "NIXPACKS"
+# Deploy only on changes to what the SERVICE RUNS. A restart mid-position drops the
+# in-process trail and the 1-second monitor until the container is back, and docs,
+# tools and research pushes were restarting it: 9 of 19 deploys over 11 days were
+# docs/tools-only, 12 of them with positions open.
+#
+# THIS LIVES UNDER [build]. From 2026-09-16 to 2026-09-24 it sat under [deploy], where
+# Railway ignores it, so it never took effect: 34 pushes restarted the bot with a
+# position open, and the daily audit's docs-only commit on 2026-09-24 18:30 still
+# deployed (0a6f84af). Found by the 14-day review of shipped changes (wc/GRADE, C05).
+#
+# The list must cover everything the running service reads, or a real change would be
+# SKIPPED: the package, the entry point, dependencies, the python version nixpacks
+# reads, and the calibration seed the runtime loads at boot
+# (FUTURES_CALIBRATION_FILE, default calibration/multi_symbol_calibration.json).
+watchPatterns = [
+  "futuresbot/**",
+  "main.py",
+  "requirements.txt",
+  ".python-version",
+  "calibration/**",
+  "pytest.ini",
+  "railway.toml",
+]
 
 [deploy]
 startCommand = "python main.py"
@@ -8,16 +31,3 @@ requiredMountPath = "/data"
 # could exhaust it and leave the bot permanently dead with no signal. This is a
 # daemon — any exit is a fault, and it should always come back.
 restartPolicyType = "ALWAYS"
-# Deploy on changes to what the SERVICE RUNS. The wildcard used to be "**/*" so
-# that Railway could not mark a real code push SKIPPED against its UI-configured
-# paths — but it also restarted the bot for documentation and research pushes:
-# 9 of 19 deploys over 11 days were docs/tools-only, and 12 landed with positions
-# open. A restart mid-position drops the in-process trail and the 1-second monitor
-# until the container is back. These patterns still override the UI settings.
-watchPatterns = [
-  "futuresbot/**",
-  "main.py",
-  "requirements.txt",
-  "pytest.ini",
-  "railway.toml",
-]
