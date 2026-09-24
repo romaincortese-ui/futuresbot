@@ -17931,3 +17931,73 @@ change is never skipped. The fix itself was pushed at 19:23Z with a TIA_USDT TRE
 on the exchange 153s earlier, and at +0.1R no software exit could act on it for many minutes, whereas the broken config
 would have restarted the bot on the next day's routine audit push regardless. **This docs-only commit is the proof: it
 must show as SKIPPED in Railway's deployment list.**
+
+## 2026-09-24 - RANKED NEXT STEPS after both reviews (wc/RANK); RUIN ODDS RECONCILED; several figures WITHDRAWN
+
+Built from the 14-day review of shipped changes (wc/GRADE), the 30-day re-grade of rejected ideas (wc/REJ), the impartial
+assessment (wc/ASSESS) and the Expander build (wc/EXP), plus two new lanes (R: ruin odds; D: latent defects) and an
+adversarial verifier. Full answer: C:/Users/Rocot/futuresbot-evidence/wc/RANK/answer.md.
+
+**Headline.** Neither review found a trading change worth shipping: none of 26 shipped changes earned an A, none of 76
+rejected families was overturned, and nothing clears +$10/month with an interval excluding zero. At today's regime floor
+WILDCARD's current-era edge is +0.0034R per fill - effectively zero. Improvement now comes from stopping what measurably
+costs money, cutting fees, sizing so a near-zero edge cannot halve the account, and repairing the instruments.
+
+### RUIN ODDS RECONCILED - and what is WITHDRAWN
+The 14-day review (1.3%, its verifier 1.5%) and the rejected-ideas review (4.3%) disagreed on the chance of losing half the
+account in 12 months on the same "live since 08-08" line. Both were wrong: the 1.3% sized the 08-08..08-29 fills at the
+RETIRED 0.25 regime floor (remapped to today's 0.50 floor, WILDCARD's R x multiplier falls from +0.0145 to +0.0034); the
+4.3% used the right floor but its 1,000 paths ran high (its method's true value is 3.8%); and BOTH resampled WILDCARD in
+blocks of 10 fills, which cut the variance of its running total to 0.38x of independent draws. The 2,540 fair-price corpus
+fills show no WILDCARD clustering, so independent draws are the right default (TREND does cluster and stays in blocks).
+Corrected, 4,000 paths, today's floor, TREND at 1.205%, current-era line (verified by V):
+| WILDCARD dial | P(lose half, 12 mo) | P(lose 25%, 12 mo) | compounded median $/mo [95%] |
+|---|---|---|---|
+| 1.205% | **3.7%** | 31.0% | +$28.36 [-34.23, +205.09] |
+| 1.87% (live) | **15.2%** | 51.5% | +$20.34 [-47.22, +273.95] |
+| 2.41% | 27.4% (R only) | 65.6% | +$11.59 [-56.83, +342.38] |
+1.87% minus 1.205%: median -$7.57 [-29.18, +76.94], mean +$1.25, P(1.87% ahead) = 0.34 - no measurable dollar advantage for
+about 4x the odds of halving the account. 1.87% pays only on the full record, which rests on 23 pre-08-08 fills averaging
++0.56R. Allowing for uncertainty in the edge itself, the half-account odds at 1.87% rise to 36.2% (lane R only). On V's
+one-sleeve calculation the growth-optimal WILDCARD dial at today's floor is about 0.3%; dials below 1.205% were not priced.
+**WITHDRAWN - do not quote:** the 14-day review's 1.3% and its verifier's 1.5%; the rejected-ideas review's 4.3%; C25's
+"3.8-4.3% -> 1.3-1.5%"; Z04's "4.3% -> 16.8% / 33.9%"; Z03's -$2.33 (copied, never re-derived); the impartial assessment's
+"growth-optimal 1.55-1.80%" (it used the recorded multipliers, i.e. the retired floor); and this record's "~1.5%". **The
+2026-09-23 choice of a 1.87% WILDCARD dial was made on these withdrawn inputs.** Not recomputed: the corrected ruin figure
+for C07 (TREND at 2.41%).
+
+### RANKED LIST (verified; do not add rows - several overlap)
+1. **Stop arming TREND positions** (owner only; optionally make /arm refuse TREND). +$71/mo if ~18 arms/month would
+   otherwise happen; resampled cost of arming -$103 [-172, -30] but on 7 arms, exact p = 0.062 - a direction, not a
+   guaranteed amount. Costs ~$0 if wrong.
+2. **Check whether Binance/OKX perps are legal for the owner** (owner only, 1h). Build the TREND venue move only if it is
+   legal AND trial 21R survives (or TREND holds >= 45 fills/month for 2 months) AND the build sizes off COMBINED equity.
+   Without 21R: +$8.8 to +$10.3/mo (below the bar); with 21R ~+$13.6. Unpriced trap: if sizing stays on MEXC's balance,
+   moving $300 cuts WILDCARD's stake ~32% silently and the TREND saving falls to ~$3-4.
+3. **WILDCARD dial 1.87% -> 1.205%** (owner's decision; a risk call, not a profit one) - see the table above.
+4. **Ops commit, in order C26 -> N1 -> C19 -> C04 -> C21, with D3, one push with no position open; C12 held back.**
+   ~$0 in expectation; removes the only $100+ tails in the code and protects the evidence both kill rules read.
+   - C26 (0.5h): an EMPTY env var reads as OFF across 17 default-on switches - an empty master trail switch also removes
+     the breakeven stop (effectively a K3 revert), an empty stop-book switch blinds K3, an empty FUTURES_PAPER_TRADE would
+     put a paper deployment live. Workaround until fixed (owner only): never blank a Railway variable - delete it.
+   - N1 (0.25h, new): the stop-on-book "no stop" branch never saves state (runtime.py ~7263-7273), so a restart can erase
+     the evidence K3 reads.
+   - C19 (0.5h): a restart loses R-path samples - 25-38% of the ZEC and MARSCOIN paths, mostly the post-peak fade the
+     retention decision needs.
+   - C04 (1.5h): after a failed close each retry cancels the stop the previous retry restored, leaving the position without
+     a stop 70-98% of the time - invisible to K3. Ceiling $4.9 / $12.9 / $29.5 per month for a 1h / 8h / 24h stuck close;
+     worst tail $139.85 per position per day.
+   - C21 (1.0h): a re-adopted position's breakeven stop is read as its stop, inflating R 5-15x, so the trail and the 3R
+     ratchet fire at ~0.6% moves. Ceiling $4.7/mo (95% bound $22).
+   - C12 held back: its fix relies on MEXC error 2009, which appears nowhere in the repo; check which codes the ZEC 09-19
+     and XRP 09-20 races returned first, or the fix could flag real races as bare stops and revert the breakeven stop.
+   - D3: scorer-only (a bar-convention schedule); makes C11, C08 and the sign of C07 gradeable from ~09-27.
+5. **Apply the kill rules the day one fires**: breakeven K3 (any further bare stop -> FUTURES_CONVEX_BREAKEVEN_ARM_R=0);
+   trial 21R K1-K6 (FUTURES_TREND_ROTATION_ENABLED=0). 21R's K3 is one rotating fill from firing; K1 stands at -$15.44 of -$60.
+6. **$0 watches**: F17 7% trigger shadow rule (n >= 100, ~March 2027); F02 $3M turnover floor - pre-register now or drop,
+   decide 2026-12-10; breadth review 2026-12-10; WILDCARD slippage ~mid-October; N06 from ~09-27 after D3; C09 2027-09-17.
+**The watchPatterns proof is already in:** the 2026-09-24 docs-only commit 13626a7 deployed as SKIPPED (90e054c2).
+**Leave alone:** everything shipped and holding (TREND 1.205%, the 5% cap, round-up off, scaler on at 0.50, streak throttle
+off, the TREND 1R cap, the 0.90R breakeven while K3 holds, C03, C17, C09, C11); both built-OFF flags; all 56 confirmed
+rejections. **Do not quote** the mechanical WILDCARD arming rule, the "+-$3.40" dial comparison, lane D's +$78.29 for the
+breakeven stop, any absolute replay $/month, or pre-repair entry figures.
