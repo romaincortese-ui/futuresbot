@@ -17878,3 +17878,56 @@ targeted), so the stop distance and 1R were correct; the slippage cost ~$2.35 (~
 Removing latency would recover only part of that, and the mean is not distinguishable from zero, so a fix is not shown
 to clear $10/month. **Verdict: no defect. Nothing changed.** If WILDCARD mean slippage holds above +15 bps at n >= 90,
 the scan-latency question (re-quote the ticker immediately before the order) reopens as a pre-registered study.
+
+## 2026-09-24 - RULINGS FROM THE 14-DAY REVIEW OF SHIPPED CHANGES (wc/GRADE)
+
+Full review: C:/Users/Rocot/futuresbot-evidence/wc/GRADE/answer.md. 26 live changes 2026-09-10 -> 09-24 graded on the
+repaired replay (same-trade, fair-price exits via futuresbot/replay/exits.py; compounded dollars via
+futuresbot/replay/sizing.py). None earns an A; none clears +$10/month with confidence. Best: the TREND 1R target cap,
+**B, +$3.65/mo [-0.01, +9.85]**. Worst: the 0.886% per-trade cap (live 27 hours, not pre-registered), **D** - it sized
+AKE to zero contracts and cost -$94.32 on the recorded trades. The owner's manual arming of TREND positions grades **D,
+about -$71/mo at today's stake** (resampled -$103 [-172, -30], exact p = 0.062, 7 arms); arming WILDCARD grades C.
+The 0.90R breakeven stop grades **C, +$5.92/mo [-18.61, +31.82]**; the dial cuts (TREND 1.205%, WILDCARD 1.87%) grade C on
+dollars with a strong risk benefit (P(losing half the account in 12 months) from 4-8% to ~1.5%); tick-snapping of
+re-placed stops grades OPS-A (without it, 26.8 hours with no resting stop in 3 days).
+
+### RULING 1 - TRIAL 21F/22F KILL RULE K3 (the breakeven stop at 0.90R)
+
+**K3 as pre-registered** (trial 21F, above): *"Any position is left with no resting exchange stop for more than 5
+minutes (`be_stop_bare` unresolved), or twice in the trial."* **Pre-registered action: revert
+`FUTURES_CONVEX_BREAKEVEN_ARM_R=0` and say so.**
+
+**What happened.** K3 was met on **2026-09-21**: an XRP_USDT position sat about **six minutes** with no resting exchange
+stop, because every re-placement of its stop was rejected by MEXC with precision error 2015 (a price sent with 16
+decimals). **Nobody ruled on it at the time** - a missed control, recorded here as such.
+
+**Ruling: the breakeven stop CONTINUES. This is an OVERRIDE of the pre-registered action, and it is recorded as one.**
+Reason: K3 exists to catch the breakeven amend leaving positions bare. The 09-21 bare window was caused by a separate
+defect in the stop RE-PLACEMENT path - prices were not snapped to the symbol's tick - which would have left any
+re-placed stop bare, breakeven or not. It was root-caused and fixed the same morning (commit a756e36, 09-21 09:50Z:
+the real tick is learned from the exchange and snapped without ever crossing entry). The review grades that fix OPS-A:
+without it, 6 of the 9 breakeven moves since would also have failed. Since 2026-09-23 the stop-on-book verification
+(commit 71dbbe7) reads every open position's stop off the exchange and records `stop_book_bare_seconds` on every
+closed trade; it has recorded **zero bare seconds** since.
+
+**K3 STAYS IN FORCE, AS WRITTEN, WITH NO FURTHER EXCEPTION.** The 09-21 event counts as the FIRST occurrence under the
+"or twice in the trial" clause. Therefore: **any further position with no resting exchange stop - of any duration,
+read from `stop_book_bare_seconds` / `stop_book_state == 0` on the trade record or `be_stop_bare` - reverts the
+breakeven stop (`FUTURES_CONVEX_BREAKEVEN_ARM_R=0`) the same day, with no second override.** An UNREADABLE stop
+(`stop_book_state == -1`, the exchange endpoint failing) is not a bare stop and does not count.
+
+**The cost of this ruling if it is wrong:** the breakeven stop's dollar effect is +$5.92/mo [-18.61, +31.82], so the
+downside is about -$18/mo at the low end of its interval. Reverting instead would give up the retention invariant: all 5
+trades since 09-20 that peaked at or above 0.9R and then closed red would come back (-4.68R).
+
+### RULING 2 - RAILWAY watchPatterns (C05) - FIXED 2026-09-24
+
+The 2026-09-16 change meant to stop docs/tools pushes from restarting the bot never took effect: `watchPatterns` sat
+under `[deploy]`, where Railway ignores it. 34 pushes restarted the bot with a position open ($0.00 lost - the resting
+exchange stops held - but the in-process trail and 1-second monitor were down each time), and the daily audit's
+docs-only commit on 2026-09-24 18:30 still deployed (0a6f84af). **Fixed in commit 45e89fe: the list now lives under
+`[build]`** and was widened to everything the service reads at runtime (`.python-version`, `calibration/**`), so a real
+change is never skipped. The fix itself was pushed at 19:23Z with a TIA_USDT TREND position open: its stop was verified
+on the exchange 153s earlier, and at +0.1R no software exit could act on it for many minutes, whereas the broken config
+would have restarted the bot on the next day's routine audit push regardless. **This docs-only commit is the proof: it
+must show as SKIPPED in Railway's deployment list.**
