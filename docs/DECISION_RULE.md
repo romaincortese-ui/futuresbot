@@ -18053,3 +18053,148 @@ adopted position's 20% fallback as "Risk at SL"; (5) adopted positions carry be_
 from breakeven-stop (trial 21F) measurements; (6) a TREND position re-adopted by /reconcile loses its trend marker, so
 /arm would not recognise it; (7) the DOLLARS layer still compounds the pre-cutover TREND replay population.
 **Deploy:** push only with no position open (a TIA_USDT TREND long was open at commit time).
+
+### 2026-09-25 - RE-TEST OF F02 / F17 / X01 (wc/RETEST): ALL THREE NOT_GRADEABLE; NOTHING SHIPS; THREE $0 FORWARD TESTS FROZEN
+
+Full answer: C:/Users/Rocot/futuresbot-evidence/wc/RETEST/answer.md. This re-tests the three leads from the 2026-09-24
+re-grade of rejected ideas (wc/REJ, answer.md lines 74-76 and 186-212).
+
+How it was run:
+- Two trust lanes: exits (wc/RETEST/trust_exits) and entries (wc/RETEST/trust_entries).
+- One re-test per lead, each with a PREREG.md written and hashed before any outcome was computed.
+- Two adversarial verifiers per lead: stats and selection, and mechanics and look-ahead.
+
+All six verifiers confirm NOT_GRADEABLE. Where a verifier's figure is more conservative than the re-test's, the verifier's
+figure stands. No verifier was shown to be wrong.
+
+**Headline.** The owner's pre-registered rule forces NOT_GRADEABLE for all three leads:
+- **Why:** the primary independent line (P1) and the second line (P3) need year-long entry books that the trust lanes
+  marked NOT_TRUSTED, so neither line was computed. The only priced line is the live window 08-21 to 09-24. The best-of-55
+  selection already saw it, and the trust grade for it is PARTIAL, so it is descriptive only.
+- **After the best-of-55 discount** (point minus 2.286 standard errors, the v8_final.py method):
+  - F02: about $0/mo (-$17 to +$7).
+  - X01: -$27 to -$52/mo.
+  - F17: -$60 to -$105/mo.
+- **Live stays unchanged:** FUTURES_CONVEX_TRAIL_ARM_R 1.0, trigger 8%, and FUTURES_WILDCARD_MIN_TURNOVER_USDT 2000000.
+
+This closes wc/RANK item 6 ("F02 $3M turnover floor - pre-register now or drop"): F02 is now pre-registered.
+
+### Trust
+
+| Layer | Grade | Key figure |
+|---|---|---|
+| E3: exit rules equal live, including the 0.90R breakeven | TRUSTED | Equals the bot's own exit methods on 62/62 WILDCARD and 21/21 TREND fills. The timeline matches the live env at 09-24 22:40Z. |
+| E1: exit dollars on live WILDCARD fills | PARTIAL | 51/62 within 0.1R = 82.3% (bar 90%). On the 53 exits the bot's rules made, 94.3%, but the replay flatters live by 0.037R/fill [0.024, 0.054]. Use it for paired comparisons only. |
+| E1: breakeven era (entries from 09-20 10:53Z) | NOT_TRUSTED (n=7) | Re-grade when 20 fills exist, around 2026-10-01. |
+| E2: arm decision at 0.80R | PARTIAL | Raw 1m high 14/15 (bar 95%). C1, arming on the recorded polled peak, gives 15/15 on live fills only. Year-long bars: NOT_TRUSTED (MEXC 5m 11/12 and 12/13). Binance mark: not measured. |
+| N1a: year-long entry books M1 and B1 (W2 machinery) | NOT_TRUSTED | Fill ratio 1.60, recall 0.40, precision 0.25. B1 inherits the grade. |
+| N1b: 1m entries at live scan instants | PARTIAL | Passes only with the recorded journal universe plus recorded refusals (0.98 / 0.78 / 0.80). |
+| N2: 7-8% band rows | NOT_TRUSTED | Recall 0.73 in the best case; 0.41 on the year-long clock. |
+| N3: 24h turnover at entry | PARTIAL | Point-in-time K gives at least 98.5% agreement from 09-01. K is unknown before 09-01 (0.667, then 0.758, then 0.810). |
+| N4a: survivorship vs a turnover floor | NOT_TRUSTED | On B1, delisted coins sit below the floor 4-5.5x more often. The MEXC purge count is unknown. |
+| N4b: survivorship vs a 7% trigger | PARTIAL | Band and trigger signals are purged equally (21.9% vs 22.1%). |
+
+### Per lead ($/mo compounded from $949 at LIVE_DIALS; day-block 95% intervals)
+
+| Lead | Verdict | P1 | P2 live line | P2 after best-of-55 | P3 | Decided by |
+|---|---|---|---|---|---|---|
+| F02 $3M floor | NOT_GRADEABLE | not computed (N1a, N4a NOT_TRUSTED) | +113.81 [+16.44, +240.17] (K 0.81; the verifier's realistic headline). Today's exits: +124.05 [+34.84, +254.95]. Re-test: +133.83 [+34.11, +281.98] | -16.67 to +2.94 | not computed | trust gate; best p 0.0013 vs family-wise bar 0.00093 |
+| F17 7% trigger | NOT_GRADEABLE | not computed (N1a, N2 NOT_TRUSTED) | median +52.06 [-63.29, +184.46], preemption modelled. Worst plausible: +30.5 [-73.4, +154.2]. Without preemption: +76.45 [-27.81, +199.27] (overstated) | -97.2 to -105.5 (-59.7 without preemption) | not computed | trust gate; would also fail P4 (drop 2 best days +3.16, drop 3 -12.5) |
+| X01 arm 0.80R | NOT_GRADEABLE | not computed (N1a, E2 year-long NOT_TRUSTED) | median +11.97 [-33.4, +77.0] on the 62 E1-graded fills with bot-made exits. All 69 fills: +36.65 [-11.84, +102.90] | -52.1 (graded); -26.5 (all) | not computed | trust gate; would also fail P4 (drop 2 best days -0.89 all / -19.32 graded) and P5 (drop the top 2 fills -1.17) |
+
+### Forward rules - FROZEN (PREREG files are read-only; hashes verified by the verifiers)
+
+- **X01.** PREREG sha256 e865308dc8a1a7973832389f668c99562f35f151b078b3042866f511c5567b5f.
+  - **Population and comparison:** WILDCARD fills entered from 2026-09-25T00:00Z and closed by **2026-12-10**, about
+    175 fills. Arm 0.80R vs the incumbent in force at the time, which today is arm 1.0, retain 0.50, 0.90R breakeven,
+    early stop -0.5R within 30 min, and the 24h clock.
+  - **Method:**
+    - C1: arm only when trade_history peak_r reaches 0.80.
+    - E1 per-kind slippage: -0.0488R on market exits, -0.0284R on resting stops.
+    - Day-block interval.
+  - **Pass:** median at least +$10/mo, lower bound above 0, and still above 0 after dropping the 2 best days and after
+    dropping the best symbol.
+  - **Power:** detects only a true effect of about +$40/mo or more.
+- **F02.** PREREG sha256 ec84d3c35c06ea13862d3f234789100c9db1d80b51583f7159e443959be9742c.
+  - **Rule:** $3M floor as an exact deletion on WILDCARD fills entered after 2026-09-24T22:40:54Z, using logged
+    turnover_24h_usdt.
+  - **Method:** same sizing, paired day-block bootstrap, and a 10,000-draw same-count random-deletion placebo.
+  - **Decision:** **2026-12-10**.
+  - **Pass:** median at least +$10/mo, lower bound above 0, and placebo p at most 0.05.
+  - **Discipline:** look at no other floor before the decision.
+  - **Power:** detects about +$120/mo or more at 80% power.
+- **F17.** Unchanged: the 2026-09-21 TRIG shadow promotion rule in this file.
+  - **Pass:** n at least 100, added-block mean net R above 0 with a 95% interval excluding 0, and the +$576 vs +$66
+    E-kline discrepancy reconciled.
+  - **Status today:** 13 gate-passing rows, mean +0.350R [-0.172, +0.872]; the added block is 10 rows, +0.489R
+    [-0.047, +1.026].
+  - Re-test PREREG sha256 670ee073a4f4543d51bd10c868c63c28c7c70dbb8249194d43e6d64108c86a54.
+
+### Addenda recorded 2026-09-25, before any forward fill is scored
+
+Each addendum only makes a test stricter. None loosens a PREREG. The owner may strike any of them before the first
+forward look.
+
+- **X01-A1.** The same pass bars must also hold on the rule-made line, where manual /arm, manual-close and pre-empted
+  fills are scored at zero change. Otherwise a forward pass could credit the 0.80R arm with gains the owner already takes
+  by hand. In this window those fills supplied about $22 of the $40.6 point.
+- **X01-A2.** At the decision, report the owner's P5 check: drop the top 1, 2 and 3 fills, each still above 0. Also report a
+  timing-aligned C1 as a sensitivity, using the r_series 60 s running max, which exists from 2026-09-22 22:21Z.
+- **F02-A1.** Count the slot_occupied and min_vol_skip rows that fall inside a deleted fill's hold. Price each one with
+  exits.py live_now on 1m fair and last bars, and report the result with and without them. **The decision uses the lower
+  figure.**
+- **F02-A2.** Any kept fill pre-empted by a deleted fill gets the exits.py counterfactual. Report with and without it.
+  **The decision uses the lower figure.**
+- **F02-A3.** Same-scan rank-2/3 substitutes are never logged live (rank_dropped starts at rank 4). This is a known blind
+  spot, and I don't know its sign. On the N1b reconstruction for 09-01 to 09-24 it was 0 fills.
+- **F17-A1.** n counts the ADDED BLOCK, as the rule's own wording says; that reaches 100 around **2027-04-10** at 0.455 a
+  day. Report the gate-passing count, around 2027-02-18, beside it.
+- **F17-A2.** The rows logged up to 2026-09-24T22:40Z (13 gate-passing, 10 added) produced the hypothesis. Report the rows
+  logged after that time separately; their mean R must also be above 0.
+- **F17-A3.** Score with live preemption modelled. The victim can be a near-tie within the polled-vs-1m gap; if so, report
+  every tied branch, and **the decision uses the lowest.**
+- **F17-A4.** The rebuilt external veto sets the gate-passing count, and no trust lane has graded it. Grade it before n
+  reaches 100.
+
+### Open question - the owner must rule before 2026-12-10
+
+A forward pass supplies P1 only. None of the three leads has a trusted second independent line (P3). By the letter of the
+criteria, **no forward result can make any of them a SHIP_CANDIDATE**. WATCH is defined for a P1 interval that includes
+0, so a clean forward pass fits neither label. Decide, before any forward data is seen, what a forward pass buys. If
+there is no ruling by then, the letter of the criteria applies: no ship.
+
+A related point: live runs FUTURES_WILDCARD_MIN_TURNOVER_USDT=2000000 over the code default of 3000000. I found no entry in
+this file that tested that override to today's bar, and I don't know why it was set.
+
+### Do not quote
+
+- X01's 7-day-block interval [+1.10, +93.90]. It is an artefact of having only 5 blocks.
+- X01's raw-1m-high figure (+$63.77). E2 does not trust it.
+- F17's +76.45 without preemption as a headline.
+- F17's drop-2-best-days figures +25.7 and -1.3. Computed consistently, the figure is +3.16.
+- F02 at K 0.66 (+$153.53). That K is impossible for ZAMA 08-22.
+- Any M1 or B1 year-long figure for these leads.
+- The F02 refused-signal tabulation (+0.38R below $3M vs +0.16R above). It comes from an ungraded resolver; it may
+  appear only as a footnote.
+
+### Not known
+
+- The true effect of each lead.
+- Why the floor is $2M.
+- K before 09-01.
+- The Binance 1m mark vs polled-peak gap. Measuring it needs an approved download of about 150 files, 4-6 MB, and it
+  cannot rescue X01's P1 alone.
+- The sign of the same-scan substitutes.
+- Why TREND XRP 09-21 06:30 replays TP +2.89R vs live +1.71R. It is not used in any grade.
+
+### Leave alone
+
+Arm 1.0R, the 8% trigger, the $2M floor, and everything the 2026-09-24 ranked list says to leave alone.
+
+**Hygiene.**
+- Repo clean at e02d0fa.
+- No deploys, orders, variable writes or /data writes. Railway access was a read-only printenv of non-secret FUTURES_*
+  names.
+- No deletions.
+- Fetched about 336 KB of MEXC public 1m bars (trust lanes) and under 1 MB (F17).
+- 19 GB free.
