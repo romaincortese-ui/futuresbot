@@ -19068,3 +19068,36 @@ Any rule seeded by one stop is first priced against the random-seed ladder null 
   - read code lines in models.py, main.py and runtime.py;
   - read 8 non-secret config values from the 09-25 env snapshot;
   - computed the median opening fee in bps from wc/LEDGER/final/trades.csv.
+
+### 2026-09-25 - OWNER DECISIONS ON THE HARMONIZED RULING (items 1-5): APPLIED AND RECORDED
+
+- **Item 1 (re-funding).** Owner: "I would refund much earlier than 6 months. I would wait about 80 to 100 trades."
+  So item 1 is YES, conditional on roughly 80-100 more live trades (counted from 2026-09-26T00:00Z; about 3-4 weeks at
+  the recent ~4 fills/day). Read honestly: 90 trades give a mean-R interval roughly +/-0.2R wide, so they can catch a
+  clear loser or a large edge but cannot confirm a small one - a re-fund at that point is a decision under uncertainty,
+  not a verdict. Any deposit re-stamps the trial clock (standing rule) and splits every running forward test.
+- **Items 2-3 (applied).** `FUTURES_RESUME_ON_BOOT=0` (literal 0; a blank would read as 1) and
+  `FUTURES_WILDCARD_RISK_PCT=0.01205` (was 0.0187), staged with --skip-deploys and deployed with commit 5314368 in ONE
+  restart: deployment 5a8fb54d, container start **2026-09-25T19:19:17Z**, verified env WC 0.01205 / TREND 0.01205 /
+  RESUME_ON_BOOT 0, paused False, flat. Pre-checks: flat and unpaused. `replay/sizing.LIVE_DIALS` records the WILDCARD step
+  at 19:30Z; no entry occurred between 19:19:17Z and 19:30Z, so the schedule is exact for every fill. TREND unchanged at
+  1.205%. `FUTURES_TREND_BREAKEVEN_ARM_R` is UNSET: TREND reads the shared `FUTURES_CONVEX_BREAKEVEN_ARM_R` (0.90) - pin it
+  in the same change as any edit to the shared value (a K3 revert). A /pause now survives restarts; a pause also stops the
+  scans (and so the shadow data).
+- **Item 4 (budget rule, adopted).** Pause entries if futures equity falls below **$140**, or if the monthly check on the
+  26th finds the pooled 95% UPPER bound (day-block bootstrap) on mean net R per trade since 2026-09-26 below 0 (evaluated
+  once n >= 10). Only the owner resumes. Implemented as ALERTS, not an automatic pause: the daily assessment task has a
+  new step 0-bis (equity floor, every run) and a new scheduled task `futures-budget-monthly` (10:00 local on the 26th)
+  runs the R check and writes futuresbot-evidence/budget/<YYYY-MM>.md; either one tells the owner to send /pause. A
+  spending cap on a data experiment, not an edge claim (not the refuted convex drawdown brake).
+- **Item 5 (forward-test scoring, adopted before any forward look).** All running and proposed forward tests (F02, X01,
+  F17, T5, breadth review, and FWD-RSI / FWD-MKT if approved) are graded in R / FP1 and per $1,000 of equity, with
+  dollars at actual equity reported beside; at ~$190 a pass means "keep testing", never "ship". Stricter additions:
+  (a) Holm correction across passes decided in the same quarter; (b) X01 and T5 reported together on the same fills;
+  (c) any ship, K3 revert, dial change or deposit splits every running test at that moment - the first split is
+  **2026-09-25T19:19:17Z** (WILDCARD dial 1.87% -> 1.205%); (d) a line excluding owner actions (/arm, /close) for FWD-RSI
+  and FWD-MKT; (e) T5 reports the fills that can actually differ; (f) signals the listing veto refuses are reported
+  separately. T5's live opt-in is struck. FWD-RSI (yes/no) and the FWD-MKT start-condition amendment remain OPEN.
+- **Still open for the owner:** the new-sleeve study (cross-venue lead, failed-move reversal, funding/positioning), and
+  the BUILD items (log-only entry-information capture, stop/risk diagnostics, scan-while-paused), which item 1 = YES now
+  makes relevant.
