@@ -83,6 +83,7 @@ def test_live_dial_schedule_prices_history_with_the_dial_live_at_entry():
     wc, tr = LIVE_DIALS["WILDCARD"], LIVE_DIALS["TREND"]
     assert wc.at(_utc(2026, 8, 22, 8)) == 0.0187 and wc.at(_utc(2026, 8, 22, 13)) == 0.0241
     assert wc.at(_utc(2026, 9, 23, 18, 9)) == 0.0241 and wc.at(_utc(2026, 9, 23, 18, 10)) == 0.0187
+    assert wc.at(_utc(2026, 9, 25, 19, 29)) == 0.0187 and wc.at(_utc(2026, 9, 25, 19, 30)) == 0.01205
     assert tr.at(_utc(2026, 9, 14, 21)) == 0.0241 and tr.at(_utc(2026, 9, 16, 9, 32)) == 0.01205
     assert LIVE_TRADE_RISK_CAP.at(_utc(2026, 9, 19, 12)) == 0.00886
     assert LIVE_TRADE_RISK_CAP.at(_utc(2026, 9, 20, 12, 25)) == 0.05

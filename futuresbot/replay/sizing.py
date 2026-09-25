@@ -79,7 +79,9 @@ class StepSchedule:
 #     09-16 09:32Z -> 09-16 00:00Z.
 #   WILDCARD 2.41% -> 1.87%: owner, live 2026-09-23 18:10Z (assessment: 2.41% sat 1.3-1.55x above growth-optimal).
 LIVE_DIALS: dict[str, StepSchedule] = {
-    "WILDCARD": StepSchedule(0.0187, ((_utc(2026, 8, 22, 12), 0.0241), (_utc(2026, 9, 23, 18, 10), 0.0187))),
+    # 2026-09-25 19:30Z: owner cut WILDCARD to 1.205% (harmonized ruling item 3; boot time checked after deploy).
+    "WILDCARD": StepSchedule(0.0187, ((_utc(2026, 8, 22, 12), 0.0241), (_utc(2026, 9, 23, 18, 10), 0.0187),
+                                      (_utc(2026, 9, 25, 19, 30), 0.01205))),
     "TREND": StepSchedule(0.0187, ((_utc(2026, 8, 22, 12), 0.0241), (_utc(2026, 9, 16), 0.01205))),
 }
 # FUTURES_MAX_TRADE_RISK_PCT as a fraction of AVAILABLE: the standing 5%, except the owner's 0.886% cap from
