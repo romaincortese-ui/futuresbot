@@ -18198,3 +18198,873 @@ Arm 1.0R, the 8% trigger, the $2M floor, and everything the 2026-09-24 ranked li
 - No deletions.
 - Fetched about 336 KB of MEXC public 1m bars (trust lanes) and under 1 MB (F17).
 - 19 GB free.
+
+
+### 2026-09-25/26 - ENTRY STUDY (wc/ENTRY): 22 FROZEN RULES, 0 A, 0 B; NO ENTRY RULE SHIPS; MARKET STATE BECOMES AN INSTRUMENT, NOT A GATE; TWO $0 SHADOW TESTS PROPOSED
+
+(Proposed text for docs/DECISION_RULE.md. The repo was not edited. The owner or a later session pastes it in.)
+
+Full answer: C:/Users/Rocot/futuresbot-evidence/wc/ENTRY/answer.md.
+
+**Owner question (2026-09-25).** Suggest entry improvements so that each entry goes the expected way "with comfortable
+certainty". Keep TREND and WILDCARD. Long-only, short-only, both, or switching sides with the market are all allowed.
+Also: what does the bot know about the market, and how can it tell dangerous moments from the right ones?
+
+**How it was run.**
+- Inputs:
+  - the audited ledger (84 trades, 09-04..09-25);
+  - M1, a code audit of market awareness (f582c46);
+  - M2, a discovery dataset: 128 pre-entry features, look-ahead test 0 mismatches;
+  - M3, a fact-check of the three external assessments.
+- Five discovery lenses produced 22 candidate rules: 16 from the assessors, 6 from the lenses.
+- The rules were frozen in `wc/ENTRY/prereg/` (PREREG.md sha256 5a5c1c8c...3ad3d, 13 files hashed) before any
+  holdout outcome was read.
+- They were graded on five holdout sets that contain no discovery row or day:
+
+| Set | Contents |
+|---|---|
+| S1 | 90 live TREND and WILDCARD positions, 07-15..09-04 |
+| S2 | 75 refused WILDCARD signals, first in episode, before the discovery window |
+| S4 | the MEXC TREND replay book, 574 fills |
+| S5 | Binance year 0, 313 fills |
+| S6 | Binance year 1, 470 fills |
+
+- Primary outcome: **FP1**, exit-independent. Fair price reaches +1R before the initial stop within 24 h.
+- Grades used the frozen A/B/C/F rule. Each lens then had a validator and an adversarial verifier.
+- **Where the verifier graded lower, the lower grade stands.** No verifier was shown to be wrong.
+
+**Headline.**
+- **0 A, 0 B, 5 C, 16 F, 1 NG.** The three C's that are the same RSI hypothesis (A2-5, C1, LOSS-C1) count as one.
+- Nothing is eligible for deployment.
+- No market-state refusal helps TREND on completed-bar data.
+- On the first trustworthy live test of WILDCARD market-direction gates, both BTC-direction variants reversed.
+- The best held-out kept FP1 on n >= 40 is 0.62 (A2-3 on S1, not blind). Pooled, 0.54. Break-even FP1 with today's
+  exits is 0.50 (TREND) and 0.55 (WILDCARD). **"Comfortable certainty" is not reachable with these signals.**
+
+### Base (discovery, 84 trades, 20.56 days)
+
+- 124 trades/month.
+- FP1 0.43 [0.31, 0.53]. Win 0.45. net_R -0.148/trade [-0.35, +0.02].
+- At $190: -$41/mo fixed stake [-82, 0], -$30/mo compounded (sizing.py @ f582c46). By sleeve: TREND -$15/mo,
+  WILDCARD -$26/mo (fixed).
+- Per $1,000: about -$200/mo.
+
+Held-out base rates:
+- TREND, MEXC year: FP1 0.55 [0.50, 0.59], +0.156R, +$20/mo at $190 [+3, +51], +$116/mo per $1k [+23, +306].
+- TREND, Binance years: 0.41 and 0.47; -$7.6 and -$4.0/mo at $190.
+- S1 WILDCARD: FP1 about 0.48.
+
+Loss anatomy (46 losses):
+- 40 went the wrong way first.
+- Of those 40, 25 were idiosyncratic, 9 mixed and 6 market-driven.
+- The last 7 days (FP1 0.42) are not a detectably different regime from before (0.44).
+
+### Grades (validator, then verifier; final = the lower)
+
+| Rule | What it refuses | Validator | Verifier | FINAL | Deciding figure (FP1 kept minus removed) |
+|---|---|---|---|---|---|
+| A1-1 | longs, BTC 24h <= -1% | F | F | **F** | S4 -0.155 [-0.26, -0.04]; S6 -0.151 (TREND reversal) |
+| A1-2 | calm_score > 1.2 | F | F | **F** | S4 -0.045 |
+| A1-3 | WC shorts unless BTC < -3% and breadth < 0.25 | NG | NG | **NG** | keeps 0 rows on every set |
+| A1-4 | 4 h same-symbol cooldown after a stop | F | F | **F** | S4 -0.013, S5 -0.125, S6 -0.050 |
+| A1-5 | A1 pipeline | F | F | **F** | S4 -0.072 |
+| A2-1 | TREND outside RISK_ON | F | F | **F** | S4 -0.038 |
+| A2-2 | WC side against BTC 24h and alt median | F | F | **F** | S1 -0.198 (S2 +0.163) |
+| A2-3 | WC turnover < $5M | B | **C** (both verifiers) | **C** | S1 +0.335 [+0.10, +0.57], not blind; S2 +0.139; trades 23-84 -0.278 |
+| A2-4 | WC \|3h ROC\| > 15% | C | **F** (verify_assessor) | **F** | S1 +0.009, flips without one day; discovery -0.405 |
+| A2-5 | WC RSI >= 80 long / <= 20 short | C | C | **C (weak)** | S1 +0.052 [-0.18, +0.30]; S2 +0.099 |
+| A2-6 | WC calm_ratio >= 0.60 | F | F | **F** | S1 -0.026; S2 -0.027 |
+| A2-7 | A2 stack | F | F | **F** | TREND leg S4 -0.038 |
+| A3-1 | TREND breadth < 0.78 | C | **F** (verify_assessor) | **F** | S4 +0.003 [-0.09, +0.09], a tight null on 574 fills |
+| A3-2 | all WC shorts | C | **F** (verify_assessor) | **F** | S1 +0.052, S2 +0.091, both below 0 without one day; S1 net_R favours shorts |
+| A3-3 | A3 breadth screen | F | F | **F** | S2 -0.064 (8 kept); S4 +0.003 |
+| A3-4 | TREND new-high margin outside 0.2-1.5% | F | F | **F** | S4 -0.113 [-0.19, -0.03] (reversal) |
+| MKT-C1 | WC side against BTC 72h | F | F | **F** | S1 -0.069 |
+| MKT-C2 | WC long in RISK-OFF / short in RISK-ON | C | C | **C (weak)** | S1 +0.062 (-0.020 without 08-13); S2 +0.247; time-shift p 0.34 / 0.057 |
+| C1 | = A2-5 | C | C | **C (weak)** | identical |
+| C2 | TREND coin 7d > +25% | F | F | **F** | S4 -0.002 on 555 fills; S5 -0.077 |
+| C3 | WC with no same-side entry in 4 h | F | F | **F** | S1 -0.052 |
+| LOSS-C1 | = A2-5 (fail-open) | C | C | **C (weak)** | identical |
+
+**Why the verifier downgrades stand.**
+- **A2-3, B to C.**
+  - wc/REJ/E/r07 (09-24) had already scored the exact $5M floor on the live book 08-13..09-23. That covers 49 of S1's
+    64 graded rows, so S1 was not blind. The blind part, before 08-13, is n 15.
+  - The S1 gap sits entirely below about $3.6M.
+  - S2's gain comes from the `ref_not_listed` stratum, which the live veto already refuses. Without it: -0.005.
+  - It reversed on trades 23-84.
+  - A global-null simulation gives at least one B among 22 rules in 47% of runs.
+- **A2-4, A3-1 and A3-2, C to F.** Each has one qualifying set that is a null or flips when one day is dropped. The
+  letter of the frozen rule gives C; the verifier took the lower grade because it was in doubt. I found nothing
+  showing the verifier wrong. For deployment, C and F mean the same here: no ship.
+
+### Prior evidence, reconciled
+
+- **TREND market-direction and extension refutations** (wc/DAYS, wc/MKT, wc/ONE, wc/REGIME, DR 09-09, DR 09-13):
+  - **Stand, and are strong.** A1-1 and A3-4 reverse with intervals wholly below 0. A2-1, A1-5, A1-2 and C2 point the
+    wrong way. A3-1 is a tight null.
+  - Caveat: S4 and S6 are the venue-years those studies already used, so this is a re-measurement, not an
+    independent confirmation. Only S5 (Binance 2023-24) is fresh.
+- **WILDCARD market-direction refutations:**
+  - These were **weak**: completed-bar replays graded NOT_TRUSTED (wc/RETEST N1a: fill ratio 1.60, recall 0.40).
+  - S1 and S2 are the first trustworthy test (live forming-bar scan instants).
+    - A2-2 and MKT-C1 reverse on live fills.
+    - MKT-C2 is a weak C.
+  - So "not shown to help" now has small-n live backing. It agrees with DR 09-02 (the majors-up 72h gate refuted by
+    time-shift placebo on live fills) and with DR 09-09 ("REJECTED: any market-regime entry gate").
+  - Whether any WILDCARD direction gate works: **I don't know.** S1 and S2 disagree on A2-2.
+- **Day-level prediction** (wc/DAYS): not re-tested. None of the 22 rules is a day halt.
+- **Per-trade levers that work** (regime size scaler, WILDCARD early stop, listing veto): not re-tested; unchanged.
+  - Turning the scaler floor into a refusal priced at -$16/mo [-37, +5] in discovery.
+  - Leverage >= 7 as a TREND refusal reversed in this window (n 20 at +0.19R vs n 21 at -0.46R). It is confounded by
+    symbol and post hoc; the prior "leverage >= 7 loses" is not re-opened as a gate.
+- **Long/short:**
+  - TREND long-only stands. TREND shorts ran -0.02 to -0.10R on every venue-year; refused TREND shorts had FP1 0.29
+    and a counterfactual of -0.50R.
+  - The 09-07 WILDCARD "keep shorts" verdict stands (A3-2 F).
+  - SFLIP: the WILDCARD side is not a choice, so "switching" can only mean refusing the counter-trend side.
+- **DR 09-08** ("tightening WILDCARD RSI costs money", p 0.977) is neither confirmed nor overturned. Its population is
+  not named in this file; I don't know whether it was replay or live.
+- **DR 09-06 "CONCURRENCY MARKS WINNERS"** had already measured the family behind C3. The lens did not cite it.
+  **DR 09-13 ENTRY PARAMETERS** (7d return rho +0.14, extended = better) is the direct prior against C2. The lens
+  did not cite it either.
+- **REGIME 09-22** (flagged BTC bars reach +1R 51.6% vs 47.7%): not reproduced on the MEXC TREND year (0.45 flagged
+  vs 0.54, intervals overlap). The live TP cap is untouched.
+
+### Market awareness (M1 audit, f582c46; env 177 FUTURES_* names, identical to the 09-24 21:31Z snapshot)
+
+- **No market-wide state gates any entry**, on either sleeve or side.
+- **Market state reaches one live decision:** the BTC exhaustion flag caps the TREND target at 1R. That is exit-side;
+  it fired 2 of 41.
+- **Logged, read by nothing:** BTC/ETH/SOL returns, calm_score, alt breadth/median/dispersion, news, OI and funding.
+- **The bot's breadth is not rolling 24h.** It is riseFallRate since 16:00Z, alt band only; 40 of 41 TREND fills are
+  outside that band.
+- **Dead code:** `regime_classifier` (allow_long/allow_short) exists on the PMT path only (FUTURES_ENTRY_MIN_SCORE=1000).
+- **Safety fact, reported and not acted on.** The owner's 06:28Z /pause was undone by the 06:32Z boot
+  (FUTURES_RESUME_ON_BOOT=1). At 14:34Z the probe read paused=false and saw at least 3 TREND trades since the pause.
+
+### Decisions
+
+1. **No entry rule ships.** Live stays unchanged:
+   - trigger 8%;
+   - RSI 90/10 (code default; FUTURES_WILDCARD_RSI_MAX/MIN unset);
+   - FUTURES_WILDCARD_MIN_TURNOVER_USDT=2000000;
+   - calm_ratio 0.75;
+   - FUTURES_WILDCARD_LONG_ONLY=0;
+   - TREND long-only;
+   - dials WILDCARD 1.87%, TREND 1.205%;
+   - the regime scaler as a size dial;
+   - the early stop;
+   - the listing veto;
+   - the TREND BTC-flag TP cap.
+2. **Market state is an instrument, not a gate.** Proposed, pending the owner's approval: a log-only monitor. It
+   computes at every scan, and persists every 15 min, rolling 24h whole-universe breadth (bar-built), BTC distance
+   from its 4h EMA20, BTC 24h and 72h returns, alt median and dispersion, the BTC flag, and the calm score against
+   its own 30-day history. States: RISK-ON / MIXED / RISK-OFF, plus POST-RALLY and AGITATED overlays, with 2-reading
+   hysteresis (untested). **It refuses nothing.**
+3. **Forward tests, frozen, pending the owner's yes.** `wc/ENTRY/forward/FORWARD_PREREG.md`, sha256
+   2e590d9e393e1cd94f135a1b33c61b2890806ab1fbc25fafcdf779966694c1e1.
+   - **FWD-RSI** (zero code):
+     - Rule: rules.py C1 as a would-refuse count on WILDCARD fills and first-in-episode shadow rows from
+       2026-09-26T00:00Z.
+     - Decide at n >= 360 graded rows or 2027-03-31.
+     - Pass: FP1 diff lower bound > 0, placebo p <= 0.05, and fill net_R diff > 0.
+     - Kill at n >= 150 if diff <= 0.
+     - Power: it detects a true gap of about 0.15. The holdout gaps (0.05-0.10) would not be detected.
+   - **FWD-MKT** (needs the log-only monitor):
+     - Rule: rules.py MKT-C2, same populations.
+     - Decide at n >= 360 or 2027-03-31.
+     - Pass: lower bound > 0, time-shift placebo p <= 0.05, and fill net_R diff > 0.
+     - Kill at n >= 150 if diff <= 0 or time-shift p > 0.20.
+     - Low priority (DR 09-09 ceiling).
+   - **No new turnover test.** F02 ($3M, 2026-12-10) carries the question.
+4. **Recommended to the owner, not done:** make /pause survive restarts, by a code change or by setting
+   FUTURES_RESUME_ON_BOOT=0. Remove or rename the constant "score 96 / certainty 0.9" stamp so it is not read as
+   confidence.
+
+### Owner rulings needed
+
+- Whether the post-hoc turnover-band tables breach F02's "look at no other floor" discipline. They are in
+  validate_selectivity/results/a23_sensitivity_S1.*, validate_assessor/results/a23_secondary.json and
+  verify_selectivity. They used only pre-09-04 rows, none from F02's forward window.
+- Yes or no to FWD-RSI, to the log-only monitor, and to FWD-MKT.
+- The pause state and FUTURES_RESUME_ON_BOOT.
+
+### Corrections recorded
+
+- **Validator error (validate_assessor, validate_selectivity).** They say "live turnover floor $3M (unset, default
+  3e6)". **The floor is $2M** (env 2000000; L.D.turnover_floor_usdt 2e6 on 43/43 rows). The source was env_now.txt,
+  whose filter omitted the variable.
+- **validate_selectivity.** It added a spurious result row, `A2-3_family_note`. It is not a frozen rule; ignore it.
+- **validate_market.** In rows_S1_S2.csv the `asof` column holds a method repr. The clean dump is
+  verify_market/v4_rows_fp.csv. Grades are unaffected.
+- **validate_loss.**
+  - It counts 4 removed S1 shorts. There are 5: 4 graded, all FP1 = 0; NIL is ENTRY_SLOT_15M.
+  - It lists 5 removed longs that banked on the retention trail. There are 7: ACE and TUT are missing.
+- **PREREG section 9** says the dry run came before the freeze; its files are dated after the sha file. This is
+  harmless: the dry run reads no outcomes.
+- **discover_market.**
+  - Addendum 1's stated time (~16:50Z) is wrong: the file was last touched at 16:42:42Z.
+  - Its fidelity check (bot_btc_72h, sign agrees on 41/43) was not archived. A verifier re-derived it: true.
+- **discover_losses and discover_certainty.** Their tests_declared.md files were modified after their results. Both
+  disclosed this, and their family-wise failures are reported anyway.
+- **holdout_trend.** It deleted its own scratch file (_prof.py) against the no-delete rule, and reported it.
+- **The lenses' "$ saved" figures overstate.** Random deletion in a losing book saves money too. Quote only the excess
+  over random deletion.
+
+### Do not quote
+
+- The discovery RSI 80/20 dollars: +$31/mo at $190, +$158 per $1k.
+- The A2-3 S1 "+$22/mo" as established, or its "B".
+- Any post-hoc turnover-band FP1 table (for example "<$3M 0.00").
+- A3-3's +3.74R vs -12.39R and its +$51.9/mo.
+- A3-1's +0.085R (a non-live breadth field).
+- Assessor 1's +$147.21 retro table.
+- MKT-C1's +$24.14/mo.
+- C2's +$19.4/mo.
+- C3's +$31.3/mo.
+- "Filled WILDCARD shorts with RSI <= 20: 0 of 9 reached +1R". It is post hoc, and refused oversold shorts went 7 of 12.
+
+### Not known
+
+- Whether any entry rule can reach the owner's "comfortable certainty".
+- Whether a WILDCARD direction gate works.
+- DR 09-08's population.
+- The true signal-time RSI on S1 (logged on 3 of 68).
+- Why the floor is $2M.
+- Universe survivorship.
+- How many trades have opened since the undone pause beyond the 3 seen.
+- Whether cross-venue lead, MEXC funding/OI or book depth at entry separate outcomes. The bot does not log them.
+
+### Leave alone
+
+Every live gate, dial and side listed in Decision 1. Also every frozen forward test (F02, X01, F17, the 2026-12-10
+breadth review).
+
+**Hygiene.**
+- The repo is clean at cac5273, docs-only after f582c46. It was not edited.
+- No deploys, orders, Railway variable writes or /data writes. Container access across the lanes was read-only.
+- This synthesis deleted nothing. The one deletion by an earlier lane is recorded above.
+- Public MEXC and Binance market data only.
+- 90 GB free on C:.
+
+
+## 2026-09-25 - EXIT REVIEW (wc/EXIT): 23 FROZEN EXIT RULES VALIDATED OUT OF SAMPLE - 21 F, 1 C, 1 N/A. NO EXIT CHANGE SHIPS. WILDCARD 0.75R BREAKEVEN TO SHADOW; LOGGING TO ADD; K3 RECORD CORRECTED TO 16 MIN 48 S
+
+**This record is for DECISION_RULE.md.** It was written read-only, with no repo edit, and is dated 2026-09-25. The
+owner-facing answer is `C:/Users/Rocot/futuresbot-evidence/wc/EXIT/answer.md`.
+
+**Asked (owner, 2026-09-25):**
+- "What would you improve in terms of exit strategies?"
+- "Should the bot be more active during the lifecycle of a trade and understand if the trade is going well or not
+  automatically?"
+- "Are the current safety nets relevant to balance losses and profits?"
+- "Is the SL correctly configured for each trade?"
+
+### Verdict
+
+- **NO EXIT RULE CHANGES.**
+  - 23 exit rules were frozen (prereg sha256 9452fadc…273bf) and run once on five populations the discovery lanes never
+    opened.
+  - Results: 21 F, 1 C (PROFIT-T5, WILDCARD breakeven at 0.75R, about $0), 1 N/A (NETS-C1, not replayable, at most
+    +$0.8/month at $190).
+  - That includes all 16 rules from the three external assessments.
+- **Where the money is lost.** Below +1R.
+  - 19 live trades peaked at ≥ 0.25R and then closed red: -17.1R, -$242.40, against a window total of -$193.92.
+  - Above +1R the stack holds: 29 trades reached +1R, kept 58% of their polled peak, and none closed red.
+- **What protecting that zone costs.**
+  - On TREND: $7.88 to $11.78 a month at $190 ($42.68 to $63.42 per $1,000), every interval below 0 (P3).
+  - On WILDCARD: about $0 (T5).
+- **The SL.** Correct as a mechanism on 83 of 84 trades. The exception is #63, left bare for 16 min 48 s. Correct as
+  risk accounting only to within the signal anchor and contract rounding: 16 trades were more than 5% off 1R, worth
+  about $0. Keep 3 × ATR.
+- **The safety nets.** All kept. The resting exchange stop is essential. The trail enforces the invariant, but its
+  dollars are unproven.
+- **More in-trade judgement.** Refuted as a class. Every failure-detection rule is F out of sample: it kills about one
+  slow winner per loser it cuts, and breaking even needs 1.7-2.4 cuts per kill. A multi-input health score has zero
+  information (out-of-fold Spearman 0.004 [-0.18, +0.18]).
+
+### How it was run
+
+**Inputs**
+- M1: exit machinery and per-trade SL audit.
+- M2: six populations with one loader. The replay gets the exit kind right on 84 of 84 L84 trades and reproduces 74 of
+  84 to within 2 minutes and 0.1R.
+- M3: fact-check of 76 assessor claims.
+- Five discovery lanes (assessors, stop, failure, profit, nets), each on L84 only, each with its tests declared first.
+- One frozen pre-registration of 23 rules.
+- One validator and one adversarial verifier per lane.
+
+**Populations**
+- P1: 59 live trades, 08-21 to 09-04.
+- P2: 72 refused WILDCARD signals.
+- P2T: 11 refused TREND signals.
+- P3: 335 TREND detector signals over a year, 333 of them on 15m bars.
+- P4: 3 live trades after the cutoff.
+- A population is eligible for a rule at n ≥ 40.
+
+**Statistics**
+- The paired delta in net R per trade on the same trades.
+- 95% intervals resampled by day.
+- Holm correction over m = 23.
+- Dollars via `sizing.py` at today's dials (WILDCARD 1.87%, TREND 1.205%), compounded from $190.04 and from $1,000.
+
+**Where a verifier's grade was lower, it stands.** One exception, T5: see Ruling 2.
+
+### Grades (frozen run; P3 dollars where eligible)
+
+| id | Grade | P1 Δ | P2 Δ | P3 Δ [95%] | $/mo at $190 [95%] | per $1k | Violations (P3, else P2 or P1) |
+|---|---|---|---|---|---|---|---|
+| PROFIT-T5-WC-BE075 | **C** (verifier F; see Ruling 2) | +0.023 (n 39) | +0.004 [-0.062, +0.081] | n/a | P2 +4.11 [-7.95, +15.35] | +28.65 | P2 16→12 |
+| STOP-C2 fill-anchored bracket | F (as P&L) | -0.024 [-0.094, +0.009] | n/a | n/a | P1 -1.08 [-6.28, +3.04] | -5.22 | 12→12 |
+| NETS-C1 monitor during scans | N/A | 0 | 0 | 0 | ≤ +0.2 to +0.8 | +1.3 to +5.0 | — |
+| STOP-C1 structural tighter-of | F | +0.062 | +0.064 | -0.049 [-0.094, -0.011] | -6.43 [-9.33, -0.85] | -32.85 | 66→70 |
+| A1-SL calm-scaled stop | F | +0.117 | +0.109 | -0.121 [-0.216, -0.032] | -12.61 [-19.70, -2.78] | -68.48 | 66→66 |
+| A2-SL fill/structural stop | F | +0.033 | -0.043 | -0.049 [-0.094, -0.011] (same test as STOP-C1 on P3) | -6.43 | -32.85 | 66→70 |
+| A3-SL 2.25/2.5 × ATR | F | +0.019 | +0.171 [+0.063, +0.321] (today's stack +0.056) | -0.095 [-0.175, -0.021] | -10.34 [-15.81, -1.49] | -56.34 | 66→70 |
+| A1-STALE 1h stalemate | F | -0.042 | +0.099 | -0.120 [-0.220, -0.024] | -12.59 [-20.23, -2.18] | -66.60 | 66→63 |
+| A1-VOL adverse volume candle | F (negative after Holm) | -0.123 | -0.015 | -0.110 [-0.170, -0.055] | -11.63 [-14.65, -4.45] | -62.62 | 66→77 |
+| A2-NFT no follow-through | F | -0.006 | -0.004 | -0.103 [-0.201, -0.010] | -11.06 [-18.41, -0.77] | -59.24 | 66→57 |
+| A2-TIME WILDCARD 12h/18h | F | -0.041 (n 39) | -0.057 [-0.156, +0.033] | n/a | P2 -7.17 [-26.56, +9.25] | -34.90 | 16→16 |
+| A3-SOFT TREND soft stop | F | +0.135 (n 20) | n/a | -0.037 [-0.098, +0.019] | -4.83 [-9.01, +1.64] | -24.84 | 66→75 |
+| A3-STAG 5h stagnation | F (negative after Holm) | -0.036 | -0.015 | -0.112 [-0.184, -0.046] | -11.48 [-17.70, -4.29] | -62.54 | 66→86 |
+| FAIL-R3 6h stagnation | F | -0.045 | -0.070 | -0.084 [-0.148, -0.026] | -9.47 [-14.48, -2.47] | -50.33 | 66→86 |
+| A1-BE breakeven at ~0.33R | F | -0.083 | +0.029 | -0.112 [-0.198, -0.030] | -11.78 [-18.84, -2.30] | -63.42 | 66→16 |
+| A2-BE tiers 0.5R / 0.75R | F | -0.104 | -0.002 | -0.069 [-0.139, -0.004] | -7.88 [-12.36, -0.07] | -42.68 | 66→49 |
+| A1-TRAIL arm 0.6R, keep 0.70 | F | -0.052 | -0.034 | -0.102 [-0.194, -0.011] | -11.00 [-18.55, -1.01] | -57.40 | 66→38 |
+| PROFIT-T8 auto-arm 0.56R / 0.75 | F | -0.114 | -0.044 | -0.104 [-0.203, -0.006] | -11.02 [-19.43, -0.74] | -58.19 | 66→34 |
+| A2-TRAIL 0.60 / 0.75 / 0.85 | F | -0.065 | -0.105 | -0.045 [-0.095, 0.000] | -5.13 [-9.10, -0.10] | -28.15 | 66→66 |
+| A3-PROG = PROFIT-T1 progressive retain | F | -0.103 | -0.072 | -0.056 [-0.102, -0.013] | -6.52 [-10.16, -1.39] | -34.59 | 66→66 |
+| A2-PART partials 30% / 30% | F | -0.079 | -0.086 | -0.073 [-0.126, -0.021] | -7.66 [-12.13, -2.00] | -42.24 | 66→66 |
+| A3-PART partial 35% at 1.75R | F (negative after Holm) | -0.114 | -0.070 | -0.071 [-0.117, -0.027] | -7.94 [-11.56, -2.48] | -42.52 | 66→66 |
+
+- The full table is in `synthesis/frozen_table.json`. It covers every rule and population and includes loss per losing
+  trade, capture of peak, and losers cut against winners harmed.
+- P2 dollar figures at $190 skip 8 fills below the minimum contract, and on T1 and T8 that flips the sign. The grades
+  follow R.
+
+### Safety nets priced by removal (L84, same trades; what keeping each net is worth)
+
+| Net | ΔR per trade [95%] | $/mo at $190 | per $1k | Note |
+|---|---|---|---|---|
+| Resting exchange stop | +0.082 [-0.105, +0.303] | +27.8 (fixed stake [-5, +86]) | +176 | Without it, loss per losing trade goes -0.91 → -1.58R, with 2 liquidations. WILDCARD +0.27 [+0.07, +0.55] |
+| Resting stop vs the in-process copy | +0.021 [+0.013, +0.030] | +4 | | 34 of 34 better |
+| WILDCARD early stop | +0.016 [-0.023, +0.055] | +2.6 | +26 | 5 saves, 1 runner cut (#75) |
+| Breakeven 0.90R | +0.016 [0.000, +0.049] | +4.4 | +14 | #67 and #78 saved. GRADE C +5.92 [-18.61, +31.82] |
+| Trail | -0.084 [-0.384, +0.187] | -18.5 (fixed [-101, +50]) | -90 | Capture 0.62 vs 0.55; violations 19 vs 34. TREND carries the cost (descriptive; X06 B, "one trending month") |
+| 24h clock | -0.051 [-0.157, +0.005] | -7.7 | -40 | 4 trades; X16 ~$0 |
+| TP | +0.007 | +2.1 | +7.6 | 1 trade |
+| Preemption | -0.020 [-0.050, 0] | -0.15 | -23 | n = 1 (#17); I don't know |
+
+No net's removal survives Holm.
+
+### SL audit (M1, corrected by the verifiers)
+
+**Mechanism**
+- The stop rested from the fill on 82 trades at 0 s, #25 at 1 s, and #67 at 13 s (cause unknown).
+- It sat at the designed distance on 84 of 84.
+- The exchange order filled all 36 stop legs.
+- Full stops cost -1.037R each: fees -$18.01, fill beyond the trigger -$11.10, rounding +$8.52, anchor +$1.34, funding
+  +$0.56.
+- No fill went more than 0.10R past its trigger.
+
+**Flags (30 of 84 trades)**
+
+| Flag | Trades |
+|---|---|
+| Over-risk | #21 (+24.4%), #73 (+10.8%) |
+| Under-risk | 2, 7, 17, 19, 22, 43, 48, 51, 62, 66, 67, 70, 76, 84 |
+| Short stop on LAST | 7, 9, 16, 17, 18, 19, 21, 28, 35, 41, 43. Fixed baa28b2, $0 |
+| Last-print stop | #9. Fair reached the same stop 45 min later |
+| 20% cap tighter than design | 21, 26, 68, 84 (n = 4) |
+| Slippage 0.064-0.099R | 20, 23, 27, 32, 72 |
+| Bare | #63, 1,008 s. Fixed a756e36 |
+| Late stop row | #67, 13 s |
+
+**Fix: the fill-anchored bracket.** Grade F as P&L (P1 -0.024 [-0.094, +0.009]; +0.006 without P1-31). It needs an
+amend after every fill, and a rejected amend is what caused the only bare window. Not shipped; logged instead
+(Ruling 5).
+
+### Rulings
+
+**RULING 1 - NO EXIT RULE CHANGES.**
+- Leave the live stack exactly as it is:
+  - stop at 3 × ATR14 of 15m bars, signal-anchored, triggered on FAIR;
+  - TP on LAST at 5R WILDCARD / 3R TREND, with the 1R cap under BTC exhaustion;
+  - WILDCARD early stop at -0.5R within 30 minutes;
+  - breakeven at 0.90R;
+  - trail armed at 1.0R, retaining 0.50 (0.75 from 3R);
+  - the 24h clock;
+  - preemption;
+  - /arm refused on TREND.
+- **Cost if wrong:** no rule tested beats $0 out of sample. The upside of the best non-loser (T5) is +$4.11/month
+  [-7.95, +15.35].
+
+**RULING 2 - PROFIT-T5 (WILDCARD breakeven at 0.75R): letter C, action SHADOW.**
+- **The verifier's F is not upheld as a letter.** Its downgrade rests on two things:
+  - P2's 38 records dated before 09-04. PREREG §6 says a population under 40 records never changes a letter.
+  - A P1+P2 pool that was never declared.
+- **Its substance is adopted:** there is no dollar case, and on independent days the rule is -0.022R [-0.073, +0.038].
+- **Shadow test**, in reporting code only, with no live change. It is pre-registered in
+  `synthesis/T5_SHADOW_PREREG.md` (sha256 819439ef831977b407e5af7027735a0d6139885b04d120b794677854055fdcc2):
+  - WILDCARD fills from 2026-09-26;
+  - decision at the later of 30 affected fills or 2026-12-10;
+  - ARM2 F3's kill lines, plus fewer violations, plus a rule-made-line condition.
+- **A pass** is a cost cap, not a profit claim. The live opt-in stays the owner's choice under ARM2 F3.
+
+**RULING 3 - THE RETENTION INVARIANT BELOW +1R IS PRICED, NOT CLOSED.**
+- On TREND, every rule that closes the gap loses $7.88-$11.78/month at $190 on P3 (A1-BE, A2-BE, A1-TRAIL, T8).
+- The owner's standing rule is to honour the invariant where it costs nothing. So TREND stays as it is. WILDCARD rests
+  on Ruling 2.
+
+**RULING 4 - SAFETY NETS: ALL KEPT.**
+- The resting stop is essential.
+- The early stop and the 0.90R breakeven are modestly positive.
+- The trail stays for the invariant: 0 trades that peaked at ≥ 1R closed red. Its dollars are unproven.
+- K3 (Ruling 1 of 2026-09-24) stays in force as written.
+
+**RULING 5 - LOGGING TO ADD. Instrumentation only; no exit decision changes.**
+1. A complete R-path for every position:
+   - at least every 60 s (10-15 s preferred);
+   - fair and last price at each sample;
+   - appended to /data as it is taken, so it survives restarts.
+2. Every new polled peak and trough of R, with its timestamp.
+3. For each software exit:
+   - the rule and the floor level;
+   - the poll time and the R that crossed it;
+   - when the order was sent;
+   - the fill time and fill price.
+4. Cycle start, work time, sleep, and container boot and stop, kept in /data.
+5. Signal time, fill time and fill price. Actual risk at the stop against the intended 1R, with an alert above 1.10×.
+6. Every stop place, cancel and amend: the exchange's response code and the bare seconds.
+7. First touch of -0.5R and of -0.8R, with the time, on every fill.
+8. Shadow outcomes per fill, computed in reporting code, for EXIT-T5S and X01.
+9. Owner /arm, /close and preemption, each with its R and time.
+
+**RULING 6 - REJECTED-IDEAS LIST.**
+- Add the 21 F rules above, each with its P3 (or P2/P1) measurement.
+- This is the first gradeable test of in-trade adverse-signal exits (the X23 family, via A1-VOL): rejected, negative
+  after Holm.
+- X17 (stagnation) gains three more rejections: A1-STALE, A3-STAG and FAIL-R3.
+- X12 (partials) gains two: A2-PART and A3-PART.
+- Discovery-only rules FAIL-R1a, R1b, R2 and R5 are recorded as F by nearest validated relative. They were not validated
+  directly.
+
+**RULING 7 - FROZEN FORWARD TESTS UNCHANGED.**
+- X01 (arm 0.80R), F02, F17 and the TREND -0.8R counter all run as frozen.
+- At X01's 2026-12-10 decision, report beside it this run's out-of-sample results on arming below 1R:
+  - A1-TRAIL: P1 -0.052, P2 -0.034, P3 -0.102;
+  - T8: P1 -0.114, P2 -0.044, P3 -0.104.
+- That report does not change X01's pass criteria.
+
+### Corrections to the record (not edited: read-only)
+
+1. **DECISION_RULE.md lines 17565 and 17900 ("about six minutes").** The 09-21 XRP position (#63) had no resting stop
+   from 08:35:51 to 08:52:39Z, **16 min 48 s**, by the exchange's own stop-order rows.
+   - K3 was met either way, and the 2026-09-24 override and the "twice" clause stand as recorded.
+   - I don't know where "six" came from.
+2. **Monitor timing** (M1 and discover_nets). The cycle sleeps **45 s**, not 60 s, from 09-18. The cycle's work time
+   IS logged. Measured over 10,949 cycles:
+   - blind window median 8.3 s, 90th percentile 22.2 s, maximum 103 s;
+   - blind for 18.2% of the time;
+   - mean extra detection delay 0.6-1.3 s.
+3. **ARM2's "The trail and the early stop run at 1 s".** True only while the cycle sleeps.
+4. **Retention-invariant counts.**
+   - M1's "0 breaches" means peak ≥ 1R and closed red.
+   - The 19 (-$242.40) means peak ≥ 0.25R and closed red.
+   - Both are right under their own definitions. Owner-facing reports use the 19.
+5. **Validator 15m-bias corrections on P3** must use the TREND-only L84 bias, not the pooled one. Corrected:
+   - A3-SL -0.091 [-0.171, -0.018];
+   - A2-NFT -0.085 [-0.182, +0.009];
+   - A3-STAG -0.067 [-0.138, -0.001];
+   - A2-TRAIL -0.094;
+   - A3-PROG -0.102;
+   - A3-PART -0.103.
+
+   No letter changes. The validator's "eight rules negative on all three" is nine.
+6. **STOP-C1 and A2-SL are one test on P3** (335 of 335 identical deltas). Holm counted it twice, and A2-SL's P3 F is
+   not independent corroboration.
+7. **FAIL-R3 discovery.**
+   - It cut 12 losers (+7.15R) and worsened 1, not "13 cut".
+   - The declared cell ranks 3rd of 36 on L84.
+   - Out of sample, each winner harmed costs 1.17-1.22R (P1, P3), not "about 0.9R".
+8. **T5 validation.** 7 green P2 exits were scratched, not 8.
+9. **A structural-stop precedent the discovery missed:** DECISION_RULE 2026-09-09 refused a structural stop at 1.25× the
+   prior-3h range.
+
+### Do not quote
+
+- Any L84 discovery dollar figure as evidence, for example:
+  - A1-TRAIL +$12.9/mo;
+  - T5 +$13.88/mo;
+  - STOP-C1 +$11.1/mo;
+  - A3-SL +$11.8/mo;
+  - FAIL-R3 +$6.28/mo.
+- Assessor 3's +5.9R / +6.4R as the effect of a stop change. It holds size fixed, is booked at zero cost, and is
+  in-sample.
+- Assessor 1's EV of -$3.57 per trade and its 58% break-even win rate. The real figures are -$2.31 and 55.0%.
+- A3-SL's P2 +0.171 as a WILDCARD stop result. Against today's stack it is +0.056 [-0.097, +0.198].
+- The P2 $190 figures for T1 (+$3.58) and T8 (+$15.71). They come from skipped fills and uneven risk weights.
+- discover_nets E2 (-$12/month) or its +$3.5/month as the value of NETS-C1.
+- M1's fill-anchor "+$12 to +$17/month". It is simple scaling with an interval that spans 0.
+- The trail's removal figure (+$18.5/month) as "the trail loses money". It is same-window, its interval spans 0, and
+  X06 is B.
+
+### Not known
+
+- Whether a 2.25 × ATR stop pays on WILDCARD alone. The evidence leans against it.
+- Whether TREND's post-entry mean reversion (VR240 0.65 [0.51, 0.86]) holds beyond 14 days and 3-4 symbols.
+- Whether the trail earns money.
+- Preemption's expected value (n = 1).
+- Why #67's stop row appeared 13 s late.
+- The cause of the pre-09-16 excess software-exit slippage (-0.050R per exit, against -0.0015R after).
+- The monitor's blind time before 09-18.
+- How MEXC index-triggered stops fill.
+- Whether the TREND 15m bias measured on 41 trades transfers to P3's year.
+- Whether a sleeve other than WILDCARD and TREND reads `FUTURES_CONVEX_BREAKEVEN_ARM_R`.
+
+### Leave alone
+
+- Everything in Ruling 1.
+- The frozen X01, F02 and F17 forward tests.
+- The TREND -0.8R counter.
+- K3.
+
+**Hygiene**
+- The repo is clean at cac5273, and its futuresbot/ package is identical to f582c46. No edit, commit or push.
+- No deploys, orders, Railway variable writes or /data writes. verify_nets read Railway cycle logs read-only.
+- This synthesis wrote only `wc/EXIT/answer.md`, this file, and `wc/EXIT/synthesis/`: `frozen_table.json`,
+  `_scripts/extract_table.py`, and `T5_SHADOW_PREREG.md`, which is read-only.
+- **Rule breach, disclosed:** lane M2 ran `rm -f` on its own 5-record test output, `wc/EXIT/data/_test_L84.pkl`. Nothing
+  else was deleted.
+- 86 GB free on C:.
+
+
+### 2026-09-25 - HARMONIZED RULING (wc/HARMONIZE): ENTRY AND EXIT RECONCILED; NO TRADING RULE SHIPS; THE BOOK RUNS AS A BUDGETED DATA EXPERIMENT; STAKE, PAUSE AND FORWARD-TEST SCORING SETTLED BEFORE THE FIRST FORWARD LOOK
+
+(Proposed text for docs/DECISION_RULE.md. The repo was not edited. The owner or a later session pastes it in, after
+the wc/ENTRY and wc/EXIT records, with the corrections below applied to those two records.)
+
+Full answer: C:/Users/Rocot/futuresbot-evidence/wc/HARMONIZE/answer.md.
+
+**Owner request (2026-09-25).** "Once both studies are completed, come back to me with one set of suggestions,
+harmonized across entry and exit strategies to improve the bot's P&L potential."
+
+**Standing objectives applied:**
+- Dollars first. The ship bar is +$10/month with an interval that excludes 0.
+- Every stop-loss is an anomaly.
+- The north star: do not trade unsuitable conditions.
+
+**Inputs.** Every hash below was re-verified.
+
+| Input | What it is | Hash |
+|---|---|---|
+| wc/ENTRY | answer, decision record, forward/FORWARD_PREREG.md | sha256 2e590d9e393e1cd94f135a1b33c61b2890806ab1fbc25fafcdf779966694c1e1 |
+| wc/ENTRY | prereg/PREREG.md | 5a5c1c8c...3ad3d |
+| wc/EXIT | answer, decision record, synthesis/T5_SHADOW_PREREG.md | sha256 819439ef831977b407e5af7027735a0d6139885b04d120b794677854055fdcc2 |
+| wc/EXIT | prereg | 9452fadc...273bf |
+| wc/HARMONIZE/crosscheck | contradictions, overlaps, forward-test conflicts, merged action list | crosscheck_numbers.json, _scripts/crosscheck.py |
+| wc/HARMONIZE/joint | a joint test, declared before it ran | PLAN.md sha256 bdad74437d3f4035d1a9a9808a0ef5911222bb4a32cdca15a117356a3ce94513, frozen 2026-09-25T18:11Z; no deviations |
+| wc/HARMONIZE/info | new-information plan | PLAN.md, PREREG_SKELETON.md (DRAFT, not hashed), value_power.json |
+| wc/HARMONIZE/critique | adversarial critique | critique_numbers.json, _scripts/critique.py (20,000 day-block draws, seeded) |
+
+- Repo read at cac5273, which carries the same code as f582c46.
+- Env values quoted come from the 09-25 non-secret snapshot (wc/ENTRY/awareness/env_now.json).
+
+#### Verdict
+
+- **NO ENTRY OR EXIT RULE SHIPS.** Counted once each, the two studies graded 42 distinct rules: 0 A, 0 B, 4 C, 36 F,
+  1 not testable (A1-3) and 1 not applicable (NETS-C1).
+  - The C rules are RSI 80/20, the $5M floor, MKT-C2 and T5.
+  - ENTRY's "22 rules, 5 C" counts RSI three times.
+  - EXIT's "23 rules, 21 F" counts A3-PROG/T1 and STOP-C1/A2-SL twice each.
+- **THE JOINT PACKAGE FAILS** on held-out data. It combined RSI 80/20, MKT-C2 and the WILDCARD breakeven at 0.75R.
+  - Live fills J1, n 39, today's exits: +$5.8/month at $190 [-47.3, +54.8].
+  - Pooled J12, n 75: +$39.8 [-40.2, +110.2]. That is +$28.4 beyond random deletion, p 0.094.
+  - The exit leg is worth $0 inside the package.
+  - RSI is negative on every held-out set from 08-21 to 09-04.
+  - The combined effect is 15-37% below the sum of the parts. Never add the parts' dollars.
+- **THE LIVE BOOK HAS NO EDGE SHOWN.**
+  - L84: -0.1475R per trade [-0.355, +0.021]. At $190 on today's dials: -$37.1/month [-76.3, +1.7]; WILDCARD -$23.9
+    [-52.4, +6.1], TREND -$13.2 [-36.2, +11.2].
+  - Pooled live with S1 (exchange rows, including the censored-era positions): WILDCARD +0.002R [-0.20, +0.20] (n 97),
+    TREND +0.07R [-0.28, +0.41] (n 63).
+  - The cost of running is therefore between $0 and about -$37/month.
+  - Fees are $8.08/month at $190. Before fees L84 is still -0.113R.
+- **AT $190 NO FORWARD TEST CAN SHIP ANYTHING IN A USEFUL TIME.**
+  - The ship bar is about +0.03 to +0.04R per trade across the book, or +0.069R per WILDCARD fill at 1.87%.
+  - A pass on realised dollars needs 1,100-3,000 WILDCARD fills (18-48 months).
+  - Every 2026-12-10 outcome is therefore drop or continue.
+
+#### Where the losses come from (joint reading, no overlap)
+
+| Group | n | $ |
+|---|---|---|
+| DOA (never reached +0.25R before the stop) | 23 | -$323.65 |
+| FADE (reached +0.25R or more, then lost) | 17 | -$241.13 |
+| Other losses (time stops, preemption, manual) | 6 | -$31.59 |
+| Remaining 38 trades | 38 | +$402.45 |
+
+- Of the 34 stop-outs, 19 are DOA (-$296.20, median polled peak +0.07R) and 15 FADE (-$225.54, median +0.40R).
+- DOA is decided at entry, and no tested price-derived signal separates it.
+- FADE is the only group an exit can reach. Protecting it costs $7.88-$11.78/month on TREND (P3 at unscaled sizing;
+  10-20% less with the live scaler) and about $0 or worse on WILDCARD.
+- Above +1R the stack holds: 29 reached +1R and none closed red.
+- WILDCARD keeps the same share of its peak as TREND (0.515 vs 0.530). Its lower net comes from smaller peaks (median
+  1.29R vs 1.49R) and from 4 of 19 hits closed below +1R: owner /arm on #42 and #79, the early stop on #75, and the
+  preemption of #17.
+
+#### Rulings
+
+**RULING 1 - ALL LIVE GATES, DIALS (except Ruling 3), SIDES AND EXITS UNCHANGED.**
+- Entry: the 8% trigger, RSI 90/10, the $2M floor, calm_ratio 0.75, the listing veto, WILDCARD both sides, TREND
+  long-only, and the scaler as a size dial.
+- Exit: the BTC-flag TP cap, the 3 × ATR stop on FAIR, the early stop, the 0.90R breakeven, the trail at 1R keeping 50%
+  (75% from 3R), TP 5R/3R, the 24h clock and preemption.
+- /arm stays refused on TREND.
+
+**RULING 2 - THE BOOK IS A PAID DATA EXPERIMENT, NOT A PROVEN STRATEGY.** It gets a budget and a stop rule, set by the
+owner before the first forward look.
+- **Default:** pause entries if equity < $140, or if at a monthly look (on the 26th) the fills since 09-26 give a
+  day-block 95% upper bound on mean R below 0. Only the owner resumes.
+- **What it is not:**
+  - not the convex drawdown brake (refuted 2026-09-04; trades entered in drawdown were no worse);
+  - not a daily loss stop or entry cap (refuted: -$17 and -$37/month).
+- **What it is:** a spending cap, not an edge.
+- **Runway under the L84 central estimate** at today's dials: $140 around 11-08, $111 on 12-10, $50 on 2027-03-31. At
+  the lower bound: $140 around 10-14.
+
+**RULING 3 - STAKE: FUTURES_WILDCARD_RISK_PCT 0.0187 -> 0.01205. FUTURES_TREND_RISK_PCT stays 0.01205.**
+- **Proposed; owner action.** Made in the same env change as Ruling 4, so the bot restarts once.
+- **Dollars, scaled from critique half-dial figures:**
+  - +$8.5/month [-2, +19] if L84 holds;
+  - about $0 on pooled live;
+  - -$4 if the 09-07 WILDCARD +0.077R holds.
+- **Minimum-contract skips at $190:** 3 -> 4 per 84. Halving would give 6, and a quarter stake 24, 16 of them TREND.
+- **No other sleeve moves.** SQUEEZE and SNIPER are 0, and TREND has its own dial.
+- **The forward tests grade in R/FP1 with replayed sizing, so they are unaffected.** The change instant is recorded and
+  splits every running test.
+- **Superseded note:** the 09-07 note "FUTURES_WILDCARD_RISK_PCT is the only risk dial; halving it halves TREND" is
+  superseded. FUTURES_TREND_RISK_PCT exists (runtime.py:2021-2032) and is set to 0.01205.
+
+**RULING 4 - /PAUSE MUST SURVIVE RESTARTS.**
+- FUTURES_RESUME_ON_BOOT is set to the literal 0, never blank. A blank reads as 1 (main.py:8-12 and 108; runtime.py:5834).
+- **Known limit:** a pause also stops the WILDCARD and TREND scans (runtime.py:7929 and 8351), and with them every
+  shadow and refused row.
+- **Optional BUILD, only if a pause is used and data is wanted:** scan while paused.
+  - Would-be entries are logged with the reason "paused", and no order is placed.
+  - It needs a hard guard at the order call and an on/off capture-equivalence test.
+  - It must not use FUTURES_PAPER_TRADE as the switch.
+
+**RULING 5 - FORWARD-TEST SCORING, SETTLED BEFORE THE FIRST LOOK (by 2026-10-02).** One ruling covers F02, X01, F17,
+the breadth review, T5, FWD-RSI and FWD-MKT.
+- **Basis:** grade in R/FP1 and per $1,000. Dollars at actual equity are reported beside.
+  - "+$10/month from $949" (F02, X01, F17) is about +$2/month at $190.
+- **Meaning of a pass:** at $190, drop or continue. A pass buys a pricing or replication step, never a ship on its own.
+  This closes the RETEST gap near DR line 18159.
+- **Stricter-only addenda** (owner approval required):
+  1. Holm correction across all passes decided in the same quarter. With 5 WILDCARD tests, the chance of at least one
+     false pass is roughly 12-23% under independence.
+  2. X01 and T5 reported jointly on the same fills (incumbent / X01 / T5 / both).
+  3. Any ship, K3 revert or dial change splits every running test at that instant.
+  4. An owner-action-excluded line for FWD-RSI and FWD-MKT.
+  5. T5 reports the fills that could differ (peak 0.75-0.90R, about 6 a month) beside its "affected" count (about 31 a
+     month).
+  6. Every entry or joint result reports the ref_not_listed stratum separately.
+
+**RULING 6 - VARIABLE SAFETY.**
+- **Never blank or delete:**
+  - FUTURES_RESUME_ON_BOOT (reads 1);
+  - FUTURES_WILDCARD_MIN_TURNOVER_USDT (reads $3M, which puts F02's challenger live);
+  - FUTURES_TREND_RISK_PCT (TREND falls back to WILDCARD's dial);
+  - the TREND trail flags (empty reads OFF, per the EXP record).
+- **The shared breakeven:** FUTURES_TREND_BREAKEVEN_ARM_R is UNSET in the 09-25 snapshot, so TREND reads
+  FUTURES_CONVEX_BREAKEVEN_ARM_R=0.90 (runtime.py:1732-1747). Any edit of the shared value pins
+  FUTURES_TREND_BREAKEVEN_ARM_R=0.90 in the same change. Examples of such an edit: a K3 revert to 0, or a T5 opt-in at
+  0.75.
+- **K3** stays in force as a standing safety rule after the trials that created it. The owner is to confirm.
+- **T5's "owner may opt in live" is struck** until a test exists that could detect an effect. Its smallest detectable
+  effect by 12-10 is 0.063R per fill; the measured effect is +0.004.
+
+**RULING 7 - EXIT SCORING MOVES TO THE ANALYST SIDE.**
+- T5 and X01 are scored with futuresbot/replay/exits.py (exit kind right on 84 of 84) on a MEXC bar archive. No bot code
+  and no restart.
+- This replaces the crosscheck's A12 and EXIT Ruling 5 item 8.
+
+**RULING 8 - INFORMATION AT ENTRY IS THE NEXT LINE OF WORK. Nothing ships from it.**
+- **U1 (now):** archive MEXC 1m last/fair/index bars around every fill and refused signal under 30 days old, then weekly.
+  MEXC 1m retention is exactly 30 days, so the 09-04 trades lose theirs around 10-04.
+- **Stage R (backfill, no code):**
+  - At most 3 hypotheses: H1 corroboration share < 0.75; one H2/H3 premium-or-lead feature; H6 listed < 30 days.
+  - Frozen and hashed by 2026-10-02; verdict 2026-10-16.
+  - A null is labelled "inconclusive at this power". The WILDCARD MDE is an FP1 gap of 0.21-0.25; the listing veto sits
+    at 0.15-0.20.
+  - TREND $ per R corrected to $1.67 at $190 (value_power.py used $2.3, about 38% high).
+- **Log-only hooks H1-H4 (H5 optional):** built only if the owner says re-funding to about $1,000 or more is plausible
+  within 6 months of a pass.
+  - H1 runs outside the pause gate.
+  - New data goes in metadata or sidecar files, never in new FuturesPosition fields. from_dict is strict
+    (models.py:66-70); an unknown field makes the bot skip the position at boot (runtime.py around line 5820).
+  - The crosscheck's A13 (detector rejects) and A16 (funding/OI/book at entry) are merged into these hooks.
+- **FWD-MKT** is scored offline from MEXC 15m klines. The owner amends its start condition before any row is looked at.
+  - Justified by the lower cost, not stronger evidence.
+  - On live fills MKT-C2 is a null: 0.50 vs 0.455 (n 28/11). Its J2 strength rests on 10 refused signals.
+
+**RULING 9 - CLEANUPS REWRITTEN.**
+- **A14:** the constant WILDCARD "score 96 / certainty 0.9" is relabelled in display text only (Telegram and report).
+  The dataclass fields stay, because the PMT tiers (runtime.py:1507) and the maker-ladder fallbacks (runtime.py:12068-12076)
+  read them.
+- **A15 ("place the new stop before cancelling the old") is struck as a build item.**
+  - _move_exchange_stop documents one stopLossPrice per position and an all-or-nothing cancel_all_tpsl
+    (runtime.py:2624-2631).
+  - #63's cause was fixed by a756e36, and the stop-book check shows 0 bare seconds on 9 trades since 09-23.
+  - It is replaced by a read-only question: does MEXC offer an in-place amend of a position stop?
+- **EXIT logging (Ruling 5 of the EXIT record)** is cut to three diagnostics, built with the hooks and only on the same
+  capital condition:
+  - stop place, cancel and amend events with the exchange's response code;
+  - risk at the fill against the intended 1R, with an alert above 1.10×;
+  - the first touch of -0.5R and of -0.8R, persisted.
+  - Items 1-4 (10-15 s paths, decision-to-fill, cycle timing) are deferred. C19 (e02d0fa) already persists 60 s
+    R-paths.
+
+**RULING 10 - STOP-LOSS ANOMALY TEMPLATE.** Every stop-out review records:
+- timing: DOA or FADE;
+- cause: idiosyncratic, market or mixed;
+- the SL audit flags: bare seconds, risk above 1.10×, slippage beyond the trigger, signal anchor and rounding, and the
+  20% cap;
+- information at entry, once it exists.
+
+Any rule seeded by one stop is first priced against the random-seed ladder null (the 2026-09-22 guardrail).
+
+**RULING 11 - VENUE.** TREND to Binance or OKX: +$14.1/month [+13.4, +15.8] at $949 (wc/EXP), about +$2/month at $190.
+- Revisit only on re-funding, with TREND at 40 or more fills a month and the owner's legal confirmation.
+- No account or credential work is done without the owner.
+
+#### Forward-test calendar (as frozen, with the rulings above)
+
+| Test | Population | Decides | Can ship? |
+|---|---|---|---|
+| F02 ($3M floor) | WILDCARD fills after 2026-09-24T22:40:54Z | 2026-12-10 | Drop/continue at $190. Refused group must be 0.35-0.57R worse |
+| X01 (trail armed at 0.80R) | WILDCARD fills from 09-25 | 2026-12-10; A1-TRAIL and T8 reported beside | Drop/continue. MDE about 0.20R |
+| Breadth review | WILDCARD fills only (not TREND, as FORWARD_PREREG files it), since-16:00Z breadth | 2026-12-10 | Pricing only. Not evidence on FWD-MKT |
+| T5 (breakeven 0.75R), shadow | WILDCARD fills from 09-26 | later of 30 affected fills or 12-10, else 30 fills or 2027-03-10 | Report only. Live opt-in struck (Ruling 6) |
+| FWD-RSI | fills + first-in-episode refused rows from 09-26, on the owner's yes | 360 rows or 2027-03-31; kill look at 150 (about early November at the funded rate) | Continue only. Expected DROP |
+| FWD-MKT (offline) | same, from the amended start | 360 rows or 2027-03-31; kill look at 150 | Continue only |
+| F17 (7% trigger) | added-block refused rows | n 100, about 2027-04-10 (not 12-10); gate-passing count about 2027-02-18 | Continue only |
+| TREND -0.8R counter | 60 stamped TREND fills | blocked (1 of 60) | - |
+| Stage R | backfilled rows | 2026-10-16 | No |
+| Stage F (only if hooks built) | forward rows | 360 rows or 2027-03-31; interim about mid-November | Continue only |
+
+#### Owner rulings needed (by 2026-10-02 unless stated)
+
+1. Is re-funding to about $1,000 or more plausible within 6 months if a test passes? This gates Rulings 8 and 9, the
+   scan-while-paused build, and Ruling 11.
+2. FUTURES_RESUME_ON_BOOT=0 and FUTURES_WILDCARD_RISK_PCT=0.01205, in one change (Rulings 3 and 4).
+3. The budget and stop rule: floor and statistical trigger (Ruling 2).
+4. The forward-test basis, the meaning of a pass, and addenda 1-6 (Ruling 5).
+5. Whether K3 still binds after the trials. Approve the K3 record correction (16 min 48 s).
+6. The F02 discipline question. Record ENTRY's post-hoc turnover-band tables (validate_selectivity, validate_assessor,
+   verify_selectivity; pre-09-04 rows only) as a disclosed deviation. Only the $3M floor may ship on F02's result.
+7. FWD-RSI yes or no. The FWD-MKT start-condition amendment for offline scoring.
+8. Why the live floor is $2M, if known.
+
+#### Corrections to the record (apply when pasting the ENTRY and EXIT records)
+
+1. **DR lines 17565 and 17900.** #63 XRP was bare from 08:35:51 to 08:52:39Z, **16 min 48 s**, not "about six minutes".
+   - The a756e36 time in the log (09:50Z) conflicts with the 08:51:52Z container boot. Unresolved.
+2. **ENTRY "40 of the 46 losses went the wrong way from the start"** becomes: 23 never reached +0.25R (DOA, -$323.65);
+   17 reached it and faded (FADE, -$241.13).
+3. **EXIT "the 34 stop-outs are trades that never worked"** becomes 19 DOA (-$296.20) and 15 FADE (-$225.54).
+   - 16 trades (-$227.89) sit in both ENTRY's wrong-way group and EXIT's 19 violators.
+   - The stop-out, violator and wrong-way totals overlap and must not be added.
+4. **ENTRY "WILDCARD tends to give back gains after +1R"** becomes "WILDCARD hits have smaller peaks, and 4 of 19 were
+   closed below +1R". EXIT's reading stands: there is no WILDCARD-specific giveback above +1R.
+5. **The 2026-12-10 breadth review** covers WILDCARD fills only. ENTRY's FORWARD_PREREG files it under TREND.
+6. **F17** decides at about 2027-04-10, not 2026-12-10 (ENTRY answer section 6).
+7. **ENTRY's scaler-as-gate figure** (-$16/month [-37, +5]) reads "not shown to help".
+8. **EXIT "a restart drops samples"** predates C19 (e02d0fa), which persists 60 s R-paths.
+9. **EXIT's "I don't know whether another sleeve reads FUTURES_CONVEX_BREAKEVEN_ARM_R"** is resolved. TREND reads it,
+   because FUTURES_TREND_BREAKEVEN_ARM_R is unset (Ruling 6).
+10. **The T5 P2 result** (+0.004R, +$4.11) comes entirely from the 27 ref_not_listed rows (+0.140R each). On the 45
+    other rows it is -0.079R [-0.14, -0.02].
+    - ENTRY's C rules are not driven by that stratum: RSI goes from +0.099 to +0.077 on S2 without it, and MKT-C2 from
+      +0.247 to +0.192.
+11. **EXIT's "protecting TREND costs $8-12/month at $190"** is 10-20% high at live sizing (scaler mean 0.82 on P3's
+    rows). The sign is unchanged.
+12. **ENTRY: the completed-bar WILDCARD question is "legitimate and still open".** It is closed by the wc/EXP record:
+    built, OFF, NOT ESTABLISHED; -$34.52/month on MEXC at the same fill count. The flag stays 0.
+13. **ENTRY: "FWD-MKT needs the log-only monitor".** It does not. It can be scored offline from MEXC 15m klines.
+14. **EXIT "Not needed: the order book, funding and the coin's own volume"** applies to exits only. It was never
+    tested at entry.
+15. **The fee.** It is 8.0 bps per side.
+    - The median opening fee is 8.0 bps of entry notional on 84 of 84 audited trades (range 7.2-8.9). wc/EXP found
+      173 of 173 legs at 0.08%.
+    - The DR 2026-09-18 open item "fee tier unverified" is closed. There is no leak.
+    - wc/LEDGER/audit_r1_money §6 ("4.0 bps per side; every replay charges 2× the real fee") is a units error. Its
+      proposed FUTURES_BACKTEST_TAKER_FEE_RATE=0.0004 and MEXC_PERP_DEFAULT_TAKER_FEE_RATE=0.0004 must not be applied.
+16. **Rule counts.** 42 distinct rules: 0 A, 0 B, 4 C, 36 F, 1 NT and 1 NA. EXIT's "21 F" is 20 distinct rules.
+17. **The crosscheck's ship bar of "+0.055R per WILDCARD trade"** used the window's 2.41% dial. At today's 1.87% it is
+    0.069R.
+18. **The information plan's value table** prices TREND at $2.3 per R. At $190 it is $1.67.
+
+#### Do not quote
+
+- Any sum of the parts' dollars (RSI + MKT-C2 + T5, or + the $5M floor). The combined effect is 15-37% below the sum.
+- J2's "+$59/month [+7, +98]" under G as a pass. It fails under NOW, n is 36, and 54-61% of the gain is ref_not_listed.
+- Joint L84 "+$43.7/month" as evidence. It is in-sample.
+- T5's P2 +0.004R or +$4.11 without the veto split.
+- The trail exit bucket's +$291.08 as the trail's value. Removing the trail measures -0.084R [-0.384, +0.187].
+- ENTRY's +0.63R (WILDCARD after FP1) as "giveback".
+- The equity-runway dates as forecasts. They are scenarios under the L84 central and lower-bound estimates.
+- "The book costs $37/month" without its interval [-76, +2] and the pooled-live counterpoint (about $0).
+
+#### Rejected-ideas list (additions)
+
+- ENTRY: A1-1, A1-2, A1-4, A1-5, A2-1, A2-2, A2-4, A2-6, A2-7, A3-1, A3-2, A3-3, A3-4, MKT-C1, C2 and C3 (F); A1-3 (NT).
+- EXIT: 20 distinct F rules (A3-PROG = T1; STOP-C1 = A2-SL on P3); NETS-C1 (NA, at most +$0.8/month).
+- The joint package (RSI 80/20 + MKT-C2 + T5) as a ship.
+- Place-before-cancel stop amends (A15).
+- Pausing one sleeve.
+- Cutting TREND's stake or halving both dials.
+- Replay fees at 4 bps.
+
+#### Leave alone
+
+- Everything in Ruling 1.
+- The frozen F02, X01, F17, the breadth review and the TREND -0.8R counter.
+- T5, FWD-RSI and FWD-MKT as frozen, except the stricter addenda of Ruling 5 and the FWD-MKT start amendment, if the
+  owner approves them.
+- The convex drawdown brake stays unset.
+
+#### Not known
+
+**Rates and estimates**
+- The fill rate at $190.
+- Whether L84 or the pooled estimate describes the next three months.
+- The Railway bill.
+- Whether RSI's sign flip since mid-August is a regime change or noise.
+
+**Information**
+- Whether MEXC leads or lags Binance and Bybit on WILDCARD alts.
+- Whether any information feature reaches FP1 0.60 or higher.
+
+**Machinery**
+- Whether MEXC has an in-place stop amend, and what two resting position stops would do.
+- How FUTURES_PAPER_TRADE treats open live positions.
+- Whether the TREND -0.8R counter accepts bar-based stamps.
+- The a756e36 deployment time.
+
+**Record gaps**
+- Why the live floor is $2M.
+- Trades opened since the undone 06:28Z pause, beyond the 3 already seen.
+- minVol per symbol (1 contract assumed).
+
+**Hygiene.**
+- **Written:** only wc/HARMONIZE/answer.md and wc/HARMONIZE/decision_record.md. The lane folders were written by
+  their own lanes.
+- **Untouched:** the repo (clean at cac5273). No deploy, variable, order, /data access, network call or deletion.
+- **Read-only checks in this synthesis:**
+  - re-verified 3 hashes;
+  - read code lines in models.py, main.py and runtime.py;
+  - read 8 non-secret config values from the 09-25 env snapshot;
+  - computed the median opening fee in bps from wc/LEDGER/final/trades.csv.
