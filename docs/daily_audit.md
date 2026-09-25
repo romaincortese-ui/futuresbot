@@ -1,3 +1,60 @@
+# Daily Audit — 2026-09-24
+
+---
+
+## Automated Assessment (run 2026-09-25 16:15Z)
+
+**Window: 2026-09-24T00:00:00Z – 23:59:59Z by exit time. 1 close, 0 wins.**
+
+**Daily card (`/daily 2026-09-24`): NO ACTION.** 0 of 6 tripwires. Ledger 1 recorded = 1 exchange close. Stop
+−1.07R inside the band, risk 1.68% of equity, slippage −7 bps, exit EXCHANGE_CLOSE (sanctioned). Draw is a
+1-in-4 day at 2 fills (−1.67R by entry / −1.07R by exit). Decay meter 14%. Steps 3/4 and every proposal skipped.
+
+### 1. Closed trades: 1, **−$16.79 realised / −1.05R**
+
+| exit Z | sym | sleeve | side x | entry → exit | R | $ | exit |
+|---|---|---|---|---|---|---|---|
+| 13:39 | VVV | WILDCARD | S x4 | 28.666 → 29.933 | −1.05 | −16.79 | **−1R stop** (exchange) |
+
+**SL root cause: VVV 13:39, WILDCARD SHORT x4.** Entered 10:26Z at lateness 1.0, RSI 19.7, 3h ROC 8.2%,
+vol_z 1.7, $2.9M turnover, cross-listed, rank 1, regime ×0.91. It sold the bottom of an oversold flush; peak
++0.14R, then a 3.2h rebound to the resting stop. The early stop did not fire. **Mechanism: the same
+late-short-into-exhaustion pattern as BR on 09-23 (lateness 1.0, RSI 31). No defect.** Recorded only: a
+second instance is not a proposal on a NO ACTION day.
+
+### 1-OPEN. None
+
+TIA (open at the last report) was closed MANUAL_CLOSE at 09-25 06:28Z, −0.60R / −$6.64 (next day's window).
+Equity is **$189.99**, 0 open. The drop from ~$921 is the **$715 withdrawal** (capital flow, not P&L; bot now
+trades ~$190 for data). The −22% drawdown flag from the last report is not comparable across that flow.
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **221 rows**, 09-24 reconciles (1 = 1). Shadow ledger 369 rows, net of cost: `slot_occupied`
++19.25R/47, `side_disabled` −63.5R/127, `veto:*` −14.13R/58 (vetoes still saving), `min_vol_skip` +16.38R/21,
+`breakout_failed` −7.01R/11, `calm_shock` −0.05R/34.
+**Trial 22F** (by entry, ≥ 09-20T12:25Z): **26 closes, net −5.87R / −$55.24, ex-best −7.58R**. Exits: 11 STOP,
+15 OTHER, 0 TP. No verdict.
+
+### 1b. WILDCARD (a)(b)
+
+Not dormant (VVV 09-24, SAGA 09-25). Latest scan (09-25 16:11Z): 44 movers, **0 candidates**
+(`roc_below_min` 40, `no_pullback_resume` 3). No 5003/2015 rejects, no Traceback in the log tail.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, one clean −1R stop.** The day is recorded, not graded.
+
+---
+
 # Daily Audit — 2026-09-23
 
 ---
