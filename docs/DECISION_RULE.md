@@ -19110,7 +19110,10 @@ Any rule seeded by one stop is first priced against the random-seed ladder null 
 
     FUTURES_ENTRY_ENVELOPE_ENABLED   (unset = 0)  ->  1     restricted entry area ON (code: this commit's parent)
     FUTURES_TRIAL_LABEL              22F -> 23
-    FUTURES_TRIAL_START_TS           1789907100 -> 1790712120   (2026-09-29T20:02:00Z)
+    FUTURES_TRIAL_START_TS           1789907100 -> 1790715120   (2026-09-29T20:52:00Z)
+
+(START_TS amended before any variable was set: a NEAR_USDT position was open at 19:52Z, so the restart waited;
+ the owner closed NEAR by hand and the switch happened at the time above.)
 
 Nothing else: dials stay 1.205% (WILDCARD and TREND), every existing gate, exit, slot and side is unchanged,
 FUTURES_RESUME_ON_BOOT stays 0, the budget rule stays ($140 floor, monthly check on the 26th). Unfunded (~$190), so no "F".
