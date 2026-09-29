@@ -1,3 +1,76 @@
+# Daily Audit — 2026-09-28 (with catch-up 09-25, 09-26, 09-27)
+
+---
+
+## Automated Assessment (run 2026-09-29 17:55Z)
+
+**Window: 2026-09-28T00:00:00Z – 23:59:59Z by exit time. 2 closes, 0 wins.** Runs for 09-25..09-27 were
+skipped; each is reported below as its own dated catch-up block (window NOT widened).
+
+**Budget floor (0-bis):** equity **$183.76** (0 unrealised, 0 open) > $140. Bot NOT paused (state file
+`paused=false`, cycles log `paused=F`), RESUME_ON_BOOT=0.
+
+**Daily card (`/daily 2026-09-28`): NO ACTION.** 0 of 6 tripwires. Ledger 2 recorded = 2 exchange closes.
+Stops −1.03/−1.04R inside the band, risk 0.54–0.99% of equity, slippage −30 to −6 bps, exits EXCHANGE_CLOSE.
+Draw −2.01R by entry / −2.08R by exit, a 1-in-5 day at 3 fills. Decay meter 12%. Steps 1a-bis(a), 1b(c), 3,
+4 and every proposal skipped.
+
+### 1. Closed trades 09-28: 2, **−$3.00 realised / −2.08R**
+
+| exit Z | sym | sleeve | side x | entry → exit | R | $ | exit |
+|---|---|---|---|---|---|---|---|
+| 09:34 | ONE | WILDCARD | L x1 | 0.0026599 → 0.002374 | −1.03 | −1.05 | −1R stop (exchange) |
+| 14:41 | PUMPFUN | WILDCARD | L x3 | 0.005289 → 0.005002 | −1.04 | −1.95 | −1R stop (exchange) |
+
+**SL root causes (recorded only, NO ACTION day; no Min1 replay run):**
+- ONE 09:34: entered 04:43Z at lateness 0.662 (deep-pullback band), peak +0.39R, 4.9h drift to the resting
+  stop. Mechanism: pullback-resume that did not resume. No defect.
+- PUMPFUN 14:41: entered 13:27Z at lateness 0.951, peak +0.07R, stopped in 1.2h. Mechanism: the late-entry
+  pattern already recorded for BR 09-23 / VVV 09-24 / 2Z 09-26 (lateness ≥0.95). No defect.
+
+### Catch-up: 09-25 — card NO ACTION (0/6; ledger 5 = 5). 5 closes, 2 wins, **−$19.27 / −1.34R**
+SAGA WILDCARD L x1 −1.04R −$12.58 stop; TIA TREND L x4 −0.61R −$6.64 MANUAL_CLOSE (owner); XRP TREND +0.93R
++$1.35 retention trail; ZEC TREND +0.45R +$0.90 retention trail; XRP TREND −1.07R −$2.30 stop.
+
+### Catch-up: 09-26 — card NO ACTION (0/6; ledger 2 = 2). 2 closes, 0 wins, **−$3.47 / −2.06R**
+2Z WILDCARD L x1 −1.00R −$2.37 stop (lateness 1.0, peak +0.02R); ENA TREND L x4 −1.06R −$1.10 stop.
+
+### Catch-up: 09-27 — card NO ACTION (0/6; ledger 2 = 2). 2 closes, 2 wins, **+$2.21 / +1.98R**
+ZEC TREND L x8 +1.27R +$1.44 retention trail (peak +2.70R); ENA TREND L x6 +0.71R +$0.77 retention trail.
+
+### 1-OPEN. None
+
+NIL WILDCARD SHORT (open 09-28 01:42Z) closed CONVEX_TIME_STOP 09-29 01:42Z +0.07R (next day's window).
+XRP TREND closed 09-29 15:21Z −1.08R. 0 open at run time.
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **229 rows**; every catch-up day reconciles with the exchange. Shadow ledger 414 rows;
+`slot_occupied` still 47 rows (no new slot-blocked candidates since 09-24).
+**Trial 22F** (by entry, ≥ 09-20T12:25Z): **34 closes, net −9.03R / −$61.72, ex-best −10.74R**
+(TREND 22: −3.48R / −$25.45; WILDCARD 12: −5.54R / −$36.26). Exits: 16 STOP, 18 OTHER, **0 TP**. No verdict.
+
+### 1b. WILDCARD (a)(b)
+
+Not dormant (ONE, PUMPFUN, NIL entered 09-28). Latest scan (09-29 17:50Z): 53 movers, 0 candidates
+(`roc_below_min` 49, `no_pullback_resume` 4). 17:42Z candidate SOONNETWORK LONG (lateness 0.86) was vetoed
+`ref_not_listed` — the external gate working. No 5003/2015 rejects, no Traceback in the last 3,000 log lines.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Four healthy-machine days, four NO ACTIONs.** Days recorded, not graded. Four days sum −$23.53 / −3.50R
+on 11 closes.
+
+---
+
 # Daily Audit — 2026-09-24
 
 ---
