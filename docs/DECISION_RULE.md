@@ -19152,3 +19152,12 @@ signal is kept for later scoring). Every candidate and fill records envelope_pas
 - ALERTS (the owner decides; nothing is automatic): (1) after >= 20 closes the full stop-out share is >= 40.5%; (2) no entry
   at all for 7 consecutive days (possible data failure of the majors sample or the spec); (3) the budget rule fires.
 - Standing rules unchanged: K3 (bare stop -> breakeven revert), the budget rule, "every SL is an anomaly" reviews.
+
+### 2026-09-29 - TRIAL 23 LIVE (restricted entry area ON)
+
+Deployed exactly as pre-registered above: commit 50e0dc8 (code 348abb1), deployment d3a97715, container start
+2026-09-29T20:54:54Z; live env FUTURES_ENTRY_ENVELOPE_ENABLED=1, FUTURES_TRIAL_LABEL=23, FUTURES_TRIAL_START_TS=1790715120
+(20:52:00Z), dials 1.205% / 1.205%, RESUME_ON_BOOT=0. Pre-checks: flat (the owner closed NEAR_USDT by hand) and unpaused;
+no entry between START_TS and the boot, so trial 23 starts clean. Suite 1875 passed. Status line: "Trial 23: 0/30 convex
+closes". Every WILDCARD/TREND candidate and fill now carries envelope_pass / envelope_cell / envelope_reason; refused
+candidates are shadow-logged with reason "envelope". The forward tests (F02, X01, T5, F17, breadth review) split here.
