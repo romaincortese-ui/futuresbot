@@ -1,0 +1,98 @@
+{
+ "_meta": {
+  "built_from": "wc/LEDGER/final (84 trades 2026-09-04..09-25) + wc/ENTRY/data/discovery.csv; code 85c08e8",
+  "exclusion_set": "34 full exchange stop-outs (SL leg, initial bracket)",
+  "rule": "zero SL inside, then most winners kept, then fewest variables; ties: tier sum, fewest early stops+non-SL losers kept, widest gap",
+  "bounds": "lo/hi = midpoint between the nearest kept winner and the nearest excluded SL on that side; null = open (no SL on that side needs excluding)",
+  "missing_value_policy": "REFUSE the entry if any box variable is missing at the decision",
+  "inclusive": "a value equal to a bound is inside (bounds sit at midpoints, so no ledger trade sits on one)",
+  "variant": "STANDARD: the brief's rule",
+  "status": "IN-SAMPLE ONLY. Not validated out of sample. Prior: 22 in-sample entry rules on these 84 trades, 0 graded A/B out of sample (wc/ENTRY)."
+ },
+ "TREND LONG": [
+  {
+   "var": "new_high_margin_pct",
+   "live_field": "metadata trend_extreme_margin_pct (4 dp)",
+   "stored_as": "trend_extreme_margin_pct",
+   "units": "percent points (0.04635 = 0.04635%)",
+   "lo": 0.04635,
+   "hi": 0.67025
+  },
+  {
+   "var": "bot_eth_12h",
+   "live_field": "_majors_state() -> metadata eth_12h (re-stamped at the fill, <= 60 s cache)",
+   "stored_as": "tags.eth_12h",
+   "units": "decimal return",
+   "lo": -0.0042,
+   "hi": 0.029644999999999998
+  },
+  {
+   "var": "bot_eth_24h",
+   "live_field": "_majors_state() -> metadata eth_24h (re-stamped at the fill, <= 60 s cache)",
+   "stored_as": "tags.eth_24h",
+   "units": "decimal return",
+   "lo": null,
+   "hi": 0.05108
+  },
+  {
+   "var": "bot_calm_score",
+   "live_field": "_majors_state() -> metadata calm_score",
+   "stored_as": "tags.calm_score",
+   "units": "ratio",
+   "lo": 0.5165,
+   "hi": null
+  }
+ ],
+ "WILDCARD LONG": [
+  {
+   "var": "roc3h_abs",
+   "live_field": "sig.roc_pct -> metadata wildcard_roc_pct (4 dp); |value|",
+   "stored_as": "|wildcard_roc_pct| (trade row tag entry_3h_roc_pct, % at 0.1)",
+   "units": "decimal (0.088 = 8.8%)",
+   "lo": 0.08798149999999999,
+   "hi": null
+  },
+  {
+   "var": "rsi14",
+   "live_field": "sig.rsi -> metadata wildcard_rsi (1 dp)",
+   "stored_as": "wildcard_rsi (trade row entry_rsi)",
+   "units": "RSI points",
+   "lo": null,
+   "hi": 84.35
+  },
+  {
+   "var": "atr_pct",
+   "live_field": "sig.atr_pct -> metadata atr_pct (also sl_frac_designed / ATR mult)",
+   "stored_as": "atr_pct",
+   "units": "decimal",
+   "lo": null,
+   "hi": 0.055592
+  },
+  {
+   "var": "bot_sol_72h",
+   "live_field": "_majors_state() -> metadata sol_72h (re-stamped at the fill, <= 60 s cache)",
+   "stored_as": "tags.sol_72h",
+   "units": "decimal return",
+   "lo": -0.028874999999999998,
+   "hi": null
+  }
+ ],
+ "WILDCARD SHORT": [
+  {
+   "var": "rsi14",
+   "live_field": "sig.rsi -> metadata wildcard_rsi (1 dp)",
+   "stored_as": "wildcard_rsi (trade row entry_rsi)",
+   "units": "RSI points",
+   "lo": 25.0,
+   "hi": null
+  },
+  {
+   "var": "range_24h",
+   "live_field": "ticker (high24-low24)/low24 at the scan -> metadata range_24h",
+   "stored_as": "range_24h",
+   "units": "decimal (0.30 = 30%)",
+   "lo": 0.29967,
+   "hi": 0.7714667468435135
+  }
+ ]
+}

@@ -90,6 +90,7 @@ from futuresbot.dynamic_leverage import dynamic_leverage_enabled
 from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lock_tick, evaluate_no_progress_loss_exit, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.accounts import Account
+from futuresbot import entry_envelope
 from futuresbot.events import Event, EventBus, EventKind, Severity, TelegramChannel
 from futuresbot.key_health import build_auth_failure_message, build_key_expiry_message, key_expiry_alert, parse_warn_days, redact, resolve_key_expiry
 from futuresbot.marketdata import MexcApiError, MexcFuturesClient
@@ -178,7 +179,8 @@ ENTRY_GATE_KEYS = ("atr_pct", "calm_ratio", "vol_z", "range_24h", "turnover_24h_
                    # WILDCARD bar convention (FUTURES_WILDCARD_COMPLETED_BARS): 1.0
                    # completed / 0.0 forming, and under completed bars the gate bar's
                    # own close and its age at the scan. Lets the book be split later.
-                   "wildcard_completed_bars", "wildcard_gate_close", "wildcard_bar_age_s")
+                   "wildcard_completed_bars", "wildcard_gate_close", "wildcard_bar_age_s",
+                   ) + entry_envelope.STAMP_KEYS   # restricted-area verdict + box values
 
 
 class FuturesRuntime:
@@ -303,6 +305,8 @@ class FuturesRuntime:
         self._pending_ref_listed: bool | None = None
         self._pending_candidate_rank: float | None = None
         self._pending_candidate_field: float | None = None
+        # (symbol, side, kind, verdict) of the envelope decision, consumed at the fill.
+        self._pending_envelope: tuple | None = None
         self._last_shadow_resolve_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
@@ -3466,6 +3470,7 @@ class FuturesRuntime:
         "trend_slot": "no free trend slot",
         "side_disabled": "shorts off", "min_vol_skip": "size below min",
         "calm_shock": "calm-shock guard", "shadow_only": "shadow mode",
+        "envelope": "restricted area",
     }
 
     def _gate_cost_lines(self, days: float | None = None) -> list[str]:
@@ -8311,6 +8316,10 @@ class FuturesRuntime:
                         log.info("[EXTERNAL_GATE] VETO WILDCARD %s %s — %s (trying next candidate)", sig.side, sig.symbol, reason)
                         self._shadow_log_untaken(sig, "WILDCARD", f"veto:{reason}")
                         continue
+                # Restricted area: last gate, and BEFORE preemption so no position is
+                # evicted for an entry the area then refuses.
+                if self._envelope_refuses(sig, "WILDCARD"):
+                    continue
                 if preempt_needed:
                     # Slots are full. Free one for THIS candidate, now that it
                     # has passed the gate — never before.
@@ -8460,6 +8469,8 @@ class FuturesRuntime:
                                  sig.side, sig.symbol, reason)
                         self._shadow_log_untaken(sig, "TREND", f"veto:{reason}")
                         continue
+                if self._envelope_refuses(sig, "TREND"):
+                    continue
                 sig = self._apply_trend_tp_cap(sig)
                 if self._open_wildcard_position(sig, available, kind="TREND",
                                                 veto_checked=True):
@@ -9958,18 +9969,62 @@ class FuturesRuntime:
             log.debug("ticker snapshot failed: %s", exc)
 
 
-    def _shadow_log_untaken(self, sig: Any, kind: str, reject_reason: str) -> None:
+    def _shadow_log_untaken(self, sig: Any, kind: str, reject_reason: str,
+                            envelope: dict[str, Any] | None = None) -> None:
         """Record a signal that was produced but NOT taken (veto/sizing/slot) so
-        the conditional-expectancy engine can evaluate entry gates counterfactually."""
+        the conditional-expectancy engine can evaluate entry gates counterfactually.
+        Every WILDCARD/TREND row carries the restricted area's verdict, switch on or off."""
         try:
             from futuresbot import shadow_ledger as shadow
             path = self._shadow_ledger_path()
+            extra = dict(self._wildcard_attribution.get(str(getattr(sig, "symbol", "")), {}))
+            extra.update((envelope if envelope is not None
+                          else self._envelope_verdict(sig, kind)) or {})
             shadow.append_row(path, shadow.candidate_row(
                 sig, sleeve=kind, reject_reason=reject_reason, lateness=self._pending_entry_lateness,
-                extra=self._wildcard_attribution.get(str(getattr(sig, "symbol", "")), {}),
+                extra=extra,
             ))
         except Exception as exc:  # pragma: no cover
             log.debug("shadow ledger append failed: %s", exc)
+
+    def _envelope_verdict(self, sig: Any, kind: str) -> dict[str, Any] | None:
+        """The restricted area's verdict on a candidate (futuresbot.entry_envelope), on the
+        bot's own values now. Majors at <= 60 s, the age the 84-trade study read them at
+        (the fill re-stamp). None for sleeves the area does not cover. Never raises: an
+        error is a failed verdict, so an enabled envelope refuses rather than admits."""
+        kind = str(kind).upper()
+        if kind not in entry_envelope.SLEEVES:
+            return None
+        try:
+            sampled_at, majors = self._majors_sample(max_age_s=60.0)
+            att = (self._wildcard_attribution.get(str(getattr(sig, "symbol", "")), {})
+                   if kind == "WILDCARD" else {})
+            return entry_envelope.verdict(
+                sig, kind, range_24h=att.get("range_24h"), majors=majors,
+                majors_age_s=(max(0.0, time.time() - float(sampled_at)) if majors else None))
+        except Exception as exc:                   # pragma: no cover - never blocks a scan
+            log.debug("envelope verdict failed for %s: %s", getattr(sig, "symbol", "?"), exc)
+            return {"envelope_pass": 0.0, "envelope_reason": "error",
+                    "envelope_cell": "%s %s" % (kind, str(getattr(sig, "side", "")).upper()),
+                    "envelope_enabled": 1.0 if entry_envelope.enabled() else 0.0}
+
+    def _envelope_refuses(self, sig: Any, kind: str) -> bool:
+        """FUTURES_ENTRY_ENVELOPE_ENABLED=1: True when the candidate sits outside its cell's
+        box (or a box value is missing); it is shadow-logged as "envelope". Off: False
+        without evaluating anything - today's decision path."""
+        self._pending_envelope = None
+        if not entry_envelope.enabled():
+            return False
+        v = self._envelope_verdict(sig, kind)
+        if v is None:
+            return False
+        if v.get("envelope_pass") == 1.0:
+            self._pending_envelope = (sig.symbol, sig.side, str(kind).upper(), v)
+            return False
+        log.info("[ENVELOPE] REFUSE %s %s %s - %s", kind, sig.side, sig.symbol,
+                 v.get("envelope_reason"))
+        self._shadow_log_untaken(sig, kind, "envelope", envelope=v)
+        return True
 
     def _external_entry_veto(self, sig: Any, kind: str) -> tuple[bool, str]:
         """Fail-OPEN reality check vs a second venue (Bybit/OKX): veto MEXC-only /
@@ -10103,6 +10158,13 @@ class FuturesRuntime:
             self._shadow_log_untaken(sig, kind, "min_vol_skip")
             return False
         side_name = sig.side
+        # The restricted area's verdict: the one the enabled envelope decided on, else
+        # computed now (switch off: what the area WOULD have done).
+        _env_pending = getattr(self, "_pending_envelope", None)
+        self._pending_envelope = None
+        envelope = (_env_pending[3] if _env_pending and _env_pending[:3]
+                    == (symbol, side_name, str(kind).upper())
+                    else self._envelope_verdict(sig, kind)) or {}
         metadata: dict[str, Any] = {
             "wildcard": 1.0, "pmt_stop_first": 1.0,
             **{k: float(v) for k, v in
@@ -10150,6 +10212,7 @@ class FuturesRuntime:
                if str(kind).upper() == "TREND" else {}),
             # Regime telemetry. Decision-free; see _majors_state.
             **self._majors_stamp(),
+            **envelope,
         }
         if kind == "TREND":
             # Marker checked BEFORE wildcard in _sleeve_kind, so a trend

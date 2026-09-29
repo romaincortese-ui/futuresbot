@@ -19101,3 +19101,51 @@ Any rule seeded by one stop is first priced against the random-seed ladder null 
 - **Still open for the owner:** the new-sleeve study (cross-venue lead, failed-move reversal, funding/positioning), and
   the BUILD items (log-only entry-information capture, stop/risk diagnostics, scan-while-paused), which item 1 = YES now
   makes relevant.
+
+## TRIAL 23 — PRE-REGISTERED 2026-09-29T19:52Z, BEFORE THE FLAG WAS SET
+
+**Written before any variable was changed. If any line below is edited after a trial result is seen, the trial is void.**
+
+### The change, in full
+
+    FUTURES_ENTRY_ENVELOPE_ENABLED   (unset = 0)  ->  1     restricted entry area ON (code: this commit's parent)
+    FUTURES_TRIAL_LABEL              22F -> 23
+    FUTURES_TRIAL_START_TS           1789907100 -> 1790712120   (2026-09-29T20:02:00Z)
+
+Nothing else: dials stay 1.205% (WILDCARD and TREND), every existing gate, exit, slot and side is unchanged,
+FUTURES_RESUME_ON_BOOT stays 0, the budget rule stays ($140 floor, monthly check on the 26th). Unfunded (~$190), so no "F".
+
+### What it does
+
+Owner (2026-09-29): "I don't want to see any trade in the future that went through the gates with the same values as the
+ones that hit SL in the 84 trade study" - approved the area table as shown ("It looks good to me, switch it on and start a
+new trial. Trial 23."). After every existing gate, a WILDCARD or TREND candidate is taken only if its own live values fall
+inside its cell's box (futuresbot/entry_envelope.json, sha256 9822bbf6993c49df..., = wc/ENVELOPE/envelope/envelope.json):
+- TREND LONG: completed gate close 0.0464%-0.6703% above the prior 24h closing high; ETH 12h -0.42%..+2.96%; ETH 24h <=
+  +5.11%; calm score >= 0.5165 (all 9 majors returns present).
+- WILDCARD LONG: 3h move >= 8.80%; RSI <= 84.35; ATR <= 5.56%; SOL 72h >= -2.89%.
+- WILDCARD SHORT: RSI >= 25.0; 24h range 29.97%-77.15%.
+Outside, or any box value missing -> refused with reason "envelope", shadow-logged like every other refusal (the refused
+signal is kept for later scoring). Every candidate and fill records envelope_pass / envelope_reason even when refused.
+
+### What was measured before switching on (wc/ENVELOPE, recorded so the result cannot be re-read later)
+
+- In-sample (circular): 36 of 84 study trades inside, 30 of 36 winners, 0 of 34 full stop-outs.
+- Pass rate on signals it was not built from: TREND ~21% [18, 24], WILDCARD LONG ~51% [38, 64], SHORT ~28% [12, 51]:
+  about 1.3 trades/day [1.05, 1.5] vs ~4 today; the owner's 80-100 trade re-funding milestone moves to ~9-11 weeks.
+- Stop-losses NOT built on still fall inside: 20/43 older live (47% [33, 61]), 26/50 refused WILDCARD, 23% of TREND replay;
+  4 of the 6 full stop-outs since 2026-09-25 07:15Z would have been taken. Kept vs removed intervals overlap on every set.
+- Known defect accepted by the owner: the TREND margin bounds were fitted mostly on forming-bar values (26 of 41 trades
+  before 2026-09-19 09:43Z); live TREND decides on completed bars (release review blocker). WILDCARD values match live.
+- WILDCARD keeps only its top 3 candidates before the area is checked; /why does not show the area.
+
+### How trial 23 is judged
+
+- PRIMARY (the owner's criterion): the share of trial-23 closes that are full exchange stop-outs, against the 84-trade
+  baseline 34/84 = 40.5%. Reported with a Wilson 95% interval at every daily review.
+- Also: mean net R per trade (day-block 95% interval), FP1, trades/day, and the counterfactual of the refused signals
+  (shadow rows with envelope_reason, scored with replay/exits.py).
+- Decision point: 30 trial-23 closes or 2026-11-15, whichever comes first - the owner decides keep / change / off.
+- ALERTS (the owner decides; nothing is automatic): (1) after >= 20 closes the full stop-out share is >= 40.5%; (2) no entry
+  at all for 7 consecutive days (possible data failure of the majors sample or the spec); (3) the budget rule fires.
+- Standing rules unchanged: K3 (bare stop -> breakeven revert), the budget rule, "every SL is an anomaly" reviews.
