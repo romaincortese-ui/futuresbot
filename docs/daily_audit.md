@@ -1,3 +1,65 @@
+# Daily Audit — 2026-09-29
+
+---
+
+## Automated Assessment (run 2026-09-30 17:20Z)
+
+**Window: 2026-09-29T00:00:00Z – 23:59:59Z by exit time. 3 closes, 1 win.** No skipped days.
+
+**Budget floor (0-bis):** equity **$181.91** (incl. −$0.20 unrealised, 1 open) > $140. Bot NOT paused
+(state `paused=false`), RESUME_ON_BOOT=0.
+
+**Daily card (`/daily 2026-09-29`): NO ACTION.** 0 of 6 tripwires. Ledger 3 recorded = 3 exchange closes.
+Stop −1.08R inside the band, risk 0.60–1.25% of equity, slippage −4 to +27 bps, exits CONVEX_TIME_STOP /
+EXCHANGE_CLOSE / MANUAL_CLOSE. Draw −1.58R by entry / −1.51R by exit, a 1-in-4 day at 2 fills. Decay meter 15%.
+Steps 1a-bis(a), 1b(c), 3, 4 and every proposal skipped.
+
+### 1. Closed trades 09-29: 3, **−$2.78 realised / −1.50R**
+
+| exit Z | sym | sleeve | side x | entry → exit | R | $ | exit |
+|---|---|---|---|---|---|---|---|
+| 01:42 | NIL | WILDCARD | S x2 | 0.08754 → 0.08697 | +0.07 | +0.15 | 24h time stop (peak +0.63R) |
+| 15:21 | XRP | TREND | L x8 | 1.5553 → 1.5194 | −1.07 | −2.38 | −1R stop (exchange), 36 min hold, peak +0.13R |
+| 20:48 | NEAR | TREND | L x3 | 5.095 → 4.965 | −0.50 | −0.55 | MANUAL_CLOSE (owner, to switch to trial 23) |
+
+**SL root cause (recorded only, NO ACTION day; no Min1 replay run):** XRP entered 14:45Z, peak +0.13R, stopped
+in 36 min — immediate failure of a TREND breakout. No defect found on the card (stop −1.07R in band, slippage in
+limit). Trial-22F entry, before the restricted entry area was switched on.
+
+### 1-OPEN. GRASS_USDT WILDCARD LONG x1 — first trial-23 entry
+
+Opened 09-29T21:11Z @0.743 (envelope_pass=1: 3h +12.2%, RSI 67.3, ATR 3.53%). Held ~20h, now 0.7273 = **−0.20R**,
+peak +0.46R (Min15 high 0.7792), giveback −0.66R. TP 1.1369 is +56% away, stop 0.6648 is −8.6% away; the 24h time
+stop is due ~21:11Z today. Regime scaler 0.5x: margin $10.40 of $20.86 intended (by design, risk 0.60%).
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **231 rows** (+2 since the last run; ledger reconciles). Shadow ledger 414 rows; `slot_occupied`
+still 47 (no new slot-blocked rows); 0 `envelope` refusals logged so far.
+**Trial 22F CLOSED** at the 20:52Z switch (my tally, by entry): **37 closes, net −10.53R / −$64.50, ex-best
+−12.24R**; exits 17 STOP, 20 OTHER, **0 TP**.
+**Trial 23** (from 09-29T20:52Z): 0 closes, 1 open. Primary (full stop-out share vs 40.5%): no data yet.
+
+### 1b. WILDCARD (a)(b)
+
+Not dormant (GRASS entered 09-29). Latest scans (09-30 17:18Z): 37 movers, 0 candidates (`roc_below_min` 35,
+`no_pullback_resume` 1–2, `low_volume_z` 1). No 5003/2015 rejects, no Traceback in the last 500 log lines.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, NO ACTION.** Trial 22F ends at −10.53R over 37 closes with zero TP completions; trial 23 has
+its first fill open.
+
+---
+
 # Daily Audit — 2026-09-28 (with catch-up 09-25, 09-26, 09-27)
 
 ---
