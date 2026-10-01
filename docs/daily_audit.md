@@ -1,3 +1,61 @@
+# Daily Audit — 2026-09-30
+
+---
+
+## Automated Assessment (run 2026-10-01 16:15Z)
+
+**Window: 2026-09-30T00:00:00Z – 23:59:59Z by exit time. 2 closes, 0 wins.** No skipped days.
+
+**Budget floor (0-bis):** equity **$181.35** (0 unrealised, 0 open) > $140. Bot NOT paused (state file
+`paused=false`), RESUME_ON_BOOT=0.
+
+**Daily card (`/daily 2026-09-30`): NO ACTION.** 0 of 6 tripwires. Ledger 2 recorded = 2 exchange closes.
+No exchange stops; risk 0.60–1.09% of equity, slippage −11 to −7 bps, exits CONVEX_EARLY_STOP / CONVEX_TIME_STOP
+(both sanctioned WILDCARD exits). Draw −0.54R by entry / −1.24R by exit, 51st pct at 1 fill. Decay meter 19%.
+Steps 1a-bis(a), 1b(c), 3, 4 and every proposal skipped.
+
+### 1. Closed trades 09-30: 2, **−$1.85 realised (exchange) / −1.23R**
+
+| exit Z | sym | sleeve | side x | entry → exit | R | $ | exit |
+|---|---|---|---|---|---|---|---|
+| 07:34 | PHA | WILDCARD | L x3 | 0.07867 → 0.07646 | −0.53 | −1.07 | early stop (−0.5R inside 30 min; 22 min hold, peak +0.31R, lateness 1.0) |
+| 21:11 | GRASS | WILDCARD | L x1 | 0.743 → 0.6892 | −0.70 | −0.78 | 24h time stop (peak +0.44R, lateness 0.662) |
+
+No −1R exchange stop today, so no SL root-cause is owed. PHA is another lateness-1.0 entry failing fast (pattern
+already recorded 09-23..09-28); the early stop cut it at −0.53R instead of −1R, as designed.
+
+### 1-OPEN. None (0 open at run time).
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **232 rows** (+1 since the last run; reconciles). Shadow ledger 417 rows; `slot_occupied` still
+47 (no new slot-blocked rows). Envelope telemetry: 3 rows carry `envelope_reason`; 2 are TREND shorts already
+`side_disabled` (no_box), 1 JASMY WILDCARD LONG passed the envelope and was vetoed `calm_shock` (paper −1R).
+0 candidates refused by the envelope alone.
+**Trial 23** (by entry, ≥ 09-29T20:52Z): **2 closes, net −1.23R / −$1.84, ex-best −0.70R**, mean −0.62R.
+Primary (full exchange stop-out share vs 40.5%): **0/2 = 0%, Wilson 95% [0%, 66%]** — no information yet.
+Exits: TP 0 | stop 0 | other 2.
+
+### 1b. WILDCARD (a)(b)
+
+Not dormant (PHA entered 09-30). Latest scans (10-01 16:10Z): 40 movers, 0 candidates (`roc_below_min` 37,
+`no_pullback_resume` 3). No 5003/2015 rejects, no Traceback in the last 500 log lines.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, NO ACTION.** Two small WILDCARD losses, both cut short of −1R by the sanctioned early/time
+stops; trial 23 at 2/30 closes.
+
+---
+
 # Daily Audit — 2026-09-29
 
 ---
