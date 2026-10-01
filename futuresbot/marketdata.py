@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,46 @@ log = logging.getLogger(__name__)
 
 _HTTP_RETRY_ATTEMPTS = 3
 _HTTP_RETRY_SLEEP_SECONDS = 0.75
+
+# SINGLE-SEND ORDERS. A POST to order/create that got no answer (timeout, dropped
+# connection, 5xx, unreadable body) may still have reached MEXC and opened a
+# position, so it is NEVER sent again: re-sending with no client order id could
+# open a second one. Each order carries a unique externalOid and, when its POST
+# gets no answer, is looked up by it (GET order/external/{symbol}/{external_oid}).
+ORDER_CREATE_PATH = "/api/v1/private/order/create"
+_ORDER_LOOKUP_ATTEMPTS = 3
+_ORDER_LOOKUP_SLEEP_SECONDS = 1.0
+_ORDER_LOOKUP_TIMEOUT_SECONDS = 5.0
+_MEXC_ORDER_NOT_EXIST_CODE = "2040"
+# MEXC's own server-side errors (500 internal error, 501 system busy, 9999 public
+# abnormal): the reply is an error, but the order may have been taken. Looked up like a
+# timeout. Every other refusal (balance, parameters, auth, rate limit...) means nothing
+# was placed and is raised at once.
+_MEXC_UNCERTAIN_CODES = frozenset({"500", "501", "9999"})
+# GET order/external states (MEXC docs): 1 pending, 2 unfilled, 3 filled, 4 canceled,
+# 5 invalid. An accepted order can still end canceled/invalid (its errorCode says why).
+_ORDER_ENDED_UNFILLED_STATES = frozenset({4, 5})
+
+
+def _ended_unfilled(order: dict[str, Any]) -> bool:
+    """A found order MEXC holds as canceled or invalid with nothing filled: it opened
+    or closed nothing, so it counts as NOT placed."""
+    try:
+        state = int(order.get("state"))
+    except (TypeError, ValueError):
+        return False
+    try:
+        dealt = float(order.get("dealVol") or 0)
+    except (TypeError, ValueError):
+        dealt = 0.0
+    return state in _ORDER_ENDED_UNFILLED_STATES and dealt <= 0
+
+
+def new_external_oid() -> str:
+    """A client order id for ONE order/create attempt: "fb" + ms clock (hex) + 48
+    random bits, 25 chars of [0-9a-f] after the prefix. MEXC caps externalOid at 32
+    (error 2030); each attempt, a balance-guard resize included, gets a fresh one."""
+    return f"fb{int(time.time() * 1000):x}{secrets.token_hex(6)}"
 
 
 def _retry_kwargs(attempts: int | None, timeout: float | None) -> dict[str, Any]:
@@ -125,6 +166,9 @@ class MexcFuturesClient:
         self.auth_error_hook: Any = None
         self.auth_error_codes: tuple[str, ...] = ()
         self.auth_error_streak = 0
+        # Called (outcome, symbol, action, external_oid, detail) when an order/create
+        # POST got no answer and its lookup did not find it. Installed by the runtime.
+        self.order_alert_hook: Any = None
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -258,6 +302,8 @@ class MexcFuturesClient:
         last_error: Exception | None = None
         body_json = json.dumps(payload_body, separators=(",", ":"))
         tries = _HTTP_RETRY_ATTEMPTS if attempts is None else max(1, int(attempts))
+        if path == ORDER_CREATE_PATH:
+            tries = 1                          # never re-POST an order (see ORDER_CREATE_PATH)
         for attempt in range(tries):
             try:
                 response = self.session.post(
@@ -405,8 +451,10 @@ class MexcFuturesClient:
         price: float | None = None,
         take_profit_price: float | None = None,
         stop_loss_price: float | None = None,
+        external_oid: str | None = None,
     ) -> dict[str, Any]:
         profit_trend, loss_trend = self._trigger_trends_for_order_side(int(side))
+        oid = external_oid or new_external_oid()
         payload = {
             "symbol": symbol,
             "price": price,
@@ -422,14 +470,92 @@ class MexcFuturesClient:
             "stopLossPrice": stop_loss_price,
             "profitTrend": profit_trend if take_profit_price else None,
             "lossTrend": loss_trend if stop_loss_price else None,
+            "externalOid": oid,
         }
-        response = self.private_post("/api/v1/private/order/create", payload)
+        try:
+            response = self.private_post(ORDER_CREATE_PATH, payload)
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            if (isinstance(exc, MexcApiError)
+                    and str((exc.payload or {}).get("code")) not in _MEXC_UNCERTAIN_CODES):
+                raise                          # MEXC refused it: nothing was placed
+            closing = bool(reduce_only) or int(side) in (2, 4)
+            return self._resolve_unanswered_order(symbol=symbol, action="close" if closing else "open",
+                                                  external_oid=oid, error=exc)
         data = response.get("data", {}) if isinstance(response, dict) else {}
         if isinstance(data, dict):
             return data
         if data not in (None, ""):
             return {"orderId": str(data)}
         return {}
+
+    def get_order_by_external_oid(self, symbol: str, external_oid: str, *,
+                                  attempts: int | None = None,
+                                  timeout: float | None = None) -> dict[str, Any] | None:
+        """The order MEXC holds under our externalOid, or None when it holds none.
+
+        "Not found" is a SUCCESS reply with no `data` - probed on the live account
+        2026-10-01: {"success": true, "code": 0}. MEXC's documented 2040 "order not
+        exist" is read the same way. Any other failure raises."""
+        try:
+            payload = self.private_get(f"/api/v1/private/order/external/{symbol}/{external_oid}",
+                                       attempts=attempts, timeout=timeout)
+        except MexcApiError as exc:
+            if str((exc.payload or {}).get("code")) == _MEXC_ORDER_NOT_EXIST_CODE:
+                return None
+            raise
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or data.get("orderId") in (None, ""):
+            return None
+        if data.get("externalOid") not in (None, "") and str(data.get("externalOid")) != external_oid:
+            return None
+        return data
+
+    def _resolve_unanswered_order(self, *, symbol: str, action: str, external_oid: str,
+                                  error: Exception) -> dict[str, Any]:
+        """order/create raised without an answer from MEXC. The order may have landed,
+        so it is NOT sent again: it is looked up by its externalOid, a few times over
+        ~3 s in case it is still landing. Found -> returned exactly as a POST reply
+        would have been used. Not found, found canceled/invalid with nothing filled,
+        or the lookup itself failing -> the original error is raised, so the caller's
+        existing failure path runs (an entry is skipped; a close restores its stop and
+        backs off), and the owner is alerted."""
+        found: dict[str, Any] | None = None
+        answered = False
+        lookup_error: Exception | None = None
+        for attempt in range(_ORDER_LOOKUP_ATTEMPTS):
+            if attempt:
+                time.sleep(_ORDER_LOOKUP_SLEEP_SECONDS * attempt)
+            try:
+                found = self.get_order_by_external_oid(symbol, external_oid, attempts=1,
+                                                       timeout=_ORDER_LOOKUP_TIMEOUT_SECONDS)
+            except (requests.RequestException, ValueError, RuntimeError) as exc:
+                lookup_error = exc
+                continue
+            answered = True
+            if found is not None:
+                break
+        if found is not None and not _ended_unfilled(found):
+            log.warning("[ORDER_RECOVERED] %s symbol=%s externalOid=%s orderId=%s state=%s "
+                        "dealVol=%s - the POST got no answer (%s) but the order landed; not re-sent",
+                        action, symbol, external_oid, found.get("orderId"), found.get("state"),
+                        found.get("dealVol"), type(error).__name__)
+            return found
+        outcome = "not_filled" if found is not None else "not_found" if answered else "lookup_failed"
+        detail = f"{type(error).__name__}: {str(error)[:160]}"
+        if found is not None:
+            detail += (f" | order {found.get('orderId')} state={found.get('state')} "
+                       f"dealVol={found.get('dealVol')} errorCode={found.get('errorCode')}")
+        if lookup_error is not None and not answered:
+            detail += f" | lookup {type(lookup_error).__name__}: {str(lookup_error)[:120]}"
+        log.error("[ORDER_UNRESOLVED] %s outcome=%s symbol=%s externalOid=%s - the POST got no "
+                  "answer and was NOT re-sent; %s", action, outcome, symbol, external_oid, detail)
+        hook = getattr(self, "order_alert_hook", None)
+        if hook is not None:
+            try:
+                hook(outcome, symbol, action, external_oid, detail)
+            except Exception:  # pragma: no cover - alerting must never break trading
+                log.exception("order-alert hook raised")
+        raise error
 
     def get_order(self, order_id: str) -> dict[str, Any]:
         payload = self.private_get(f"/api/v1/private/order/get/{order_id}")

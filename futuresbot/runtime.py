@@ -91,6 +91,7 @@ from futuresbot.event_quality import evaluate_adverse_event_quality
 from futuresbot.exits import evaluate_adverse_peak_trail_tick, evaluate_micro_lock_tick, evaluate_no_progress_loss_exit, evaluate_stagnation_exit, evaluate_trailing_tick, is_trailing_exit_armed, trailing_stop_price
 from futuresbot.accounts import Account
 from futuresbot import entry_envelope
+from futuresbot import random_mode
 from futuresbot.events import Event, EventBus, EventKind, Severity, TelegramChannel
 from futuresbot.key_health import build_auth_failure_message, build_key_expiry_message, key_expiry_alert, parse_warn_days, redact, resolve_key_expiry
 from futuresbot.marketdata import MexcApiError, MexcFuturesClient
@@ -227,6 +228,7 @@ class FuturesRuntime:
         # private call is rejected for an auth reason, so a dead key alerts
         # immediately instead of at the next heartbeat (up to 6h away).
         self.client.auth_error_hook = self._on_auth_failure
+        self.client.order_alert_hook = self._on_order_unresolved
         self.client.auth_error_codes = tuple(
             code.strip() for code in os.environ.get("MEXC_AUTH_ERROR_CODES", "").split(",") if code.strip()
         )
@@ -307,6 +309,12 @@ class FuturesRuntime:
         self._pending_candidate_field: float | None = None
         # (symbol, side, kind, verdict) of the envelope decision, consumed at the fill.
         self._pending_envelope: tuple | None = None
+        # Trial 24 (FUTURES_RANDOM_MODE_ENABLED): the last processed 12h tick, persisted
+        # so a restart never processes a tick twice; the tick waiting on positions the
+        # backtest would already have closed; scan rows already logged this tick.
+        self._random_mode_state: dict[str, Any] = {}
+        self._random_tick_pending: int | None = None
+        self._random_mode_logged: dict[tuple, int] = {}
         self._last_shadow_resolve_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
@@ -904,6 +912,34 @@ class FuturesRuntime:
             cooldown_seconds=cooldown,
         ))
 
+    def _on_order_unresolved(self, outcome: str, symbol: str, action: str, external_oid: str,
+                             detail: str) -> None:
+        """Client hook: an order/create POST got no answer, was NOT re-sent, and the
+        lookup by its externalOid did not find it ("not_found"), found it canceled or
+        invalid with nothing filled ("not_filled"), or could not run ("lookup_failed").
+        The attempt has failed through its normal path; this only makes it visible,
+        because an order that lands late is not tracked."""
+        self._record_activity(f"ORDER UNANSWERED ({outcome}) {action} {symbol}")
+        safe_detail = redact(detail, (self.config.api_key, self.config.api_secret))
+        verdict = {
+            "not_found": "MEXC holds no order under its id, so it was treated as not placed.",
+            "not_filled": "MEXC holds it as canceled/invalid with nothing filled, so it was "
+                          "treated as not placed.",
+        }.get(outcome, "The lookup failed too: the bot cannot tell whether it was placed.")
+        check = ("If a position appears on MEXC, /reconcile adopts it."
+                 if action == "open" else
+                 "The close is retried by its normal path; if the position is already gone on MEXC, "
+                 "the reconcile records it.")
+        self._notify_once(
+            f"futures_order_unresolved_{outcome}_{symbol}",
+            f"⚠️ <b>Futures Order Unanswered</b> [{self._mode_label()}]\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"The {action} order for <b>{html.escape(str(symbol))}</b> got no clear answer from MEXC "
+            f"and was NOT re-sent. {verdict} {check}\n"
+            f"<code>{html.escape(str(external_oid))}</code>\n"
+            f"<code>{html.escape(safe_detail)[:200]}</code>",
+        )
+
     def _key_expiry_timestamp(self) -> float | None:
         return resolve_key_expiry(
             expires_at=os.environ.get("MEXC_API_KEY_EXPIRES_AT"),
@@ -1209,7 +1245,7 @@ class FuturesRuntime:
 
     _BTC_HOURLY_TTL_S = 600.0
 
-    def _btc_exhaustion_flag(self) -> tuple[bool, dict[str, float]]:
+    def _btc_exhaustion_flag(self, asof: float | None = None) -> tuple[bool, dict[str, float]]:
         """(flagged, fields) - the post-rally EXHAUSTION state, on BTC 1h closes.
 
         Pre-registered 2026-09-22 (docs/DECISION_RULE.md, wc/REGIME). Two legs, OR:
@@ -1224,10 +1260,20 @@ class FuturesRuntime:
         with a -$1.0 to -$1.6 downside if the regime is nothing.
 
         Cached 10 minutes (one kline call). Fails SOFT: any error returns unflagged, so
-        a dead endpoint can never change the target on a live entry."""
+        a dead endpoint can never change the target on a live entry.
+
+        `asof` (trial 24): the flag on the bars CLOSED by that tick, as the backtest read
+        it. Cached per tick and kept apart from the 10-minute cache, which it never
+        reads or writes; trend_flag_age_s is then the age of the tick at stamping."""
         now_ts = time.time()
+        if asof is not None:
+            hit_asof = getattr(self, "_btc_flag_asof", None)
+            if hit_asof is not None and hit_asof[0] == int(asof):
+                fields = dict(hit_asof[2])
+                fields["trend_flag_age_s"] = round(max(0.0, now_ts - float(asof)), 1)
+                return hit_asof[1], fields
         hit = getattr(self, "_btc_flag_cache", None)
-        if hit is not None and now_ts - hit[0] < self._BTC_HOURLY_TTL_S:
+        if asof is None and hit is not None and now_ts - hit[0] < self._BTC_HOURLY_TTL_S:
             flagged, fields = hit[1], dict(hit[2])
             fields["trend_flag_age_s"] = round(max(0.0, now_ts - hit[0]), 1)
             return flagged, fields
@@ -1239,11 +1285,15 @@ class FuturesRuntime:
             # hourly closes are a SUBSET of 15m closes, so an hourly 7d high is
             # structurally <= the measured one and biases `dist` toward flagging on
             # every bar. The 0-of-126 statistic belongs to the 15m flag.
+            end_ts = int(asof) if asof is not None else int(now_ts)
             frame = self.client.get_klines("BTC_USDT", interval="Min15",
-                                           start=int(now_ts) - 900 * 700,
-                                           end=int(now_ts))
-            frame = self._drop_incomplete_klines(frame, interval_seconds=900,
-                                                 now_ts=now_ts)
+                                           start=end_ts - 900 * 700,
+                                           end=end_ts)
+            if asof is not None:
+                frame = random_mode.completed(frame, int(asof), 700)
+            else:
+                frame = self._drop_incomplete_klines(frame, interval_seconds=900,
+                                                     now_ts=now_ts)
             close = frame["close"].astype(float)
             if len(close) < 673:
                 raise ValueError("short BTC 15m series: %d bars" % len(close))
@@ -1261,6 +1311,10 @@ class FuturesRuntime:
                       "trend_flag_btc_72h": round(roc72, 5),
                       "trend_flag_btc_168h": round(roc168, 5),
                       "trend_flag_dist_7d_high": round(dist, 5)}
+            if asof is not None:
+                self._btc_flag_asof = (int(asof), flagged, dict(fields))
+                fields["trend_flag_age_s"] = round(max(0.0, now_ts - float(asof)), 1)
+                return flagged, fields
             self._btc_flag_cache = (now_ts, flagged, dict(fields))
             fields["trend_flag_age_s"] = 0.0
             return flagged, fields
@@ -1269,7 +1323,8 @@ class FuturesRuntime:
                         "- entries proceed UNCAPPED for the next %ds", exc,
                         int(self._BTC_HOURLY_TTL_S))
             fields = {"trend_flag": 0.0, "trend_flag_error": 1.0}
-            self._btc_flag_cache = (now_ts, False, dict(fields))
+            if asof is None:
+                self._btc_flag_cache = (now_ts, False, dict(fields))
             return False, fields
 
     @staticmethod
@@ -1289,18 +1344,19 @@ class FuturesRuntime:
         return dataclasses.replace(sig, tp_price=float(tp),
                                    tp_margin_pct=float(tp_r) * float(sig.sl_margin_pct))
 
-    def _apply_trend_tp_cap(self, sig: Any) -> Any:
+    def _apply_trend_tp_cap(self, sig: Any, asof: float | None = None) -> Any:
         """Cap a TREND target at FUTURES_TREND_FLAGGED_TP_R while BTC is exhausted.
 
         Default 0.0 = OFF; the live value is the kill switch. Always stamps what BTC was
         doing at the entry instant, flagged or not, so the pre-registered review (abandon
         at n >= 10 if the cumulative delta <= 0) reads recorded fields rather than a
-        reconstruction."""
+        reconstruction. `asof` (trial 24): read the flag on the bars closed by that tick."""
         tp_r = self._env_float("FUTURES_TREND_FLAGGED_TP_R", 0.0)
         if tp_r <= 0:
             self._last_trend_flag = {}
             return sig
-        flagged, fields = self._btc_exhaustion_flag()
+        flagged, fields = (self._btc_exhaustion_flag() if asof is None
+                           else self._btc_exhaustion_flag(asof=asof))
         if not fields:
             self._last_trend_flag = {}
             return sig
@@ -3490,6 +3546,7 @@ class FuturesRuntime:
         by = shadow.gate_cost_usd(rows, equity, since_ts=time.time() - days * 86400.0,
                                   funding_r_of=self._row_funding_r)
         by.pop("shadow_only", None)
+        by.pop("random_tick", None)     # trial 24's own tick decisions, not a gate
         if not by:
             return ["", f"💵 Gate cost, {days:.0f}d: nothing blocked and resolved yet"]
         total = sum(v for _n, v in by.values())
@@ -4045,7 +4102,9 @@ class FuturesRuntime:
             from futuresbot import shadow_ledger as shadow
 
             rows = [r for r in shadow.load_rows(self._shadow_ledger_path())
-                    if str(r.get("sleeve") or "") == "WILDCARD"]
+                    if str(r.get("sleeve") or "") == "WILDCARD"
+                    # trial 24's tick decisions are not scan skips
+                    and not str(r.get("reject_reason") or "").startswith("random_tick")]
         except Exception:  # pragma: no cover — status must render regardless
             return None
         if not rows:
@@ -4144,8 +4203,9 @@ class FuturesRuntime:
             line += chr(10) + "  by sleeve — " + " · ".join(parts)
         # Split by side while both arms are live: the short arm carries a
         # different payoff ceiling and a different prior, and pooling them
-        # would make the trial unreadable in either direction.
-        if not wildcard_long_only():
+        # would make the trial unreadable in either direction. Trial 24 flips a
+        # coin for every side, so both arms are always live there.
+        if not wildcard_long_only() or random_mode.enabled():
             parts = []
             for side in ("LONG", "SHORT"):
                 arm = [r for r in rows if str(r.get("side") or "").upper() == side]
@@ -4261,11 +4321,14 @@ class FuturesRuntime:
         off = [n for n, on in (("PMT", pmt_live), ("Squeeze", squeeze_enabled()),
                                ("Trend", trend_enabled()), ("Sniper", sniper_enabled()))
                if not on]
+        # Trial 24: name the entry mode first thing under the slots (None when off).
+        random_line = self._random_mode_status_line()
         lines = [
             f"{title} [{self._mode_label()}]",
             "━━━━━━━━━━━━━━━",
             *([" · ".join(slots) + (f"  ·  ⛔ {', '.join(off)}" if off else "")]
               if slots else ([f"⛔ {', '.join(off)}"] if off else [])),
+            *([random_line] if random_line else []),
             *([f"Scanning <b>{len(active_syms)}</b> futures pairs "
                f"({html.escape(self._universe_label(active_syms))}): "
                f"{html.escape(', '.join(active_syms))}"] if not pmt_blocked else []),
@@ -4844,6 +4907,7 @@ class FuturesRuntime:
             f"━━━━━━━━━━━━━━━\n"
             f"<b>{html.escape(position.side)}</b> {html.escape(position.symbol)} | {html.escape(position.entry_signal)}\n"
             f"{wc_line}"
+            f"{self._random_entry_line(md)}"
             f"Entry <b>${self._format_price(position.entry_price)}</b> | x{position.leverage} | margin <b>${position.margin_usdt:.2f}</b>\n"
             f"TP <b>${self._format_price(position.tp_price)}</b> | SL <b>${self._format_price(position.sl_price)}</b>\n"
             f"Risk at SL <b>{stop_risk_text}</b>{stop_risk_pct_text}\n"
@@ -5854,6 +5918,8 @@ class FuturesRuntime:
             self._trend_rotation = self._coerce_rotation_state(rot_state)
         except (TypeError, ValueError):
             pass
+        rm_state = payload.get("random_mode")
+        self._random_mode_state = dict(rm_state) if isinstance(rm_state, dict) else {}
         log.info("Loaded futures runtime state from %s", self._state_path)
 
     def _save_state(self) -> None:
@@ -5878,6 +5944,10 @@ class FuturesRuntime:
             # The rotating TREND symbol and its 48h window: a restart must not
             # re-pick on a different tape, and a held symbol must stay held.
             "trend_rotation": dict(self._trend_rotation or {}),
+            # Trial 24: the last processed 12h tick. Written only once the mode has
+            # processed one, so the file is unchanged while it never has.
+            **({"random_mode": dict(self._random_mode_state)}
+               if getattr(self, "_random_mode_state", None) else {}),
         }
         # Atomic write. This file is the authoritative open_positions map and is
         # rewritten every cycle; a bare write_text truncates it if the container
@@ -6291,6 +6361,9 @@ class FuturesRuntime:
                 "entry_rsi": (position.metadata or {}).get("wildcard_rsi"),
                 **{k: (position.metadata or {}).get(k) for k in ENTRY_GATE_KEYS},
                 **{k: (position.metadata or {}).get(k) for k in EXIT_TELEMETRY_KEYS},
+                # Trial 24 tick telemetry, only on positions a tick opened.
+                **{k: (position.metadata or {})[k] for k in random_mode.STAMP_KEYS
+                   if k in (position.metadata or {})},
                 # Market-wide state at entry. Promoted explicitly because this
                 # record is built field by field and anything not named here is
                 # discarded at close - the same defect that wiped five metadata
@@ -6513,6 +6586,8 @@ class FuturesRuntime:
                 "entry_rsi": md.get("wildcard_rsi"),
                 **{k: md.get(k) for k in ENTRY_GATE_KEYS},
                 **{k: md.get(k) for k in EXIT_TELEMETRY_KEYS},
+                # Trial 24 tick telemetry, only on positions a tick opened.
+                **{k: md[k] for k in random_mode.STAMP_KEYS if k in md},
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -8252,6 +8327,13 @@ class FuturesRuntime:
                      hist or "{}", best.symbol if best else "none")
             if best is None:
                 return
+            if random_mode.enabled():
+                # Trial 24: entries come only from the 12h tick. The scan keeps running
+                # and logging; what it would have taken is recorded once per tick, and
+                # nothing below (slots, preemption, veto, envelope, order) runs.
+                self._pending_entry_lateness = best_lateness
+                self._random_mode_shadow_once(best, "WILDCARD")
+                return
             if slot_blocked and best is not None and self._preemption_possible():
                 # Fall through to the candidate loop: preemption happens THERE,
                 # per candidate, after its veto passes.
@@ -8456,6 +8538,10 @@ class FuturesRuntime:
                      hist or "{}", best.symbol if best else "none")
             if best is None:
                 return
+            if random_mode.enabled():
+                # Trial 24: entries come only from the 12h tick (see the WILDCARD scan).
+                self._random_mode_shadow_once(best, "TREND")
+                return
             if slot_blocked:
                 self._shadow_log_untaken(best, "TREND", "slot_occupied")
                 log.info("[TREND_SCAN_SUMMARY] skipped=slot_occupied candidate=%s open=%d",
@@ -8641,18 +8727,459 @@ class FuturesRuntime:
         except Exception as exc:  # pragma: no cover — squeeze never breaks the cycle
             log.warning("[SQUEEZE_SCAN] failed: %s", exc)
 
-    def _regime_size_multiplier(self, symbol: str) -> float:
+    # ------------------------------------------------------------------
+    # TRIAL 24 - THE RANDOM-DIRECTION STRATEGY (FUTURES_RANDOM_MODE_ENABLED, default 0).
+    #
+    # Frozen definition: wc/RANDOM/PREREG.md (sha256 29fabd853a4f5d77...). Selection is
+    # futuresbot.random_mode (the backtest's ranking, ported); everything after the pick
+    # - sizing, the order, the resting stop, the exits, reconcile - is the live convex
+    # path, unchanged. With the switch off none of this runs.
+    # ------------------------------------------------------------------
+    def _random_mode_sleep_seconds(self, seconds: float) -> float:
+        """Cycle sleep, shortened so the first cycle after a 00:00Z / 12:00Z tick starts
+        within a second of it (every few seconds while a tick waits on a 24h clock).
+        Returned unchanged when the mode is off."""
+        if not random_mode.enabled():
+            return seconds
+        now = time.time()
+        cap = random_mode.next_tick(now) - now + 1.0
+        if self._random_tick_pending is not None:
+            cap = min(cap, 5.0)
+        return max(1, int(math.ceil(min(float(seconds), cap))))
+
+    def _random_mode_shadow_once(self, sig: Any, kind: str) -> None:
+        """A candidate the switched-off scan entry path would have taken, shadow-logged as
+        "random_mode" once per (sleeve, symbol, side) per 12h tick."""
+        try:
+            period = random_mode.tick_at(time.time())
+            key = (str(kind).upper(), str(getattr(sig, "symbol", "")), str(getattr(sig, "side", "")),
+                   period)
+            if key in self._random_mode_logged:
+                return
+            self._random_mode_logged = {k: v for k, v in self._random_mode_logged.items()
+                                        if v >= period}
+            self._random_mode_logged[key] = period
+            self._shadow_log_untaken(sig, kind, "random_mode")
+        except Exception as exc:                   # pragma: no cover - telemetry only
+            log.debug("random-mode shadow row failed: %s", exc)
+
+    def _random_mode_status_line(self) -> str | None:
+        """The /status line naming the entry mode. None when the mode is off."""
+        if not random_mode.enabled():
+            return None
+        now = time.time()
+        state = self._random_mode_state or {}
+        parts = ["🎲 <b>RANDOM MODE</b> (trial 24): entries only at 00:00Z / 12:00Z, "
+                 "side by coin flip"]
+        last = state.get("last_tick")
+        if last:
+            stamp = random_mode.utc(last) or ""
+            opened = (state.get("summary") or {}).get("opened")
+            parts.append(f"last tick {stamp[5:10]} {stamp[11:16]}Z"
+                         + (f" opened <b>{int(opened)}</b>" if opened is not None else ""))
+        nxt = random_mode.utc(random_mode.next_tick(now)) or ""
+        parts.append(f"next {nxt[11:16]}Z")
+        if self._random_tick_pending is not None:
+            parts.append("tick waiting on a 24h clock")
+        if self._paused:
+            parts.append("⏸️ paused: ticks are skipped")
+        return " · ".join(parts)
+
+    @staticmethod
+    def _random_entry_line(md: dict[str, Any]) -> str:
+        """One line on the entry message of a position a tick opened; empty otherwise."""
+        if not md or not md.get("random_mode"):
+            return ""
+        try:
+            tick = str(md.get("random_tick_utc") or "")
+            coin = md.get("random_coin")
+            return (f"🎲 tick {tick[11:16]}Z · {html.escape(str(md.get('random_bucket')))} "
+                    f"#{int(float(md.get('random_rank') or 0))} ({html.escape(str(md.get('random_status')))})"
+                    f" · coin {'?' if coin is None else int(float(coin))} → "
+                    f"<b>{html.escape(str(md.get('random_side')))}</b>"
+                    f" (natural {html.escape(str(md.get('random_natural_side')))})\n")
+        except Exception:                          # pragma: no cover - presentation only
+            return ""
+
+    def _random_journal_path(self) -> str:
+        base = os.path.dirname(self._shadow_ledger_path() or "/data/x")
+        return os.path.join(base or "/data", "futures_random_ticks.jsonl")
+
+    @staticmethod
+    def _iso_ts(raw: Any) -> float | None:
+        try:
+            dt = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+
+    def _random_clock_seconds(self) -> float:
+        return max(0.0, self._env_float("FUTURES_CONVEX_TIME_STOP_HOURS", 24.0)) * 3600.0
+
+    def _random_due_positions(self, tick: int) -> list[FuturesPosition]:
+        """Open positions a tick opened whose clock, counted from THAT tick, has run out
+        by `tick`. The backtest filled at the tick, so it freed their slots at this tick;
+        live counts the clock from the fill, seconds to minutes later. The tick waits for
+        them (at most random_mode.TICK_DEFER_SECONDS) rather than see their slots full."""
+        clock = self._random_clock_seconds()
+        if clock <= 0:
+            return []
+        out = []
+        for p in self.open_positions.values():
+            t0 = self._metadata_float(p.metadata or {}, "random_tick_ts")
+            if t0 is not None and t0 + clock <= tick and self._is_wildcard_convex(p):
+                out.append(p)
+        return out
+
+    def _random_book_at(self, tick: int) -> tuple[set[str], dict[str, int]]:
+        """(symbols held, open positions per sleeve) AT the tick - the book the backtest
+        decided on. Every position open now counts, and so does one that was open at the
+        tick and closed since (the tick is processed seconds to minutes late; at the tick
+        it still held its slot). A tick-opened position whose clock from its own tick
+        had run out by this tick does not count: the backtest closed it at the tick."""
+        clock = self._random_clock_seconds()
+        held: set[str] = set()
+        count = {"TREND": 0, "WILDCARD": 0}
+        for p in self.open_positions.values():
+            held.add(p.symbol)
+            kind = self._sleeve_kind(p)
+            if kind in count:
+                count[kind] += 1
+        for row in self.trade_history[-200:]:
+            sym = str(row.get("symbol") or "")
+            if not sym or sym in self.open_positions:
+                continue
+            t_in, t_out = self._iso_ts(row.get("entry_time")), self._iso_ts(row.get("exit_time"))
+            if t_in is None or t_out is None or not (t_in <= tick < t_out):
+                continue
+            t0 = row.get("random_tick_ts")
+            try:
+                if t0 is not None and clock > 0 and float(t0) + clock <= tick:
+                    continue
+            except (TypeError, ValueError):
+                pass
+            held.add(sym)
+            kind = str(row.get("sleeve") or "").split(":", 1)[0].upper()
+            if kind in count:
+                count[kind] += 1
+        return held, count
+
+    def _random_frame(self, symbol: str, tick: int, n: int) -> pd.DataFrame | None:
+        """15m klines ending at the tick; the row helpers keep only bars closed by it."""
+        try:
+            return self.client.get_klines(symbol, interval="Min15",
+                                          start=int(tick) - (int(n) + 4) * 900, end=int(tick))
+        except Exception as exc:
+            log.info("[RANDOM_TICK] klines failed for %s: %s", symbol, exc)
+            return None
+
+    def _random_ref_price(self, symbol: str) -> float:
+        """The latest traded price, the reference the order is sized and bracketed on
+        (the backtest used the first 1m LAST open after the tick). Fair price if the
+        ticker is unreadable; 0.0 if neither is."""
+        try:
+            px = float((self.client.get_ticker(symbol) or {}).get("lastPrice") or 0.0)
+        except Exception:
+            px = 0.0
+        if px <= 0:
+            try:
+                px = float(self.client.get_fair_price(symbol) or 0.0)
+            except Exception:
+                px = 0.0
+        return px
+
+    def _random_tick_select(self, tick: int) -> dict[str, Any]:
+        """Rank the three buckets at `tick`. I/O (ticker, 15m klines, the BTC flag); no
+        orders. Raises if the ticker cannot be read, so the tick is retried."""
+        plan: dict[str, Any] = {"tick": int(tick), "buckets": {}, "frames": {"WILDCARD": {}, "TREND": {}},
+                                "universe": [], "unusable": [], "trend_symbols": [], "btc_flag": None}
+        if wildcard_enabled():
+            self._refresh_non_crypto_universe()
+            tickers = self.client.get_all_tickers() or []
+            if not tickers:
+                raise RuntimeError("empty ticker list")
+            majors = self._major_symbols(tickers, random_mode.MAJORS_BAND)
+            uni = random_mode.universe(tickers, majors=majors, tradeable=self._is_tradeable_crypto,
+                                       range_of=self._range_24h)
+            plan["universe"] = [[s, round(tk["range24"], 5), round(tk["amount24"], 1)] for s, tk in uni]
+            rows = []
+            for sym, tk in uni:
+                frame = self._random_frame(sym, tick, random_mode.WC_BARS)
+                row = random_mode.wildcard_row(sym, frame, tick, ticker=tk)
+                rows.append(row)
+                if row.get("usable"):
+                    plan["frames"]["WILDCARD"][sym] = random_mode.completed(frame, tick, random_mode.WC_BARS)
+                else:
+                    plan["unusable"].append({"symbol": sym, "why": row.get("why")})
+            plan["buckets"]["WC_LONG"], plan["buckets"]["WC_SHORT"] = random_mode.rank_wildcard(rows)
+        if trend_enabled():
+            symbols = [s.upper() for s in trend_symbols()]
+            rotating = self._trend_rotation_symbol()
+            if rotating and rotating.upper() not in symbols:
+                symbols.append(rotating.upper())
+            plan["trend_symbols"] = symbols
+            rows = []
+            for sym in symbols:
+                frame = self._random_frame(sym, tick, random_mode.TREND_BARS)
+                row = random_mode.trend_row(sym, frame, tick)
+                rows.append(row)
+                if row.get("usable"):
+                    plan["frames"]["TREND"][sym] = random_mode.completed(frame, tick, random_mode.TREND_BARS)
+                else:
+                    plan["unusable"].append({"symbol": sym, "why": row.get("why"), "sleeve": "TREND"})
+            plan["buckets"]["TREND"] = random_mode.rank_trend(rows)
+            flagged, fields = self._btc_exhaustion_flag(asof=tick)
+            plan["btc_flag"] = {"flagged": bool(flagged), **fields}
+        # An exchange outage is not a market: with half or more of the kline requests
+        # failing, the lists would rank whatever happened to load. Retry instead.
+        asked = len(plan["universe"]) + len(plan["trend_symbols"])
+        failed = sum(1 for u in plan["unusable"] if u.get("why") == "kline_error")
+        if asked and failed * 2 >= asked:
+            raise RuntimeError("klines unavailable for %d of %d symbols" % (failed, asked))
+        return plan
+
+    def _random_record(self, plan: dict[str, Any], bucket: str, cand: dict[str, Any], rank_: int,
+                       field: int, held: list[str], decision: str, *, coin_: int | None = None,
+                       sig: Any = None, ref: float | None = None, regime: float | None = None) -> None:
+        """One bucket decision in the shadow ledger, reason "random_tick:<decision>".
+        Without an order signal the row is priced at the gate close: on the coin's side
+        when one was drawn, else (held, slot full) on the bucket's natural side with
+        random_coin None. Never raises."""
+        try:
+            sleeve = random_mode.SLEEVE[bucket]
+            if sig is None:
+                frame = plan["frames"].get(sleeve, {}).get(cand["symbol"])
+                side = (random_mode.coin_side(coin_) if coin_ is not None
+                        else random_mode.NATURAL[bucket])
+                sig = random_mode.signal_for(cand, bucket=bucket, side=side,
+                                             ref_price=float(cand.get("gate_close") or 0.0), frame=frame)
+            btc = plan.get("btc_flag") if sleeve == "TREND" else None
+            fields = random_mode.stamp(
+                tick=plan["tick"], bucket=bucket, cand=cand, rank_=rank_, field=field, side=sig.side,
+                coin_=coin_, ref_price=ref, universe_n=len(plan.get("universe") or []), held=held,
+                regime_mult=regime, btc_flag=(btc or {}).get("flagged") if btc else None,
+                decision=decision)
+            self._pending_entry_lateness = None
+            self._shadow_log_untaken(sig, sleeve, "random_tick:" + decision, extra_fields=fields)
+        except Exception as exc:                   # pragma: no cover - telemetry only
+            log.debug("random tick shadow row failed for %s: %s", cand.get("symbol"), exc)
+
+    def _random_open(self, plan: dict[str, Any], bucket: str, cand: dict[str, Any], rank_: int,
+                     field: int, coin_: int, held: list[str]) -> dict[str, Any]:
+        """Open one bucket's pick on the coin's side through the live convex entry. The
+        decision record says what happened; a refused fill leaves the slot empty until
+        the next tick (no next-best retry), as in the backtest."""
+        tick = int(plan["tick"])
+        sleeve = random_mode.SLEEVE[bucket]
+        sym = cand["symbol"]
+        side = random_mode.coin_side(coin_)
+        d: dict[str, Any] = {"tick": tick, "bucket": bucket, "sleeve": sleeve,
+                             "natural_side": random_mode.NATURAL[bucket], "symbol": sym,
+                             "rank": rank_, "status": cand.get("status"), "coin": coin_, "side": side,
+                             "held_skipped": list(held)}
+        sig = None
+        ref = regime = None
+        btc = plan.get("btc_flag") if sleeve == "TREND" else None
+        try:
+            frame = plan["frames"].get(sleeve, {}).get(sym)
+            ref = self._random_ref_price(sym)
+            if not ref or ref <= 0:
+                raise ValueError("no price for " + sym)
+            try:
+                contract = self.client.get_contract_detail(sym) or {}
+                exch_max = float(contract.get("maxLeverage") or 0.0) or None
+            except Exception:
+                exch_max = None
+            sig = random_mode.signal_for(cand, bucket=bucket, side=side, ref_price=ref, frame=frame,
+                                         exch_max_leverage=exch_max)
+            if sleeve == "TREND":
+                sig = self._apply_trend_tp_cap(sig, asof=tick)
+            closes = ([float(x) for x in frame["close"]] if frame is not None and len(frame) else None)
+            regime = self._regime_size_multiplier(sym, closes=closes)
+            snapshot = self._account_snapshot(self._get_reference_price())
+            available = float(snapshot.get("available_usdt", 0.0) or 0.0)
+            if available <= 0:
+                d["decision"] = "no_available"
+            else:
+                tk = cand.get("ticker") if isinstance(cand.get("ticker"), dict) else None
+                # The tick's own ticker values for this symbol, not the last scan's.
+                if sleeve == "WILDCARD" and tk:
+                    self._wildcard_attribution[sym] = {"turnover_24h_usdt": float(tk["amount24"]),
+                                                       "range_24h": float(tk["range24"])}
+                else:
+                    self._wildcard_attribution.pop(sym, None)
+                ctx: dict[str, Any] = {"regime_mult": regime, "stamp": random_mode.stamp(
+                    tick=tick, bucket=bucket, cand=cand, rank_=rank_, field=field, side=side,
+                    coin_=coin_, ref_price=ref, universe_n=len(plan.get("universe") or []),
+                    held=held, regime_mult=regime,
+                    btc_flag=(btc or {}).get("flagged") if btc else None, decision="opened")}
+                self._pending_entry_lateness = None
+                self._pending_candidate_rank = float(rank_)
+                self._pending_candidate_field = float(field)
+                self._pending_ref_listed = None
+                self._pending_envelope = None
+                opened = self._open_wildcard_position(sig, available, kind=sleeve, veto_checked=True,
+                                                      random_tick=ctx)
+                d["decision"] = "opened" if opened else str(ctx.get("refusal") or "not_opened")
+        except Exception as exc:
+            log.warning("[RANDOM_TICK] %s %s %s failed: %s", bucket, sym, side, exc)
+            d["decision"] = "error"
+            d["error"] = f"{type(exc).__name__}: {exc}"[:200]
+        finally:
+            self._pending_candidate_rank = None
+            self._pending_candidate_field = None
+        d["ref_price"] = ref
+        d["regime_mult"] = regime
+        if sig is not None:
+            d.update({"leverage": sig.leverage, "sl_price": sig.sl_price, "tp_price": sig.tp_price,
+                      "sl_margin_pct": sig.sl_margin_pct})
+        self._random_record(plan, bucket, cand, rank_, field, held, d["decision"], coin_=coin_,
+                            sig=sig, ref=ref, regime=regime)
+        return d
+
+    def _random_tick_execute(self, plan: dict[str, Any]) -> list[dict[str, Any]]:
+        """The three buckets in order: slot check, held skip (next best), coin, open."""
+        tick = int(plan["tick"])
+        held_set, count = self._random_book_at(tick)
+        caps = {"TREND": trend_max_positions(), "WILDCARD": wildcard_max_positions()}
+        decisions: list[dict[str, Any]] = []
+        for bucket in random_mode.BUCKETS:
+            sleeve = random_mode.SLEEVE[bucket]
+            base = {"tick": tick, "bucket": bucket, "sleeve": sleeve,
+                    "natural_side": random_mode.NATURAL[bucket]}
+            cands = plan["buckets"].get(bucket)
+            if cands is None:
+                decisions.append({**base, "decision": "sleeve_disabled"})
+                continue
+            field = len(cands)
+            skipped: list[tuple[int, dict]] = []
+            pick, rank_ = None, None
+            for i, c in enumerate(cands, 1):
+                if c["symbol"] in held_set:
+                    skipped.append((i, c))
+                    continue
+                pick, rank_ = c, i
+                break
+            if count[sleeve] >= caps[sleeve]:
+                d = {**base, "decision": "slot_full", "open": count[sleeve], "slots": caps[sleeve]}
+                if pick is not None:
+                    d.update({"symbol": pick["symbol"], "rank": rank_, "status": pick.get("status")})
+                    self._random_record(plan, bucket, pick, rank_, field, [], "slot_full")
+                decisions.append(d)
+                continue
+            held = [c["symbol"] for _i, c in skipped]
+            for i, c in skipped:
+                decisions.append({**base, "decision": "held", "symbol": c["symbol"], "rank": i,
+                                  "status": c.get("status")})
+                self._random_record(plan, bucket, c, i, field, [], "held")
+            if pick is None:
+                decisions.append({**base, "decision": "no_candidate"})
+                continue
+            d = self._random_open(plan, bucket, pick, rank_, field, random_mode.coin(), held)
+            decisions.append(d)
+            if d.get("decision") == "opened":
+                held_set.add(pick["symbol"])
+                count[sleeve] += 1
+        return decisions
+
+    def _random_journal(self, plan: dict[str, Any], decisions: list[dict[str, Any]],
+                        started_at: float) -> None:
+        """One line per processed tick: the universe, the ranked lists, every decision -
+        the record trial 24 is compared with the backtest on, tick by tick. Never raises."""
+        try:
+            tick = int(plan["tick"])
+            row = {"tick": tick, "tick_utc": random_mode.utc(tick), "prereg": random_mode.PREREG_TAG,
+                   "started_at": round(started_at, 1), "done_at": round(time.time(), 1),
+                   "universe_n": len(plan.get("universe") or []), "universe": plan.get("universe"),
+                   "trend_symbols": plan.get("trend_symbols"), "btc_flag": plan.get("btc_flag"),
+                   "unusable": plan.get("unusable"),
+                   "buckets": {b: [random_mode.compact(c, b) for c in cands]
+                               for b, cands in (plan.get("buckets") or {}).items()},
+                   "decisions": decisions}
+            path = self._random_journal_path()
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, default=str) + "\n")
+        except Exception as exc:                   # pragma: no cover - telemetry only
+            log.warning("[RANDOM_TICK] journal write failed: %s", exc)
+
+    def _maybe_random_tick(self) -> None:
+        """Trial 24's only entry path: once per 00:00Z / 12:00Z tick, at the first cycle
+        after it (the cycle sleep is shortened to land there).
+
+        ONCE ONLY, ACROSS RESTARTS. The tick is persisted in the state file AFTER the
+        selection and BEFORE the first order. A restart within the 15-minute grace
+        processes a tick that was not yet marked; a marked tick is never processed again
+        (a crash mid-tick loses its remaining buckets rather than risk a double entry);
+        a restart later than the grace waits for the next tick. A failed selection (the
+        ticker unreadable) is not marked and is retried next cycle inside the grace.
+        Paused or retired: the tick is not processed (nor marked) - resume inside the
+        grace and it still runs."""
+        if not random_mode.enabled():
+            self._random_tick_pending = None
+            return
+        now = time.time()
+        tick = random_mode.due_tick(now, (self._random_mode_state or {}).get("last_tick"))
+        if tick is None:
+            self._random_tick_pending = None
+            return
+        if self._paused or self._strategies_retired():
+            log.info("[RANDOM_TICK] %s not processed: entries %s (it runs if resumed by %s)",
+                     random_mode.utc(tick), "retired" if self._strategies_retired() else "paused",
+                     random_mode.utc(tick + random_mode.TICK_GRACE_SECONDS))
+            self._random_tick_pending = None
+            return
+        waiting = self._random_due_positions(tick)
+        if waiting and now - tick < random_mode.TICK_DEFER_SECONDS:
+            if self._random_tick_pending != tick:
+                log.info("[RANDOM_TICK] %s waits for %d position(s) the backtest closes at this "
+                         "tick (24h clock from their own tick): %s", random_mode.utc(tick),
+                         len(waiting), ", ".join(p.symbol for p in waiting))
+            self._random_tick_pending = tick
+            return
+        self._random_tick_pending = None
+        started = time.time()
+        try:
+            plan = self._random_tick_select(tick)
+        except Exception as exc:
+            log.warning("[RANDOM_TICK] %s selection failed (retried next cycle within the %ds "
+                        "grace): %s", random_mode.utc(tick), random_mode.TICK_GRACE_SECONDS, exc)
+            return
+        self._random_mode_state = {"last_tick": int(tick), "processed_at": round(time.time(), 1)}
+        self._save_state()                         # marked BEFORE any order
+        try:
+            decisions = self._random_tick_execute(plan)
+        except Exception as exc:                   # pragma: no cover - never breaks the cycle
+            log.exception("[RANDOM_TICK] %s failed: %s", random_mode.utc(tick), exc)
+            decisions = [{"tick": int(tick), "decision": "error", "error": str(exc)[:200]}]
+        opened = [d for d in decisions if d.get("decision") == "opened"]
+        brief = ["%s:%s%s" % (d.get("bucket", "?"), d.get("decision"),
+                              (" %s %s" % (d.get("symbol"), d.get("side") or "")).rstrip()
+                              if d.get("symbol") else "") for d in decisions]
+        self._random_mode_state["summary"] = {"opened": len(opened), "decisions": brief}
+        self._random_journal(plan, decisions, started)
+        self._save_state()
+        log.warning("[RANDOM_TICK] %s universe=%d opened=%d | %s", random_mode.utc(tick),
+                    len(plan.get("universe") or []), len(opened), " | ".join(brief))
+
+    def _regime_size_multiplier(self, symbol: str, closes: list[float] | None = None) -> float:
         """Continuous size scaler by the TRADED symbol's own trend-efficiency:
         full size in a clean trend, floor in chop (default-off). Symbol-own (not
         BTC) so the wildcard isn't throttled in its normal flat-BTC habitat.
-        Fail-open to 1.0 on any data error — never blocks an entry on a hiccup."""
+        Fail-open to 1.0 on any data error — never blocks an entry on a hiccup.
+        `closes` (trial 24): 15m closes the caller already holds - the bars closed by
+        its tick - read instead of fetching klines that include the forming bar."""
         if not self._flag("FUTURES_REGIME_SIZE_SCALER_ENABLED", default=False):
             return 1.0
         try:
             window = max(4, int(self._env_float("FUTURES_REGIME_EFF_WINDOW", 24.0)))
-            end = int(time.time()); start = end - (window + 6) * 900
-            frame = self.client.get_klines(symbol, interval="Min15", start=start, end=end)
-            eff = trend_efficiency([float(x) for x in frame["close"]], window)
+            if closes is None:
+                end = int(time.time()); start = end - (window + 6) * 900
+                frame = self.client.get_klines(symbol, interval="Min15", start=start, end=end)
+                closes = [float(x) for x in frame["close"]]
+            eff = trend_efficiency([float(x) for x in closes], window)
             mult = regime_size_multiplier(
                 eff,
                 lo=self._env_float("FUTURES_REGIME_EFF_LO", 0.20),
@@ -9970,16 +10497,20 @@ class FuturesRuntime:
 
 
     def _shadow_log_untaken(self, sig: Any, kind: str, reject_reason: str,
-                            envelope: dict[str, Any] | None = None) -> None:
+                            envelope: dict[str, Any] | None = None,
+                            extra_fields: dict[str, Any] | None = None) -> None:
         """Record a signal that was produced but NOT taken (veto/sizing/slot) so
         the conditional-expectancy engine can evaluate entry gates counterfactually.
-        Every WILDCARD/TREND row carries the restricted area's verdict, switch on or off."""
+        Every WILDCARD/TREND row carries the restricted area's verdict, switch on or off.
+        `extra_fields` (trial 24's tick telemetry) is written last, over everything."""
         try:
             from futuresbot import shadow_ledger as shadow
             path = self._shadow_ledger_path()
             extra = dict(self._wildcard_attribution.get(str(getattr(sig, "symbol", "")), {}))
             extra.update((envelope if envelope is not None
                           else self._envelope_verdict(sig, kind)) or {})
+            if extra_fields:
+                extra.update(extra_fields)
             shadow.append_row(path, shadow.candidate_row(
                 sig, sleeve=kind, reject_reason=reject_reason, lateness=self._pending_entry_lateness,
                 extra=extra,
@@ -10058,14 +10589,31 @@ class FuturesRuntime:
             log.warning("[EXTERNAL_GATE] fail-open for %s: %s", getattr(sig, "symbol", "?"), exc)
             return (True, "failopen")
 
-    def _open_wildcard_position(self, sig: Any, available_balance: float, kind: str = "WILDCARD", veto_checked: bool = False) -> bool:
+    def _open_wildcard_position(self, sig: Any, available_balance: float, kind: str = "WILDCARD",
+                                veto_checked: bool = False,
+                                random_tick: dict[str, Any] | None = None) -> bool:
         """Isolated wildcard entry — reuses the live order primitive + TPSL +
         position registration; never routes through the PMT _enter_trade path.
         Stamps pmt_stop_first + sl/tp margin so the existing bank/breakeven/lock
-        exits manage it; score 96 -> runner-tier exits (bank 50% @+1R, ride)."""
+        exits manage it; score 96 -> runner-tier exits (bank 50% @+1R, ride).
+
+        `random_tick` (trial 24 only): the tick's context. Its presence is what lets an
+        entry through while FUTURES_RANDOM_MODE_ENABLED=1; it carries the regime
+        multiplier measured on bars closed by the tick and the telemetry to stamp, and
+        receives the reason a fill was refused. None = today's path, unchanged."""
         symbol = sig.symbol
-        if symbol in self.open_positions:
+
+        def _refused(reason: str) -> bool:
+            if random_tick is not None:
+                random_tick["refusal"] = reason
             return False
+
+        if random_tick is None and random_mode.enabled():
+            log.info("[RANDOM_MODE] %s %s %s not opened: entries come only from the 12h tick",
+                     kind, getattr(sig, "side", "?"), symbol)
+            return False
+        if symbol in self.open_positions:
+            return _refused("held")
         if not veto_checked and self._flag("FUTURES_EXTERNAL_GATE_ENABLED", default=False):
             allow, reason = self._external_entry_veto(sig, kind)
             if not allow:
@@ -10076,12 +10624,16 @@ class FuturesRuntime:
             contract = self.client.get_contract_detail(symbol)
         except Exception as exc:
             log.warning("[WILDCARD] contract detail failed for %s: %s", symbol, exc)
-            return False
+            return _refused("contract_error")
         contract_size = float(contract.get("contractSize", 0.0001) or 0.0001)
         min_vol = int(float(contract.get("minVol", 1) or 1))
         margin = max(0.0, self._entry_margin(sig, available_balance, kind=kind, symbol=symbol))
         intended_margin = margin
-        regime_mult = self._regime_size_multiplier(symbol)  # chop -> floor, clean trend -> full
+        if random_tick is not None and random_tick.get("regime_mult") is not None:
+            # Trial 24: the same scaler, read on the bars closed by the tick (PREREG).
+            regime_mult = float(random_tick["regime_mult"])
+        else:
+            regime_mult = self._regime_size_multiplier(symbol)  # chop -> floor, clean trend -> full
         margin *= regime_mult
         # Drawdown protocol (industry-standard: cut size on consecutive losses).
         # PMT had a cold-streak throttle; the convex rewrite dropped it. Purely
@@ -10105,12 +10657,12 @@ class FuturesRuntime:
                 margin *= dd_mult
             if dd_mult <= 0.0:
                 log.warning("[DRAWDOWN_BRAKE] %s %s entry BLOCKED by drawdown halt", kind, symbol)
-                return False
+                return _refused("drawdown_halt")
         if regime_mult < 0.999:
             log.info("[SIZE_TRIM] %s %s regime_mult=%.2f margin %.2f -> %.2f (intended %.0f%% of balance)",
                      kind, symbol, regime_mult, intended_margin, margin, sig.balance_fraction * 100)
         if margin <= 0 or sig.entry_price <= 0:
-            return False
+            return _refused("zero_size")
         contracts = int((margin * sig.leverage / sig.entry_price) / contract_size)
         if self._flag("FUTURES_RISK_BASED_SIZING_ENABLED", default=False):
             max_risk_pct = self._env_float("FUTURES_MAX_TRADE_RISK_PCT", 5.0)
@@ -10155,8 +10707,9 @@ class FuturesRuntime:
             contracts = capped
         if contracts < min_vol:
             log.info("[WILDCARD] %s contracts %d below min_vol %d — skip", symbol, contracts, min_vol)
-            self._shadow_log_untaken(sig, kind, "min_vol_skip")
-            return False
+            if random_tick is None:            # trial 24 records its own decision row
+                self._shadow_log_untaken(sig, kind, "min_vol_skip")
+            return _refused("min_vol")
         side_name = sig.side
         # The restricted area's verdict: the one the enabled envelope decided on, else
         # computed now (switch off: what the area WOULD have done).
@@ -10245,6 +10798,9 @@ class FuturesRuntime:
             # — the wildcard's own trigger language on a move that could never
             # pass the wildcard's 8% bar. Cost AVAX_USDT a +1.68R peak.
             metadata["sniper"] = 1.0
+        if random_tick is not None:
+            # Trial 24: which tick, bucket, rank, coin and side opened this position.
+            metadata.update(random_tick.get("stamp") or {})
         if self._pending_entry_lateness is not None:
             metadata["entry_lateness"] = round(float(self._pending_entry_lateness), 3)
         # 1.0 = corroborated on Bybit/OKX, 0.0 = MEXC-only (admitted only since the
@@ -10291,7 +10847,7 @@ class FuturesRuntime:
             take_profit_price=sig.tp_price, stop_loss_price=sig.sl_price, min_vol=min_vol, signal_metadata=metadata,
         )
         if guarded is None:
-            return False
+            return _refused("balance_guard")
         order, contracts = guarded
         order_id = self._extract_order_id(order)
         fill = sig.entry_price
@@ -10329,7 +10885,7 @@ class FuturesRuntime:
         if not exch_position_id:
             # No live position confirmed — order didn't fill (price-limit/reject).
             log.warning("[WILDCARD] entry order %s for %s did not fill (no live position) — skipping", order_id, symbol)
-            return False
+            return _refused("not_filled")
         # Stamped HERE, not before the order: contracts is only final after the
         # balance guard and the exchange-confirmed volume above, and `fill` can
         # differ from the quoted entry — both change the real risk.
@@ -14236,6 +14792,11 @@ class FuturesRuntime:
         # funding-gate state, leverage band, Sprint flags) on redeploy without
         # diffing Railway env against code defaults.
         self._log_boot_manifest()
+        if random_mode.enabled():
+            log.warning("[RANDOM_MODE] ON (trial 24, PREREG %s): entries only at 00:00Z / 12:00Z, "
+                        "coin-flip side; the WILDCARD / TREND scans log shadow rows only. "
+                        "Last processed tick: %s", random_mode.PREREG_TAG,
+                        random_mode.utc(self._random_mode_state.get("last_tick")) or "none")
         # Gate B B4 (memo 1 §7): validate MEXC contract-spec for every active
         # symbol before the first cycle — refuses to start in strict mode if
         # contractSize/minVol/takerFeeRate don't match expected values.
@@ -14303,9 +14864,13 @@ class FuturesRuntime:
                     if self._liq_buffer_force_close(position, pos_price):
                         continue
                     self._hourly_exit(position, pos_price)
+                # Trial 24: with FUTURES_RANDOM_MODE_ENABLED=1 the 00:00Z / 12:00Z tick is
+                # the ONLY entry path (no-op when off). After the exits, so a position
+                # closed this cycle has freed its slot.
+                self._maybe_random_tick()
                 # Attempt new entries for any remaining slots (highest-score signal wins
                 # each cycle; bucket / concurrency / session / funding gates enforced inside).
-                if not self._paused and self._available_slots() > 0:
+                if not self._paused and self._available_slots() > 0 and not random_mode.enabled():
                     signal = self._fetch_signal()
                 if signal is not None:
                     entered = self._enter_trade(signal)
@@ -14349,7 +14914,7 @@ class FuturesRuntime:
                     f"━━━━━━━━━━━━━━━\n"
                     f"{html.escape(str(exc))}",
                 )
-            sleep_seconds = self._cycle_sleep_seconds()
+            sleep_seconds = self._random_mode_sleep_seconds(self._cycle_sleep_seconds())
             log.info("Sleeping %ss before next futures cycle", sleep_seconds)
             self._sleep_until_next_cycle(sleep_seconds)
 
