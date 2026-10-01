@@ -19161,3 +19161,86 @@ Deployed exactly as pre-registered above: commit 50e0dc8 (code 348abb1), deploym
 no entry between START_TS and the boot, so trial 23 starts clean. Suite 1875 passed. Status line: "Trial 23: 0/30 convex
 closes". Every WILDCARD/TREND candidate and fill now carries envelope_pass / envelope_cell / envelope_reason; refused
 candidates are shadow-logged with reason "envelope". The forward tests (F02, X01, T5, F17, breadth review) split here.
+
+
+## 2026-10-01 - NEW-SLEEVE STUDY: 0 of 11 candidate sleeves pass; nothing ships, nothing shadows
+
+**Owner request (2026-09-25):** "go ahead with the new sleeve study". The aim was a new sleeve with a real edge, added beside WILDCARD and TREND. Both existing sleeves stay. Full answer: wc/SLEEVE/answer.md.
+
+**Method**
+- Three verified data lanes: D1 core/realism, D2 funding and open interest, D3 cross-venue.
+- Four design lanes, one per family (A-D), worked on DEVELOPMENT only (Binance 2024-09-22 to 2025-03-22). The exception is XV1, which used MEXC 1m 2026-08-26 to 09-10.
+- 11 sleeves frozen in PREREG.md (sha256 3db17ae3…9df73, 220 hashed files). Each sleeve has one primary cell.
+- Graded holdouts:
+  - HOLDOUT-1: Binance 2025-03-22 to 09-22, delisted coins included.
+  - HOLDOUT-3: Binance 2023-09-22 to 2024-09-22, delisted coins included.
+  - HOLDOUT-2G: MEXC 2025-10-01 to 2026-08-21 09:41Z. Variants: 2G-XV to 07-18; XV1M-HOLD for XV1.
+- Each family had a validator, then an adversarial verifier with independent code. All 11 grades were reproduced trade for trade, or from the raw data.
+- Realism for every trade:
+  - next-open fills after a completed bar;
+  - taker fee 0.08% per side;
+  - turnover-band slippage, run under both 'cost' and 'stress';
+  - funding;
+  - leverage cap and the 20%-of-margin rule;
+  - MEXC contract minimums;
+  - pinned sizing.py at 85c08e8, 1.205% dial, compounded from $1,000 and from $190.
+
+**Results.** Grade under `Slippage('cost')`. Mean net R per trade with its day-block 95% interval. $/month from $1,000. Order: H1 / H3 / H2.
+
+| Sleeve | Grade | Mean R | $/mo from $1,000 |
+|---|---|---|---|
+| XV1 1m catch-up | F | H2 only: -0.267 [-0.545, -0.001] | -$1,527 (81% DD in 16 days) |
+| XV2 confirmed move, continue | F | -0.085 / -0.130 / -0.054, all CIs < 0 | -$125 / -$80 / -$84 |
+| XV3 unconfirmed move, fade | F | -0.102 / -0.109 / -0.101, all CIs < 0 | -$136 / -$75 / -$98 |
+| B1 pullback-break reversal | F | -0.135 / -0.090 / -0.026 | -$117 / -$59 / -$44 |
+| B2 half-retrace reversal | F | -0.067 / -0.044 / -0.051 | -$79 / -$31 / -$62 |
+| B3 WILDCARD early-stop reversal | F | -0.165 / -0.043 / -0.079 | -$48 / -$6 / -$32 |
+| F1 crowded-short long | F | -0.098 / -0.107 / -0.103 | -$79 / -$48 / -$68 |
+| F2 crowded-long short | F | -0.106 / -0.054 / -0.062 | -$48 / -$16 / -$38 |
+| F3 OI-deleveraging reversal | F | -0.140 / -0.141 / H2 NOT_TESTABLE | -$53 / -$30 / – |
+| D1 BTC-lead alt catch-up | F | -0.150 / -0.138 / -0.154, all CIs < 0 | -$84 / -$74 / -$82 |
+| D2 post-listing short | F | +0.061 / **-0.034 (n 104)** / +0.652 [+0.054, +1.296] (n 57) | +$6 / -$7 / +$43 |
+
+**Verifier corrections recorded (no grade moved)**
+1. Family A: before all costs, XV2 and XV3 are about 0R. XV1's pre-cost gain is mostly an artefact of the 1m stop filling at its level. XV1's interval depends on the seed. Its coin list has look-ahead through turnover that overlaps the holdout.
+2. The Bybit alias probe missed names (1000SATS, NEIRO and others): 319 H1 events were mislabelled. XV3 moves -0.102 -> -0.103.
+3. B2: the half-retrace does select stronger 24h reversals on H1 and H3 (difference CIs exclude 0). It is still negative after costs.
+4. The placebo p ignores the noise in the real mean. F1 H2 moves from 0.02 to 0.087. **Any future A/B grade must use the corrected placebo test.**
+5. Day blocks understate the interval for 48h holds; use week blocks. F1's H1 and H3 intervals then cross 0. Point estimates stay negative.
+6. D2:
+   - **The placebo was capped at the real hold time.** With the declared 7-day hold, same-time seasoned shorts on H2 earn +0.29R, so about 45% of the +0.65R is market-wide shorting. The real trades still beat it (p about 0.03).
+   - **The second placebo dropped 27 of 57 trades.** Its listing-age test could not pass before 2025-11-26.
+   - **Holm resolved: fails.** All other sleeves' H2 p are >= 0.83, so D2 ranks first of 11 and its adjusted p is 11 x 0.0168 = 0.185.
+7. Funding: MEXC's settled funding on 547 F1 H1 holds is +0.105R per trade, against Binance +0.107R (correlation 0.99). The "MEXC funding unknown" caveat is closed for that window.
+
+**DECISION**
+- No new sleeve is added. None goes to shadow, because none graded A, B or C.
+- No repo, Railway, container or exchange change.
+- WILDCARD (1.205%) and TREND continue unchanged.
+- The re-fund plan is unchanged: about $1,000 after about 80-100 more live trades.
+- Existing forward tests are unchanged:
+  - trial 23 entry envelope: decision at 30 closes or 2026-11-15;
+  - X01 and F02: 2026-12-10;
+  - F17: at n >= 100;
+  - monthly budget check on the 26th, and the $140 alert.
+
+**STANDING RULES from this study**
+1. **HOLDOUT-1, HOLDOUT-3 and HOLDOUT-2G are spent** for families A-D: cross-venue lead or confirmation, failed-move reversal, funding/OI positioning, BTC-lead catch-up and post-listing drift. Do not re-grade any variant of these on those windows. New tests are forward-only (data from 2026-10-01 on) or use a newly pre-registered window never touched.
+2. **D2 is refuted on Binance and unresolved on MEXC.** It must not be rescued by re-cutting the 2025-26 MEXC window. A forward test needs a new pre-registration.
+   - MEXC qualifies about 5 trades a month, and one trade's result spreads about 2.4R.
+   - About 54 trades (about 10 months) would confirm a true +0.65R. About 250 trades (about 4 years) would be needed for +0.30R.
+   - MEXC erases delisted contracts, so a forward D2 test needs a weekly read-only capture of new-listing bars.
+3. The listing signal stays a **veto only**. Do not use it as an entry signal in either direction (XV2 and XV3 both F on 3 holdouts).
+4. Funding carry is real on MEXC, about +0.1R per trade on crowded-short longs. Price beats it. Do not build a carry sleeve on it.
+5. Placebo tests must count the real mean's own noise. Hold periods over 24h need week-block intervals.
+
+**Open owner question (only one):** start the weekly MEXC new-listing capture, so D2 can ever be judged on MEXC? Not recommended by default: the verdict is 10 months to 4 years away, and the best case is about +$43 a month from $1,000.
+
+**Files** (all under C:/Users/Rocot/futuresbot-evidence/wc/SLEEVE/)
+- answer.md
+- prereg/PREREG.md
+- validate_{a,b,c,d}/: grades and per-window results
+- verify_{a,b,c,d}/: independent rebuilds
+- data/{core,funding,xvenue}/: verified data lanes, kept for reuse
+
+Nothing was deleted.
