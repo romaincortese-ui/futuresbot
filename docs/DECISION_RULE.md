@@ -19303,3 +19303,15 @@ envelope, calm/range caps, lateness re-ranking and preemption do not apply. Ever
   processing time; exchange-side close timestamps at reconcile; universe from the live ticker vs the scan journal; /pause
   checked once per tick; /daily and the digest miscount tick trades as refused; /why ignores the mode; the daily assessment
   task must not change the trial-24 definition mid-trial.
+
+### 2026-10-01 - TRIAL 24 LIVE (random-direction mode)
+
+Deployed exactly as pre-registered above: commit 36da431 (code 2617a64), deployment accd1440, container start
+2026-10-01T19:05:37Z; live env FUTURES_RANDOM_MODE_ENABLED=1, FUTURES_ENTRY_ENVELOPE_ENABLED=0, FUTURES_TRIAL_LABEL=24,
+FUTURES_TRIAL_START_TS=1790881680 (19:08:00Z), dials 1.205%/1.205%, slots TREND 2 / WILDCARD 3, RESUME_ON_BOOT=0.
+Pre-checks: flat and unpaused. Status: "RANDOM MODE (trial 24): entries only at 00:00Z / 12:00Z, side by coin flip";
+no errors at boot; the old scans log shadow rows only. The first tick is 2026-10-02 00:00Z (a one-off read-only check is
+scheduled for 00:20Z). Note: the status scoreboard still shows "/30 convex closes" from the old trial config - trial 24's
+decision point is 100 closes or 2026-11-15 as pre-registered. Integration review minors (rare unconfirmed-order overfill
+of one WILDCARD slot; a lost ETH/ZEC TREND entry re-adopted as PMT; one failed order costs a slot until the next tick)
+are recorded in wc/TRIAL24/integration and accepted for this trial.
