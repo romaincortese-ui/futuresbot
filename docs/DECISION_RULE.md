@@ -19244,3 +19244,62 @@ candidates are shadow-logged with reason "envelope". The forward tests (F02, X01
 - data/{core,funding,xvenue}/: verified data lanes, kept for reuse
 
 Nothing was deleted.
+
+## TRIAL 23 - CLOSED EARLY BY OWNER DECISION (2026-10-01)
+
+Trial 23 (restricted entry area) is closed before its 30-close / 2026-11-15 decision point because the owner chose to go
+live with the random-direction strategy (trial 24). Result at close: 2 closes, -$1.84 (PHA early stop -$1.07, GRASS 24h
+clock -$0.77), 0 full exchange stop-outs. Too few closes to grade; recorded as UNGRADED. FUTURES_ENTRY_ENVELOPE_ENABLED is
+set to 0 with the trial-24 switch (random-mode entries bypass the area anyway).
+
+## TRIAL 24 - PRE-REGISTERED 2026-10-01T19:03Z, BEFORE THE FLAG WAS SET
+
+**Written before any variable was changed. If any line below is edited after a trial result is seen, the trial is void.**
+
+### The change, in full
+
+    FUTURES_RANDOM_MODE_ENABLED      (unset = 0)  ->  1     random-direction 12h mode (futuresbot/random_mode.py)
+    FUTURES_ENTRY_ENVELOPE_ENABLED   1 -> 0                 trial 23 closed
+    FUTURES_TRIAL_LABEL              23 -> 24
+    FUTURES_TRIAL_START_TS           1790715120 -> 1790881680   (2026-10-01T19:08:00Z)
+
+Code in the same release: the trial-24 mode (wc/TRIAL24, 70 tests; three release lenses PASS - backtest parity 168/168
+picks at all 56 backtest ticks and 300/300 seed timelines, live order safety, switch/flags/defaults) and the single-send
+order fix (assessment #3 part A, wc/HARDEN/A: externalOid on every order/create, POSTed once, looked up on timeout; one
+release-gate major fixed and re-verified). Integration of the two checked by a separate interaction review. Suite 1979.
+Unchanged: dials 1.205% both sleeves, slots TREND 2 / WILDCARD 3, every exit, the $140 floor + monthly budget rule,
+FUTURES_RESUME_ON_BOOT=0, K3.
+
+### What it does (= wc/RANDOM/PREREG.md, sha256 29fabd853a4f5d77..., as backtested)
+
+At 00:00Z and 12:00Z, on bars closed before the tick: pick the best TREND symbol (TREND rule passes ranked by 24h ROC, else
+the highest 24h ROC), the best WILDCARD-long and WILDCARD-short symbols (detector passes ranked by +/-3h ROC, else the
+largest +/-3h ROC) from the bot's own scan universe; skip held symbols; fill free slots (TREND 2, WILDCARD 3), at most one
+new position per bucket per tick; flip a fair os.urandom coin for each position's side; size and exit exactly as today,
+mirrored for shorts (TREND shorts allowed in this mode only). Old scans keep logging but open nothing; the listing veto, the
+envelope, calm/range caps, lateness re-ranking and preemption do not apply. Every tick decision is logged
+(futures_random_ticks.jsonl, metadata, feature store, shadow ledger).
+
+### What the backtest said (2026-09-03..10-01, $1,000, 10,000 coin seeds; wc/RANDOM)
+
+- Median 28-day result -$21.78 vs the live bot -$85.95 on the same basis: PASS under the owner's rule ("$0.01 better").
+- The strategy still lost money: 59% of seeds below $1,000; mean net R per trade -0.018R [-0.082, +0.052]; 5.8 trades/day;
+  fees ~$59/month at $1,000; 97% of picks were fallbacks (nothing passed the gates at the tick).
+- Thin pass (auditor): through the same simulator the live trades make -$35.04 with today's exits, margin +$13.27; with
+  stress slippage on both sides the strategy is ~$23 behind. The same picks on their natural side made +$118.94 (in-sample,
+  one path, not pre-registered).
+- At ~$190, 7.7% of rank-1 picks are refused for minimum volume (vs 1.2% at $1,000); the slot stays empty to the next tick.
+
+### How trial 24 is judged
+
+- PRIMARY: mean net R per trial-24 close (exchange net $ / intended 1R), reported with a day-block 95% interval against
+  (a) the backtest's expectation -0.018R [-0.082, +0.052] and (b) the live bot's pre-trial 4-week baseline -0.082R
+  [-0.291, +0.110]. Also: $ at actual equity, trades/day, fallback share, min-volume refusals, coin long share.
+- Decision point: 100 trial-24 closes or 2026-11-15, whichever comes first - the owner decides keep / change / stop.
+- ALERTS (the owner decides; nothing is automatic): the budget rule fires ($140 floor or the monthly upper bound < 0);
+  no tick processed for 24 h; more than 3 WILDCARD or 2 TREND positions open at once (gate minor LOS-1); any position
+  without a resting stop (K3); live picks diverging from a replay of the same tick.
+- Known minors accepted (wc/TRIAL24 gates): 1-contract rounding on ~0.1% of large positions; sizing reads the balance at
+  processing time; exchange-side close timestamps at reconcile; universe from the live ticker vs the scan journal; /pause
+  checked once per tick; /daily and the digest miscount tick trades as refused; /why ignores the mode; the daily assessment
+  task must not change the trial-24 definition mid-trial.
