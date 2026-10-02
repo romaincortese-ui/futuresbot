@@ -19335,3 +19335,21 @@ Pre-registered (PREREG.md sha256 56b083f2...) as V1 (trail from the fee threshol
 - It does enforce the retention invariant completely (violations -> 0) and halves drawdown, but it pays for that in
   dollars. Consistent with wc/EXIT (sub-1R protection -$8 to -$12/mo on TREND at $190) and "early banking measured
   harmful". VERDICT: do not ship; today's exits stay (breakeven at 0.90R, trail from 1R).
+
+### 2026-10-02 - TIGHT LOSS CUT "only allow the winning direction" (owner idea, wc/TIGHTSTOP): REJECTED
+
+Owner: "If the trade loses more than $0.50 (or 0.05R) then close it." Pre-registered (sha256 785d61cc...) as T1 (cut at
+-$0.50 unrealised at fair) and T2 (cut at -0.05R), everything else unchanged, paired vs today; two lanes + an independent
+verifier with its own algorithm (CONFIRMED).
+- PRIMARY (trial-24 random strategy, 10,000 paired seeds), variant minus today, median 28-day $: T1 -$12.68 at $190
+  (P better 15%), -$73.68 at $1,000; T2 -$11.76 at $190 (22%), -$71.74 at $1,000; no delta-R interval excludes 0 on the
+  positive side (T2 on the 168 exact paths at $190: -0.073R [-0.156, -0.0001], a measured loss).
+- T2 cuts 93.5% of trades (median ~11 min), win rate 45.6% -> 6.2%, 86.5% of eventual winners and every 3R+ winner cut;
+  5.6% are cut at the first poll (entry slippage + fair/last gap already past -0.05R). T1 ($0.50 ~ -0.42R at $190,
+  ~ -0.08R at $1,000) cuts 66% of trades and 36% of winners at $190. A cut on an eventual winner costs ~-1.2 to -1.6R; a cut
+  on a loser saves only +0.4 to +0.7R.
+- TREND year (P3): T1 -$11.0/mo [-19.5, -1.8] at $190; T2 -$15.5/mo [-28.1, -6.8]; both intervals below 0 at both stakes.
+- Trial 24's live closes: all five dipped past both levels before deciding (polled worst: BATON -0.50R, ETH -0.54R, XRP
+  -1.00R, CAP -0.98R, MANA -0.34R within 2 min) - the three winners would all have become losses.
+- Consistent with wc/SL, wc/EXIT (winners' median adverse excursion ~-0.26R) and wc/FEETRAIL. The first move does not tell
+  the winning direction. VERDICT: do not ship; today's exits stay.
