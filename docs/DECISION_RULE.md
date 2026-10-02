@@ -19315,3 +19315,23 @@ scheduled for 00:20Z). Note: the status scoreboard still shows "/30 convex close
 decision point is 100 closes or 2026-11-15 as pre-registered. Integration review minors (rare unconfirmed-order overfill
 of one WILDCARD slot; a lost ETH/ZEC TREND entry re-adopted as PMT; one failed order costs a slot until the next tick)
 are recorded in wc/TRIAL24/integration and accepted for this trial.
+
+### 2026-10-02 - FEE-COVERED TRAIL (owner idea, wc/FEETRAIL): REJECTED - every variant loses on every population
+
+Owner: "arm a trailing process right after the trade is above the threshold where fees are covered + at least $0.10".
+Pre-registered (PREREG.md sha256 56b083f2...) as V1 (trail from the fee threshold with a floor at it), V2 (floor only), V3
+(trail armed early, no floor); paired against today's exits; two lanes + an independent verifier (CONFIRMED).
+- The threshold is tiny: median ~0.10R at ~$190 (p10-p90 0.06-0.22R), ~0.035R at $1,000; 84-98% of trades arm.
+- PRIMARY (trial-24 random strategy, 10,000 paired seeds): V1 minus today, median 28-day $ -$6.03 / -$10.39 at $190 and
+  -$51.69 / -$81.24 at $1,000 (exits.py / pessimistic intrabar order); P(V1 better) 19-35%; delta R per trade -0.047
+  [-0.123, +0.027] to -0.078 [-0.142, -0.016]. Win rate 45.6% -> 76% but the average win falls from +0.98R ($1.29) to
+  +0.08R ($0.10); the average loss only improves -0.86R -> -0.51R; every eventual 3R+ winner is cut (10,043 of 10,043).
+  At $1,000 the $0.10 cushion does not cover exit slippage (91% of floor exits net negative).
+- TREND year (P3, n=335): V1 -0.147R [-0.260, -0.036] = -$15.50/mo [-25.08, -3.32] at $190; V2/V3 likewise below 0.
+- 84-trade ledger ~0; older live (P1) negative; refused WILDCARD signals (P2) positive but no interval excludes 0.
+- Trial 24's first 5 closes replayed: today +$0.79 (actual +$0.35); V1 -$1.49 / -$2.10, V2 -$0.37 / -$2.10, V3 -$1.55 /
+  -$2.16 - CAP and MANA (the two "best this week" alerts) closed at ~+$0.10 instead of +$1.20 each; XRP (peak 0.199R, its
+  threshold 0.21R) never armed.
+- It does enforce the retention invariant completely (violations -> 0) and halves drawdown, but it pays for that in
+  dollars. Consistent with wc/EXIT (sub-1R protection -$8 to -$12/mo on TREND at $190) and "early banking measured
+  harmful". VERDICT: do not ship; today's exits stay (breakeven at 0.90R, trail from 1R).
