@@ -2,6 +2,58 @@
 
 ---
 
+## Automated Assessment (run 2026-10-02 17:15Z)
+
+**Window: 2026-10-01T00:00:00Z – 23:59:59Z by exit time. 0 closes.** No skipped days.
+
+**Budget floor (0-bis):** equity **$181.75** (incl. +$1.35 unrealised, 2 open) > $140. Bot NOT paused
+(`paused=false`), RESUME_ON_BOOT=0.
+
+**Daily card (`/daily 2026-10-01`): NO ACTION.** 0 of 6 tripwires. Ledger 0 recorded = 0 exchange closes; margin 10%
+of equity (halt 45%). Decay meter 19%. Steps 1a-bis(a), 1b(c), 3, 4 and every proposal skipped.
+
+### 1. Closed trades 10-01: none
+
+Trial 23 closed and trial 24 (random-direction mode) went live 19:08Z; the first tick was 10-02 00:00Z, so 10-01 had
+no entries by design (9 `random_mode` shadow rows = old scans logging only).
+
+### 1-OPEN (at 17:15Z 10-02; both from the 12:00Z tick)
+
+| sym | sleeve | side x | held | R now | peak R | giveback | to TP | to SL | sizing |
+|---|---|---|---|---|---|---|---|---|---|
+| MANA | WILDCARD | S x2 | 5.2h | +0.73 | +0.99 | −0.26 | −36.5% | +14.6% | regime 1.00, margin 11.66/11.69 |
+| UAI | WILDCARD | S x1 | 5.2h | +0.00 | +0.12 | −0.12 | −50.0% | +20.0% | regime 0.74, margin 6.40 vs intended 8.69 |
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **236 rows** (+4 = the four 10-02 trial-24 closes; reconciles with exchange). Shadow ledger 440 rows;
+`slot_occupied` still 47 (no new rows). Random ticks logged: 2 (00:00Z, 12:00Z; universe 39 / 43).
+**Trial 24** (by entry, ≥ 10-01T19:08Z): **4 closes, net −1.02R / −$0.83 (exchange), ex-best −1.52R**, mean −0.26R per
+close — n=4, no interval worth quoting vs backtest −0.018R / baseline −0.082R. Exits: TP 0 | stop 1 | other 3.
+Not scored today (10-02 exits; they belong to tomorrow's window): BATON L −0.58R, ETH L +0.24R, XRP S −1.18R
+(exchange stop — root-cause owed in the 10-02 run), CAP S +0.50R. Trial-24 alerts: none (ticks processed, ≤3 WILDCARD /
+≤2 TREND open, both open positions have resting stops).
+
+### 1b. WILDCARD (a)(b)
+
+Entries now come from the random-mode ticks, not the scan. Old scan (10-02 17:09Z): 44 movers, 0 candidates
+(`roc_below_min` 41, `low_volume_z` 2, `no_pullback_resume` 1). No 5003/2015 rejects, no Traceback in the last 500 log
+lines.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, NO ACTION.** Flat day by design (trial switch-over); trial 24 at 4/100 closes, two shorts open.
+
+---
+
 ## Automated Assessment (run 2026-10-01 16:15Z)
 
 **Window: 2026-09-30T00:00:00Z – 23:59:59Z by exit time. 2 closes, 0 wins.** No skipped days.
