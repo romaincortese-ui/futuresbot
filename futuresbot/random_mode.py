@@ -568,9 +568,7 @@ def stamp(*, tick: int, bucket: str, cand: dict, rank_: int, field: int, side: s
     store, shadow ledger). Missing readings stay None rather than 0.0. `cfg` is the
     tick's configuration (read from the environment when not given)."""
     cfg = cfg if cfg is not None else config()
-    # The ticker turnover / range stamped are the WILDCARD universe's, as in trial 24; a TREND
-    # row's ticker values go to the tick journal only (compact), so its stamps are unchanged.
-    tk = cand.get("ticker") if isinstance(cand.get("ticker"), dict) and SLEEVE[bucket] == "WILDCARD" else {}
+    tk = cand.get("ticker") if isinstance(cand.get("ticker"), dict) else {}
     det_side = _detector_side(cand)
     out = {
         "random_mode": 1.0, "random_prereg": cfg.prereg,
@@ -596,9 +594,13 @@ def stamp(*, tick: int, bucket: str, cand: dict, rank_: int, field: int, side: s
 
 
 def compact(cand: dict, bucket: str) -> dict[str, Any]:
-    """A ranked candidate as the tick journal stores it."""
-    return {"symbol": cand.get("symbol"), "status": cand.get("status"),
-            KEY[bucket]: cand.get(KEY[bucket]), "gate_close": cand.get("gate_close"),
-            "atr_pct": cand.get("atr_pct"), "detector_side": _detector_side(cand),
-            "reject": cand.get("reject"), "calm_ratio": cand.get("calm_ratio"),
-            "turnover24_mx": cand.get("turnover24_mx"), "ticker": cand.get("ticker")}
+    """A ranked candidate as the tick journal stores it. A TREND row's 24h turnover / range
+    is added as `ticker_24h` (trial 25, C7); `ticker` stays the WILDCARD universe's."""
+    out = {"symbol": cand.get("symbol"), "status": cand.get("status"),
+           KEY[bucket]: cand.get(KEY[bucket]), "gate_close": cand.get("gate_close"),
+           "atr_pct": cand.get("atr_pct"), "detector_side": _detector_side(cand),
+           "reject": cand.get("reject"), "calm_ratio": cand.get("calm_ratio"),
+           "turnover24_mx": cand.get("turnover24_mx"), "ticker": cand.get("ticker")}
+    if "ticker_24h" in cand:
+        out["ticker_24h"] = cand["ticker_24h"]
+    return out

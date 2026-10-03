@@ -1456,7 +1456,8 @@ def test_the_journal_logs_the_full_ranking_trend_turnover_and_the_configuration(
     for b in ("TREND", "WC_LONG", "WC_SHORT"):
         assert plan["buckets"][b] == plan["buckets_all"][b][:RM.TOP_N]
     eth = next(c for c in plan["buckets"]["TREND"] if c["symbol"] == "ETH_USDT")
-    assert eth["ticker"] == {"range24": pytest.approx(0.30), "amount24": 5e6, "source": "ticker"}
+    assert eth["ticker_24h"] == {"range24": pytest.approx(0.30), "amount24": 5e6, "source": "ticker"}
+    assert eth.get("ticker") is None                  # trial 24's key on a TREND row: unchanged
     # journal only: a TREND position's stamps keep trial 24's (WILDCARD-only) ticker fields
     st = RM.stamp(tick=T, bucket="TREND", cand=eth, rank_=1, field=3, side="LONG", coin_=None,
                   ref_price=100.0, universe_n=3, held=[], cfg=plan["config"])
@@ -1468,7 +1469,9 @@ def test_the_journal_logs_the_full_ranking_trend_turnover_and_the_configuration(
             row["random_wc_min_turnover"]) == (6.0, "natural", 3.5, 2e6)
     assert [c["symbol"] for c in row["buckets_all"]["WC_LONG"]] == ["UP_USDT", "FL_USDT", "DN_USDT"]
     trend_eth = next(c for c in row["buckets"]["TREND"] if c["symbol"] == "ETH_USDT")
-    assert trend_eth["ticker"]["amount24"] == 5e6 and trend_eth["ticker"]["range24"] == pytest.approx(0.30)
+    assert trend_eth["ticker_24h"]["amount24"] == 5e6 and trend_eth["ticker_24h"]["range24"] == pytest.approx(0.30)
+    assert trend_eth["ticker"] is None                # added, never overwritten (journal as today, C7)
+    assert all("ticker_24h" not in c and c["ticker"] for c in row["buckets_all"]["WC_LONG"])
     # what it wrote before is all still there
     assert {"tick", "tick_utc", "prereg", "started_at", "done_at", "universe_n", "universe", "trend_symbols",
             "btc_flag", "unusable", "buckets", "decisions"} <= set(row)

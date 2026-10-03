@@ -8948,7 +8948,7 @@ class FuturesRuntime:
                 frame = self._random_frame(sym, tick, random_mode.TREND_BARS)
                 row = random_mode.trend_row(sym, frame, tick)
                 if sym in trend_tk:
-                    row["ticker"] = trend_tk[sym]      # journal only: 24h turnover / range
+                    row["ticker_24h"] = trend_tk[sym]  # journal only: 24h turnover / range
                 rows.append(row)
                 if row.get("usable"):
                     plan["frames"]["TREND"][sym] = random_mode.completed(frame, tick, random_mode.TREND_BARS)
