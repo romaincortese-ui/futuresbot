@@ -19392,3 +19392,16 @@ window 09-03..10-01, trial-24 rules otherwise; 10,000 paired seeds; independent 
 - Coin minus natural: median -$33 (12h) / -$39 (6h) per 28d at $190; coin beats natural on only 4-8% of seeds; 95% ranges
   end just above 0 (+$1.35, +$2.78) - not confirmed. Rests on ~5 WILDCARD winners.
 - No change. The natural-vs-coin question is read forward on trial 24's own picks at the WHY24 checkpoints.
+
+### 2026-10-03 - OPTIMUM COMBINATION across wc/FOUR x wc/CADENCE (wc/OPTIMUM, analysis only): LEAN, not confirmed
+
+Pre-registered (sha256 d5d1784e...): 64 configs (12h/6h x coin/natural per bucket x $10M filter x TREND stop 3.0/3.5,
+hands off) on 09-03..10-01; unseen history per switch; walk-forward selection check; two verifiers (no number wrong).
+- In-window #1: 6h, all natural, filter on, 3.5x: +$52.25 / +$310.77 (from $190 / $1,000); trial 24 ranks 52/64.
+  Filter excluded by the rule (unseen -0.0035R). RECOMMENDED by the rule: 6h, all natural, no filter, 3.5x, hands off:
+  +$39.23 / +$216.68, gain vs trial 24 +$43.13 [-$1.05, +$88.13] at $190.
+- Selection honesty: the picking procedure kept +$41.31 [-$28, +$110] one-week-out, +$26.60 by halves (~half survives).
+- Unseen: TREND long-only +$15/mo at $190 on the MEXC year (lost on Binance 2023-24); 3.5x +0.024R [+0.008, +0.040] (only
+  interval above 0); WILDCARD natural sides and 6h each within 0.01R of 0; every WILDCARD setup loses on the unseen year.
+- 6h is the weakest leg (late-exit tie-break drops the pick to rank 9, +$23.45). No change; read forward on trial 24's own
+  picks (natural vs coin, TREND long-only, 3.5x) at ~175 positions / 100 closes or 2026-11-15.
