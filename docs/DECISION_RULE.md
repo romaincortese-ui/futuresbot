@@ -19353,3 +19353,18 @@ verifier with its own algorithm (CONFIRMED).
   -1.00R, CAP -0.98R, MANA -0.34R within 2 min) - the three winners would all have become losses.
 - Consistent with wc/SL, wc/EXIT (winners' median adverse excursion ~-0.26R) and wc/FEETRAIL. The first move does not tell
   the winning direction. VERDICT: do not ship; today's exits stay.
+
+### 2026-10-03 - FOUR SUGGESTIONS TOGETHER (wc/FOUR): GO by the pre-registered rule - owner to decide on trial 25
+
+Owner: "Test all four together." Pre-registered (sha256 8397fe3e...): S1 WILDCARD picks need >= $10M 24h turnover, S2 TREND
+long-only (coin kept for WILDCARD), S3 TREND stop 3.5x ATR (1R in $ unchanged), S4 hands off (no manual /arm or /close).
+Rule: COMBINED paired median 28-day $ above today at $190 on the trial-24 window AND no component refuted (95% interval
+wholly below 0) on unseen history. Three lanes + two independent verifiers (every headline number reproduced).
+- Trial-24 window, 10,000 paired seeds, $190: COMBINED -$1.63 vs today -$4.86 (+$3.23; P better 57%; mean delta +$2.40,
+  day-block [-$25, +$30]). S2 +$9.15 (P 81%), S3 +$2.05, S1 -$6.42 (P 31%); S2+S3 without S1 +$5.51. In-sample for S2/S3.
+- Unseen: S2 +0.051R/trade [-0.011, +0.112] pooled (MEXC year +$15/mo at $190 [+2, +36]; Binance 2023-24 negative on its
+  own); S3 +0.024R [+0.008, +0.040], positive in every year; S2+S3 +0.075R [+0.010, +0.139]; S1 -0.005R [-0.032, +0.022]
+  (no effect). S4 from the live audit: ~+$6 [-6, +17] at $190 over 15 hand-managed trades.
+- Fragility: pooled (not per-year) judging of S2 was the lanes' pre-declared reading, not written in PREREG; per-year judging
+  drops S2 and gives NO-GO. Verifier: S3's small in-window gain inside COMBINED is coin reshuffling, not the rule.
+- Not an edge: both arms still lose in a typical month. Nothing built; owner decides.
