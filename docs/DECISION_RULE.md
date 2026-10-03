@@ -19380,3 +19380,15 @@ Owner kept trial 24 unchanged and asked which part works. Pre-registered (sha256
   from WHICH symbols it picks (WILDCARD-long bucket), not the clock (signals moved to the next tick: -0.016 to -0.043R).
 - Nothing confirmed; live and backtest disagree on the coin's sign. Coin question readable at ~175-350 positions
   (~10-30 to ~11-28); cadence not settleable live. No change.
+
+### 2026-10-03 - 6h vs 12h CADENCE x NATURAL vs COIN (wc/CADENCE, simulation only): nothing confirmed, 6h not pursued
+
+Owner asked for the last 4 weeks at a 6h and 12h cadence, natural side and coin. Pre-registered (sha256 51952af0...);
+window 09-03..10-01, trial-24 rules otherwise; 10,000 paired seeds; independent verifier (no number wrong).
+- 28-day $ from $190 / $1,000: 12h natural +$28.02 / +$118.94; 12h coin (trial 24) median -$4.86 / -$21.78; 6h natural
+  +$28.95 / +$135.31; 6h coin median -$10.20 / -$67.74; old live bot -$16.43 / -$85.95.
+- 6h vs 12h natural ~ $0 [-$49, +$53 at $190] and flips sign if a 24h exit lands after the tick's decisions; 6h coin below
+  12h coin on 62-68% of seeds. 6h: 70-84 slot-full skips/28d, +$9 (at $190) to +$49 (at $1,000) fees+slippage, deeper drawdown.
+- Coin minus natural: median -$33 (12h) / -$39 (6h) per 28d at $190; coin beats natural on only 4-8% of seeds; 95% ranges
+  end just above 0 (+$1.35, +$2.78) - not confirmed. Rests on ~5 WILDCARD winners.
+- No change. The natural-vs-coin question is read forward on trial 24's own picks at the WHY24 checkpoints.
