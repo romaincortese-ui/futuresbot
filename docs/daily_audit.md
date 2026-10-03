@@ -1,4 +1,63 @@
-# Daily Audit — 2026-09-30
+# Daily Audit — 2026-10-02
+
+---
+
+## Automated Assessment (run 2026-10-03 16:20Z)
+
+**Window: 2026-10-02T00:00:00Z – 23:59:59Z by exit time. 5 closes (all convex, trial 24).** No skipped days.
+
+**Budget floor (0-bis):** equity **$185.69** (incl. unrealised, 2 open) > $140. Bot NOT paused (`paused=false`).
+
+**Daily card (`/daily 2026-10-02`): NO ACTION.** 0 of 6 tripwires. Ledger 5 recorded = 5 exchange closes; stops −1.17R
+(band [−1.22,−0.92]); risk 0.58–1.02% (band [0.35,3.0]); slippage −6 to +49 bps (limit 100); margin 15% of equity.
+−0.22R entry-dated / −0.34R exit-dated; 1-in-2 day at 6 fills. Decay meter 4%. Steps 1a-bis(a), 1b(c), 3, 4 skipped.
+
+### 1. Closed trades 10-02 (exchange realised, net +$0.28, 3W/2L)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| BATON | WILDCARD | L x1 | 0.004305 → 0.003814 | −0.74 | −0.58 | CONVEX_EARLY_STOP |
+| ETH | TREND | L x10 | 2703.57 → 2711.63 | +0.26 | +0.24 | CONVEX_RETENTION_TRAIL |
+| XRP | TREND | S x10 | 1.5317 → 1.5539 | −1.28 | −1.18 | exchange stop |
+| CAP | WILDCARD | S x1 | 0.06998 → 0.06607 | +0.92 | +0.50 | CONVEX_RETENTION_TRAIL |
+| MANA | WILDCARD | S x2 | 0.1080 → 0.10226 | +1.11 | +0.64 | CONVEX_RETENTION_TRAIL |
+
+Exit reasons are trial-24's pre-registered stack (card: sanctioned). **SL root-cause (XRP S):** coin-flip short at the
+12:00Z tick; XRP rose +1.45% in 31 min to the resting stop. Gross −1.05R, the extra −0.13R is the x10 round-trip fee
+(−$0.13), not slippage. Mechanism = random side by design; resting stop worked (K3). Not a defect; inside the stop band.
+
+### 1-OPEN (at 16:18Z 10-03; both from the 12:00Z tick)
+
+| sym | sleeve | side x | held | R now | peak R | giveback | to TP | to SL | sizing |
+|---|---|---|---|---|---|---|---|---|---|
+| ETH | TREND | S x10 | 4.3h | +0.75 | +0.93 | −0.18 | −0.68% | +0.52% | regime 0.50, margin 21.47 vs intended 46.41 (risk cap) |
+| MAGMA | WILDCARD | S x1 | 4.3h | −0.12 | +0.07 | −0.19 | ~−100% (x1, unreachable) | +17.6% | regime 0.90, margin 6.94 vs intended 9.87 |
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **241 rows** (+5 since 10-02 run; reconciles). Shadow ledger 457 rows; `slot_occupied` still 47 (no new
+rows; random mode bypasses the scan slots). **Trial 24** (by entry, ≥ 10-01T19:08Z): **9 closes, net +1.22R / +$4.37,
+ex-best −1.26R** (VELVET +2.48R). n=9: no interval worth quoting vs backtest −0.018R / baseline −0.082R.
+Exits: TP 0 | stop 2 | other 7. Trial-24 alerts: none (≤3 WILDCARD / ≤2 TREND open, both with resting stops).
+Not scored today (10-03 exits): CT S −1.04R (exchange stop — root-cause owed tomorrow), XRP L +0.04R, VELVET S +2.48R,
+UAI S +0.12R (time stop).
+
+### 1b. WILDCARD (a)(b)
+
+Old scan (10-03 16:14Z): 57 movers, 0 candidates (`roc_below_min` 55, `no_pullback_resume` 2). No 5003/2015 rejects and
+no Traceback in the last 1,500 log lines.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, NO ACTION.** 5 closes, +$0.28 / −0.34R; trial 24 at 9/100 closes.
 
 ---
 
