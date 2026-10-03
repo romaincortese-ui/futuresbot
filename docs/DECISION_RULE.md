@@ -19405,3 +19405,18 @@ hands off) on 09-03..10-01; unseen history per switch; walk-forward selection ch
   interval above 0); WILDCARD natural sides and 6h each within 0.01R of 0; every WILDCARD setup loses on the unseen year.
 - 6h is the weakest leg (late-exit tie-break drops the pick to rank 9, +$23.45). No change; read forward on trial 24's own
   picks (natural vs coin, TREND long-only, 3.5x) at ~175 positions / 100 closes or 2026-11-15.
+
+### 2026-10-03 - TRIAL 25 PRE-REGISTERED (rank 2 of wc/OPTIMUM) - NOT BUILT, NOT LIVE; trial 24 continues unchanged
+
+Owner: "Write the pre-registration for trial 25 with rank 2." File: futuresbot-evidence/wc/TRIAL25/PREREG.md, sha256
+23840ce65807b549... (reviewed adversarially before hashing; findings in wc/TRIAL25/review_*.md).
+- Config: ticks 00/06/12/18Z; natural side every bucket (TREND long, WC-long long, WC-short short); TREND stop 3.5x ATR;
+  everything else as trial 24; hands off (malfunction exception logged).
+- Start gate, read once at trial 24's decision point (100th close or 2026-11-15): rank 2 replayed minus trial 24 replayed
+  (seed median) > $0 at $190 AND no component (natural-minus-coin per bucket, TREND 3.5x on the long side, the 6h leg) with
+  a 95% interval wholly below 0 -> RECOMMEND START; the owner decides. Replaces the OPTIMUM/CADENCE switch condition.
+- Trial 25 primary at 250 closes or 2026-12-31: replay vs replay on the same logged ticks; KEEP if > $0, else REVERT;
+  CONFIRMED only if the day-block interval excludes 0 (needs ~+$46/30d at $190 - not expected). A deposit opens a new
+  segment. Rank 1 is never switched mid-trial; it becomes trial 26 (one setting) only if its replay beats rank 2.
+- Needs: P0 evidence-archive fix (tick journal + all list symbols; MEXC 1m data from 10-01 rolls off ~10-31) and B1/B2 build
+  (cadence, side mode and turnover floor become settings defaulting to trial 24) - each on the owner's go-ahead.
