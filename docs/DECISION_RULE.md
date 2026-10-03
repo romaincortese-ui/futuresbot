@@ -19420,3 +19420,10 @@ Owner: "Write the pre-registration for trial 25 with rank 2." File: futuresbot-e
   segment. Rank 1 is never switched mid-trial; it becomes trial 26 (one setting) only if its replay beats rank 2.
 - Needs: P0 evidence-archive fix (tick journal + all list symbols; MEXC 1m data from 10-01 rolls off ~10-31) and B1/B2 build
   (cadence, side mode and turnover floor become settings defaulting to trial 24) - each on the owner's go-ahead.
+
+### 2026-10-03 - TRIAL 25 BUILT (not deployed): branch t25-build e93a916
+
+B1/B2 of wc/TRIAL25/PREREG.md: FUTURES_RANDOM_TICK_HOURS / _SIDE_MODE / _WC_MIN_TURNOVER (defaults = trial 24), natural
+side, PREREG tag per configuration, full-ranking tick journal. Unset: trial-24 parity 168/168 picks, 300/300 timelines,
+same exchange calls and coin draws. 6/natural/3.5: reproduces wc/OPTIMUM rank 2 on all 112 six-hour ticks. Suite 2030
+passed; 3-lens release gate PASS. Release note: wc/TRIAL25/build/RELEASE.md. Deploy (a restart) and start need the owner.
