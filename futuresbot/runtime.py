@@ -8728,30 +8728,33 @@ class FuturesRuntime:
             log.warning("[SQUEEZE_SCAN] failed: %s", exc)
 
     # ------------------------------------------------------------------
-    # TRIAL 24 - THE RANDOM-DIRECTION STRATEGY (FUTURES_RANDOM_MODE_ENABLED, default 0).
+    # TRIALS 24 / 25 - THE RANDOM-TICK STRATEGY (FUTURES_RANDOM_MODE_ENABLED, default 0).
     #
-    # Frozen definition: wc/RANDOM/PREREG.md (sha256 29fabd853a4f5d77...). Selection is
-    # futuresbot.random_mode (the backtest's ranking, ported); everything after the pick
-    # - sizing, the order, the resting stop, the exits, reconcile - is the live convex
-    # path, unchanged. With the switch off none of this runs.
+    # Frozen definitions: wc/RANDOM/PREREG.md (sha256 29fabd853a4f5d77..., 12h / coin /
+    # TREND stop 3.0 - the default) and wc/TRIAL25/PREREG.md (sha256 23840ce65807b549...,
+    # 6h / natural / 3.5), chosen by FUTURES_RANDOM_TICK_HOURS, FUTURES_RANDOM_SIDE_MODE,
+    # FUTURES_TREND_SL_ATR_MULT and FUTURES_RANDOM_WC_MIN_TURNOVER, read once per tick
+    # (random_mode.config). Selection is futuresbot.random_mode (the backtest's ranking,
+    # ported); everything after the pick - sizing, the order, the resting stop, the exits,
+    # reconcile - is the live convex path, unchanged. With the switch off none of this runs.
     # ------------------------------------------------------------------
     def _random_mode_sleep_seconds(self, seconds: float) -> float:
-        """Cycle sleep, shortened so the first cycle after a 00:00Z / 12:00Z tick starts
+        """Cycle sleep, shortened so the first cycle after a tick (12h or 6h) starts
         within a second of it (every few seconds while a tick waits on a 24h clock).
         Returned unchanged when the mode is off."""
         if not random_mode.enabled():
             return seconds
         now = time.time()
-        cap = random_mode.next_tick(now) - now + 1.0
+        cap = random_mode.next_tick(now, random_mode.config().tick_seconds) - now + 1.0
         if self._random_tick_pending is not None:
             cap = min(cap, 5.0)
         return max(1, int(math.ceil(min(float(seconds), cap))))
 
     def _random_mode_shadow_once(self, sig: Any, kind: str) -> None:
         """A candidate the switched-off scan entry path would have taken, shadow-logged as
-        "random_mode" once per (sleeve, symbol, side) per 12h tick."""
+        "random_mode" once per (sleeve, symbol, side) per tick."""
         try:
-            period = random_mode.tick_at(time.time())
+            period = random_mode.tick_at(time.time(), random_mode.config().tick_seconds)
             key = (str(kind).upper(), str(getattr(sig, "symbol", "")), str(getattr(sig, "side", "")),
                    period)
             if key in self._random_mode_logged:
@@ -8769,15 +8772,23 @@ class FuturesRuntime:
             return None
         now = time.time()
         state = self._random_mode_state or {}
-        parts = ["🎲 <b>RANDOM MODE</b> (trial 24): entries only at 00:00Z / 12:00Z, "
-                 "side by coin flip"]
+        cfg = random_mode.config()
+        if not cfg.valid:
+            return ("🎲 <b>RANDOM MODE</b>: ⚠️ <b>invalid settings - ticks are NOT processed</b>: "
+                    + html.escape("; ".join(cfg.errors)))
+        hours = " / ".join(f"{h:02d}:00Z" for h in range(0, 24, cfg.tick_hours))
+        side = ("side by coin flip" if cfg.side_mode == "coin"
+                else "natural side (TREND long, WILDCARD-long long, WILDCARD-short short)")
+        parts = [f"🎲 <b>RANDOM MODE</b> ({cfg.trial}): entries only at {hours}, {side}",
+                 f"every {cfg.tick_hours}h · {cfg.side_mode} · TREND stop {cfg.trend_sl_mult:g}x ATR"
+                 f" · WILDCARD turnover ≥ ${cfg.wc_min_turnover:,.0f} · PREREG {cfg.prereg}"]
         last = state.get("last_tick")
         if last:
             stamp = random_mode.utc(last) or ""
             opened = (state.get("summary") or {}).get("opened")
             parts.append(f"last tick {stamp[5:10]} {stamp[11:16]}Z"
                          + (f" opened <b>{int(opened)}</b>" if opened is not None else ""))
-        nxt = random_mode.utc(random_mode.next_tick(now)) or ""
+        nxt = random_mode.utc(random_mode.next_tick(now, cfg.tick_seconds)) or ""
         parts.append(f"next {nxt[11:16]}Z")
         if self._random_tick_pending is not None:
             parts.append("tick waiting on a 24h clock")
@@ -8793,9 +8804,11 @@ class FuturesRuntime:
         try:
             tick = str(md.get("random_tick_utc") or "")
             coin = md.get("random_coin")
+            how = ("natural side" if md.get("random_side_mode") == "natural"
+                   else f"coin {'?' if coin is None else int(float(coin))}")
             return (f"🎲 tick {tick[11:16]}Z · {html.escape(str(md.get('random_bucket')))} "
                     f"#{int(float(md.get('random_rank') or 0))} ({html.escape(str(md.get('random_status')))})"
-                    f" · coin {'?' if coin is None else int(float(coin))} → "
+                    f" · {how} → "
                     f"<b>{html.escape(str(md.get('random_side')))}</b>"
                     f" (natural {html.escape(str(md.get('random_natural_side')))})\n")
         except Exception:                          # pragma: no cover - presentation only
@@ -8890,11 +8903,17 @@ class FuturesRuntime:
                 px = 0.0
         return px
 
-    def _random_tick_select(self, tick: int) -> dict[str, Any]:
-        """Rank the three buckets at `tick`. I/O (ticker, 15m klines, the BTC flag); no
-        orders. Raises if the ticker cannot be read, so the tick is retried."""
+    def _random_tick_select(self, tick: int, cfg: Any = None) -> dict[str, Any]:
+        """Rank the three buckets at `tick` under the tick's configuration `cfg`
+        (random_mode.config() when not given). I/O (ticker, 15m klines, the BTC flag); no
+        orders. Raises if the ticker cannot be read, so the tick is retried.
+        plan["buckets"] = the top-10 lists the picks come from; plan["buckets_all"] = every
+        usable row of each bucket's ranking (the journal's record; the same order)."""
+        cfg = cfg if cfg is not None else random_mode.config()
         plan: dict[str, Any] = {"tick": int(tick), "buckets": {}, "frames": {"WILDCARD": {}, "TREND": {}},
-                                "universe": [], "unusable": [], "trend_symbols": [], "btc_flag": None}
+                                "universe": [], "unusable": [], "trend_symbols": [], "btc_flag": None,
+                                "buckets_all": {}, "config": cfg}
+        tickers = None
         if wildcard_enabled():
             self._refresh_non_crypto_universe()
             tickers = self.client.get_all_tickers() or []
@@ -8902,7 +8921,7 @@ class FuturesRuntime:
                 raise RuntimeError("empty ticker list")
             majors = self._major_symbols(tickers, random_mode.MAJORS_BAND)
             uni = random_mode.universe(tickers, majors=majors, tradeable=self._is_tradeable_crypto,
-                                       range_of=self._range_24h)
+                                       range_of=self._range_24h, min_turnover=cfg.wc_min_turnover)
             plan["universe"] = [[s, round(tk["range24"], 5), round(tk["amount24"], 1)] for s, tk in uni]
             rows = []
             for sym, tk in uni:
@@ -8913,23 +8932,31 @@ class FuturesRuntime:
                     plan["frames"]["WILDCARD"][sym] = random_mode.completed(frame, tick, random_mode.WC_BARS)
                 else:
                     plan["unusable"].append({"symbol": sym, "why": row.get("why")})
-            plan["buckets"]["WC_LONG"], plan["buckets"]["WC_SHORT"] = random_mode.rank_wildcard(rows)
+            longs, shorts = random_mode.rank_wildcard(rows, top_n=None)
+            plan["buckets_all"]["WC_LONG"], plan["buckets_all"]["WC_SHORT"] = longs, shorts
+            plan["buckets"]["WC_LONG"] = longs[:random_mode.TOP_N]
+            plan["buckets"]["WC_SHORT"] = shorts[:random_mode.TOP_N]
         if trend_enabled():
             symbols = [s.upper() for s in trend_symbols()]
             rotating = self._trend_rotation_symbol()
             if rotating and rotating.upper() not in symbols:
                 symbols.append(rotating.upper())
             plan["trend_symbols"] = symbols
+            trend_tk = self._random_trend_tickers(symbols, tickers)
             rows = []
             for sym in symbols:
                 frame = self._random_frame(sym, tick, random_mode.TREND_BARS)
                 row = random_mode.trend_row(sym, frame, tick)
+                if sym in trend_tk:
+                    row["ticker"] = trend_tk[sym]      # journal only: 24h turnover / range
                 rows.append(row)
                 if row.get("usable"):
                     plan["frames"]["TREND"][sym] = random_mode.completed(frame, tick, random_mode.TREND_BARS)
                 else:
                     plan["unusable"].append({"symbol": sym, "why": row.get("why"), "sleeve": "TREND"})
-            plan["buckets"]["TREND"] = random_mode.rank_trend(rows)
+            ranked = random_mode.rank_trend(rows, top_n=None)
+            plan["buckets_all"]["TREND"] = ranked
+            plan["buckets"]["TREND"] = ranked[:random_mode.TOP_N]
             flagged, fields = self._btc_exhaustion_flag(asof=tick)
             plan["btc_flag"] = {"flagged": bool(flagged), **fields}
         # An exchange outage is not a market: with half or more of the kline requests
@@ -8939,6 +8966,25 @@ class FuturesRuntime:
         if asked and failed * 2 >= asked:
             raise RuntimeError("klines unavailable for %d of %d symbols" % (failed, asked))
         return plan
+
+    def _random_trend_tickers(self, symbols: list[str], tickers: list[dict] | None) -> dict[str, dict]:
+        """{symbol: {range24, amount24, source}} for the TREND symbols, from the tick's
+        ticker list (read here when the WILDCARD block did not). Telemetry for the tick
+        journal only; never raises, never changes the selection."""
+        try:
+            if tickers is None:
+                tickers = self.client.get_all_tickers() or []
+            want = set(symbols)
+            out: dict[str, dict] = {}
+            for t in tickers:
+                sym = str(t.get("symbol") or "")
+                if sym in want:
+                    out[sym] = {"range24": float(self._range_24h(t) or 0.0),
+                                "amount24": float(t.get("amount24") or 0.0), "source": "ticker"}
+            return out
+        except Exception as exc:                   # pragma: no cover - telemetry only
+            log.info("[RANDOM_TICK] TREND ticker values unavailable: %s", exc)
+            return {}
 
     def _random_record(self, plan: dict[str, Any], bucket: str, cand: dict[str, Any], rank_: int,
                        field: int, held: list[str], decision: str, *, coin_: int | None = None,
@@ -8960,21 +9006,23 @@ class FuturesRuntime:
                 tick=plan["tick"], bucket=bucket, cand=cand, rank_=rank_, field=field, side=sig.side,
                 coin_=coin_, ref_price=ref, universe_n=len(plan.get("universe") or []), held=held,
                 regime_mult=regime, btc_flag=(btc or {}).get("flagged") if btc else None,
-                decision=decision)
+                decision=decision, cfg=plan.get("config"))
             self._pending_entry_lateness = None
             self._shadow_log_untaken(sig, sleeve, "random_tick:" + decision, extra_fields=fields)
         except Exception as exc:                   # pragma: no cover - telemetry only
             log.debug("random tick shadow row failed for %s: %s", cand.get("symbol"), exc)
 
     def _random_open(self, plan: dict[str, Any], bucket: str, cand: dict[str, Any], rank_: int,
-                     field: int, coin_: int, held: list[str]) -> dict[str, Any]:
-        """Open one bucket's pick on the coin's side through the live convex entry. The
+                     field: int, coin_: int | None, held: list[str]) -> dict[str, Any]:
+        """Open one bucket's pick on the tick's side (the coin's, or the bucket's natural
+        side in side mode natural, coin_ None) through the live convex entry. The
         decision record says what happened; a refused fill leaves the slot empty until
         the next tick (no next-best retry), as in the backtest."""
         tick = int(plan["tick"])
         sleeve = random_mode.SLEEVE[bucket]
         sym = cand["symbol"]
-        side = random_mode.coin_side(coin_)
+        cfg = plan.get("config") or random_mode.config()
+        side = random_mode.side_for(bucket, cfg.side_mode, coin_)
         d: dict[str, Any] = {"tick": tick, "bucket": bucket, "sleeve": sleeve,
                              "natural_side": random_mode.NATURAL[bucket], "symbol": sym,
                              "rank": rank_, "status": cand.get("status"), "coin": coin_, "side": side,
@@ -9014,7 +9062,8 @@ class FuturesRuntime:
                     tick=tick, bucket=bucket, cand=cand, rank_=rank_, field=field, side=side,
                     coin_=coin_, ref_price=ref, universe_n=len(plan.get("universe") or []),
                     held=held, regime_mult=regime,
-                    btc_flag=(btc or {}).get("flagged") if btc else None, decision="opened")}
+                    btc_flag=(btc or {}).get("flagged") if btc else None, decision="opened",
+                    cfg=cfg)}
                 self._pending_entry_lateness = None
                 self._pending_candidate_rank = float(rank_)
                 self._pending_candidate_field = float(field)
@@ -9040,8 +9089,10 @@ class FuturesRuntime:
         return d
 
     def _random_tick_execute(self, plan: dict[str, Any]) -> list[dict[str, Any]]:
-        """The three buckets in order: slot check, held skip (next best), coin, open."""
+        """The three buckets in order: slot check, held skip (next best), side (one coin
+        per decided position in side mode coin; none in natural), open."""
         tick = int(plan["tick"])
+        cfg = plan.get("config") or random_mode.config()
         held_set, count = self._random_book_at(tick)
         caps = {"TREND": trend_max_positions(), "WILDCARD": wildcard_max_positions()}
         decisions: list[dict[str, Any]] = []
@@ -9077,7 +9128,8 @@ class FuturesRuntime:
             if pick is None:
                 decisions.append({**base, "decision": "no_candidate"})
                 continue
-            d = self._random_open(plan, bucket, pick, rank_, field, random_mode.coin(), held)
+            coin_ = random_mode.coin() if cfg.side_mode == "coin" else None
+            d = self._random_open(plan, bucket, pick, rank_, field, coin_, held)
             decisions.append(d)
             if d.get("decision") == "opened":
                 held_set.add(pick["symbol"])
@@ -9087,16 +9139,22 @@ class FuturesRuntime:
     def _random_journal(self, plan: dict[str, Any], decisions: list[dict[str, Any]],
                         started_at: float) -> None:
         """One line per processed tick: the universe, the ranked lists, every decision -
-        the record trial 24 is compared with the backtest on, tick by tick. Never raises."""
+        the record a trial is compared with the backtest on, tick by tick - plus the
+        tick's effective configuration and PREREG tag, and every usable row of each
+        bucket's ranking ("buckets_all"; "buckets" keeps the top 10). Never raises."""
         try:
             tick = int(plan["tick"])
-            row = {"tick": tick, "tick_utc": random_mode.utc(tick), "prereg": random_mode.PREREG_TAG,
+            cfg = plan.get("config") or random_mode.config()
+            row = {"tick": tick, "tick_utc": random_mode.utc(tick), "prereg": cfg.prereg,
+                   **cfg.fields(),
                    "started_at": round(started_at, 1), "done_at": round(time.time(), 1),
                    "universe_n": len(plan.get("universe") or []), "universe": plan.get("universe"),
                    "trend_symbols": plan.get("trend_symbols"), "btc_flag": plan.get("btc_flag"),
                    "unusable": plan.get("unusable"),
                    "buckets": {b: [random_mode.compact(c, b) for c in cands]
                                for b, cands in (plan.get("buckets") or {}).items()},
+                   "buckets_all": {b: [random_mode.compact(c, b) for c in cands]
+                                   for b, cands in (plan.get("buckets_all") or {}).items()},
                    "decisions": decisions}
             path = self._random_journal_path()
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -9105,9 +9163,42 @@ class FuturesRuntime:
         except Exception as exc:                   # pragma: no cover - telemetry only
             log.warning("[RANDOM_TICK] journal write failed: %s", exc)
 
+    def _random_mode_boot_log(self) -> None:
+        """Boot: the random mode's effective settings (and an alert when they are invalid -
+        no tick will run - or match no pre-registration). Silent when the mode is off."""
+        if not random_mode.enabled():
+            return
+        rcfg = random_mode.config()
+        if not rcfg.valid:
+            log.error("[RANDOM_MODE] ON with INVALID settings - ticks will NOT be processed: %s",
+                      "; ".join(rcfg.errors))
+            self._notify_once(
+                "random_config_invalid_boot",
+                f"🚨 <b>Random mode: invalid settings</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"{html.escape('; '.join(rcfg.errors))}. No tick is processed until they are fixed.",
+                cooldown_seconds=3600)
+            return
+        log.warning("[RANDOM_MODE] ON (%s, PREREG %s): %s; the WILDCARD / TREND scans log "
+                    "shadow rows only. Last processed tick: %s", rcfg.trial, rcfg.prereg,
+                    rcfg.describe(),
+                    random_mode.utc((self._random_mode_state or {}).get("last_tick")) or "none")
+        if rcfg.prereg == random_mode.UNREGISTERED:
+            self._notify_once(
+                "random_config_unregistered_boot",
+                f"⚠️ <b>Random mode: unregistered configuration</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"{html.escape(rcfg.describe())}. It matches no pre-registration.",
+                cooldown_seconds=3600)
+
     def _maybe_random_tick(self) -> None:
-        """Trial 24's only entry path: once per 00:00Z / 12:00Z tick, at the first cycle
-        after it (the cycle sleep is shortened to land there).
+        """The random mode's only entry path: once per tick (every 12h or 6h, see
+        random_mode.config), at the first cycle after it (the cycle sleep is shortened to
+        land there). The configuration is read ONCE here and carried by the plan.
+
+        INVALID SETTINGS: a due tick is not processed (nor marked) and the owner is alerted
+        once per tick; never a silent fallback. A valid but unregistered combination runs,
+        stamped "unregistered", with an alert.
 
         ONCE ONLY, ACROSS RESTARTS. The tick is persisted in the state file AFTER the
         selection and BEFORE the first order. A restart within the 15-minute grace
@@ -9120,9 +9211,23 @@ class FuturesRuntime:
         if not random_mode.enabled():
             self._random_tick_pending = None
             return
+        cfg = random_mode.config()
         now = time.time()
-        tick = random_mode.due_tick(now, (self._random_mode_state or {}).get("last_tick"))
+        tick = random_mode.due_tick(now, (self._random_mode_state or {}).get("last_tick"),
+                                    tick_seconds=cfg.tick_seconds)
         if tick is None:
+            self._random_tick_pending = None
+            return
+        if not cfg.valid:
+            log.error("[RANDOM_TICK] %s NOT processed: invalid settings: %s", random_mode.utc(tick),
+                      "; ".join(cfg.errors))
+            self._notify_once(
+                f"random_config_invalid_{tick}",
+                f"🚨 <b>Random mode: tick NOT processed</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"Tick {html.escape(str(random_mode.utc(tick)))} was skipped: invalid settings: "
+                f"{html.escape('; '.join(cfg.errors))}. No tick runs until they are fixed.",
+                cooldown_seconds=24 * 3600)
             self._random_tick_pending = None
             return
         if self._paused or self._strategies_retired():
@@ -9140,13 +9245,24 @@ class FuturesRuntime:
             self._random_tick_pending = tick
             return
         self._random_tick_pending = None
+        if cfg.prereg == random_mode.UNREGISTERED:
+            log.warning("[RANDOM_TICK] %s runs an UNREGISTERED configuration: %s",
+                        random_mode.utc(tick), cfg.describe())
+            self._notify_once(
+                f"random_config_unregistered_{tick}",
+                f"⚠️ <b>Random mode: unregistered configuration</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"Tick {html.escape(str(random_mode.utc(tick)))} runs {html.escape(cfg.describe())}. "
+                f"It matches no pre-registration; positions are stamped \"unregistered\".",
+                cooldown_seconds=24 * 3600)
         started = time.time()
         try:
-            plan = self._random_tick_select(tick)
+            plan = self._random_tick_select(tick, cfg)
         except Exception as exc:
             log.warning("[RANDOM_TICK] %s selection failed (retried next cycle within the %ds "
                         "grace): %s", random_mode.utc(tick), random_mode.TICK_GRACE_SECONDS, exc)
             return
+        plan["config"] = cfg
         self._random_mode_state = {"last_tick": int(tick), "processed_at": round(time.time(), 1)}
         self._save_state()                         # marked BEFORE any order
         try:
@@ -14792,11 +14908,7 @@ class FuturesRuntime:
         # funding-gate state, leverage band, Sprint flags) on redeploy without
         # diffing Railway env against code defaults.
         self._log_boot_manifest()
-        if random_mode.enabled():
-            log.warning("[RANDOM_MODE] ON (trial 24, PREREG %s): entries only at 00:00Z / 12:00Z, "
-                        "coin-flip side; the WILDCARD / TREND scans log shadow rows only. "
-                        "Last processed tick: %s", random_mode.PREREG_TAG,
-                        random_mode.utc(self._random_mode_state.get("last_tick")) or "none")
+        self._random_mode_boot_log()
         # Gate B B4 (memo 1 §7): validate MEXC contract-spec for every active
         # symbol before the first cycle — refuses to start in strict mode if
         # contractSize/minVol/takerFeeRate don't match expected values.

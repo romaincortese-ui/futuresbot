@@ -1,20 +1,35 @@
-"""Trial 24: the random-direction strategy, live (FUTURES_RANDOM_MODE_ENABLED, default OFF).
+"""Trials 24 and 25: the random-tick strategy, live (FUTURES_RANDOM_MODE_ENABLED, default OFF).
 
-THE FROZEN DEFINITION is wc/RANDOM/PREREG.md (sha256 29fabd853a4f5d77...) with the
-interpretations its backtest had to choose (wc/RANDOM/build/DEVIATIONS.md). This module
-is the backtest's selection code moved into the package: `wildcard_row`, `trend_row`
-and `rank` are ports of wc/RANDOM/build/_scripts/b02_candidates.py, line for line, and
-`build_signal` is the detectors' own stop / leverage / target arithmetic
-(wildcard.py, trend.py) applied to the side the coin picked instead of the detector's.
+THE FROZEN DEFINITIONS. Two registered configurations; which one a tick runs is read from
+four settings ONCE per tick (`config()`), and every position and tick-journal row is
+stamped with the effective values and the tag of the PREREG they match:
+  - TRIAL 24 = wc/RANDOM/PREREG.md (sha256 29fabd853a4f5d77...) with the interpretations
+    its backtest had to choose (wc/RANDOM/build/DEVIATIONS.md): ticks every 12h
+    (00:00Z, 12:00Z), side by a fair coin, TREND stop 3.0 x ATR14%, WILDCARD ticker 24h
+    turnover >= $2M. FUTURES_RANDOM_TICK_HOURS=12, FUTURES_RANDOM_SIDE_MODE=coin,
+    FUTURES_TREND_SL_ATR_MULT=3.0, FUTURES_RANDOM_WC_MIN_TURNOVER=2000000 - also what
+    unset or blank settings give.
+  - TRIAL 25 = wc/TRIAL25/PREREG.md (sha256 23840ce65807b549...; rank 2 of wc/OPTIMUM,
+    `6h|NNN|liq0|3.5`): ticks every 6h (00:00Z, 06:00Z, 12:00Z, 18:00Z), natural side
+    for every bucket (TREND LONG, WILDCARD-long LONG, WILDCARD-short SHORT; no coin),
+    TREND stop 3.5 x ATR14%, WILDCARD turnover >= $2M. Everything else as trial 24.
+  - Any other valid combination runs, stamped "unregistered", and the owner is alerted;
+    an invalid value stops the ticks (not processed) and alerts - never a silent fallback.
+This module is the backtest's selection code moved into the package: `wildcard_row`,
+`trend_row` and `rank` are ports of wc/RANDOM/build/_scripts/b02_candidates.py, line for
+line, and `build_signal` is the detectors' own stop / leverage / target arithmetic
+(wildcard.py, trend.py) applied to the side the tick chose instead of the detector's.
 
 What one tick does (the runtime drives it, see FuturesRuntime._maybe_random_tick):
-  - at 00:00Z and 12:00Z, using only 15m bars CLOSED before the tick;
+  - at every tick of the cadence, using only 15m bars CLOSED before the tick;
   - three buckets, in this order: TREND, WILDCARD-long, WILDCARD-short;
   - each bucket ranks its candidates (detector passes first, then the fallback by the
     bucket's own ROC), skips symbols already held, and opens at most ONE position if
     its sleeve has a free slot (TREND 2, WILDCARD 3 shared by both WILDCARD buckets);
-  - the direction is a fair coin from os.urandom, ignoring the bucket's natural side;
-  - sizing and exits are the live ones, unchanged.
+  - the direction is a fair coin from os.urandom (side mode coin), or the bucket's
+    natural side (side mode natural, no coin drawn);
+  - sizing and exits are the live ones, unchanged (a TREND stop multiple moves 1R's
+    price distance; every R-based level follows it).
 Runtime-level gates the backtest did NOT apply (calm-ratio cap, long 24h-range cap,
 external listing veto, entry envelope, lateness re-ranking, preemption) are not applied.
 
@@ -24,6 +39,7 @@ from __future__ import annotations
 
 import math
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
@@ -41,10 +57,15 @@ from futuresbot.wildcard import (
 )
 
 PREREG_SHA256 = "29fabd853a4f5d77526a544f528692c733e55d8b667f24e119c6a095bf9d94b6"
-PREREG_TAG = PREREG_SHA256[:16]
+PREREG_TAG = PREREG_SHA256[:16]                                    # trial 24
+PREREG25_SHA256 = "23840ce65807b549a406a531c0b05d4b677ead981c84ad0c8fc4f5ecc4a8e89f"
+PREREG25_TAG = PREREG25_SHA256[:16]                                # trial 25
+UNREGISTERED = "unregistered"
 
 # ---- the frozen definition ---------------------------------------------------------
-TICK_SECONDS = 12 * 3600            # 00:00Z and 12:00Z (the epoch is 00:00Z, 43200 | 86400)
+TICK_SECONDS = 12 * 3600            # default (trial 24): 00:00Z and 12:00Z (the epoch is 00:00Z, 43200 | 86400)
+TICK_HOURS_ALLOWED = (12, 6)        # FUTURES_RANDOM_TICK_HOURS; 6 = 00:00Z, 06:00Z, 12:00Z, 18:00Z
+SIDE_MODES = ("coin", "natural")    # FUTURES_RANDOM_SIDE_MODE
 BAR_SECONDS = 900                   # 15m bars
 # A tick is processed by the first cycle after it. A restart (or a pause) that lands
 # within this grace still processes the tick once; later than that the tick is skipped
@@ -62,7 +83,8 @@ NATURAL = {"TREND": "LONG", "WC_LONG": "LONG", "WC_SHORT": "SHORT"}
 KEY = {"TREND": "roc24h", "WC_LONG": "roc3h", "WC_SHORT": "roc3h"}
 
 # WILDCARD universe (PREREG): USDT perps outside the top-24 turnover majors band,
-# 24h turnover >= $2M, 24h range >= 7%. Fixed here, not read from the scan's env.
+# 24h turnover >= $2M, 24h range >= 7%. Fixed here, not read from the scan's env; the
+# turnover floor is the default of FUTURES_RANDOM_WC_MIN_TURNOVER.
 MAJORS_BAND = 24
 UNIVERSE_MIN_TURNOVER = 2_000_000.0
 UNIVERSE_MIN_RANGE = 0.07
@@ -80,8 +102,16 @@ STAMP_KEYS = (
     "random_detector_reject", "random_natural_side", "random_coin", "random_side",
     "random_ref_price", "random_regime_mult", "random_universe_n", "random_held_skipped",
     "random_held_symbols", "random_btc_flag", "random_turnover_24h", "random_range_24h",
-    "random_decision",
+    "random_decision", "random_tick_hours", "random_side_mode", "random_trend_sl_mult",
+    "random_wc_min_turnover",
 )
+
+# (tick hours, side mode, TREND stop multiple, WILDCARD turnover floor) -> the PREREG tag.
+REGISTERED = {
+    (12, "coin", 3.0, 2_000_000.0): PREREG_TAG,
+    (6, "natural", 3.5, 2_000_000.0): PREREG25_TAG,
+}
+TRIAL_OF_TAG = {PREREG_TAG: "trial 24", PREREG25_TAG: "trial 25"}
 
 
 def enabled() -> bool:
@@ -89,24 +119,115 @@ def enabled() -> bool:
     return _b("FUTURES_RANDOM_MODE_ENABLED", False)
 
 
+# ---- the tick's configuration (read once per tick) ---------------------------------------
+
+@dataclass(frozen=True)
+class TickConfig:
+    """The settings one tick runs with. `errors` non-empty = invalid: the tick is not
+    processed (the fields then hold the defaults and must not be traded on)."""
+    tick_hours: int = 12
+    side_mode: str = "coin"
+    trend_sl_mult: float = 3.0
+    wc_min_turnover: float = UNIVERSE_MIN_TURNOVER
+    errors: tuple[str, ...] = ()
+
+    @property
+    def valid(self) -> bool:
+        return not self.errors
+
+    @property
+    def tick_seconds(self) -> int:
+        return int(self.tick_hours) * 3600
+
+    @property
+    def prereg(self) -> str:
+        """The tag of the PREREG this combination is, else "unregistered"."""
+        key = (int(self.tick_hours), self.side_mode, float(self.trend_sl_mult), float(self.wc_min_turnover))
+        return REGISTERED.get(key, UNREGISTERED)
+
+    @property
+    def trial(self) -> str:
+        return TRIAL_OF_TAG.get(self.prereg, "UNREGISTERED")
+
+    def fields(self) -> dict[str, Any]:
+        """The effective values as stamped on positions, shadow rows and journal rows."""
+        return {"random_tick_hours": float(self.tick_hours), "random_side_mode": self.side_mode,
+                "random_trend_sl_mult": float(self.trend_sl_mult),
+                "random_wc_min_turnover": float(self.wc_min_turnover)}
+
+    def describe(self) -> str:
+        """One line: the effective values (boot log, /status, alerts)."""
+        hours = " / ".join(f"{h:02d}:00Z" for h in range(0, 24, int(self.tick_hours)))
+        return (f"ticks every {int(self.tick_hours)}h ({hours}), side {self.side_mode}, "
+                f"TREND stop {float(self.trend_sl_mult):g}x ATR, WILDCARD turnover >= "
+                f"${float(self.wc_min_turnover):,.0f}, PREREG {self.prereg}")
+
+
+def _setting(name: str) -> str | None:
+    """The raw value, stripped; None when unset or blank (blank reads as unset, C26)."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return raw.strip()
+
+
+def config() -> TickConfig:
+    """FUTURES_RANDOM_TICK_HOURS (12 | 6, default 12), FUTURES_RANDOM_SIDE_MODE (coin |
+    natural, default coin), FUTURES_RANDOM_WC_MIN_TURNOVER (> 0, default 2000000) and the
+    TREND stop multiple the order uses (FUTURES_TREND_SL_ATR_MULT, default 3.0, read as
+    trend.py reads it). Unset or blank = the default. Any other value is an error: the
+    caller does not process the tick and alerts. Never a silent fallback."""
+    errors: list[str] = []
+    hours = 12
+    raw = _setting("FUTURES_RANDOM_TICK_HOURS")
+    if raw is not None:
+        if raw in tuple(str(h) for h in TICK_HOURS_ALLOWED):
+            hours = int(raw)
+        else:
+            errors.append(f"FUTURES_RANDOM_TICK_HOURS={raw!r} (allowed: 12, 6)")
+    mode = "coin"
+    raw = _setting("FUTURES_RANDOM_SIDE_MODE")
+    if raw is not None:
+        if raw.lower() in SIDE_MODES:
+            mode = raw.lower()
+        else:
+            errors.append(f"FUTURES_RANDOM_SIDE_MODE={raw!r} (allowed: coin, natural)")
+    turnover = UNIVERSE_MIN_TURNOVER
+    raw = _setting("FUTURES_RANDOM_WC_MIN_TURNOVER")
+    if raw is not None:
+        try:
+            val = float(raw)
+        except ValueError:
+            val = float("nan")
+        if math.isfinite(val) and val > 0:
+            turnover = val
+        else:
+            errors.append(f"FUTURES_RANDOM_WC_MIN_TURNOVER={raw!r} (a number > 0)")
+    return TickConfig(tick_hours=hours, side_mode=mode,
+                      trend_sl_mult=float(_sleeve_params("TREND")["sl_mult"]),
+                      wc_min_turnover=turnover, errors=tuple(errors))
+
+
 # ---- time ------------------------------------------------------------------------------
 
-def tick_at(now: float) -> int:
-    """The latest 00:00Z / 12:00Z boundary at or before `now`."""
-    return int(float(now) // TICK_SECONDS) * TICK_SECONDS
+def tick_at(now: float, tick_seconds: int = TICK_SECONDS) -> int:
+    """The latest tick boundary at or before `now` (12h: 00:00Z / 12:00Z; 6h: also
+    06:00Z / 18:00Z - both divide the day, so every tick is on the UTC clock)."""
+    return int(float(now) // int(tick_seconds)) * int(tick_seconds)
 
 
-def next_tick(now: float) -> int:
-    return tick_at(now) + TICK_SECONDS
+def next_tick(now: float, tick_seconds: int = TICK_SECONDS) -> int:
+    return tick_at(now, tick_seconds) + int(tick_seconds)
 
 
-def due_tick(now: float, last_tick: float | None, grace: float = TICK_GRACE_SECONDS) -> int | None:
+def due_tick(now: float, last_tick: float | None, grace: float = TICK_GRACE_SECONDS,
+             tick_seconds: int = TICK_SECONDS) -> int | None:
     """The tick to process now, or None.
 
     A tick is due once: when it is later than the last processed tick and no more than
     `grace` seconds old. The caller persists the tick before its first order, so a
     restart can never process it twice."""
-    tick = tick_at(now)
+    tick = tick_at(now, tick_seconds)
     try:
         last = None if last_tick is None else float(last_tick)
     except (TypeError, ValueError):
@@ -231,16 +352,18 @@ def trend_row(symbol: str, frame: pd.DataFrame | None, tick: int) -> dict[str, A
 
 
 def rank(rows: Iterable[dict], key: str, passing: Callable[[dict], bool], desc: bool,
-         top_n: int = TOP_N) -> list[dict]:
+         top_n: int | None = TOP_N) -> list[dict]:
     """b02_candidates.rank: passing candidates by `key`, then the rest of the usable
-    universe by the same key (the PREREG fallback); each tagged pass / fallback."""
+    universe by the same key (the PREREG fallback); each tagged pass / fallback.
+    top_n None = every usable row (the journal's full ranking; its first TOP_N rows are
+    the top_n=TOP_N list exactly)."""
     ok = [r for r in rows if r.get("usable")]
     p = sorted([r for r in ok if passing(r)], key=lambda r: r[key], reverse=desc)
     rest = sorted([r for r in ok if not passing(r)], key=lambda r: r[key], reverse=desc)
     out: list[dict] = []
     for r, flag in [(r, "pass") for r in p] + [(r, "fallback") for r in rest]:
         out.append(dict(r, status=flag))
-        if len(out) >= top_n:
+        if top_n is not None and len(out) >= top_n:
             break
     return out
 
@@ -250,7 +373,7 @@ def _detector_side(row: dict) -> str | None:
     return det.get("side") if isinstance(det, dict) else None
 
 
-def rank_wildcard(rows: list[dict], top_n: int = TOP_N) -> tuple[list[dict], list[dict]]:
+def rank_wildcard(rows: list[dict], top_n: int | None = TOP_N) -> tuple[list[dict], list[dict]]:
     """(WILDCARD-long list, WILDCARD-short list): LONG passes by +3h ROC (largest
     first), SHORT passes by 3h ROC (most negative first), each followed by the rest."""
     longs = rank(rows, "roc3h", lambda r: _detector_side(r) == "LONG", True, top_n)
@@ -258,7 +381,7 @@ def rank_wildcard(rows: list[dict], top_n: int = TOP_N) -> tuple[list[dict], lis
     return longs, shorts
 
 
-def rank_trend(rows: list[dict], top_n: int = TOP_N) -> list[dict]:
+def rank_trend(rows: list[dict], top_n: int | None = TOP_N) -> list[dict]:
     """TREND list: passing = a LONG TREND signal (24h ROC >= 4% and a new 24h closing
     high), by 24h ROC; else the highest 24h ROC (fallback)."""
     return rank(rows, "roc24h", lambda r: _detector_side(r) == "LONG", True, top_n)
@@ -267,9 +390,11 @@ def rank_trend(rows: list[dict], top_n: int = TOP_N) -> list[dict]:
 # ---- the WILDCARD universe at the tick ----------------------------------------------------
 
 def universe(tickers: Iterable[dict], *, majors: set[str], tradeable: Callable[[str], bool],
-             range_of: Callable[[dict], float]) -> list[tuple[str, dict]]:
+             range_of: Callable[[dict], float],
+             min_turnover: float = UNIVERSE_MIN_TURNOVER) -> list[tuple[str, dict]]:
     """(symbol, ticker values) for every crypto USDT perp outside the majors band with
-    24h turnover >= $2M and 24h range >= 7%, widest range first (the scan's order).
+    24h turnover >= `min_turnover` ($2M unless FUTURES_RANDOM_WC_MIN_TURNOVER says
+    otherwise) and 24h range >= 7%, widest range first (the scan's order).
 
     HELD SYMBOLS ARE INCLUDED. The scan journal the backtest read drops symbols the bot
     holds, and DEVIATIONS.md D2 added them back when they pass the same filters; read
@@ -285,7 +410,7 @@ def universe(tickers: Iterable[dict], *, majors: set[str], tradeable: Callable[[
         except (TypeError, ValueError):
             continue
         rng = float(range_of(t) or 0.0)
-        if turn >= UNIVERSE_MIN_TURNOVER and rng >= UNIVERSE_MIN_RANGE:
+        if turn >= float(min_turnover) and rng >= UNIVERSE_MIN_RANGE:
             out.append((rng, sym, {"range24": rng, "amount24": turn, "source": "ticker"}))
     out.sort(key=lambda x: (x[0], x[1]), reverse=True)
     return [(sym, tk) for _rng, sym, tk in out]
@@ -305,6 +430,14 @@ def coin() -> int:
 
 def coin_side(c: int) -> str:
     return "LONG" if int(c) == 0 else "SHORT"
+
+
+def side_for(bucket: str, side_mode: str, coin_: int | None) -> str:
+    """The side a bucket's pick trades: the coin's (side mode coin) or the bucket's
+    natural side (side mode natural, where no coin is drawn)."""
+    if side_mode == "natural":
+        return NATURAL[bucket]
+    return coin_side(coin_)
 
 
 # ---- the signal for the chosen side -------------------------------------------------------
@@ -416,13 +549,18 @@ def signal_for(cand: dict, *, bucket: str, side: str, ref_price: float,
 def stamp(*, tick: int, bucket: str, cand: dict, rank_: int, field: int, side: str,
           coin_: int | None, ref_price: float | None, universe_n: int,
           held: list[str], regime_mult: float | None = None,
-          btc_flag: bool | None = None, decision: str | None = None) -> dict[str, Any]:
+          btc_flag: bool | None = None, decision: str | None = None,
+          cfg: TickConfig | None = None) -> dict[str, Any]:
     """The telemetry one bucket decision carries (metadata, trade record, feature
-    store, shadow ledger). Missing readings stay None rather than 0.0."""
-    tk = cand.get("ticker") if isinstance(cand.get("ticker"), dict) else {}
+    store, shadow ledger). Missing readings stay None rather than 0.0. `cfg` is the
+    tick's configuration (read from the environment when not given)."""
+    cfg = cfg if cfg is not None else config()
+    # The ticker turnover / range stamped are the WILDCARD universe's, as in trial 24; a TREND
+    # row's ticker values go to the tick journal only (compact), so its stamps are unchanged.
+    tk = cand.get("ticker") if isinstance(cand.get("ticker"), dict) and SLEEVE[bucket] == "WILDCARD" else {}
     det_side = _detector_side(cand)
     out = {
-        "random_mode": 1.0, "random_prereg": PREREG_TAG,
+        "random_mode": 1.0, "random_prereg": cfg.prereg,
         "random_tick_ts": float(tick), "random_tick_utc": utc(tick),
         "random_bucket": bucket, "random_rank": float(rank_), "random_field": float(field),
         "random_status": cand.get("status"),
@@ -439,6 +577,7 @@ def stamp(*, tick: int, bucket: str, cand: dict, rank_: int, field: int, side: s
         "random_btc_flag": (None if btc_flag is None else (1.0 if btc_flag else 0.0)),
         "random_turnover_24h": tk.get("amount24"), "random_range_24h": tk.get("range24"),
         "random_decision": decision,
+        **cfg.fields(),
     }
     return out
 
