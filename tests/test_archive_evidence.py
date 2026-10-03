@@ -49,6 +49,25 @@ def _journal():
     return "\n".join(json.dumps(r) for r in rows) + "\n"
 
 
+T0 = A.day_bounds(TODAY)[0]
+
+
+def _ticks():
+    """Trial 24's tick journal (runtime._random_journal): today 12:00Z, yesterday 12:00Z, and a
+    tick two days back whose 24h clock has run out."""
+    rows = [{"tick": T0 + 12 * 3600, "prereg": "29fabd853a4f5d77", "universe": [["UNI_USDT", 0.12, 3.1e6]],
+             "trend_symbols": ["ETH_USDT", "PUMPFUN_USDT"], "unusable": [{"symbol": "BADK_USDT", "why": "kline_error"}],
+             "buckets": {"WC_LONG": [{"symbol": "MANA_USDT", "status": "pass"}], "WC_SHORT": [{"symbol": "CAP_USDT"}],
+                         "TREND": [{"symbol": "ETH_USDT"}]},
+             "decisions": [{"bucket": "WC_LONG", "decision": "opened", "symbol": "MANA_USDT"},
+                           {"bucket": "TREND", "decision": "slot_full", "symbol": "SLOT_USDT"},
+                           {"bucket": "WC_SHORT", "decision": "no_candidate"}]},
+            {"tick": T0 - 12 * 3600, "universe": [["OLDUNI_USDT", 0.1, 2e6]],
+             "buckets": {"WC_LONG": [{"symbol": "CARRY_USDT"}]}, "decisions": []},
+            {"tick": T0 - 36 * 3600, "buckets": {"WC_LONG": [{"symbol": "GONE_USDT"}]}}]
+    return "\n".join(json.dumps(r) for r in rows) + "\nnot json\n"
+
+
 @pytest.fixture
 def data_dir(tmp_path):
     d = tmp_path / "data"
@@ -61,7 +80,7 @@ def data_dir(tmp_path):
     return d
 
 
-def _local_runner(data_dir, calls):
+def _local_runner(data_dir, calls, extra=None):
     """Stands in for `railway ssh`: decodes the command exactly as the container shell would and
     runs the script with /data pointed at a temp dir, a secret planted in its environment."""
     def run(cmd):
@@ -73,7 +92,7 @@ def _local_runner(data_dir, calls):
         env = {"PATH": "", "SYSTEMROOT": "C:\\Windows", "MEXC_API_KEY": SECRET, "MEXC_API_SECRET": SECRET,
                "TELEGRAM_BOT_TOKEN": SECRET, "FUTURES_CONVEX_API_SECRET": SECRET,
                "FUTURES_CONVEX_TRAIL_RETAIN_FRAC": "0.50", "FUTURES_WILDCARD_EARLY_STOP_R": "0.5",
-               "FUTURES_TREND_SYMBOLS": "ETH_USDT,XRP_USDT,ZEC_USDT,LINK_USDT"}
+               "FUTURES_TREND_SYMBOLS": "ETH_USDT,XRP_USDT,ZEC_USDT,LINK_USDT", **(extra or {})}
         out = subprocess.run([sys.executable, "-"], input=script.encode(), capture_output=True, env=env,
                              timeout=60)
         assert out.returncode == 0, out.stderr.decode()
@@ -108,7 +127,7 @@ def test_the_remote_script_can_only_read():
                 assert ast.unparse(f) == "sys.stdout.write"
     assert set(A.CONTAINER_FILES) == {"futures_feature_store.jsonl", "futures_shadow_ledger.jsonl",
                                       "futures_r_series.jsonl", "futures_ticker_snapshots.jsonl",
-                                      "futures_runtime_state.json"}
+                                      "futures_runtime_state.json", "futures_random_ticks.jsonl"}
 
 
 def test_no_secret_ever_leaves_the_container(data_dir):
@@ -132,6 +151,23 @@ def test_pull_verifies_every_file_and_flags_missing_ones(data_dir):
     assert snap["files"]["futures_runtime_state.json"] == (data_dir / "futures_runtime_state.json").read_bytes()
     assert snap["files"]["futures_r_series.jsonl"] is None
     assert snap["meta"]["futures_r_series.jsonl"] == {"missing": True}
+    assert snap["files"]["futures_random_ticks.jsonl"] is None          # absent tick journal: still a pull
+
+
+def test_trial_dials_are_recorded_and_never_read_as_exit_drift(data_dir):
+    """The trial 24/25 settings get a dated record; ENV_DENY still locks a secret under the new
+    prefixes; and none of them is an exit dial, so the drift check is blind to them."""
+    extra = {"FUTURES_RANDOM_TICK_HOURS": "6", "FUTURES_RANDOM_SIDE_MODE": "natural",
+             "FUTURES_RANDOM_WC_MIN_TURNOVER": "2000000", "FUTURES_TREND_SL_ATR_MULT": "3.5",
+             "FUTURES_WILDCARD_SL_ATR_MULT": "2.0", "FUTURES_TRIAL_LABEL": "25", "FUTURES_TRIAL_START_TS": "1791000000"}
+    snap = A.pull_container(_local_runner(data_dir, [], extra=dict(extra, FUTURES_RANDOM_API_SECRET=SECRET,
+                                                                     FUTURES_RANDOM_KEY=SECRET)))
+    assert {k: snap["env"].get(k) for k in extra} == extra
+    assert SECRET not in json.dumps(snap["env"])
+    for bad in ("FUTURES_RANDOM_API_KEY", "FUTURES_RANDOM_TOKEN", "FUTURES_TRIAL_LABEL_X", "FUTURES_TREND_SL_ATR"):
+        assert not A.env_allowed(bad)
+    base = {k: v for k, v in snap["env"].items() if k not in extra}
+    assert A.timeline_drift(snap["env"]) == A.timeline_drift(base)
 
 
 def test_a_corrupted_transfer_is_refused_not_archived(data_dir):
@@ -155,7 +191,36 @@ def test_symbols_are_what_was_traded_or_scanned_that_day():
     assert syms["traded"] == ["SAGA_USDT", "SPAN_USDT", "ZORA_USDT"]      # SPAN opened yesterday, closed today
     assert syms["scanned"] == ["AKE_USDT", "TAKE_USDT"]
     assert set(syms["always"]) == set(A.ALWAYS_SYMBOLS) | {"LINK_USDT"}
+    assert syms["ticks"] == [] and syms["rotation"] == []
     assert t1 - t0 == 86400
+
+
+def test_tick_journal_symbols_join_the_day():
+    """Every symbol the day's ticks name (universe, TREND list, unusable, ranked lists, decisions),
+    plus yesterday's picks the 24h clock can hold into today; not yesterday's whole universe."""
+    syms = A.symbols_for_day(TODAY, json.dumps(_state()).encode(), _journal().encode(), None, _ticks().encode())
+    assert syms["ticks"] == ["BADK_USDT", "CAP_USDT", "CARRY_USDT", "ETH_USDT", "MANA_USDT", "PUMPFUN_USDT",
+                             "SLOT_USDT", "UNI_USDT"]
+    assert syms["traded"] == ["SAGA_USDT", "SPAN_USDT", "ZORA_USDT"] and syms["scanned"] == ["AKE_USDT", "TAKE_USDT"]
+    past = A.symbols_for_day("2026-09-22", None, None, None, _ticks().encode())
+    assert past["ticks"] == ["CARRY_USDT", "GONE_USDT", "OLDUNI_USDT"]
+
+
+def test_rotation_symbols_in_force_that_day():
+    """The state's pick over [chosen_at, until), the pick it replaced the window before, and a TREND
+    trade outside the static list within one window of the day."""
+    st = _state()
+    st["trend_rotation"] = {"symbol": "PUMPFUN_USDT", "chosen_at": NOW - 6 * 3600, "until": NOW + 42 * 3600,
+                            "previous": "WIF_USDT"}
+    st["trade_history"] += [
+        {"symbol": "ENA_USDT", "sleeve": "TREND", "entry_time": _iso(NOW - 30 * 3600), "exit_time": _iso(NOW - 29 * 3600)},
+        {"symbol": "XRP_USDT", "sleeve": "TREND", "entry_time": _iso(NOW - 30 * 3600), "exit_time": _iso(NOW - 29 * 3600)},
+        {"symbol": "NEAR_USDT", "sleeve": "TREND", "entry_time": _iso(NOW - 120 * 3600), "exit_time": _iso(NOW - 118 * 3600)},
+        {"symbol": "DOGE_USDT", "sleeve": "WILDCARD", "entry_time": _iso(NOW - 30 * 3600), "exit_time": _iso(NOW - 29 * 3600)}]
+    raw = json.dumps(st).encode()
+    assert A.symbols_for_day(TODAY, raw, None)["rotation"] == ["ENA_USDT", "PUMPFUN_USDT", "WIF_USDT"]
+    assert A.symbols_for_day("2026-09-22", raw, None)["rotation"] == ["ENA_USDT", "WIF_USDT"]
+    assert A.symbols_for_day("2026-09-19", raw, None)["rotation"] == ["NEAR_USDT"]
 
 
 def test_daily_run_writes_everything_dated_and_a_rerun_changes_nothing(tmp_path, data_dir):
@@ -198,6 +263,55 @@ def test_the_next_day_finishes_yesterdays_bars(tmp_path, data_dir):
     assert s["day"] == "2026-09-24" and s["previous"] == TODAY
     man = json.loads((out / "archive" / TODAY / "MANIFEST.json").read_text())
     assert man["bars"]["TAKE_USDT"]["fair"]["bars"] == 1440 and man["bars"]["TAKE_USDT"]["fair"]["holes"] == []
+
+
+def test_the_next_day_rederives_yesterdays_symbols_from_the_newer_snapshot(tmp_path, data_dir):
+    """10-02: 31 symbols (MANA among them) first appeared after that day's pull. The next run
+    re-derives yesterday's set from its own snapshot and unions it with the stored one."""
+    out = tmp_path / "evidence"
+    clock = Clock(NOW)
+    ex = FakeExchange(clock)
+    s1 = A.run_daily(None, out, _local_runner(data_dir, []), now=NOW, cache_factory=_factory(ex, clock),
+                     log=lambda m: None)
+    assert s1["run"]["container"]["futures_random_ticks.jsonl"] == "missing"
+    # After the pull: a late scan, the tick journal appears, and the ring buffer drops the morning rows.
+    late = {"ts": int(NOW + 3600), "n": 1, "rows": [["LATE_USDT", 1.0, 5e6, 1.0]]}
+    (data_dir / "futures_ticker_snapshots.jsonl").write_text(json.dumps(late) + "\n", encoding="utf-8")
+    (data_dir / "futures_random_ticks.jsonl").write_text(_ticks(), encoding="utf-8")
+    clock.t = NOW + 6 * 3600                       # 2026-09-24 00:30Z
+    s = A.run_daily(None, out, _local_runner(data_dir, []), now=clock.t, cache_factory=_factory(ex, clock),
+                    log=lambda m: None)
+    assert s["previous"] == TODAY
+    man = json.loads((out / "archive" / TODAY / "MANIFEST.json").read_text())
+    assert {"LATE_USDT", "TAKE_USDT", "AKE_USDT"} <= set(man["symbols"]["scanned"])
+    assert {"MANA_USDT", "PUMPFUN_USDT", "CARRY_USDT"} <= set(man["symbols"]["ticks"])
+    for sym in ("LATE_USDT", "MANA_USDT", "TAKE_USDT"):
+        assert man["bars"][sym]["fair"]["bars"] == 1440 and man["bars"][sym]["last"]["holes"] == []
+    today = _man_ticks(out / "archive" / "2026-09-24")
+    assert "MANA_USDT" in today and "UNI_USDT" not in today
+
+
+def _man_ticks(day_dir):
+    return set(json.loads((day_dir / "MANIFEST.json").read_text())["symbols"]["ticks"])
+
+
+def test_a_past_day_reads_the_tick_journal_from_the_newest_archived_snapshot(tmp_path, data_dir):
+    (data_dir / "futures_random_ticks.jsonl").write_text(_ticks(), encoding="utf-8")
+    out = tmp_path / "evidence"
+    clock = Clock(NOW)
+    ex = FakeExchange(clock)
+    s1 = A.run_daily(None, out, _local_runner(data_dir, []), now=NOW, cache_factory=_factory(ex, clock),
+                     log=lambda m: None)
+    assert s1["run"]["container"]["futures_random_ticks.jsonl"] == "written"
+    day = out / "archive" / TODAY
+    assert (gzip.decompress((day / "container" / "futures_random_ticks.jsonl.gz").read_bytes())
+            == (data_dir / "futures_random_ticks.jsonl").read_bytes())
+    assert _man_ticks(day) >= {"MANA_USDT", "UNI_USDT", "CARRY_USDT"}
+    A.run_daily("2026-09-22", out, None, now=NOW, finish_previous=False, cache_factory=_factory(ex, clock),
+                log=lambda m: None)
+    past = out / "archive" / "2026-09-22"
+    assert _man_ticks(past) == {"OLDUNI_USDT", "CARRY_USDT", "GONE_USDT"}
+    assert json.loads((past / "MANIFEST.json").read_text())["bars"]["OLDUNI_USDT"]["fair"]["bars"] == 1440
 
 
 def test_a_past_day_never_pulls_todays_state_into_it(tmp_path, data_dir):

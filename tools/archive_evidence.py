@@ -13,7 +13,9 @@ WHAT ONE RUN DOES (default: today, UTC)
        futures_shadow_ledger.jsonl   refused / shadow candidates
        futures_r_series.jsonl        per-position R paths
        futures_ticker_snapshots.jsonl  the WILDCARD scan journal (one line per scan: ts + movers)
-       futures_runtime_state.json    trade_history, open positions, trial marker
+       futures_runtime_state.json    trade_history, open positions, trial marker, trend_rotation
+       futures_random_ticks.jsonl    trial 24's tick journal (one line per tick: universe, ranked
+                                     lists, decisions); a file absent on the container is "missing"
      plus the exit/risk env values (a fixed whitelist of non-secret FUTURES_* names, filtered ON
      THE CONTAINER so nothing else ever crosses the wire) and the deployed commit when Railway
      exposes it (RAILWAY_GIT_COMMIT_SHA; absent on 2026-09-23). Each file is
@@ -22,9 +24,13 @@ WHAT ONE RUN DOES (default: today, UTC)
      the interpreter on stdin.
   2. Caches MEXC LAST and FAIR 1m bars (futuresbot.replay.bars) for every symbol the bot traded
      (open or closed positions overlapping the day) or scanned (the journal's movers that day),
-     plus the TREND universe and the majors its gates read.
+     every symbol the tick journal names for that day's ticks (plus the previous 24h's picks,
+     which the 24h clock can hold into it), the TREND rotation pick(s) in force, plus the TREND
+     universe and the majors its gates read.
   3. Finishes the PREVIOUS day's bars too (their tail was still forming at the last run), so a
-     job run at any hour leaves every past day complete.
+     job run at any hour leaves every past day complete. Its symbol set is re-derived from this
+     run's newer snapshot and unioned with the stored one (a symbol first seen after that day's
+     pull still gets its bars).
 
 LAYOUT  <out>/archive/YYYY-MM-DD/
             container/<file>.gz        snapshot taken that UTC day (latest run wins, hash-checked)
@@ -75,6 +81,7 @@ CONTAINER_FILES = (
     "futures_r_series.jsonl",
     "futures_ticker_snapshots.jsonl",
     "futures_runtime_state.json",
+    "futures_random_ticks.jsonl",
 )
 # Exit / sizing parameters a replay needs to know were live that day. A WHITELIST of names,
 # matched on the container: a key outside it never leaves the process. The deny pattern is a
@@ -85,10 +92,14 @@ ENV_WHITELIST = re.compile(
     r"|FUTURES_WILDCARD_CONVEX_EXIT_ENABLED|FUTURES_(WILDCARD|TREND)_RISK_PCT|FUTURES_TREND_TP_R"
     r"|FUTURES_TREND_SYMBOLS|FUTURES_OPEN_POSITION_MONITOR_SECONDS|USE_FUTURES_FAIR_PRICE_WS"
     r"|FUTURES_WILDCARD_(COMPLETED_BARS|MAX_BAR_AGE_SECONDS)"
+    r"|FUTURES_RANDOM_[A-Z0-9_]+|FUTURES_(TREND|WILDCARD)_SL_ATR_MULT"   # trial 24/25 dials: dated record
+    r"|FUTURES_TRIAL_LABEL|FUTURES_TRIAL_START_TS"
     r"|RAILWAY_GIT_COMMIT_SHA)$")
 ENV_DENY = re.compile(r"KEY|SECRET|TOKEN|PASS|AUTH|COOKIE|PRIVATE|CREDENTIAL|SESSION", re.I)
 # TREND scans these every cycle and its gates read BTC/SOL; they are "scanned" every day.
 ALWAYS_SYMBOLS = ("BTC_USDT", "ETH_USDT", "SOL_USDT", "XRP_USDT", "ZEC_USDT")
+# One TREND rotation window (futuresbot.trend_rotation.rotation_seconds() default, 48h).
+ROTATION_WINDOW = 48 * 3600.0
 MARK = "<<ARCHIVE_EVIDENCE>>"
 
 
@@ -207,6 +218,58 @@ def scanned_symbols(journal_lines: Iterable[str], t0: float, t1: float) -> set[s
     return out
 
 
+def _sym(x: Any) -> str | None:
+    s = x.get("symbol") if isinstance(x, dict) else (x[0] if isinstance(x, (list, tuple)) and x else x)
+    return s if isinstance(s, str) and s else None
+
+
+def tick_symbols(tick_lines: Iterable[str], t0: float, t1: float, *, picks_only: bool = False) -> set[str]:
+    """Symbols trial 24's tick journal names for a tick in [t0, t1): the universe, the TREND list
+    (rotation included), unusable rows, every bucket's ranked list and every decision.
+    picks_only: the ranked lists and decisions alone (what a position opened at the tick can be)."""
+    out: set[str] = set()
+    for line in tick_lines:
+        try:
+            d = json.loads(line)
+            ts = float(d["tick"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if not t0 <= ts < t1:
+            continue
+        items = [c for rows in (d.get("buckets") or {}).values() for c in rows or []]
+        items += list(d.get("decisions") or [])
+        if not picks_only:
+            items += list(d.get("universe") or []) + list(d.get("trend_symbols") or []) + list(d.get("unusable") or [])
+        out.update(s for s in map(_sym, items) if s)
+    return out
+
+
+def rotation_symbols(state: dict, t0: float, t1: float, static: Iterable[str] = ()) -> set[str]:
+    """TREND rotation pick(s) that can have been in force in [t0, t1). The state's pick holds
+    [chosen_at, until) and the one it replaced the window before chosen_at. A TREND trade on a
+    symbol outside the static list was the pick at its entry, so in force within one window of it."""
+    out: set[str] = set()
+    rot = state.get("trend_rotation")
+    if isinstance(rot, dict):
+        a, b = _ts(rot.get("chosen_at")), _ts(rot.get("until"))
+        if rot.get("symbol") and (a is None or a < t1) and (b is None or b >= t0):
+            out.add(str(rot["symbol"]))
+        if rot.get("previous") and a is not None and t0 < a and a - ROTATION_WINDOW < t1:
+            out.add(str(rot["previous"]))
+    skip = {str(s).upper() for s in static}
+    for r in state.get("trade_history") or []:
+        e, sym = _ts(r.get("entry_time")), str(r.get("symbol") or "").upper()
+        if (r.get("sleeve") == "TREND" and sym and sym not in skip and e is not None
+                and e - ROTATION_WINDOW < t1 and e + ROTATION_WINDOW >= t0):
+            out.add(sym)
+    return out
+
+
+def _union(stored: dict | None, fresh: dict) -> dict[str, list[str]]:
+    stored = stored or {}
+    return {k: sorted(set(stored.get(k) or []) | set(fresh.get(k) or [])) for k in set(stored) | set(fresh)}
+
+
 def day_bounds(day: str) -> tuple[int, int]:
     d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     t0 = int(d.timestamp())
@@ -297,14 +360,21 @@ def _latest_snapshot(out: Path, name: str, before_or_on: str) -> bytes | None:
 
 
 def symbols_for_day(day: str, state_raw: bytes | None, journal_raw: bytes | None,
-                    env: dict | None = None) -> dict[str, list[str]]:
+                    env: dict | None = None, ticks_raw: bytes | None = None) -> dict[str, list[str]]:
     t0, t1 = day_bounds(day)
     state = json.loads(state_raw.decode("utf-8")) if state_raw else {}
     lines = io.StringIO(journal_raw.decode("utf-8", "replace")) if journal_raw else []
+    tick_lines = ticks_raw.decode("utf-8", "replace").splitlines() if ticks_raw else []
     trend = [s.strip().upper() for s in ((env or {}).get("FUTURES_TREND_SYMBOLS") or "").split(",") if s.strip()]
+    always = set(ALWAYS_SYMBOLS) | set(trend)
+    # A tick's pick can run ~24h15m on the 24h clock: the previous 24h's ranked lists and
+    # decisions carry into this day, so every listed pick can be priced to its close.
+    ticks = tick_symbols(tick_lines, t0, t1) | tick_symbols(tick_lines, t0 - 86400, t0, picks_only=True)
     return {"traded": sorted(traded_symbols(state, t0, t1)),
             "scanned": sorted(scanned_symbols(lines, t0, t1)),
-            "always": sorted(set(ALWAYS_SYMBOLS) | set(trend))}
+            "always": sorted(always),
+            "ticks": sorted(ticks),
+            "rotation": sorted(rotation_symbols(state, t0, t1, always))}
 
 
 def run_daily(day: str | None, out: Path, run: Callable[[str], str] | None, *, now: float | None = None,
@@ -326,6 +396,7 @@ def run_daily(day: str | None, out: Path, run: Callable[[str], str] | None, *, n
         env = snap.get("env") or {}
         state_raw = snap["files"].get("futures_runtime_state.json")
         journal_raw = snap["files"].get("futures_ticker_snapshots.jsonl")
+        ticks_raw = snap["files"].get("futures_random_ticks.jsonl")
         log("container: " + ", ".join(f"{k}={v}" for k, v in sorted(run_rec["container"].items())))
         # The replay's deployed-exit timeline must end where live is. A difference means an exit
         # dial moved and futuresbot/replay/exits.LIVE_TIMELINE needs a row.
@@ -338,10 +409,13 @@ def run_daily(day: str | None, out: Path, run: Callable[[str], str] | None, *, n
         # Symbols come from the newest archived snapshot on or after it (the journals are cumulative).
         state_raw = _latest_snapshot(out, "futures_runtime_state.json", "9999-12-31")
         journal_raw = _latest_snapshot(out, "futures_ticker_snapshots.jsonl", "9999-12-31")
-    syms = symbols_for_day(day, state_raw, journal_raw, env)
+        ticks_raw = _latest_snapshot(out, "futures_random_ticks.jsonl", "9999-12-31")
+    # Unioned with what an earlier run stored: a ring-buffered journal must not shrink a day's set.
+    syms = _union(man.get("symbols"), symbols_for_day(day, state_raw, journal_raw, env, ticks_raw))
     allsyms = set().union(*syms.values())
     man["symbols"] = syms
-    log(f"{day}: {len(syms['traded'])} traded, {len(syms['scanned'])} scanned, {len(allsyms)} symbols")
+    log(f"{day}: {len(syms['traded'])} traded, {len(syms['scanned'])} scanned, {len(syms['ticks'])} in ticks, "
+        f"{len(allsyms)} symbols")
     res = archive_bars(day, allsyms, out, cache_factory=cache_factory, workers=workers, now=now, rate=rate)
     man["bars"] = res
     holes = sum(1 for s in res.values() for f in s.values() if any(h[2] != "not_closed" for h in f["holes"]))
@@ -356,7 +430,11 @@ def run_daily(day: str | None, out: Path, run: Callable[[str], str] | None, *, n
         pdir = out / "archive" / prev
         if (pdir / "MANIFEST.json").exists():
             pman = _load_manifest(pdir)
-            psyms = set().union(*(pman.get("symbols") or {}).values()) if pman.get("symbols") else set()
+            # Re-derived from THIS run's newer snapshot, unioned with the stored set: on 10-02, 31
+            # symbols (incl. MANA) first appeared after that day's pull.
+            pman["symbols"] = _union(pman.get("symbols"),
+                                     symbols_for_day(prev, state_raw, journal_raw, env, ticks_raw))
+            psyms = set().union(*pman["symbols"].values())
             if psyms:
                 pres = archive_bars(prev, psyms, out, cache_factory=cache_factory, workers=workers, now=now,
                                     rate=rate)
