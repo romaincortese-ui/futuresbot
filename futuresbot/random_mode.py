@@ -124,7 +124,9 @@ def enabled() -> bool:
 @dataclass(frozen=True)
 class TickConfig:
     """The settings one tick runs with. `errors` non-empty = invalid: the tick is not
-    processed (the fields then hold the defaults and must not be traded on)."""
+    processed (the fields then hold the defaults and must not be traded on; an invalid
+    FUTURES_RANDOM_TICK_HOURS holds 6, the finest allowed cadence, so every tick either
+    cadence could have is checked and alerted)."""
     tick_hours: int = 12
     side_mode: str = "coin"
     trend_sl_mult: float = 3.0
@@ -175,8 +177,10 @@ def config() -> TickConfig:
     """FUTURES_RANDOM_TICK_HOURS (12 | 6, default 12), FUTURES_RANDOM_SIDE_MODE (coin |
     natural, default coin), FUTURES_RANDOM_WC_MIN_TURNOVER (> 0, default 2000000) and the
     TREND stop multiple the order uses (FUTURES_TREND_SL_ATR_MULT, default 3.0, read as
-    trend.py reads it). Unset or blank = the default. Any other value is an error: the
-    caller does not process the tick and alerts. Never a silent fallback."""
+    trend.py reads it; a set value that is not a number > 0 is an error here). Unset or
+    blank = the default; surrounding spaces are ignored; values are case-sensitive. Any
+    other value is an error: the caller does not process the tick and alerts. Never a
+    silent fallback."""
     errors: list[str] = []
     hours = 12
     raw = _setting("FUTURES_RANDOM_TICK_HOURS")
@@ -184,12 +188,13 @@ def config() -> TickConfig:
         if raw in tuple(str(h) for h in TICK_HOURS_ALLOWED):
             hours = int(raw)
         else:
+            hours = min(TICK_HOURS_ALLOWED)    # checked (and alerted) at every 6h tick
             errors.append(f"FUTURES_RANDOM_TICK_HOURS={raw!r} (allowed: 12, 6)")
     mode = "coin"
     raw = _setting("FUTURES_RANDOM_SIDE_MODE")
     if raw is not None:
-        if raw.lower() in SIDE_MODES:
-            mode = raw.lower()
+        if raw in SIDE_MODES:
+            mode = raw
         else:
             errors.append(f"FUTURES_RANDOM_SIDE_MODE={raw!r} (allowed: coin, natural)")
     turnover = UNIVERSE_MIN_TURNOVER
@@ -203,6 +208,14 @@ def config() -> TickConfig:
             turnover = val
         else:
             errors.append(f"FUTURES_RANDOM_WC_MIN_TURNOVER={raw!r} (a number > 0)")
+    raw = _setting("FUTURES_TREND_SL_ATR_MULT")
+    if raw is not None:
+        try:
+            val = float(raw)
+        except ValueError:
+            val = float("nan")
+        if not (math.isfinite(val) and val > 0):
+            errors.append(f"FUTURES_TREND_SL_ATR_MULT={raw!r} (a number > 0)")
     return TickConfig(tick_hours=hours, side_mode=mode,
                       trend_sl_mult=float(_sleeve_params("TREND")["sl_mult"]),
                       wc_min_turnover=turnover, errors=tuple(errors))

@@ -1179,7 +1179,7 @@ def test_the_trial_25_configuration_and_the_prereg_tags(live_env):
     assert RM.PREREG25_SHA256.startswith(RM.PREREG25_TAG) and len(RM.PREREG25_SHA256) == 64
     assert "06:00Z" in cfg.describe() and "natural" in cfg.describe() and "3.5x" in cfg.describe()
     live_env.setenv("FUTURES_TREND_SL_ATR_MULT", "3.50")
-    live_env.setenv("FUTURES_RANDOM_SIDE_MODE", " Natural ")
+    live_env.setenv("FUTURES_RANDOM_SIDE_MODE", " natural ")             # surrounding spaces ignored
     live_env.setenv("FUTURES_RANDOM_WC_MIN_TURNOVER", "2e6")
     assert RM.config().prereg == RM.PREREG25_TAG
 
@@ -1203,14 +1203,20 @@ def test_any_other_valid_combination_is_unregistered(live_env, hours, mode, sl, 
     ("FUTURES_RANDOM_TICK_HOURS", "6h"), ("FUTURES_RANDOM_TICK_HOURS", "0"),
     ("FUTURES_RANDOM_TICK_HOURS", "24"), ("FUTURES_RANDOM_SIDE_MODE", "random"),
     ("FUTURES_RANDOM_SIDE_MODE", "natual"), ("FUTURES_RANDOM_SIDE_MODE", "0"),
+    ("FUTURES_RANDOM_SIDE_MODE", "Natural"), ("FUTURES_RANDOM_SIDE_MODE", "NATURAL"),
+    ("FUTURES_RANDOM_SIDE_MODE", " Natural "), ("FUTURES_RANDOM_SIDE_MODE", "Coin"),
     ("FUTURES_RANDOM_WC_MIN_TURNOVER", "abc"), ("FUTURES_RANDOM_WC_MIN_TURNOVER", "-1"),
     ("FUTURES_RANDOM_WC_MIN_TURNOVER", "0"), ("FUTURES_RANDOM_WC_MIN_TURNOVER", "nan"),
     ("FUTURES_RANDOM_WC_MIN_TURNOVER", "inf"), ("FUTURES_RANDOM_WC_MIN_TURNOVER", "2M"),
+    ("FUTURES_TREND_SL_ATR_MULT", "3.5x"), ("FUTURES_TREND_SL_ATR_MULT", "abc"),
+    ("FUTURES_TREND_SL_ATR_MULT", "3,5"), ("FUTURES_TREND_SL_ATR_MULT", "0"),
+    ("FUTURES_TREND_SL_ATR_MULT", "-1"), ("FUTURES_TREND_SL_ATR_MULT", "nan"),
+    ("FUTURES_TREND_SL_ATR_MULT", "inf"),
 ])
 def test_an_invalid_value_is_refused_never_a_silent_fallback(tmp_path, live_env, name, raw):
     live_env.setenv(name, raw)
     cfg = RM.config()
-    assert not cfg.valid and len(cfg.errors) == 1 and name in cfg.errors[0] and repr(raw) in cfg.errors[0]
+    assert not cfg.valid and len(cfg.errors) == 1 and name in cfg.errors[0] and repr(raw.strip()) in cfg.errors[0]
     # the due tick is not processed, not marked, and the owner is alerted (once per tick)
     calls: list = []
     clock = {"now": T + 30}
@@ -1235,6 +1241,26 @@ def test_an_invalid_value_is_refused_never_a_silent_fallback(tmp_path, live_env,
     live_env.setenv(name, "")
     rt._maybe_random_tick()
     assert [c[0] for c in calls] == ["select", "execute"]
+
+
+def test_an_invalid_tick_hours_value_is_checked_and_alerted_at_every_6h_tick(tmp_path, live_env):
+    """An invalid cadence is checked on the finest allowed grid: 06:00Z and 18:00Z alert
+    too (never processed), and the cycle sleep lands just after them."""
+    live_env.setenv("FUTURES_RANDOM_TICK_HOURS", "8")
+    assert not RM.config().valid and RM.config().tick_seconds == 6 * 3600
+    for t6 in (T - 6 * 3600, T + 6 * 3600):                        # 06:00Z and 18:00Z
+        calls: list = []
+        clock = {"now": t6 + 30}
+        live_env.setattr(R.time, "time", lambda: clock["now"])
+        (tmp_path / str(t6)).mkdir()
+        rt = _tick_runtime(tmp_path / str(t6), live_env, calls)
+        sent: list = []
+        rt._notify_once = lambda key, msg, **k: sent.append((key, msg))
+        rt._maybe_random_tick()
+        assert calls == [] and not rt._random_mode_state
+        assert [k for k, _m in sent] == [f"random_config_invalid_{t6}"]
+        clock["now"] = t6 - 100.5
+        assert rt._random_mode_sleep_seconds(300) == 102
 
 
 def test_an_unregistered_combination_still_runs_with_an_alert(tmp_path, live_env):
