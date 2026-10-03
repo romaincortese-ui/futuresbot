@@ -19427,3 +19427,19 @@ B1/B2 of wc/TRIAL25/PREREG.md: FUTURES_RANDOM_TICK_HOURS / _SIDE_MODE / _WC_MIN_
 side, PREREG tag per configuration, full-ranking tick journal. Unset: trial-24 parity 168/168 picks, 300/300 timelines,
 same exchange calls and coin draws. 6/natural/3.5: reproduces wc/OPTIMUM rank 2 on all 112 six-hour ticks. Suite 2030
 passed; 3-lens release gate PASS. Release note: wc/TRIAL25/build/RELEASE.md. Deploy (a restart) and start need the owner.
+
+### 2026-10-03 - TRIAL 24 CLOSED, TRIAL 25 LIVE (owner decision, without waiting for the start gate)
+
+Owner: "close the open positions now and trial 24 and go with the new build and trial 25! Let's see how it fares in the
+next few days." Per wc/TRIAL25/PREREG.md section 2 this start is WITHOUT a RECOMMEND (the start gate was not read) -
+recorded as such; the gate evidence (E1-E4) will still be computed for the record.
+- TRIAL 24 FINAL: 11 closes, +$3.68 net (fees $1.17); the owner hand-closed the last two at 20:57-20:58Z (ETH_USDT short
+  -$0.52, MAGMA_USDT short -$0.17, both MANUAL_CLOSE). Equity $184.97. Ungraded (decision point was 100 closes).
+- TRIAL 25 START: owner /pause + flat verified 20:59Z; variables set in one change with --skip-deploys
+  (FUTURES_RANDOM_TICK_HOURS=6, FUTURES_RANDOM_SIDE_MODE=natural, FUTURES_TREND_SL_ATR_MULT=3.5, FUTURES_TRIAL_LABEL=25,
+  FUTURES_TRIAL_START_TS=1791061167 = 2026-10-03T20:59:27Z; FUTURES_RESUME_ON_BOOT stays 0), then t25-build pushed to
+  main (159a383) = one deploy, SUCCESS 21:01:55Z. Boot log 21:01:35Z: "[RANDOM_MODE] ON (trial 25, PREREG
+  23840ce65807b549): ticks every 6h ... side natural, TREND stop 3.5x ATR, WILDCARD turnover >= $2,000,000"; paused=True,
+  0 open. First trial-25 tick 2026-10-04T00:00Z after the owner's /resume.
+- Judged per PREREG section 3: interim (report only) at the 100th close; decision at the 250th close or 2026-12-31T00:00Z,
+  replay vs replay, KEEP if > $0. Kill-rule alerts added to the daily assessment task (step 0-ter).
