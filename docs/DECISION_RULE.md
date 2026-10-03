@@ -19368,3 +19368,15 @@ wholly below 0) on unseen history. Three lanes + two independent verifiers (ever
 - Fragility: pooled (not per-year) judging of S2 was the lanes' pre-declared reading, not written in PREREG; per-year judging
   drops S2 and gives NO-GO. Verifier: S3's small in-window gain inside COMBINED is coin reshuffling, not the rule.
 - Not an edge: both arms still lose in a typical month. Nothing built; owner decides.
+
+### 2026-10-03 - WHY TRIAL 24 WORKS: cadence or randomness? (wc/WHY24, analysis only): CAN'T TELL YET
+
+Owner kept trial 24 unchanged and asked which part works. Pre-registered (sha256 6b31cde3...); two verifiers.
+- Trial 24 at 08:55Z: 9 positions, closed +$4.21 [-$4.17, +$15.18]; VELVET +$4.72 = 112% of it. Split: picks (coin-free)
+  +$0.68, coin luck +$1.51, live exits beating the replay +$2.05 (VELVET missed a 1m dip). Natural side on the same picks
+  -$1.86; coin vs natural +0.155R/position [-0.288, +0.592] (falling-market leg).
+- Backtest 09-03..09-30, 2x2 on one machine (R/position): signals+natural -0.005, signals+coin -0.059, cadence+natural
+  +0.074, cadence+coin -0.018. Coin effect -0.073 [-0.183, +0.045]; cadence effect +0.037 [-0.116, +0.197] (corrected),
+  from WHICH symbols it picks (WILDCARD-long bucket), not the clock (signals moved to the next tick: -0.016 to -0.043R).
+- Nothing confirmed; live and backtest disagree on the coin's sign. Coin question readable at ~175-350 positions
+  (~10-30 to ~11-28); cadence not settleable live. No change.
