@@ -19472,3 +19472,14 @@ Pre-registered (sha256 1779d386...): X12 = skip a candidate whose symbol was ope
   Rotation symbols such as PUMPFUN not covered on history.
 - Live 10-04: the block would have removed the 12:00Z PUMPFUN long (+$2.39, best trade) and kept the 18:00Z one; net -$2.66.
 - Verifier: 37/39 claims confirmed, 0 wrong. Trial 25 unchanged. Trial 25 day one: 8 closes +$8.17, all trail exits.
+
+### 2026-10-04 - 3h vs 6h CADENCE on the trial-25 configuration (wc/CADENCE3): REJECTED
+
+Pre-registered (sha256 2d4d9cfe...); independent verifier reproduced every number to the cent.
+- Trial-25 month 09-03..10-01 (0 picks lost to missing bars): 3h +$38.40 vs 6h +$39.23 at $190 -> -$0.83 [-$41.57, +$39.60]
+  (needed > $0); $1,000 -$36.16. Positions/day 10.25 vs 8.32; slot-full skips 360 vs 77; fees+slippage +$5.90; max
+  drawdown 11.0% vs 7.4%. Extra 03/09/15/21Z positions +0.030R (noise).
+- Unseen year (WILDCARD 6h book + static TREND book, 15m): -$2.07/month at $190 [-$17.44, +$13.68] (needed >= 0). Verifier:
+  correcting the 15m TREND bias would make it +$0.91 - verdict still REJECT because the in-window leg fails. 3h + one
+  extra slot per sleeve: -$22.62/month [-$31.95, -$13.30].
+- Not shown worse, only not better: slots, not tick frequency, are the binding limit. Trial 25 stays at 6h.
