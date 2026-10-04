@@ -1,4 +1,73 @@
-# Daily Audit — 2026-10-02
+# Daily Audit — 2026-10-03
+
+---
+
+## Automated Assessment (run 2026-10-04 20:30Z)
+
+**Window: 2026-10-03T00:00:00Z – 23:59:59Z by exit time. 6 closes (all trial 24, convex/random mode).** No skipped days.
+
+**Budget floor (0-bis):** equity **$193.09** (incl. unrealised, 3 open) > $140. Bot NOT paused.
+
+**Trial 25 alerts (0-ter): none.** 4 ticks processed (00/06/12/18Z 10-04, last 18:00Z), all prereg 23840ce65807b549;
+decisions 11 opened / 1 min_vol / 1 held, 0 error/not_filled/contract_error. Max open 2 TREND / 3 WILDCARD. No stop
+fills (no >0.5R overshoot); all 3 open positions have active exchange stop orders. No "invalid settings"/Traceback in
+the last 500 log lines.
+
+**Daily card (`/daily 2026-10-03`): INVESTIGATE** — 1 of 6 tripwires, **M3 risk% 0.35** (ETH TREND SHORT 0.3468 <
+0.35). Stops −1.03R (band ok); slippage −7 to +7 bps; ledger 6 = 6; margin 11% of equity. +0.54R entry / +0.66R exit,
+59th pct at 5 fills. Decay meter 1%. **Root cause written to DECISION_RULE.md (2026-10-04): NOT A DEFECT** — 25%
+deployment cap (sl_margin 3.0% at x10, ETH ATR 0.10%) × regime 0.50. No authority to change; steps 1a-bis(a), 1b(c),
+3, 4 not run.
+
+### 1. Closed trades 10-03 (exchange realised, net +$3.34, 3W/3L)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| CT | WILDCARD | S x2 | 0.5007 → 0.5451 | −0.90 | −1.04 | exchange stop |
+| XRP | TREND | L x10 | 1.4836 → 1.4864 | +0.04 | +0.04 | exchange close (BE stop) |
+| VELVET | WILDCARD | S x2 | 0.09483 → 0.07419 | +4.72 | +2.48 | CONVEX_RETENTION_TRAIL |
+| UAI | WILDCARD | S x1 | 0.2910 → 0.2833 | +0.16 | +0.12 | CONVEX_TIME_STOP |
+| ETH | TREND | S x10 | 2683.45 → 2685.66 | −0.52 | −0.81 | MANUAL_CLOSE (owner, trial switch) |
+| MAGMA | WILDCARD | S x1 | 0.23124 → 0.2365 | −0.17 | −0.12 | MANUAL_CLOSE (owner, trial switch) |
+
+**SL root-cause (CT S):** trial-24 coin-flip short at the 00:00Z tick; CT rose +8.9% to the resting stop. −1.04R incl.
+fees, inside the stop band, slippage within card limits. Mechanism = random side by design; resting stop worked.
+Not a defect. Both manual closes are the owner's recorded trial-24 → 25 hand-closes.
+
+### 1-OPEN (at 20:30Z 10-04; all trial 25)
+
+| sym | sleeve | side x | held | R now | peak R | giveback | to TP | to SL |
+|---|---|---|---|---|---|---|---|---|
+| GRASS | WILDCARD | S x4 | 8.5h | +0.92 | +1.39 | −0.47 | −19.8% | +4.2% (exchange stop trailed to 0.7264, +0.04R) |
+| PUMPFUN | TREND | L x3 | 2.5h | −0.62 | 0.00 | −0.62 | +20.8% | −2.2% |
+| MUBARAK | WILDCARD | S x2 | 2.5h | +0.74 | +0.78 | −0.04 | −42.9% | +17.5% |
+
+Sizing: GRASS/MUBARAK regime 0.50 (margin 5.09/3.63 vs intended 10.53/10.49); PUMPFUN 0.97 (13.03 vs 13.47).
+
+### 1a-bis. Learning loop (recording only)
+
+Feature store **251 rows** (+10 since the 10-03 run = 2 late 10-03 closes + 8 on 10-04; reconciles). Shadow ledger 476
+rows; `slot_occupied` still 47 (random mode bypasses scan slots). **Trial 24 FINAL** 11 closes, +$3.68 (owner record).
+**Trial 25** (entry ≥ 10-03T20:59:27Z): **8 closes, +$8.17 (SE $2.11), +5.49R (SE 0.76R)**, 8/8 retention-trail wins,
+ex-best +4.34R; ~11 positions/day. Exits: TP 0 | stop 0 | other 8. Interim at 100 closes.
+
+### 1b. WILDCARD (a)(b)
+
+Random-mode tick buckets: WC_LONG mostly `fallback` (largest mover) with `roc_below_min` / `no_pullback_resume` /
+`low_volume_z` on the detector. No 5003/2015 rejects in the last 500 log lines.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine; INVESTIGATE closed as NOT A DEFECT (M3, ETH cap × scaler).** 10-03: 6 closes, +$3.34. Trial 25
+started cleanly: 8 closes, +$8.17. M3 will fire again on the 10-04 card (ETH LONG 0.328%) — same cited mechanism.
 
 ---
 

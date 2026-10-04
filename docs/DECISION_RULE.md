@@ -19443,3 +19443,21 @@ recorded as such; the gate evidence (E1-E4) will still be computed for the recor
   0 open. First trial-25 tick 2026-10-04T00:00Z after the owner's /resume.
 - Judged per PREREG section 3: interim (report only) at the 100th close; decision at the 250th close or 2026-12-31T00:00Z,
   replay vs replay, KEEP if > $0. Kill-rule alerts added to the daily assessment task (step 0-ter).
+
+## 2026-10-04 - INVESTIGATE (daily card 10-03, M3): ETH_USDT TREND SHORT risk 0.347% of equity - NOT A DEFECT
+
+**Fill:** ETH_USDT TREND SHORT x10, trial-24 tick 10-03 12:00Z, hand-closed by the owner at the trial-25 switch
+10-03 20:57Z (-0.81R / -$0.52, MANUAL_CLOSE). `risk_pct_actual` 0.3468 vs band floor 0.35 (first M3 firing).
+
+**Mechanism: the 25% deployment cap x the regime scaler on a low-ATR major at x10, by design.** ETH ATR was 0.10%,
+so the 3xATR stop sat 0.30% away and `sl_margin_pct` was 3.0% at x10. Risk-equalised sizing wanted $74.68 margin;
+`FUTURES_WILDCARD_MAX_MARGIN_PCT` (0.25 x $185.65 = $46.41) bound it (`risk_cap_bound=1`), the regime multiplier
+0.50 halved it, contract rounding gave $21.47. 21.47 x 3.0% = $0.64 = 0.347%. The cap exists precisely for stops
+under ~7.5% of margin (gap-through bound, runtime.py ~2104), and the scaler is a measured net-positive shrink dial.
+Stop, fill and ledger were correct (stop band, slippage +0.04 bps, ledger 6 = 6).
+
+**$ test:** the only effect is a smaller stake on ETH TREND fills; at an unproven edge (trial 24 backtest -0.018R/
+trade) sizing them up changes variance, not expected dollars, so no fix is shown to clear $10/month.
+**Verdict: no defect. Nothing changed.** Expect M3 to recur on ETH TREND fills while random mode selects ETH (the
+10-04 06:00Z ETH LONG stamped 0.3279% under the 3.5x stop; it will fire on the 10-04 card) - same mechanism, cited
+here; it reopens only if a non-ETH fill or a fill without `risk_cap_bound=1` breaches the band.
