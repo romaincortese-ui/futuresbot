@@ -19461,3 +19461,14 @@ trade) sizing them up changes variance, not expected dollars, so no fix is shown
 **Verdict: no defect. Nothing changed.** Expect M3 to recur on ETH TREND fills while random mode selects ETH (the
 10-04 06:00Z ETH LONG stamped 0.3279% under the 3.5x stop; it will fire on the 10-04 card) - same mechanism, cited
 here; it reopens only if a non-ETH fill or a fill without `risk_cap_bound=1` breaches the band.
+
+### 2026-10-04 - 12h SAME-SYMBOL SAME-DIRECTION RE-ENTRY BLOCK (owner idea, wc/REENTRY): REJECTED
+
+Pre-registered (sha256 1779d386...): X12 = skip a candidate whose symbol was opened in the same direction < 12 h earlier
+(fill time; blocks the next two 6h ticks), next-ranked candidate takes the slot; vs trial 25 (6h|NNN|liq0|3.5).
+- Trial-25 month 09-03..10-01: -$2.26 per 28 days at $190 [-$27.05, +$22.46] (needed > $0); -$40.60 at $1,000. 50 blocks
+  (38 TREND): blocked picks +0.37R avg vs replacements +0.17R. Every reading/window/tie-break below 0 (24/24 runs).
+- Unseen year (WILDCARD 6h book + static ETH/XRP/ZEC TREND book): -0.0175R/position [-0.039, +0.004] (needed >= 0).
+  Rotation symbols such as PUMPFUN not covered on history.
+- Live 10-04: the block would have removed the 12:00Z PUMPFUN long (+$2.39, best trade) and kept the 18:00Z one; net -$2.66.
+- Verifier: 37/39 claims confirmed, 0 wrong. Trial 25 unchanged. Trial 25 day one: 8 closes +$8.17, all trail exits.
