@@ -1,3 +1,72 @@
+# Daily Audit — 2026-10-04
+
+---
+
+## Automated Assessment (run 2026-10-05 ~16:50Z)
+
+**Window: 2026-10-04T00:00:00Z – 23:59:59Z by exit time. 8 closes (all trial 25, convex/random mode).** No skipped days.
+
+**Budget floor (0-bis):** equity **$187.67** (incl. unrealised, 1 open) > $140. Bot NOT paused.
+
+**Trial 25 alerts (0-ter): none.** Ticks 10-04 00/06/12/18Z and 10-05 00/06/12Z all processed, prereg 23840ce65807b549;
+decisions opened / held / min_vol / slot_full only (0 error/not_filled/contract_error). Max open 2 TREND / 3 WILDCARD.
+Trial-25 stop fills ZEC −1.13R, NIL −1.09R, XRP −1.19R (10-05) — none > 0.5R beyond. Open PUMPFUN has its exchange
+stop+TP on the book. No Traceback / "invalid settings" / 5003 / 2015 in the last 500 log lines.
+
+**Daily card (`/daily 2026-10-04`): INVESTIGATE** — 1 of 6 tripwires, **M3 risk% 0.33** (ETH TREND LONG 0.3279%,
+`risk_cap_bound=1`), the firing pre-cited in the 10-04 root cause. Stops none; slippage −28 to +82 bps; ledger 8 = 8;
+margin 7% of equity. +6.67R entry / +5.52R exit, 89th pct at 10 fills. Decay meter 0%. **Root cause appended to
+DECISION_RULE.md (2026-10-05): NOT A DEFECT (cited mechanism).** No authority to change; steps 1a-bis(a), 1b(c), 3, 4
+not run.
+
+### 1. Closed trades 10-04 (exchange realised, net +$8.16, 8W/0L, +5.49R)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| AIN | WILDCARD | L x1 | 0.0636 → 0.07316 | +1.61 | +0.94 | retention trail |
+| PUMPFUN | TREND | L x4 | 0.006274 → 0.006412 | +0.57 | +0.48 | retention trail |
+| ETH | TREND | L x10 | 2693.83 → 2700.93 | +0.22 | +0.38 | retention trail |
+| LONGXIA | WILDCARD | S x2 | 0.04599 → 0.04363 | +0.46 | +0.53 | retention trail |
+| SAND | WILDCARD | L x4 | 0.07733 → 0.07896 | +0.48 | +0.47 | retention trail |
+| STRK | WILDCARD | L x3 | 0.0544 → 0.05676 | +0.95 | +0.83 | retention trail |
+| PUMPFUN | TREND | L x7 | 0.006252 → 0.006442 | +2.39 | +1.15 | retention trail |
+| BATON | WILDCARD | L x1 | 0.009134 → 0.010455 | +1.49 | +0.71 | retention trail |
+
+No stop-losses on the day (nothing to root-cause).
+
+### 1-OPEN (at ~16:50Z 10-05; trial 25)
+
+| sym | sleeve | side x | held | R now | peak R | giveback | to TP | to SL |
+|---|---|---|---|---|---|---|---|---|
+| PUMPFUN | TREND | L x3 | 22.8h | −0.80 | +0.01 | −0.81 | +22.1% | −1.2% |
+
+Sizing: margin $13.03 (score 96).
+
+### 1-bis. Trial 25 so far (entry ≥ 10-03T20:59:27Z, all prereg 23840ce65807b549)
+
+17 closes, net **+$4.51 ± $4.43 SE** / **+2.69R ± 3.13R SE** (not a readable total), ex-best +1.54R; ~8.5 closes/day.
+Exits: TP 0 | stop 3 | other 14 (retention trail / early stop / exchange close). Interim at 100 closes.
+
+### 1b. WILDCARD (a)(b)
+
+Detector scan at 16:27–16:44Z 10-05: 37 movers, 0 candidates — `roc_below_min` 34–35, `no_pullback_resume` 2,
+`low_volume_z` 1. Random mode trades via the 6h ticks regardless. No 5003/2015 rejects.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine; INVESTIGATE closed as NOT A DEFECT (M3, ETH cap × scaler, pre-cited).** 10-04: 8 closes, all
+retention-trail wins, +$8.16 / +5.49R. Trial 25 at 17 closes, sign not yet distinguishable from zero.
+
+---
+
 # Daily Audit — 2026-10-03
 
 ---

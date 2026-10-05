@@ -19483,3 +19483,11 @@ Pre-registered (sha256 2d4d9cfe...); independent verifier reproduced every numbe
   correcting the 15m TREND bias would make it +$0.91 - verdict still REJECT because the in-window leg fails. 3h + one
   extra slot per sleeve: -$22.62/month [-$31.95, -$13.30].
 - Not shown worse, only not better: slots, not tick frequency, are the binding limit. Trial 25 stays at 6h.
+
+## 2026-10-05 - INVESTIGATE (daily card 10-04, M3): ETH_USDT TREND LONG risk 0.328% of equity - NOT A DEFECT (cited)
+
+**Fill:** ETH_USDT TREND LONG x10, trial-25 tick 10-04 06:00Z, closed 07:57Z +0.38R / +$0.22 (CONVEX_RETENTION_TRAIL).
+`risk_pct_actual` 0.3279 vs band floor 0.35; `risk_cap_bound=1`, ATR 0.078%, `sl_margin_pct` 2.73% at x10, regime 0.56.
+**Mechanism:** the one pre-cited in the 2026-10-04 entry (25% deployment cap x regime scaler on a low-ATR major) - ETH,
+cap-bound, so it does not meet that entry's reopen condition. Ledger 8 = 8, slippage -28/+82 bps (inside 100), no stops.
+**Verdict: no defect. Nothing changed.**
