@@ -19506,3 +19506,19 @@ Pre-registered (sha256 3a141fe8...) before any test; independent rebuild matched
 - C2 no opposite-direction trade on a coin within 12 h: month +$9.60 (noise), unseen -$1.34/month -> REJECT.
 - C3 WILDCARD skips RSI >= 90 longs / <= 10 shorts: month -$3.48 (noise) -> REJECT.
 No rule added; trial 25 unchanged.
+
+### 2026-10-05 - SIDE-SELECTION STUDY: literature vs the "natural side" (wc/SIDE, analysis only): 3 rules REJECTED
+
+Owner challenged the natural side ("why long ETH because it's the top 24h mover? why not short?"). Research lanes: 54
+academic citations (44 peer-reviewed) + practitioner sources + internal evidence; 3 literature-grounded side rules
+pre-registered (sha256 0b3187c5...) with thresholds from the papers; independent verifier matched every deciding number.
+- Literature: TREND long has weak support (large-coin time-series/weekly momentum: Liu & Tsyvinski 2021 RFS; Moskowitz-Ooi-
+  Pedersen 2012; Zaremba et al. 2021; Fieberg et al. 2025 JFQA); shorting the leader has none. WILDCARD-long (buy the 3h
+  riser) has no documented edge - small/illiquid coins tend to reverse (Bianchi et al. 2022; Kozlowski et al. 2021; Ficura
+  2023) - but at our horizon reversal is below costs (Kitron & Wengrowicz 2026 preprint).
+- R1 TREND side = sign of its 1-week return: month -$45.56 at $190 [-79.04, -14.85] -> REJECT (unseen +$5.73/mo, noise).
+  R2 WILDCARD low-volume fade (Bianchi parameters): -$10.31 / -$5.37/mo -> REJECT. R3 WILDCARD prior-week sign (skip last
+  day): -$16.92 / +$4.42/mo -> REJECT. Literal "TREND = 24h sign": -$38.15 (reported only). Always-opposite -$80.47.
+- Headroom: perfect side +0.78R/position on the unseen year (~$198/month on the WILDCARD book at $190); natural beats coin
+  by only +0.025R [-0.011, +0.062] (~52% "accuracy"). No rule captures it. Post-hoc lead (untested, needs fresh data):
+  TREND longs in a down week made -0.182R vs -0.019R in an up week -> "sit out down-week TREND picks". Trial 25 unchanged.
