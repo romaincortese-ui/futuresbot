@@ -19522,3 +19522,14 @@ pre-registered (sha256 0b3187c5...) with thresholds from the papers; independent
 - Headroom: perfect side +0.78R/position on the unseen year (~$198/month on the WILDCARD book at $190); natural beats coin
   by only +0.025R [-0.011, +0.062] (~52% "accuracy"). No rule captures it. Post-hoc lead (untested, needs fresh data):
   TREND longs in a down week made -0.182R vs -0.019R in an up week -> "sit out down-week TREND picks". Trial 25 unchanged.
+
+### 2026-10-05 - DOUBLED SLOTS (TREND 4 / WILDCARD 6) + TOTAL MARGIN CAP 50% OF INITIAL BALANCE (wc/SLOTS2X): REJECTED
+
+Pre-registered (sha256 77323813...); independent verifier (minor corrections only).
+- Trial-25 month: -$19.87 per 28 days at $190 [-$41.91, -$0.59] (DD 7.4% -> 8.1%); $1,000 -$95.20 [-218, +30].
+- Unseen year, one shared account: -$12.11/month at $190 [-$18.73, -$5.40]; all 32 cells below 0; DD 28% -> 35%.
+- Cause: the extra positions (taken where trial 25's slots were full) are weaker picks: -0.273R each in-window, -$15.04/month
+  on the unseen year; +~$7.60/month fees. The 50% cap never bound in-window and once in a year (sizing from free cash
+  already keeps engaged margin near 50%); its effect is untested. Live: slots are settings, but random mode does not check
+  FUTURES_MAX_TOTAL_MARGIN_USDT and the PREREG tag ignores slots (would need code + new registration).
+- Note: the unseen-year shared-account baseline at trial-25 slots is -$15.45/month at $190 [-30.46, -0.30]. Trial 25 unchanged.
