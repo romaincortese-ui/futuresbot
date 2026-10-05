@@ -19491,3 +19491,18 @@ Pre-registered (sha256 2d4d9cfe...); independent verifier reproduced every numbe
 **Mechanism:** the one pre-cited in the 2026-10-04 entry (25% deployment cap x regime scaler on a low-ATR major) - ETH,
 cap-bound, so it does not meet that entry's reopen condition. Ledger 8 = 8, slippage -28/+82 bps (inside 100), no stops.
 **Verdict: no defect. Nothing changed.**
+
+### 2026-10-05 - TODAY'S TRIAL-25 LOSSES ROOT-CAUSED; THREE PREVENTIVE RULES REJECTED (wc/LOSS1005)
+
+Six stop-outs on 10-05 (-$7.62; trial 25 after 18 closes +$2.23, equity $187.18). All stops were on the book, fills
+0.03-0.07R past the stop, no malfunction. Causes: BATON long (00Z) bought a +33% 3h spike already 23% off its high -
+early stop 13 min, -$0.57; ZEC long (TREND rank 2, PUMPFUN held) market-wide drop, -$0.83; MUBARAK long (06Z) squeeze top
+RSI 93.6, 12 h after we were short it - early stop, -$0.96; NIL short (12Z) idiosyncratic +5% rally, -$1.70; XRP long
+(TREND rank 2, 10x, 1.15% stop) 17-min BTC flush -1.5%, -$1.27; PUMPFUN long (10-04 18Z, third same-side entry in a day)
+coin-specific -5.2% slide while BTC was flat, stopped 17:09Z, -$2.29 (the rejected 12h re-entry block would not have
+stopped it). Early stop saved ~$1.41 on BATON and MUBARAK.
+Pre-registered (sha256 3a141fe8...) before any test; independent rebuild matched every deciding number to the cent:
+- C1 TREND opens only its rank-1 pick: month -$11.78 at $190 [-28.15, +2.76] -> REJECT.
+- C2 no opposite-direction trade on a coin within 12 h: month +$9.60 (noise), unseen -$1.34/month -> REJECT.
+- C3 WILDCARD skips RSI >= 90 longs / <= 10 shorts: month -$3.48 (noise) -> REJECT.
+No rule added; trial 25 unchanged.
