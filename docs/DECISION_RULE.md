@@ -19541,3 +19541,18 @@ equity $184.97 -> ~$188.00 (SE larger than the total), max DD -4.3%; top 2 trade
 +0.43R, TREND -0.28R (4 stops in 9 closes). Pace 10.9/day; no kill rule near; live beat replay by +0.035R/position.
 Same days, same machine: trial-25 rules +$1.73 vs trial-24 rules median -$3.26 (5-95% -$10.79..+$4.08) at $190 - noise.
 Old signal bot at $190 (09-25..09-29) -0.28R; audited ledger -0.15R; trial 24 +0.03R (n=11). Interim ~10-13 (100th close).
+
+### 2026-10-06 - LIFETIME COUNTERFACTUAL: the same money in other schemes (wc/PASSIVE, research only, not advice)
+
+Lifetime (exchange-reconciled, read-only GET): money in $1,305.53 ($316.15 opening on 2026-03-29 is IMPLIED from rolling the
+wallet back - the owner's MEXC app transfer history would pin it; +$73.66 07-21; +$915.72 09-04), out $715.00 (09-25),
+value $186.99 -> lifetime P&L -$403.53 (money-weighted -75.1% over 191 days). Fees $262.20 = 65% of the loss. By era: PMT
+04-18..06-14 -$243.02 (~60%); 07-21..09-04 +$48.32; funded window 09-04..09-25 -$198.41. Supersedes "the lifetime loss is
+the retired PMT sleeve".
+Same cash flows, same dates (59 schemes, all ahead of the bot): USDT idle +$403.53 vs the bot; IB01 (USD T-bill fund, LSE)
++$8.20 P&L, worst dip -$0.43; GBP cash/ISA/Premium Bonds about -$7 to -$14 in USD (FX), positive in GBP; MEXC funding carry
++$0.38..+$5.49; MEXC spot grid +$56..+$102 after -$35..-$102 dips; global index +$58..+$62; BTC +$148, ETH +$197..+$204
+after -$112..-$134 dips. Steady yield at this size = a few dollars a month.
+REGULATORY FACT (verified): MEXC's User Agreement lists the United Kingdom as a Prohibited Jurisdiction (added between
+2025-09-09 and 2025-12-05); MEXC Global Ltd is on the FCA Warning List since 2024-03-22 (no FSCS/FOS cover). Reported to the
+owner; any decision is the owner's.
