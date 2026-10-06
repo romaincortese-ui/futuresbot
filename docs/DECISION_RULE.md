@@ -19533,3 +19533,11 @@ Pre-registered (sha256 77323813...); independent verifier (minor corrections onl
   already keeps engaged margin near 50%); its effect is untested. Live: slots are settings, but random mode does not check
   FUTURES_MAX_TOTAL_MARGIN_USDT and the PREREG tag ignores slots (would need code + new registration).
 - Note: the unseen-year shared-account baseline at trial-25 slots is -$15.45/month at $190 [-30.46, -0.30]. Trial 25 unchanged.
+
+### 2026-10-06 - TRIAL 25 FIRST ASSESSMENT (wc/T25CHECK1, descriptive, decides nothing)
+
+To 10-06 17:22Z: 30 positions (27 closed, 3 open marked), +0.10R per position [-0.18, +0.36] (backtest +0.096R), 67% wins,
+equity $184.97 -> ~$188.00 (SE larger than the total), max DD -4.3%; top 2 trades = 132% of the total. WILDCARD-long
++0.43R, TREND -0.28R (4 stops in 9 closes). Pace 10.9/day; no kill rule near; live beat replay by +0.035R/position.
+Same days, same machine: trial-25 rules +$1.73 vs trial-24 rules median -$3.26 (5-95% -$10.79..+$4.08) at $190 - noise.
+Old signal bot at $190 (09-25..09-29) -0.28R; audited ledger -0.15R; trial 24 +0.03R (n=11). Interim ~10-13 (100th close).
