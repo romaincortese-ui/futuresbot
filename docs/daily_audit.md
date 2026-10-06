@@ -1,3 +1,78 @@
+# Daily Audit — 2026-10-05
+
+---
+
+## Automated Assessment (run 2026-10-06 ~17:30Z)
+
+**Window: 2026-10-05T00:00:00Z – 23:59:59Z by exit time. 11 closes (all trial 25, convex/random mode).** No skipped days.
+
+**Budget floor (0-bis):** equity **$187.94** (incl. −$0.73 unrealised, 3 open) > $140. Bot NOT paused.
+
+**Trial 25 alerts (0-ter): none.** Ticks 10-05 00/06/12/18Z and 10-06 00/06/12Z all processed, prereg 23840ce65807b549;
+decisions opened / held / min_vol / slot_full only (0 error/not_filled/contract_error). Open now 2 TREND / 1 WILDCARD.
+Stop fills ZEC −1.12R, NIL −1.07R, XRP −1.20R, PUMPFUN −1.04R — none > 0.5R beyond; 0 bare-stop seconds. No Traceback /
+"invalid settings" / 5003 / 2015 in the last 500 log lines.
+
+**Daily card (`/daily 2026-10-05`): NO ACTION** — 0 of 6 tripwires. Stops −1.12/−1.07/−1.20/−1.04 in band; risk% 0.35–1.14;
+slippage −15 to +39 bps; ledger 11 = 11 exchange closes; margin 13% of equity. −3.33R entry / −3.85R exit, a 1-in-5 day at
+9 fills. Decay meter 8%. Steps 1a-bis(a), 1b(c), 3, 4 not run.
+
+### 1. Closed trades 10-05 (exchange realised, net −$6.08, 4W/7L, −3.85R)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| BATON | WILDCARD | L x1 | 0.012688 → 0.011447 | −0.57 | −0.49 | early stop |
+| MUBARAK | WILDCARD | S x2 | 0.07263 → 0.06902 | +0.35 | +0.51 | retention trail |
+| ZEC | TREND | L x7 | 1351.86 → 1312.33 | −0.83 | −1.12 | stop |
+| MUBARAK | WILDCARD | L x3 | 0.07815 → 0.07588 | −0.96 | −0.55 | early stop |
+| GRASS | WILDCARD | S x4 | 0.7278 → 0.7054 | +0.60 | +0.64 | retention trail |
+| XRP | TREND | L x10 | 1.5074 → 1.5102 | +0.01 | +0.02 | exchange close |
+| NIL | WILDCARD | S x4 | 0.09653 → 0.10103 | −1.70 | −1.07 | stop |
+| XRP | TREND | L x10 | 1.5178 → 1.4994 | −1.27 | −1.20 | stop |
+| LONGXIA | WILDCARD | L x3 | 0.0462 → 0.04746 | +0.71 | +0.52 | retention trail |
+| PUMPFUN | TREND | L x3 | 0.006624 → 0.006247 | −2.29 | −1.04 | stop |
+| RLC | WILDCARD | L x1 | 0.6487 → 0.6434 | −0.13 | −0.07 | exchange close |
+
+All four stops (and both early stops) already root-caused in DECISION_RULE.md 2026-10-05 (wc/LOSS1005): stops on the book,
+no malfunction; three preventive rules pre-registered and rejected.
+
+### 1-OPEN (at ~17:25Z 10-06; trial 25)
+
+| sym | sleeve | side x | held | R now | peak R | giveback | to TP | to SL |
+|---|---|---|---|---|---|---|---|---|
+| ETH | TREND | L x10 | 23.4h | −0.35 | +0.70 | −1.05 | +3.6% | −0.7% |
+| ZEC | TREND | L x5 | 5.4h | −0.62 | +0.21 | −0.83 | +12.9% | −1.4% |
+| API3 | WILDCARD | S x1 | 5.4h | +0.58 | +0.61 | −0.03 | −47.2% | +16.3% |
+
+Sizing (intended → actual margin): ETH $21.06 → $8.11 (regime ×0.50), ZEC $11.68 → $8.24 (×0.71), API3 $17.75 → $8.73.
+
+### 1-bis. Trial 25 so far (entry ≥ 10-03T20:59:27Z, all prereg 23840ce65807b549)
+
+27 closes, net **+$3.98 ± $6.08 SE** / **+3.58R ± 4.07R SE** (not a readable total), ex-best +2.41R; ~9 closes/day.
+Exits: TP 0 | stop 6 | other 21. Sleeves: WILDCARD-long 11, TREND-long 9, WILDCARD-short 7. Interim at 100 closes.
+
+### 1a-bis / 1b
+
+Feature store 270 rows; ledger 11 = 11 exchange closes. Shadow ledger slot_occupied: 47 resolved, net +19.2R paper
+(directional-only; the 2x-slots question was priced and rejected 10-05 in wc/SLOTS2X — no proposal on a NO ACTION day).
+Detector scan 16:58–17:22Z 10-06: 32–37 movers, 0 candidates — `roc_below_min` 29–34, `no_pullback_resume` ≤3,
+`climax_wick`/`low_volume_z` ≤2. Random mode trades via the 6h ticks regardless. No 5003/2015 rejects.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, NO ACTION.** 10-05: 11 closes, −$6.08 / −3.85R, a 1-in-5 day for its fill count; every stop in band and
+already root-caused. Trial 25 at 27 closes, +$3.98 ± $6.08 — sign not distinguishable from zero.
+
+---
+
 # Daily Audit — 2026-10-04
 
 ---
