@@ -19556,3 +19556,19 @@ after -$112..-$134 dips. Steady yield at this size = a few dollars a month.
 REGULATORY FACT (verified): MEXC's User Agreement lists the United Kingdom as a Prohibited Jurisdiction (added between
 2025-09-09 and 2025-12-05); MEXC Global Ltd is on the FCA Warning List since 2024-03-22 (no FSCS/FOS cover). Reported to the
 owner; any decision is the owner's.
+
+## 2026-10-08 - INVESTIGATE (daily card 10-06, M1): XRP_USDT TREND LONG stop at -1.23R - NOT A DEFECT
+
+**Fill:** XRP_USDT TREND LONG x10, trial-25 tick 10-06 00:00Z (rank 2, ETH held), filled 1.5070 (ref 1.5069), server
+stop 1.49533, closed 02:35Z at 1.4950 (EXCHANGE_CLOSE / exit_kind STOP), realised -$1.96 incl. -$0.33 fees, risk $1.59.
+R -1.234 vs band floor -1.22 (0.014R outside; first M1 firing in trial 25).
+
+**Mechanism: round-trip fee on a tight x10 stop, not execution.** Price leg = (1.5070-1.4950)/(1.5070-1.49533) =
+1.028R, i.e. the fill was 0.03% / 0.028R past the trigger - normal stop slippage. The remaining 0.206R is the round-trip
+fee ($0.33 on ~$205 notional) divided by a 0.77% stop distance. Every XRP/ETH x10 TREND stop carries ~0.2R of fee by
+construction (10-05 XRP -1.20, 10-07 XRP -1.20/-1.15), so the band edge is reached whenever price slippage exceeds ~0.01R.
+Server stop present, ledger 10 = 10 exchange closes, slippage -29/+66 bps (inside 100).
+
+**$ test:** the excess beyond band is 0.014R x $1.59 = $0.02; no fix approaches $10/month.
+**Verdict: no defect. Nothing changed.** Expect M1 to recur on x10 major TREND stops; it reopens only if the PRICE leg
+(fill vs trigger) exceeds 0.10R or a stop fills without a resting server order.

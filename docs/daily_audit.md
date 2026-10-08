@@ -1,3 +1,80 @@
+# Daily Audit — 2026-10-07 (+ catch-up 10-06)
+
+---
+
+## Automated Assessment (run 2026-10-08 ~18:20Z)
+
+**Window: 2026-10-07T00:00:00Z – 23:59:59Z by exit time. 9 closes (all trial 25).** 10-06 had no run → separate
+catch-up block below (10 closes). Not merged.
+
+**Budget floor (0-bis):** equity **$175.33** (−$0.12 unrealised, 3 open) > $140. Bot NOT paused.
+
+**Trial 25 alerts (0-ter): none.** Ticks 10-06 00Z → 10-08 18Z all processed, prereg 23840ce65807b549. One `error`
+decision 10-07 12Z (LONGXIA WC-short, MEXC 7008 "min order 5 USDT") — isolated, not two consecutive. Max concurrency
+2 TREND / 3 WC (slot_full). Stops: fills 0.02–0.06R past trigger; all 3 open positions carry resting server SL/TP.
+No Traceback / "invalid settings" / 5003 / 2015 in the last 800 log lines.
+
+**Daily card 10-07: NO ACTION** — 0/6 tripwires; stops −1.20/−1.06/−1.02/−1.06/−1.03/−1.15; risk% 0.39–0.95;
+slippage −37/+35 bps; ledger 9 = 9; margin 12%. −5.28R entry / −4.55R exit, a 1-in-37 day at 6 fills. Decay meter 11%.
+Steps 1a-bis(a), 1b(c), 3, 4 not run.
+
+### 1. Closed trades 10-07 (exchange realised −$6.13, 2W/7L, −4.55R)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| XRP | TREND | L x10 | 1.5067 → 1.4816 | −1.26 | −1.20 | stop |
+| ZEC | TREND | L x5 | 1373.19 → 1323.6 | −1.56 | −1.06 | stop |
+| ORCA | WILDCARD | L x1 | 3.195 → 2.827 | −0.74 | −1.02 | stop |
+| ZEC | TREND | L x9 | 1321.01 → 1294 | −1.75 | −1.06 | stop |
+| API3 | WILDCARD | S x1 | 0.3492 → 0.3087 | +0.87 | +1.17 | time stop |
+| BR | WILDCARD | L x2 | 0.573 → 0.52631 | −0.95 | −1.03 | stop |
+| XRP | TREND | L x10 | 1.4447 → 1.4231 | −2.01 | −1.15 | stop |
+| RLC | WILDCARD | S x1 | 0.7627 → 0.683 | +1.27 | +0.79 | time stop |
+| ZEC | TREND | L x6 | 1306.78 → 1308.81 | −0.00 | −0.00 | exchange close |
+
+Six long stops in a narrow-breadth (0.19) down day; every stop rested and filled in band. TREND-long 0/4 ex-flat.
+
+### Catch-up 10-06 (exchange realised +$0.43, 6W/4L, +1.04R exit)
+
+Card: **INVESTIGATE** (M1: XRP TREND L x10 stop −1.23R, band floor −1.22). Root cause written to DECISION_RULE.md
+2026-10-08: price leg 1.03R (normal 0.03R stop slippage) + 0.21R round-trip fee on a 0.77% x10 stop → **NOT A DEFECT**,
+$0.02 at stake, nothing changed. Other closes: CT S +0.63R, RLC L +1.03R / +0.70R, ZEC L +0.62R, NIL S +0.62R, NMR L
++0.58R (all retention trail); MOVR S −1.05R stop; ETH L −0.31R time stop; ORCA L −0.55R early stop. Ledger 10 = 10.
+
+### 1-OPEN (18:16Z 10-08; trial 25, all WILDCARD)
+
+| sym | side x | held | R now | peak R | giveback | to TP | to SL | margin intended → actual |
+|---|---|---|---|---|---|---|---|---|
+| STRK | L x2 | 6.3h | −0.17 | +0.55 | −0.72 | +51% | −8% | $9.96 → $9.95 |
+| TIA | L x1 | 0.2h | +0.29 | +0.31 | −0.02 | +27% | −13% | $19.00 → $11.35 (regime ×0.62) |
+| RLC | L x1 | 0.2h | −0.08 | −0.05 | −0.03 | +84% | −16% | $11.18 → $10.69 (×0.98) |
+
+### 1-bis. Trial 25 (entry ≥ 10-03T20:59:27Z, all prereg 23840ce65807b549)
+
+46 closes, net **−$9.06 ± $7.93 SE** / **−6.54R ± 5.57R SE** (not a readable total), ex-best −7.72R; ~9.4 closes/day.
+Exits: TP 0 | stop 17 | other 29. Sleeves: TREND-long 18, WILDCARD-long 16, WILDCARD-short 12. Interim at 100 closes.
+
+### 1a-bis / 1b
+
+Feature store 289 rows; ledgers reconcile both days. Shadow ledger: no resolved slot_occupied rows under random mode.
+Detector scan 18:07Z 10-08: 72 movers, 0 candidates — `roc_below_min` 50, `no_pullback_resume` 21, `climax_wick` 1
+(dormant detector; random ticks trade regardless). [SIZE_TRIM] RLC ×0.98, PONS ×0.88 — no winner trimmed.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, NO ACTION (10-07); 10-06 INVESTIGATE closed NOT A DEFECT.** 10-07: −$6.13 / −4.55R, six in-band
+stops on a narrow down day. Trial 25 at 46 closes, −$9.06 ± $7.93 — sign not distinguishable from zero.
+
+---
+
 # Daily Audit — 2026-10-05
 
 ---
