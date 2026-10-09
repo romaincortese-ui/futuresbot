@@ -1,3 +1,71 @@
+# Daily Audit — 2026-10-08
+
+---
+
+## Automated Assessment (run 2026-10-09 ~17:20Z)
+
+**Window: 2026-10-08T00:00:00Z – 23:59:59Z by exit time. 8 closes (all trial 25).** No skipped day.
+
+**Budget floor (0-bis):** equity **$182.51** (−$1.06 unrealised, 3 open) > $140. Bot NOT paused.
+
+**Trial 25 alerts (0-ter): none.** Ticks 10-08 00Z → 10-09 12Z all processed, prereg 23840ce65807b549. No error /
+not_filled / contract_error decisions; 2 `min_vol` refusals (BTW WC-long 06Z, PONS WC-short 18Z), slot_full 4. Max
+concurrency 2 TREND / 3 WC. Stops filled 0.03–0.11R past trigger; all 3 open positions carry resting server SL/TP
+(stop_book_state 1). No Traceback / "invalid settings" / 5003 / 2015 in logs since 14:27Z 10-09.
+
+**Daily card 10-08: NO ACTION** — 0/6 tripwires; stops −1.07/−1.03/−1.11/−1.07/−1.03; risk% 0.51–1.12; slippage
+−14/+64 bps; ledger 8 = 8; margin 13%. +0.81R entry / −4.71R exit, 59th pct at 9 fills; breadth 0.49. Decay meter 25%.
+Steps 1a-bis(a), 1b(c), 3, 4 not run.
+
+### 1. Closed trades 10-08 (exchange realised −$5.87, 1W/7L, −4.71R)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| JUP | WILDCARD | L x5 | 0.3577 → 0.3659 | +1.14 | +0.64 | retention trail |
+| ZEC | TREND | L x8 | 1327.17 → 1296.51 | −0.98 | −1.07 | stop |
+| MANA | WILDCARD | L x3 | 0.10646 → 0.0997 | −1.61 | −1.03 | stop |
+| NIL | WILDCARD | S x5 | 0.08426 → 0.08752 | −2.26 | −1.11 | stop |
+| FET | TREND | L x5 | 0.2314 → 0.223 | −1.05 | −1.07 | stop |
+| TIA | TREND | L x4 | 0.4851 → 0.465 | −1.04 | −1.03 | stop |
+| MET | WILDCARD | S x2 | 0.4675 → 0.4686 | −0.04 | −0.04 | exchange close |
+| BR | WILDCARD | S x2 | 0.52616 → 0.52545 | −0.04 | −0.00 | exchange close |
+
+Five in-band stops; entry-dated the day is +0.81R (open trades from 10-08 entries still running/closed later).
+
+### 1-OPEN (17:20Z 10-09; trial 25, all WILDCARD)
+
+| sym | side x | held | R now | peak R | giveback | to TP | to SL | margin intended → actual |
+|---|---|---|---|---|---|---|---|---|
+| BATON | L x1 | 17.3h | −0.21 | +0.69 | −0.90 | +109% | −17% | $7.60 → $7.47 (×0.99) |
+| KAIA | L x1 | 5.3h | −0.25 | +0.08 | −0.33 | +101% | −15% | $11.02 → $10.87 |
+| STRK | S x2 | 5.3h | −0.22 | +0.43 | −0.65 | +40% | −6% | $12.33 → $6.12 (regime ×0.5) |
+
+### 1-bis. Trial 25 (entry ≥ 10-03T20:59:27Z, all prereg 23840ce65807b549)
+
+51 closes, net **−$1.14 ± $9.76 SE** / **−2.47R ± 6.44R SE** (not a readable total), ex-best −4.76R; ~8.7 closes/day.
+Exits: TP 0 | stop 18 | other 33. Sleeves: TREND-long 21, WILDCARD-long 18, WILDCARD-short 12. Interim at 100 closes.
+
+### 1a-bis / 1b
+
+Feature store 294 rows; ledger reconciles (8 = 8). Shadow ledger: no resolved slot_occupied rows under random mode.
+Detector scan 17:16Z 10-09: 53 movers, 0 candidates — `roc_below_min` 49, `no_pullback_resume` 3, `low_volume_z` 1
+(dormant detector; random ticks trade regardless). No [SIZE_TRIM] in the log window.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Healthy machine, NO ACTION.** 10-08: −$5.87 / −4.71R exit-dated (+0.81R entry-dated), five in-band stops. Trial 25 at
+51 closes, −$1.14 ± $9.76 — sign not distinguishable from zero.
+
+---
+
 # Daily Audit — 2026-10-07 (+ catch-up 10-06)
 
 ---
