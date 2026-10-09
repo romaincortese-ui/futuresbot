@@ -19572,3 +19572,17 @@ Server stop present, ledger 10 = 10 exchange closes, slippage -29/+66 bps (insid
 **$ test:** the excess beyond band is 0.014R x $1.59 = $0.02; no fix approaches $10/month.
 **Verdict: no defect. Nothing changed.** Expect M1 to recur on x10 major TREND stops; it reopens only if the PRICE leg
 (fill vs trigger) exceeds 0.10R or a stop fills without a resting server order.
+
+### 2026-10-09 - TREND LOSSES vs THE MARKET TREND (owner intuition, wc/TRENDMKT): PARTLY RIGHT; 3 entry fixes REJECTED
+
+Pre-registered (sha256 c9c4d468...); verifier reproduced 47/48 numbers exactly.
+- Live trial 25 TREND: 21 closes, -$11.68, -0.454R [-0.69, -0.11]; 12 full stops. BTC fell during all 12 stops and rose
+  during all 9 others; fixed 6h after entry: BTC fell after 10 of 20 entries, all 10 full stops (p 0.0012). Unseen year
+  (1,063 TREND trades): BTC down next 6h -0.50R vs up +0.31R. => losses ARE the market moving during the trade.
+- At entry: 12 market measures (BTC 24h/72h/7d, vs 7/20-day averages, breadth, ETH) did not separate losers (all p >= 0.51);
+  market state did not predict BTC's next 6h. => the market trend AT ENTRY does not avoid them.
+- F1 no TREND if BTC 7d < 0: Sept -$23.53 -> REJECT. F2 no TREND if BTC < 200-day avg: never fired in Sept -> REJECT.
+  F3 no TREND if the coin's 7d < 0: Sept -$23.97 -> REJECT. Unseen-year gains (+$6..+$9/month) = removing a losing 15m TREND
+  book; a random pause of the same length does as well (placebo 61-78th pct). TREND off entirely: Sept -$23.64.
+- Mechanism: payoff shape (avg win +0.59R vs loss -0.98R; needs 62% wins, had 33%; 3R target never hit). Next idea, if any:
+  an IN-TRADE rule reacting to BTC moving against an open TREND trade, pre-registered for a later trial. Trial 25 unchanged.
