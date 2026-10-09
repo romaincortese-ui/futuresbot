@@ -19598,3 +19598,15 @@ and a new 24h closing high, every completed 15m bar), long-only, 3.5x, 2 slots; 
   trades -0.61R vs fallback -0.454R (tiny n).
 - Tick-gated pass-only: Sept -$18.38. Live would need code (a TREND source switch, ~60-100 lines) + its own trial PREREG.
   If TREND is revisited, the deciding comparison is trigger vs TREND off. Trial 25 unchanged.
+
+### 2026-10-10 - TAKE PROFIT WITHIN 10% OF THE PEAK AFTER THE TROPHY ALERT (RX90, wc/RECORDTP): CANDIDATE (weak), NOT CONFIRMED
+
+Pre-registered (sha256 4765517b...); verifier reproduced every number. Rule: after the 🏆 alert (unrealized $ above every close
+of the trailing 7 days), exit when profit falls to 90% of its running peak; other exits unchanged.
+- Sept at $190 (adverse-first): +$2.40 [-25.50, +27.70] (SE $13.55 - not a result); favourable-first -$24.77. The plus is
+  slot/cash timing; on triggered trades the rule's exits were -0.118R worse. 7 runners cut ($9.62).
+- Unseen 15m year: +$2.75/month [-1.59, +7.18] adverse; +$4.43 [+0.82, +8.07] favourable; half the adverse gain is the first
+  week. Unseen 1m check: +$0.77/month (SE 1.97); 83 target winners cut over ~24 months (-$200).
+- The trigger lowers itself: capped winners keep the weekly best close small, so the alert fires earlier (Sept median 0.54R,
+  1m 549/580 triggers below 1R). Live: 3 trophy trades (STRK, PUMPFUN, RLC) would have banked +$4.75 more (hand-picked).
+- CANDIDATE on the letter of the rule; could only enter as a later trial / approved amendment. Trial 25 unchanged.
