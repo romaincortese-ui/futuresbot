@@ -19586,3 +19586,15 @@ Pre-registered (sha256 c9c4d468...); verifier reproduced 47/48 numbers exactly.
   book; a random pause of the same length does as well (placebo 61-78th pct). TREND off entirely: Sept -$23.64.
 - Mechanism: payoff shape (avg win +0.59R vs loss -0.98R; needs 62% wins, had 33%; 3R target never hit). Next idea, if any:
   an IN-TRADE rule reacting to BTC moving against an open TREND trade, pre-registered for a later trial. Trial 25 unchanged.
+
+### 2026-10-09 - TREND ONLY ON ITS NATURAL TRIGGER, WILDCARD UNCHANGED (wc/TRENDTRIG): REJECTED (Sept leg a tie)
+
+Pre-registered (sha256 2c40949d...); verifier 55 CONFIRMED, 0 WRONG. TRIG = TREND opens only when the detector fires (24h >= +4%
+and a new 24h closing high, every completed 15m bar), long-only, 3.5x, 2 slots; WILDCARD on the 6h ticks.
+- Sept 09-03..09-30 at $190: TRIG +$38.15 vs trial 25 +$39.23 -> -$1.08 [-$27.04, +$26.14] (needed > $0) -> REJECT.
+  TREND trades 1.50/day vs 3.11; +0.317R vs +0.191R per trade (spans 0); fees -$8.29; DD 6.7% vs 7.4%.
+- Unseen MEXC year, one $190 account: +$16.73/month vs trial 25 [+7.42, +26.24] (met); but TREND OFF alone is +$9.76 and TRIG
+  minus OFF is +$6.97 [-0.50, +15.20]. Binance years (TREND alone): the trigger loses -$10.69/month. Live 10-03..10-09: trigger
+  trades -0.61R vs fallback -0.454R (tiny n).
+- Tick-gated pass-only: Sept -$18.38. Live would need code (a TREND source switch, ~60-100 lines) + its own trial PREREG.
+  If TREND is revisited, the deciding comparison is trigger vs TREND off. Trial 25 unchanged.
