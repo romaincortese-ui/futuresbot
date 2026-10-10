@@ -127,7 +127,8 @@ def test_the_remote_script_can_only_read():
                 assert ast.unparse(f) == "sys.stdout.write"
     assert set(A.CONTAINER_FILES) == {"futures_feature_store.jsonl", "futures_shadow_ledger.jsonl",
                                       "futures_r_series.jsonl", "futures_ticker_snapshots.jsonl",
-                                      "futures_runtime_state.json", "futures_random_ticks.jsonl"}
+                                      "futures_runtime_state.json", "futures_random_ticks.jsonl",
+                                      "futures_random_trend_evals.jsonl"}
 
 
 def test_no_secret_ever_leaves_the_container(data_dir):
@@ -168,6 +169,29 @@ def test_trial_dials_are_recorded_and_never_read_as_exit_drift(data_dir):
         assert not A.env_allowed(bad)
     base = {k: v for k, v in snap["env"].items() if k not in extra}
     assert A.timeline_drift(snap["env"]) == A.timeline_drift(base)
+
+
+def test_trial_26_trend_evaluation_log_and_settings_are_archived(tmp_path, data_dir):
+    """B3: the 15m TREND evaluation log is pulled and filed with the day; the two trial-26 settings
+    get a dated record (and are no exit dial the drift check reads)."""
+    evals = json.dumps({"s": 1790187300, "prereg": "cbbff32d4bf5d887",
+                        "rows": [{"symbol": "ETH_USDT", "fire": True}]}) + "\n"
+    (data_dir / "futures_random_trend_evals.jsonl").write_text(evals, encoding="utf-8")
+    extra = {"FUTURES_RANDOM_TREND_SOURCE": "natural", "FUTURES_RANDOM_FX90": "on"}
+    for name in extra:
+        assert A.env_allowed(name)
+    out = tmp_path / "evidence"
+    clock = Clock(NOW)
+    ex = FakeExchange(clock)
+    s1 = A.run_daily(None, out, _local_runner(data_dir, [], extra=extra), now=NOW, cache_factory=_factory(ex, clock),
+                     log=lambda m: None)
+    day = out / "archive" / TODAY
+    assert s1["run"]["container"]["futures_random_trend_evals.jsonl"] == "written"
+    assert (gzip.decompress((day / "container" / "futures_random_trend_evals.jsonl.gz").read_bytes())
+            == (data_dir / "futures_random_trend_evals.jsonl").read_bytes())
+    env = json.loads((day / "container" / "exit_env.json").read_text())["env"]
+    assert {k: env.get(k) for k in extra} == extra
+    assert A.timeline_drift(env) == A.timeline_drift({k: v for k, v in env.items() if k not in extra})
 
 
 def test_a_corrupted_transfer_is_refused_not_archived(data_dir):

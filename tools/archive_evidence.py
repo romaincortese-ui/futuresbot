@@ -16,6 +16,8 @@ WHAT ONE RUN DOES (default: today, UTC)
        futures_runtime_state.json    trade_history, open positions, trial marker, trend_rotation
        futures_random_ticks.jsonl    trial 24's tick journal (one line per tick: universe, ranked
                                      lists, decisions); a file absent on the container is "missing"
+       futures_random_trend_evals.jsonl  trial 26's TREND evaluation log (one line per 15m close:
+                                     per symbol roc_24, new-high, fire, prio, decision)
      plus the exit/risk env values (a fixed whitelist of non-secret FUTURES_* names, filtered ON
      THE CONTAINER so nothing else ever crosses the wire) and the deployed commit when Railway
      exposes it (RAILWAY_GIT_COMMIT_SHA; absent on 2026-09-23). Each file is
@@ -82,6 +84,7 @@ CONTAINER_FILES = (
     "futures_ticker_snapshots.jsonl",
     "futures_runtime_state.json",
     "futures_random_ticks.jsonl",
+    "futures_random_trend_evals.jsonl",
 )
 # Exit / sizing parameters a replay needs to know were live that day. A WHITELIST of names,
 # matched on the container: a key outside it never leaves the process. The deny pattern is a

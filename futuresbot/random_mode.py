@@ -13,6 +13,13 @@ stamped with the effective values and the tag of the PREREG they match:
     `6h|NNN|liq0|3.5`): ticks every 6h (00:00Z, 06:00Z, 12:00Z, 18:00Z), natural side
     for every bucket (TREND LONG, WILDCARD-long LONG, WILDCARD-short SHORT; no coin),
     TREND stop 3.5 x ATR14%, WILDCARD turnover >= $2M. Everything else as trial 24.
+  - TRIAL 26 = wc/TRIAL26/PREREG.md (sha256 cbbff32d4bf5d887...): trial 25 plus two
+    settings. FUTURES_RANDOM_TREND_SOURCE=natural: TREND never opens at the ticks; it
+    opens LONG only, in event time, at every 15m close where the live detector's LONG
+    verdict fires (L0: 24h ROC >= +4% and a new 24h closing high on completed bars; see
+    the runtime's _maybe_random_trend_eval). FUTURES_RANDOM_FX90=on: every position also
+    exits at 0.90 x its running peak R once that peak has reached +2.0R (RECORD_TP_FLOOR,
+    the runtime's retention-trail poll). Unset = tick / off = trial 25 exactly.
   - Any other valid combination runs, stamped "unregistered", and the owner is alerted;
     an invalid value stops the ticks (not processed) and alerts - never a silent fallback.
 This module is the backtest's selection code moved into the package: `wildcard_row`,
@@ -60,12 +67,18 @@ PREREG_SHA256 = "29fabd853a4f5d77526a544f528692c733e55d8b667f24e119c6a095bf9d94b
 PREREG_TAG = PREREG_SHA256[:16]                                    # trial 24
 PREREG25_SHA256 = "23840ce65807b549a406a531c0b05d4b677ead981c84ad0c8fc4f5ecc4a8e89f"
 PREREG25_TAG = PREREG25_SHA256[:16]                                # trial 25
+PREREG26_SHA256 = "cbbff32d4bf5d8870e3fd08010709525d42af634203bb0524047e262a03801d9"
+PREREG26_TAG = PREREG26_SHA256[:16]                                # trial 26
 UNREGISTERED = "unregistered"
 
 # ---- the frozen definition ---------------------------------------------------------
 TICK_SECONDS = 12 * 3600            # default (trial 24): 00:00Z and 12:00Z (the epoch is 00:00Z, 43200 | 86400)
 TICK_HOURS_ALLOWED = (12, 6)        # FUTURES_RANDOM_TICK_HOURS; 6 = 00:00Z, 06:00Z, 12:00Z, 18:00Z
 SIDE_MODES = ("coin", "natural")    # FUTURES_RANDOM_SIDE_MODE
+TREND_SOURCES = ("tick", "natural")  # FUTURES_RANDOM_TREND_SOURCE (trial 26: natural)
+FX90_MODES = ("off", "on")          # FUTURES_RANDOM_FX90 (trial 26: on)
+FX90_ARM_R = 2.0                    # C2: arms at the first new-peak poll whose R >= +2.0R ...
+FX90_FRAC = 0.90                    # ... and exits when R <= 0.90 x the running peak R
 BAR_SECONDS = 900                   # 15m bars
 # A tick is processed by the first cycle after it. A restart (or a pause) that lands
 # within this grace still processes the tick once; later than that the tick is skipped
@@ -76,6 +89,11 @@ TICK_GRACE_SECONDS = 15 * 60
 # (24h clock from the tick 24h earlier; live measures the clock from the fill, a few
 # seconds to minutes later). Kept inside the grace so a stuck close cannot lose the tick.
 TICK_DEFER_SECONDS = 10 * 60
+# Trial 26: the TREND evaluation at a 15m close s is processed once, by the first cycle
+# after s, with the tick's grace and 24h-clock wait (so: only the latest close; a restart
+# never catches up on older ones). A paused bot logs the evaluation and opens nothing.
+TREND_EVAL_SECONDS = BAR_SECONDS
+TREND_EVAL_GRACE_SECONDS = TICK_GRACE_SECONDS
 
 BUCKETS = ("TREND", "WC_LONG", "WC_SHORT")                   # PREREG's listed order
 SLEEVE = {"TREND": "TREND", "WC_LONG": "WILDCARD", "WC_SHORT": "WILDCARD"}
@@ -103,15 +121,17 @@ STAMP_KEYS = (
     "random_ref_price", "random_regime_mult", "random_universe_n", "random_held_skipped",
     "random_held_symbols", "random_btc_flag", "random_turnover_24h", "random_range_24h",
     "random_decision", "random_tick_hours", "random_side_mode", "random_trend_sl_mult",
-    "random_wc_min_turnover",
+    "random_wc_min_turnover", "random_trend_source", "random_fx90",
 )
 
-# (tick hours, side mode, TREND stop multiple, WILDCARD turnover floor) -> the PREREG tag.
+# (tick hours, side mode, TREND stop multiple, WILDCARD turnover floor, TREND source, FX90)
+# -> the PREREG tag.
 REGISTERED = {
-    (12, "coin", 3.0, 2_000_000.0): PREREG_TAG,
-    (6, "natural", 3.5, 2_000_000.0): PREREG25_TAG,
+    (12, "coin", 3.0, 2_000_000.0, "tick", "off"): PREREG_TAG,
+    (6, "natural", 3.5, 2_000_000.0, "tick", "off"): PREREG25_TAG,
+    (6, "natural", 3.5, 2_000_000.0, "natural", "on"): PREREG26_TAG,
 }
-TRIAL_OF_TAG = {PREREG_TAG: "trial 24", PREREG25_TAG: "trial 25"}
+TRIAL_OF_TAG = {PREREG_TAG: "trial 24", PREREG25_TAG: "trial 25", PREREG26_TAG: "trial 26"}
 
 
 def enabled() -> bool:
@@ -132,6 +152,8 @@ class TickConfig:
     trend_sl_mult: float = 3.0
     wc_min_turnover: float = UNIVERSE_MIN_TURNOVER
     errors: tuple[str, ...] = ()
+    trend_source: str = "tick"          # trial 26: "natural" = L0 at every 15m close, LONG only
+    fx90: str = "off"                   # trial 26: "on" = the +2R / 90%-of-peak floor
 
     @property
     def valid(self) -> bool:
@@ -142,9 +164,19 @@ class TickConfig:
         return int(self.tick_hours) * 3600
 
     @property
+    def trend_natural(self) -> bool:
+        """TREND opens only in event time (15m closes), never at the ticks."""
+        return self.trend_source == "natural"
+
+    @property
+    def fx90_on(self) -> bool:
+        return self.fx90 == "on"
+
+    @property
     def prereg(self) -> str:
         """The tag of the PREREG this combination is, else "unregistered"."""
-        key = (int(self.tick_hours), self.side_mode, float(self.trend_sl_mult), float(self.wc_min_turnover))
+        key = (int(self.tick_hours), self.side_mode, float(self.trend_sl_mult), float(self.wc_min_turnover),
+               self.trend_source, self.fx90)
         return REGISTERED.get(key, UNREGISTERED)
 
     @property
@@ -152,17 +184,25 @@ class TickConfig:
         return TRIAL_OF_TAG.get(self.prereg, "UNREGISTERED")
 
     def fields(self) -> dict[str, Any]:
-        """The effective values as stamped on positions, shadow rows and journal rows."""
+        """The effective values as stamped on positions, shadow rows and journal rows
+        (trial 25's four; the trial-26 two are `event_fields`, stamped beside them)."""
         return {"random_tick_hours": float(self.tick_hours), "random_side_mode": self.side_mode,
                 "random_trend_sl_mult": float(self.trend_sl_mult),
                 "random_wc_min_turnover": float(self.wc_min_turnover)}
 
+    def event_fields(self) -> dict[str, Any]:
+        """Trial 26's two effective values, stamped wherever `fields()` is."""
+        return {"random_trend_source": self.trend_source, "random_fx90": self.fx90}
+
     def describe(self) -> str:
         """One line: the effective values (boot log, /status, alerts)."""
         hours = " / ".join(f"{h:02d}:00Z" for h in range(0, 24, int(self.tick_hours)))
+        trend = ("natural (L0 at every 15m close, LONG only, never at the ticks)" if self.trend_natural
+                 else self.trend_source)
         return (f"ticks every {int(self.tick_hours)}h ({hours}), side {self.side_mode}, "
                 f"TREND stop {float(self.trend_sl_mult):g}x ATR, WILDCARD turnover >= "
-                f"${float(self.wc_min_turnover):,.0f}, PREREG {self.prereg}")
+                f"${float(self.wc_min_turnover):,.0f}, TREND source {trend}, FX90 {self.fx90}, "
+                f"PREREG {self.prereg}")
 
 
 def _setting(name: str) -> str | None:
@@ -175,12 +215,15 @@ def _setting(name: str) -> str | None:
 
 def config() -> TickConfig:
     """FUTURES_RANDOM_TICK_HOURS (12 | 6, default 12), FUTURES_RANDOM_SIDE_MODE (coin |
-    natural, default coin), FUTURES_RANDOM_WC_MIN_TURNOVER (> 0, default 2000000) and the
+    natural, default coin), FUTURES_RANDOM_WC_MIN_TURNOVER (> 0, default 2000000), the
     TREND stop multiple the order uses (FUTURES_TREND_SL_ATR_MULT, default 3.0, read as
-    trend.py reads it; a set value that is not a number > 0 is an error here). Unset or
-    blank = the default; surrounding spaces are ignored; values are case-sensitive. Any
-    other value is an error: the caller does not process the tick and alerts. Never a
-    silent fallback."""
+    trend.py reads it; a set value that is not a number > 0 is an error here), and trial
+    26's FUTURES_RANDOM_TREND_SOURCE (tick | natural, default tick) and FUTURES_RANDOM_FX90
+    (off | on, default off). Unset or blank = the default; surrounding spaces are ignored;
+    values are case-sensitive. Any other value is an error: the caller does not process the
+    tick (nor the 15m TREND evaluation) and alerts. Never a silent fallback. An invalid
+    FX90 value holds "off" (the floor is not applied); a valid one is applied to open
+    positions even while another setting is invalid (exits keep running, entries stop)."""
     errors: list[str] = []
     hours = 12
     raw = _setting("FUTURES_RANDOM_TICK_HOURS")
@@ -216,9 +259,24 @@ def config() -> TickConfig:
             val = float("nan")
         if not (math.isfinite(val) and val > 0):
             errors.append(f"FUTURES_TREND_SL_ATR_MULT={raw!r} (a number > 0)")
+    source = "tick"
+    raw = _setting("FUTURES_RANDOM_TREND_SOURCE")
+    if raw is not None:
+        if raw in TREND_SOURCES:
+            source = raw
+        else:
+            errors.append(f"FUTURES_RANDOM_TREND_SOURCE={raw!r} (allowed: tick, natural)")
+    fx90 = "off"
+    raw = _setting("FUTURES_RANDOM_FX90")
+    if raw is not None:
+        if raw in FX90_MODES:
+            fx90 = raw
+        else:
+            errors.append(f"FUTURES_RANDOM_FX90={raw!r} (allowed: off, on)")
     return TickConfig(tick_hours=hours, side_mode=mode,
                       trend_sl_mult=float(_sleeve_params("TREND")["sl_mult"]),
-                      wc_min_turnover=turnover, errors=tuple(errors))
+                      wc_min_turnover=turnover, errors=tuple(errors),
+                      trend_source=source, fx90=fx90)
 
 
 # ---- time ------------------------------------------------------------------------------
@@ -362,6 +420,38 @@ def trend_row(symbol: str, frame: pd.DataFrame | None, tick: int) -> dict[str, A
         "turnover24_mx": turnover24(fr),
     })
     return row
+
+
+def trend_eval_row(symbol: str, frame: pd.DataFrame | None, s: int) -> dict[str, Any]:
+    """Trial 26, one TREND symbol at the 15m close `s`: trigger L0 = the live detector's LONG
+    verdict on the bars COMPLETED at s (trend_row: open <= s - 900, the bar that closed at s
+    present) - 24h ROC c[-1]/c[-97] - 1 >= +4% and a new 24h closing high c[-1] >=
+    max(c[-97:-1]). `trend_row`'s fields (the order is built from them) plus `new_high`, `fire`
+    (LONG only: a detector SHORT verdict is not a firing) and `prio` (= roc24h when firing)."""
+    row = trend_row(symbol, frame, s)
+    new_high = None
+    if row.get("usable"):
+        c = completed(frame, s, TREND_BARS)["close"].astype(float).values
+        new_high = bool(len(c) >= 97 and c[-1] >= c[-97:-1].max())
+    fire = bool(row.get("usable")) and _detector_side(row) == "LONG"
+    row.update({"new_high": new_high, "fire": fire, "prio": row.get("roc24h") if fire else None,
+                "status": "trigger"})
+    return row
+
+
+def trend_firings(rows: Iterable[dict]) -> list[dict]:
+    """The firing rows of one 15m close in the order C3 tries them: prio (= 24h ROC)
+    descending, ties by symbol ascending."""
+    return sorted([r for r in rows if r.get("fire")], key=lambda r: (-float(r["prio"]), str(r["symbol"])))
+
+
+def trend_eval_compact(row: dict) -> dict[str, Any]:
+    """One symbol of a TREND evaluation as the evaluation log stores it (C6)."""
+    return {"symbol": row.get("symbol"), "usable": bool(row.get("usable")), "why": row.get("why"),
+            "roc24h": row.get("roc24h"), "new_high": row.get("new_high"), "fire": bool(row.get("fire")),
+            "prio": row.get("prio"), "reject": row.get("reject"), "gate_close": row.get("gate_close"),
+            "atr_pct": row.get("atr_pct"), "detector_side": _detector_side(row),
+            "decision": row.get("decision")}
 
 
 def rank(rows: Iterable[dict], key: str, passing: Callable[[dict], bool], desc: bool,
@@ -589,6 +679,7 @@ def stamp(*, tick: int, bucket: str, cand: dict, rank_: int, field: int, side: s
         "random_turnover_24h": tk.get("amount24"), "random_range_24h": tk.get("range24"),
         "random_decision": decision,
         **cfg.fields(),
+        **cfg.event_fields(),
     }
     return out
 

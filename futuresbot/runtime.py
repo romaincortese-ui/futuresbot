@@ -163,7 +163,8 @@ EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "b
                        "stop_book_state", "stop_book_price", "stop_book_price_gap_bps",
                        "stop_book_checks", "stop_book_absent_checks",
                        "stop_book_unreadable_checks", "stop_book_bare_seconds",
-                       "stop_book_bare_max_seconds", "stop_book_seen_ts")
+                       "stop_book_bare_max_seconds", "stop_book_seen_ts",
+                       "fx90_armed_ts", "fx90_armed_r")       # trial 26: when the FX90 floor armed
 
 # Entry gate values stamped on a position and copied, by name, to the closed
 # trade record and the feature-store row.
@@ -315,6 +316,12 @@ class FuturesRuntime:
         self._random_mode_state: dict[str, Any] = {}
         self._random_tick_pending: int | None = None
         self._random_mode_logged: dict[tuple, int] = {}
+        # Trial 26: the last processed 15m TREND evaluation (persisted like the tick), the
+        # evaluation waiting on a 24h clock, and the random-mode settings read once at the
+        # top of each cycle (the FX90 floor in the per-second exit poll reads this copy).
+        self._random_trend_state: dict[str, Any] = {}
+        self._random_trend_pending: int | None = None
+        self._random_cycle_cfg: Any = None
         self._last_shadow_resolve_at = 0.0
         self._last_prophet_archive_error_at = 0.0
         self._last_pmt_core_weight_refresh_at = 0.0
@@ -2937,8 +2944,28 @@ class FuturesRuntime:
                 self._maybe_record_peak_notify(position, r_now)
             except Exception as exc:  # notification must never break the trail
                 log.debug("record-peak notify failed: %s", exc)
+            # TRIAL 26 FX90 (FUTURES_RANDOM_FX90=on): the floor ARMS on the first new-peak
+            # poll whose (unrounded) R reaches +2.0R and first acts on the NEXT poll -
+            # wc/RECORDTP/A exits_rx.py trig=("fixed", 2.0), state step (3).
+            if ("fx90_armed_ts" not in position.metadata and r_now >= random_mode.FX90_ARM_R
+                    and self._random_fx90_on()):
+                position.metadata["fx90_armed_ts"] = time.time()
+                position.metadata["fx90_armed_r"] = round(r_now, 4)
+                log.warning("[RECORD_TP_FLOOR] armed symbol=%s side=%s peak=%.4fR floor=%.2f x peak",
+                            position.symbol, position.side, r_now, random_mode.FX90_FRAC)
             self._save_state()
             return False
+        # TRIAL 26 FX90: once armed, exit at market when R falls to 0.90 x the running peak
+        # (the stored 4-dp peak the trail reads). Highest floor wins: it sits above the
+        # retention floor (0.50 / 0.75 x peak), so it is checked first and takes the label;
+        # it ignores the trail's arm gate, cost guard and TREND trail switch, as exits_rx.py.
+        if ((position.metadata or {}).get("fx90_armed_ts") is not None and self._random_fx90_on()
+                and r_now <= random_mode.FX90_FRAC * peak_r):
+            log.warning("[RECORD_TP_FLOOR] symbol=%s side=%s peak=%.2fR now=%.2fR floor=%.2fR price=%s",
+                        position.symbol, position.side, peak_r, r_now, random_mode.FX90_FRAC * peak_r,
+                        self._format_price(current_price))
+            return self._close_position_for_exit(position, current_price=current_price,
+                                                 reason="RECORD_TP_FLOOR")
         # TREND-ONLY SWITCH (FUTURES_TREND_TRAIL_ENABLED, default on). It sits HERE,
         # not beside the master switch at the top, on purpose: nothing above this
         # line is the trail. The R series, the trough, the peak and the breakeven
@@ -5920,6 +5947,8 @@ class FuturesRuntime:
             pass
         rm_state = payload.get("random_mode")
         self._random_mode_state = dict(rm_state) if isinstance(rm_state, dict) else {}
+        rt_state = payload.get("random_trend")
+        self._random_trend_state = dict(rt_state) if isinstance(rt_state, dict) else {}
         log.info("Loaded futures runtime state from %s", self._state_path)
 
     def _save_state(self) -> None:
@@ -5948,6 +5977,9 @@ class FuturesRuntime:
             # processed one, so the file is unchanged while it never has.
             **({"random_mode": dict(self._random_mode_state)}
                if getattr(self, "_random_mode_state", None) else {}),
+            # Trial 26: the last processed 15m TREND evaluation; absent until one ran.
+            **({"random_trend": dict(self._random_trend_state)}
+               if getattr(self, "_random_trend_state", None) else {}),
         }
         # Atomic write. This file is the authoritative open_positions map and is
         # rewritten every cycle; a bare write_text truncates it if the container
@@ -8745,10 +8777,24 @@ class FuturesRuntime:
         if not random_mode.enabled():
             return seconds
         now = time.time()
-        cap = random_mode.next_tick(now, random_mode.config().tick_seconds) - now + 1.0
-        if self._random_tick_pending is not None:
+        cfg = random_mode.config()
+        cap = random_mode.next_tick(now, cfg.tick_seconds) - now + 1.0
+        if cfg.valid and cfg.trend_natural:
+            # Trial 26: TREND is decided at every 15m close - wake 1 s after each one.
+            cap = min(cap, random_mode.next_tick(now, random_mode.TREND_EVAL_SECONDS) - now + 1.0)
+        if self._random_tick_pending is not None or getattr(self, "_random_trend_pending", None) is not None:
             cap = min(cap, 5.0)
         return max(1, int(math.ceil(min(float(seconds), cap))))
+
+    def _random_fx90_on(self) -> bool:
+        """Trial 26: the FX90 floor applies (FUTURES_RANDOM_FX90=on with the random mode on),
+        as read at the top of this cycle; before the first cycle, read now."""
+        cfg = getattr(self, "_random_cycle_cfg", None)
+        if cfg is None:
+            if not random_mode.enabled():
+                return False
+            cfg = random_mode.config()
+        return bool(cfg.fx90_on)
 
     def _random_mode_shadow_once(self, sig: Any, kind: str) -> None:
         """A candidate the switched-off scan entry path would have taken, shadow-logged as
@@ -8781,7 +8827,16 @@ class FuturesRuntime:
                 else "natural side (TREND long, WILDCARD-long long, WILDCARD-short short)")
         parts = [f"🎲 <b>RANDOM MODE</b> ({cfg.trial}): entries only at {hours}, {side}",
                  f"every {cfg.tick_hours}h · {cfg.side_mode} · TREND stop {cfg.trend_sl_mult:g}x ATR"
-                 f" · WILDCARD turnover ≥ ${cfg.wc_min_turnover:,.0f} · PREREG {cfg.prereg}"]
+                 f" · WILDCARD turnover ≥ ${cfg.wc_min_turnover:,.0f} · PREREG {cfg.prereg}",
+                 (f"TREND source natural: L0 at every 15m close, LONG only, never at the ticks"
+                  if cfg.trend_natural else f"TREND source {cfg.trend_source}") + f" · FX90 {cfg.fx90}"]
+        if cfg.trend_natural:
+            tstate = getattr(self, "_random_trend_state", None) or {}
+            if tstate.get("last_eval"):
+                stamp = random_mode.utc(tstate.get("last_eval")) or ""
+                parts.append(f"last TREND evaluation {stamp[11:16]}Z: {html.escape(str(tstate.get('summary') or '-'))}")
+            if getattr(self, "_random_trend_pending", None) is not None:
+                parts.append("TREND evaluation waiting on a 24h clock")
         last = state.get("last_tick")
         if last:
             stamp = random_mode.utc(last) or ""
@@ -8804,9 +8859,12 @@ class FuturesRuntime:
         try:
             tick = str(md.get("random_tick_utc") or "")
             coin = md.get("random_coin")
-            how = ("natural side" if md.get("random_side_mode") == "natural"
+            event = md.get("random_status") == "trigger"       # trial 26: a 15m-close TREND entry
+            how = ("natural trigger L0" if event
+                   else "natural side" if md.get("random_side_mode") == "natural"
                    else f"coin {'?' if coin is None else int(float(coin))}")
-            return (f"🎲 tick {tick[11:16]}Z · {html.escape(str(md.get('random_bucket')))} "
+            return (f"🎲 {'15m close' if event else 'tick'} {tick[11:16]}Z · "
+                    f"{html.escape(str(md.get('random_bucket')))} "
                     f"#{int(float(md.get('random_rank') or 0))} ({html.escape(str(md.get('random_status')))})"
                     f" · {how} → "
                     f"<b>{html.escape(str(md.get('random_side')))}</b>"
@@ -9013,16 +9071,18 @@ class FuturesRuntime:
             log.debug("random tick shadow row failed for %s: %s", cand.get("symbol"), exc)
 
     def _random_open(self, plan: dict[str, Any], bucket: str, cand: dict[str, Any], rank_: int,
-                     field: int, coin_: int | None, held: list[str]) -> dict[str, Any]:
+                     field: int, coin_: int | None, held: list[str],
+                     side: str | None = None) -> dict[str, Any]:
         """Open one bucket's pick on the tick's side (the coin's, or the bucket's natural
         side in side mode natural, coin_ None) through the live convex entry. The
         decision record says what happened; a refused fill leaves the slot empty until
-        the next tick (no next-best retry), as in the backtest."""
+        the next tick (no next-best retry), as in the backtest. `side` (trial 26's 15m
+        TREND evaluation: always "LONG") overrides the tick's side rule."""
         tick = int(plan["tick"])
         sleeve = random_mode.SLEEVE[bucket]
         sym = cand["symbol"]
         cfg = plan.get("config") or random_mode.config()
-        side = random_mode.side_for(bucket, cfg.side_mode, coin_)
+        side = side or random_mode.side_for(bucket, cfg.side_mode, coin_)
         d: dict[str, Any] = {"tick": tick, "bucket": bucket, "sleeve": sleeve,
                              "natural_side": random_mode.NATURAL[bucket], "symbol": sym,
                              "rank": rank_, "status": cand.get("status"), "coin": coin_, "side": side,
@@ -9104,6 +9164,11 @@ class FuturesRuntime:
             if cands is None:
                 decisions.append({**base, "decision": "sleeve_disabled"})
                 continue
+            if bucket == "TREND" and getattr(cfg, "trend_natural", False):
+                # Trial 26 (C3): TREND opens only at the 15m closes (_maybe_random_trend_eval,
+                # which ran before this tick); the ranking above is journalled, never traded.
+                decisions.append({**base, "decision": "event_time_only"})
+                continue
             field = len(cands)
             skipped: list[tuple[int, dict]] = []
             pick, rank_ = None, None
@@ -9146,7 +9211,7 @@ class FuturesRuntime:
             tick = int(plan["tick"])
             cfg = plan.get("config") or random_mode.config()
             row = {"tick": tick, "tick_utc": random_mode.utc(tick), "prereg": cfg.prereg,
-                   **cfg.fields(),
+                   **cfg.fields(), **cfg.event_fields(),
                    "started_at": round(started_at, 1), "done_at": round(time.time(), 1),
                    "universe_n": len(plan.get("universe") or []), "universe": plan.get("universe"),
                    "trend_symbols": plan.get("trend_symbols"), "btc_flag": plan.get("btc_flag"),
@@ -9162,6 +9227,175 @@ class FuturesRuntime:
                 fh.write(json.dumps(row, default=str) + "\n")
         except Exception as exc:                   # pragma: no cover - telemetry only
             log.warning("[RANDOM_TICK] journal write failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # TRIAL 26 - TREND IN EVENT TIME (FUTURES_RANDOM_TREND_SOURCE=natural).
+    #
+    # wc/TRIAL26/PREREG.md (sha256 cbbff32d4bf5d887...) C3: at every 15m close s, trigger L0
+    # (the live detector's LONG verdict on completed bars) per symbol of the TREND universe in
+    # force; firings by 24h ROC (ties: symbol); with a free TREND slot (2) the first whose
+    # symbol no position holds is opened LONG through the tick's own entry (_random_open:
+    # stop 3.5x, sizing, BTC-flag target, exits), ONE attempt per s, a firing not taken is
+    # gone. Never at the ticks, never short. Every evaluation is logged (C6).
+    # ------------------------------------------------------------------
+    def _random_trend_log_path(self) -> str:
+        return os.path.join(os.path.dirname(self._random_journal_path()) or "/data",
+                            "futures_random_trend_evals.jsonl")
+
+    def _random_trend_select(self, s: int, cfg: Any) -> dict[str, Any]:
+        """L0 at the 15m close `s` for every TREND symbol in force (I/O: 15m klines; no
+        orders). Raises when half or more of the kline requests fail, so it is retried."""
+        symbols = [x.upper() for x in trend_symbols()]
+        rotating = self._trend_rotation_symbol()
+        if rotating and rotating.upper() not in symbols:
+            symbols.append(rotating.upper())
+        ev: dict[str, Any] = {"tick": int(s), "rows": [], "frames": {"WILDCARD": {}, "TREND": {}},
+                              "universe": [], "trend_symbols": symbols, "btc_flag": None, "config": cfg}
+        for sym in symbols:
+            frame = self._random_frame(sym, s, random_mode.TREND_BARS)
+            row = random_mode.trend_eval_row(sym, frame, s)
+            ev["rows"].append(row)
+            if row.get("usable"):
+                ev["frames"]["TREND"][sym] = random_mode.completed(frame, s, random_mode.TREND_BARS)
+        failed = sum(1 for r in ev["rows"] if r.get("why") == "kline_error")
+        if symbols and failed * 2 >= len(symbols):
+            raise RuntimeError("klines unavailable for %d of %d TREND symbols" % (failed, len(symbols)))
+        return ev
+
+    def _random_trend_execute(self, ev: dict[str, Any]) -> list[dict[str, Any]]:
+        """C3 at one 15m close: slot check, held skip, ONE open attempt (LONG). Sets each
+        row's `decision`: opened / held / slot_full / refused (+ `refusal`) / not_taken (a
+        firing below the attempted one: gone, not queued) / no_fire / unusable."""
+        s = int(ev["tick"])
+        for r in ev["rows"]:
+            r["decision"] = "no_fire" if r.get("usable") else "unusable"
+        held_set, count = self._random_book_at(s)
+        cap = trend_max_positions()
+        ev["book"] = {"held": sorted(held_set), "trend_open": count["TREND"], "trend_slots": cap}
+        firing = random_mode.trend_firings(ev["rows"])
+        if not firing:
+            return []
+        base = {"tick": s, "bucket": "TREND", "sleeve": "TREND", "natural_side": "LONG"}
+        if count["TREND"] >= cap:
+            for r in firing:
+                r["decision"] = "slot_full"
+            return [{**base, "decision": "slot_full", "open": count["TREND"], "slots": cap,
+                     "symbol": firing[0]["symbol"], "firing": len(firing)}]
+        decisions: list[dict[str, Any]] = []
+        held: list[str] = []
+        pick = None
+        for i, r in enumerate(firing, 1):
+            if pick is not None:
+                r["decision"] = "not_taken"
+            elif r["symbol"] in held_set:
+                r["decision"] = "held"
+                held.append(r["symbol"])
+                decisions.append({**base, "decision": "held", "symbol": r["symbol"], "rank": i,
+                                  "status": "trigger"})
+            else:
+                pick = (i, r)
+        if pick is None:
+            return decisions
+        rank_, r = pick
+        if ev.get("btc_flag") is None:
+            flagged, fields = self._btc_exhaustion_flag(asof=s)
+            ev["btc_flag"] = {"flagged": bool(flagged), **fields}
+        d = self._random_open(ev, "TREND", r, rank_, len(firing), None, held, side="LONG")
+        if d.get("decision") == "opened":
+            r["decision"] = "opened"
+        else:
+            r["decision"] = "refused"
+            r["refusal"] = d.get("decision")
+        decisions.append(d)
+        return decisions
+
+    def _random_trend_log(self, ev: dict[str, Any], decisions: list[dict[str, Any]], started_at: float,
+                          paused: bool) -> None:
+        """One line per evaluated 15m close (C6): per symbol roc_24, new-high verdict, fire,
+        prio and decision; the book; the effective settings and PREREG tag. Never raises."""
+        try:
+            s = int(ev["tick"])
+            cfg = ev.get("config") or random_mode.config()
+            row = {"s": s, "s_utc": random_mode.utc(s), "prereg": cfg.prereg,
+                   **cfg.fields(), **cfg.event_fields(), "trigger": "L0",
+                   "started_at": round(started_at, 1), "done_at": round(time.time(), 1),
+                   "paused": bool(paused), "trend_symbols": ev.get("trend_symbols"),
+                   "book": ev.get("book"), "btc_flag": ev.get("btc_flag"),
+                   "rows": [random_mode.trend_eval_compact(r) for r in ev.get("rows") or []],
+                   "decisions": decisions}
+            path = self._random_trend_log_path()
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, default=str) + "\n")
+        except Exception as exc:                   # pragma: no cover - telemetry only
+            log.warning("[RANDOM_TREND] evaluation log write failed: %s", exc)
+
+    def _maybe_random_trend_eval(self, cfg: Any = None) -> None:
+        """Trial 26: the TREND evaluation of the latest 15m close, once (persisted before any
+        order, as the tick), at the first cycle after it; it waits (bounded) for positions
+        whose 24h clock from their own decision time ends at it. Paused or retired: the
+        evaluation is still logged, nothing opens, and it is never re-run on resume.
+        A no-op unless the random mode is on with valid settings and TREND source natural."""
+        if not random_mode.enabled():
+            self._random_trend_pending = None
+            return
+        cfg = cfg if cfg is not None else (getattr(self, "_random_cycle_cfg", None) or random_mode.config())
+        if not cfg.valid or not cfg.trend_natural or not trend_enabled():
+            self._random_trend_pending = None
+            return
+        now = time.time()
+        s = random_mode.due_tick(now, (self._random_trend_state or {}).get("last_eval"),
+                                 grace=random_mode.TREND_EVAL_GRACE_SECONDS,
+                                 tick_seconds=random_mode.TREND_EVAL_SECONDS)
+        if s is None:
+            self._random_trend_pending = None
+            return
+        paused = bool(self._paused or self._strategies_retired())
+        waiting = [] if paused else self._random_due_positions(s)
+        if waiting and now - s < random_mode.TICK_DEFER_SECONDS:
+            if self._random_trend_pending != s:
+                log.info("[RANDOM_TREND] %s waits for %d position(s) whose 24h clock ends at this "
+                         "close: %s", random_mode.utc(s), len(waiting), ", ".join(p.symbol for p in waiting))
+            self._random_trend_pending = s
+            return
+        self._random_trend_pending = None
+        if cfg.prereg == random_mode.UNREGISTERED:
+            self._notify_once(
+                "random_config_unregistered_trend",
+                f"⚠️ <b>Random mode: unregistered configuration</b> [{self._mode_label()}]\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"TREND evaluations run {html.escape(cfg.describe())}. It matches no pre-registration; "
+                f"positions are stamped \"unregistered\".",
+                cooldown_seconds=6 * 3600)
+        started = time.time()
+        try:
+            ev = self._random_trend_select(s, cfg)
+        except Exception as exc:
+            log.warning("[RANDOM_TREND] %s evaluation failed (retried next cycle within the %ds "
+                        "grace): %s", random_mode.utc(s), random_mode.TREND_EVAL_GRACE_SECONDS, exc)
+            return
+        self._random_trend_state = {"last_eval": int(s), "processed_at": round(time.time(), 1)}
+        self._save_state()                         # marked BEFORE any order
+        if paused:
+            for r in ev["rows"]:
+                r["decision"] = "paused" if r.get("fire") else ("no_fire" if r.get("usable") else "unusable")
+            decisions = ([{"tick": int(s), "bucket": "TREND", "decision": "paused"}]
+                         if any(r.get("fire") for r in ev["rows"]) else [])
+        else:
+            try:
+                decisions = self._random_trend_execute(ev)
+            except Exception as exc:               # pragma: no cover - never breaks the cycle
+                log.exception("[RANDOM_TREND] %s failed: %s", random_mode.utc(s), exc)
+                decisions = [{"tick": int(s), "bucket": "TREND", "decision": "error", "error": str(exc)[:200]}]
+        fired = [r["symbol"] for r in random_mode.trend_firings(ev["rows"])]
+        brief = ", ".join("%s:%s%s" % (d.get("decision"), d.get("symbol") or "",
+                                        (" " + str(d.get("side"))) if d.get("side") else "")
+                          for d in decisions) or "no firing"
+        self._random_trend_state["summary"] = brief
+        self._random_trend_log(ev, decisions, started, paused)
+        self._save_state()
+        (log.warning if any(d.get("decision") == "opened" for d in decisions) else log.info)(
+            "[RANDOM_TREND] %s firing=%s | %s", random_mode.utc(s), ",".join(fired) or "-", brief)
 
     def _random_mode_boot_log(self) -> None:
         """Boot: the random mode's effective settings (and an alert when they are invalid -
@@ -9183,6 +9417,14 @@ class FuturesRuntime:
                     "shadow rows only. Last processed tick: %s", rcfg.trial, rcfg.prereg,
                     rcfg.describe(),
                     random_mode.utc((self._random_mode_state or {}).get("last_tick")) or "none")
+        if rcfg.trend_natural or rcfg.fx90_on:
+            log.warning("[RANDOM_MODE] trial-26 settings: TREND source %s%s; FX90 %s%s. Last TREND "
+                        "evaluation: %s", rcfg.trend_source,
+                        " (L0 at every 15m close, LONG only, event time, never at the ticks)"
+                        if rcfg.trend_natural else " (TREND at the ticks)", rcfg.fx90,
+                        " (exit at 0.90 x peak R once the peak reaches +2.0R, every position)"
+                        if rcfg.fx90_on else "",
+                        random_mode.utc((self._random_trend_state or {}).get("last_eval")) or "none")
         if rcfg.prereg == random_mode.UNREGISTERED:
             self._notify_once(
                 "random_config_unregistered_boot",
@@ -9191,10 +9433,13 @@ class FuturesRuntime:
                 f"{html.escape(rcfg.describe())}. It matches no pre-registration.",
                 cooldown_seconds=3600)
 
-    def _maybe_random_tick(self) -> None:
+    def _maybe_random_tick(self, cfg: Any = None) -> None:
         """The random mode's only entry path: once per tick (every 12h or 6h, see
         random_mode.config), at the first cycle after it (the cycle sleep is shortened to
-        land there). The configuration is read ONCE here and carried by the plan.
+        land there). The configuration is read ONCE (`cfg`: the cycle's read, else read
+        here) and carried by the plan. Trial 26 (TREND source natural): TREND is not
+        opened here - it is decided at every 15m close by _maybe_random_trend_eval, which
+        runs first, so the tick also waits (bounded) for that close's TREND evaluation.
 
         INVALID SETTINGS: a due tick is not processed (nor marked) and the owner is alerted
         once per tick; never a silent fallback. A valid but unregistered combination runs,
@@ -9211,7 +9456,7 @@ class FuturesRuntime:
         if not random_mode.enabled():
             self._random_tick_pending = None
             return
-        cfg = random_mode.config()
+        cfg = cfg if cfg is not None else (getattr(self, "_random_cycle_cfg", None) or random_mode.config())
         now = time.time()
         tick = random_mode.due_tick(now, (self._random_mode_state or {}).get("last_tick"),
                                     tick_seconds=cfg.tick_seconds)
@@ -9242,6 +9487,16 @@ class FuturesRuntime:
                 log.info("[RANDOM_TICK] %s waits for %d position(s) the backtest closes at this "
                          "tick (24h clock from their own tick): %s", random_mode.utc(tick),
                          len(waiting), ", ".join(p.symbol for p in waiting))
+            self._random_tick_pending = tick
+            return
+        # Trial 26 (C3): at a tick, TREND (the 15m evaluation at this close) goes before
+        # WILDCARD. Wait for it, bounded like the 24h-clock wait.
+        last_eval = (getattr(self, "_random_trend_state", None) or {}).get("last_eval")
+        if (cfg.trend_natural and trend_enabled() and now - tick < random_mode.TICK_DEFER_SECONDS
+                and (last_eval is None or float(last_eval) < tick)):
+            if self._random_tick_pending != tick:
+                log.info("[RANDOM_TICK] %s waits for the TREND evaluation of this 15m close",
+                         random_mode.utc(tick))
             self._random_tick_pending = tick
             return
         self._random_tick_pending = None
@@ -14934,6 +15189,9 @@ class FuturesRuntime:
         while True:
             try:
                 log.info("Beginning futures cycle")
+                # The random mode's settings, read ONCE per cycle (trial 26): the tick, the
+                # 15m TREND evaluation and the FX90 floor in the exit poll all use this read.
+                self._random_cycle_cfg = random_mode.config() if random_mode.enabled() else None
                 self._handle_telegram_commands()
                 # Early in the cycle, before any MEXC private call: an already
                 # expired key would raise below and this warning would never run.
@@ -14976,6 +15234,10 @@ class FuturesRuntime:
                     if self._liq_buffer_force_close(position, pos_price):
                         continue
                     self._hourly_exit(position, pos_price)
+                # Trial 26: the TREND evaluation of the latest 15m close (no-op unless
+                # FUTURES_RANDOM_TREND_SOURCE=natural), BEFORE the tick: at a 6h tick
+                # TREND goes first, then WILDCARD-long, then WILDCARD-short (C3).
+                self._maybe_random_trend_eval()
                 # Trial 24: with FUTURES_RANDOM_MODE_ENABLED=1 the 00:00Z / 12:00Z tick is
                 # the ONLY entry path (no-op when off). After the exits, so a position
                 # closed this cycle has freed its slot.

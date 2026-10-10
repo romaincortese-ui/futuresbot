@@ -382,6 +382,8 @@ SANCTIONED_EXITS = frozenset({
     "BREAKEVEN_PROTECTION_GAP_EXIT", "ADVERSE_PEAK_TRAIL", "MID_PROFIT_LOCK",
     "TRAILING_TAKE_PROFIT", "HOURLY_TAKE_PROFIT", "STAGNATION_EXIT",
     "MARGIN_LOSS_EXIT", "STOP_RISK_CAP_EXIT", "LIQ_BUFFER",
+    # trial 26 (FUTURES_RANDOM_FX90=on): the +2R / 90%-of-peak floor, wc/TRIAL26 PREREG C2
+    "RECORD_TP_FLOOR",
 })
 # The decay meter: a one-sided CUSUM on per-fill R, in R units, EXIT-ORDERED
 # (R is not known until a trade closes, so a sequential statistic cannot be
