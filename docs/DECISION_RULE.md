@@ -19610,3 +19610,13 @@ of the trailing 7 days), exit when profit falls to 90% of its running peak; othe
 - The trigger lowers itself: capped winners keep the weekly best close small, so the alert fires earlier (Sept median 0.54R,
   1m 549/580 triggers below 1R). Live: 3 trophy trades (STRK, PUMPFUN, RLC) would have banked +$4.75 more (hand-picked).
 - CANDIDATE on the letter of the rule; could only enter as a later trial / approved amendment. Trial 25 unchanged.
+
+### 2026-10-10 - FIXED +2R VERSION (FX90) READ FROM wc/RECORDTP (POST-HOC: chosen after seeing results)
+
+FX90 = after peak >= +2.0R, exit at 90% of the running peak (other exits unchanged). Verified numbers from the RX90 run:
+Sept $190 +$12.17 [-$5.85, +$30.57] adverse / +$1.14 favourable; unseen 15m +$2.79/month [-2.58, +8.10] adverse, +$2.88
+[+0.03, +5.79] favourable; 1m check +$0.08 adverse. Passes the RX90 PREREG's CANDIDATE letter, not CONFIRMED, and is post-hoc.
+On the trades it touches its exits are worse than today's (Sept -0.139R per triggered trade [-0.45, +0.16]; favourable -0.302R);
+the September plus comes from path timing (positions only trial 25 opened: -$14.78). Cuts runners: 9 in Sept ($11.73), all 86
+on the 15m year ($7.14/month), 29 target winners on 1m (-$43 / ~24 months). Live trial 25: 4 of 54 trades peaked >= 2R
+(PUMPFUN, ZEC, RLC, STRK); FX90 approx +$5.8 on them (ZEC estimated, not replayed). Trial 25 unchanged.
