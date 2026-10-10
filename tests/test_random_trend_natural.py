@@ -484,6 +484,7 @@ def test_status_boot_and_journal_print_the_effective_values(tmp_path, live_env, 
     assert "trial 26" in line and "PREREG cbbff32d4bf5d887" in line and "every 6h · natural · TREND stop 3.5x ATR" in line
     assert "TREND source natural: L0 at every 15m close, LONG only, never at the ticks · FX90 on" in line
     assert "last TREND evaluation 12:45Z: opened:ETH_USDT LONG" in line
+    assert "WILDCARD entries only at 00:00Z / 06:00Z / 12:00Z / 18:00Z, TREND at every 15m close" in line
     sent: list = []
     rt._notify_once = lambda key, msg, **k: sent.append(key)
     with caplog.at_level(logging.WARNING):

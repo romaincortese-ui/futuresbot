@@ -8824,7 +8824,9 @@ class FuturesRuntime:
         hours = " / ".join(f"{h:02d}:00Z" for h in range(0, 24, cfg.tick_hours))
         side = ("side by coin flip" if cfg.side_mode == "coin"
                 else "natural side (TREND long, WILDCARD-long long, WILDCARD-short short)")
-        parts = [f"🎲 <b>RANDOM MODE</b> ({cfg.trial}): entries only at {hours}, {side}",
+        when = (f"WILDCARD entries only at {hours}, TREND at every 15m close" if cfg.trend_natural
+                else f"entries only at {hours}")
+        parts = [f"🎲 <b>RANDOM MODE</b> ({cfg.trial}): {when}, {side}",
                  f"every {cfg.tick_hours}h · {cfg.side_mode} · TREND stop {cfg.trend_sl_mult:g}x ATR"
                  f" · WILDCARD turnover ≥ ${cfg.wc_min_turnover:,.0f} · PREREG {cfg.prereg}",
                  (f"TREND source natural: L0 at every 15m close, LONG only, never at the ticks"
