@@ -163,8 +163,7 @@ EXIT_TELEMETRY_KEYS = ("be_stop_price", "be_stop_ts", "be_stop_armed_peak_r", "b
                        "stop_book_state", "stop_book_price", "stop_book_price_gap_bps",
                        "stop_book_checks", "stop_book_absent_checks",
                        "stop_book_unreadable_checks", "stop_book_bare_seconds",
-                       "stop_book_bare_max_seconds", "stop_book_seen_ts",
-                       "fx90_armed_ts", "fx90_armed_r")       # trial 26: when the FX90 floor armed
+                       "stop_book_bare_max_seconds", "stop_book_seen_ts")
 
 # Entry gate values stamped on a position and copied, by name, to the closed
 # trade record and the feature-store row.
@@ -6394,7 +6393,7 @@ class FuturesRuntime:
                 **{k: (position.metadata or {}).get(k) for k in ENTRY_GATE_KEYS},
                 **{k: (position.metadata or {}).get(k) for k in EXIT_TELEMETRY_KEYS},
                 # Trial 24 tick telemetry, only on positions a tick opened.
-                **{k: (position.metadata or {})[k] for k in random_mode.STAMP_KEYS
+                **{k: (position.metadata or {})[k] for k in random_mode.STAMP_KEYS + random_mode.FX90_KEYS
                    if k in (position.metadata or {})},
                 # Market-wide state at entry. Promoted explicitly because this
                 # record is built field by field and anything not named here is
@@ -6619,7 +6618,7 @@ class FuturesRuntime:
                 **{k: md.get(k) for k in ENTRY_GATE_KEYS},
                 **{k: md.get(k) for k in EXIT_TELEMETRY_KEYS},
                 # Trial 24 tick telemetry, only on positions a tick opened.
-                **{k: md[k] for k in random_mode.STAMP_KEYS if k in md},
+                **{k: md[k] for k in random_mode.STAMP_KEYS + random_mode.FX90_KEYS if k in md},
                 **(trade.get("tags") or {}),
             }
             self._feature_store_path.parent.mkdir(parents=True, exist_ok=True)

@@ -123,6 +123,9 @@ STAMP_KEYS = (
     "random_decision", "random_tick_hours", "random_side_mode", "random_trend_sl_mult",
     "random_wc_min_turnover", "random_trend_source", "random_fx90",
 )
+# Trial 26: when a position's FX90 floor armed; copied to the trade record and the feature
+# store only when present (a position that never armed carries neither).
+FX90_KEYS = ("fx90_armed_ts", "fx90_armed_r")
 
 # (tick hours, side mode, TREND stop multiple, WILDCARD turnover floor, TREND source, FX90)
 # -> the PREREG tag.
