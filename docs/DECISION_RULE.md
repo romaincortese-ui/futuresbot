@@ -19620,3 +19620,22 @@ On the trades it touches its exits are worse than today's (Sept -0.139R per trig
 the September plus comes from path timing (positions only trial 25 opened: -$14.78). Cuts runners: 9 in Sept ($11.73), all 86
 on the 15m year ($7.14/month), 29 target winners on 1m (-$43 / ~24 months). Live trial 25: 4 of 54 trades peaked >= 2R
 (PUMPFUN, ZEC, RLC, STRK); FX90 approx +$5.8 on them (ZEC estimated, not replayed). Trial 25 unchanged.
+
+### 2026-10-10 - TRIAL 26 PRE-REGISTERED (wc/TRIAL26) - NOT BUILT, NOT LIVE
+
+Owner asked: WILDCARD 6h batch as trial 25 + the +2R take-profit (FX90) + TREND on natural triggers only (2 slots, longs and/or
+shorts) with an improved trigger; shorts researched from scratch. Selection protocol pre-registered (PREREG_DESIGN sha256 in
+wc/TRIAL26); 20 triggers (10 long, 10 short) + 9 crosses + neighbours replayed on Sept 3-Oct 1, validated on the unseen MEXC 15m
+year (both orderings) and Binance 1m TREND years; verifier 69 CONFIRMED, 0 WRONG.
+- No new trigger held up: all 8 top Sept arms (best X22 +$12.83 vs fallback) lose on the unseen year (-$3.45..-$10.83/month);
+  0 of 119 eligible rows pass; Sept selection kept no edge out of sample (leave-one-week-out -$17.02/28d).
+- Shorts: 10 short triggers all worse than shorting the same coin at a random time the same day (9/10 in Sept, 0/20 seeds
+  beaten on the unseen year); every short leg loses on Binance (-0.18..-0.25R). Trial 25's week drifted -1.31%/24h, so any
+  short looked good there. "4% is late" is true (fires ~59% into a move) but earlier triggers did not make more $.
+- SELECTED = FALLBACK: TREND opens only on the current trigger (24h >= +4% + new 24h closing high, completed 15m bars, every
+  15m), LONG only, 2 slots, no TREND picks at the 6h ticks; WILDCARD as trial 25; FX90 on all positions. vs trial 25: Sept
+  +$7.65 (not a result); unseen MEXC +$19.09/month [+8.40, +30.01]; Binance (TREND alone) +$19.06/month [+12.69, +25.40] -
+  the gain is dropping the 6h fallback TREND picks (trial-25 type-A losses), not a better trigger.
+- TRIAL 26 PREREG: wc/TRIAL26/PREREG.md sha256 cbbff32d4bf5d887...; primary at 250 closes or 2027-01-31 = trial-26 replayed
+  minus trial-25 replayed, KEEP if > $0; FX90 read as a secondary. Build (TREND natural source, FX90 floor, logging, parity)
+  and start (ends trial 25 early, ungraded) each need the owner's go-ahead.
