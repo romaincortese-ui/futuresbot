@@ -19655,3 +19655,12 @@ year (both orderings) and Binance 1m TREND years; verifier 69 CONFIRMED, 0 WRONG
   never at the ticks), FX90 on"; paused, 0 open, marker 26; TREND evaluation log writing (rotation symbol now BTW_USDT).
 - Judged per wc/TRIAL26/PREREG.md section 3: interim at 100 closes (report only); primary at 250 closes or 2027-01-31.
   Daily task step 0-ter now watches trial 26's kill rules. REVERT = FUTURES_RANDOM_TREND_SOURCE=tick, FUTURES_RANDOM_FX90=off.
+
+### 2026-10-11 - ONE NEW WILDCARD TRADE PER 6h BATCH, TREND UNCHANGED (wc/WC1): REJECTED
+
+Pre-registered (sha256 55351e28...); verifier confirmed every line A/B number. ONE = per tick only the larger-|3h| #1 pick of
+the two WILDCARD lists opens (natural side); vs trial 26 (up to 2 per tick).
+- Sept at $190: -$31.70 [-$63.67, +$0.01] (needed > $0); $1,000 -$221.42. Five +2R winners skipped (POWER, LSK x2, AR, ZRO)
+  = -$24.88. WILDCARD 5.25 -> 3.36/day; the dropped pick did as well as the kept one (no skill in "bigger 3h move").
+- Unseen MEXC year: -$2.21/month adverse-first (needed >= 0), +$4.72 favourable - a volume cut whose sign follows WILDCARD's
+  own ~0 edge. LONGONLY -$14.82 Sept; SHORTONLY -$22.57; ONE with 2 slots -$34.69. Trial 26 unchanged.
