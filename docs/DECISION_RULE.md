@@ -19639,3 +19639,19 @@ year (both orderings) and Binance 1m TREND years; verifier 69 CONFIRMED, 0 WRONG
 - TRIAL 26 PREREG: wc/TRIAL26/PREREG.md sha256 cbbff32d4bf5d887...; primary at 250 closes or 2027-01-31 = trial-26 replayed
   minus trial-25 replayed, KEEP if > $0; FX90 read as a secondary. Build (TREND natural source, FX90 floor, logging, parity)
   and start (ends trial 25 early, ungraded) each need the owner's go-ahead.
+
+### 2026-10-11 - TRIAL 25 CLOSED, TRIAL 26 LIVE (owner: "build trial 26 and go live with it")
+
+- TRIAL 25 FINAL (ended early at the switch, ungraded): 66 closes, -$4.87 net, equity $180.28; the owner paused and hand-
+  closed the last three (CAP short -$0.59, JCT long +$0.63, LUMIA long -$0.31, MANUAL_CLOSE 09:08Z).
+- TRIAL 26 BUILD: branch t26-build (15e1eb0, 97cb795, d6a8977): FUTURES_RANDOM_TREND_SOURCE (tick|natural) and
+  FUTURES_RANDOM_FX90 (off|on), unset = trial 25. Parity: unset == trial 25 (harness identical); L0 stream 257/257 Sept,
+  1,762/1,762 unseen, 3,854/3,854 Binance; FX90 == exits_rx.py on 279 Sept paths + 70 live fills; Sept engine +$46.87
+  reproduced. Suite 2,073 passed; 3-lens gate PASS, no blockers. Release note wc/TRIAL26/build/RELEASE.md.
+- START: paused + flat verified 09:12Z; variables set in one change with --skip-deploys (FUTURES_RANDOM_TREND_SOURCE=natural,
+  FUTURES_RANDOM_FX90=on, FUTURES_TRIAL_LABEL=26, FUTURES_TRIAL_START_TS=1791710034 = 2026-10-11T09:13:54Z; tick 6 / side
+  natural / TREND stop 3.5 / RESUME_ON_BOOT 0 unchanged); t26-build pushed to main (d6a8977) = one deploy, SUCCESS 09:16:57Z.
+  Boot log: "[RANDOM_MODE] ON (trial 26, PREREG cbbff32d4bf5d887) ... TREND source natural (L0 at every 15m close, LONG only,
+  never at the ticks), FX90 on"; paused, 0 open, marker 26; TREND evaluation log writing (rotation symbol now BTW_USDT).
+- Judged per wc/TRIAL26/PREREG.md section 3: interim at 100 closes (report only); primary at 250 closes or 2027-01-31.
+  Daily task step 0-ter now watches trial 26's kill rules. REVERT = FUTURES_RANDOM_TREND_SOURCE=tick, FUTURES_RANDOM_FX90=off.
