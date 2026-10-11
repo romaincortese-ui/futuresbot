@@ -1,3 +1,74 @@
+# Daily Audit — 2026-10-10
+
+---
+
+## Automated Assessment (run 2026-10-11 ~16:20Z)
+
+**Window: 2026-10-10T00:00:00Z – 23:59:59Z by exit time. 8 closes (all trial 25).** No skipped day.
+
+**Budget floor (0-bis):** equity **$182.15** (+$1.89 unrealised, 1 open) > $140. Bot NOT paused.
+
+**Trial 26 alerts (0-ter): none.** Live since 09:13:54Z. One tick processed (10-11 12:00Z, prereg cbbff32d4bf5d887):
+TREND event_time_only, WC_LONG BTW min_vol (normal refusal), WC_SHORT US opened. 29 TREND L0 evaluations logged every
+15m 09:15Z–16:15Z, all prereg cbbff32d4bf5d887, 0 fires. Max concurrency 0 TREND / 1 WC. No Traceback / "invalid
+settings" / 5003 / 2015 in the last 800 log lines. Trial-26 closes 0; FX90 exits 0.
+
+**Daily card 10-10: INVESTIGATE** — 1/6 tripwires: M4 entry slippage KAIA +104, JCT +194 bps. Stops −1.03 (in band);
+risk% 0.37–1.15; ledger 8 = 8; exits CONVEX_EARLY_STOP / RETENTION_TRAIL / TIME_STOP / EXCHANGE_CLOSE (all sanctioned).
+−1.80R entry / +0.67R exit, 1-in-3 day at 7 fills; breadth 0.69; decay meter 6%.
+Root-cause written to DECISION_RULE.md: tick-to-fill latency in a fast minute (MARSCOIN mechanism), ~$0.28 total;
+WILDCARD mean +11.7 bps at n=100 (~$3–4/month) — **NOT A DEFECT, nothing changed.** INVESTIGATE carries no lever.
+
+### 1. Closed trades 10-10 (ledger +$1.10 / exchange realised +$1.69 — KAIA funding; 6W/2L, +0.67R)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| JCT | WILDCARD | L x3 | 0.00261 → 0.002693 | +0.67 | +0.53 | retention trail |
+| XRP | TREND | L x10 | 1.3952 → 1.4021 | +0.50 | +0.52 | retention trail |
+| KAIA | WILDCARD | L x1 | 0.05434 → 0.05564 | +0.24 | +0.11 | time stop |
+| STRK | WILDCARD | S x2 | 0.07291 → 0.07118 | +0.27 | +0.28 | time stop |
+| US | WILDCARD | L x1 | 0.026592 → 0.025049 | −0.48 | −0.58 | early stop |
+| ZEC | TREND | L x7 | 1218.68 → 1225.95 | +0.11 | +0.16 | time stop |
+| CHIP | WILDCARD | L x3 | 0.05864 → 0.06113 | +0.96 | +0.68 | retention trail |
+| JCT | WILDCARD | L x1 | 0.002948 → 0.00256 | −1.18 | −1.03 | stop |
+
+SL review: JCT −1.03R = random fallback long bought ~30 s after a +5% one-minute spike (+194 bps fill), faded to the
+server stop by 20:11Z — trial-25 design (undetected random pick), stop in band. US −0.58R = sanctioned early stop.
+
+### 1-OPEN (16:15Z 10-11; trial 26)
+
+| sym | sleeve | side x | held | R now | peak R | giveback | to TP | to SL | margin intended → actual |
+|---|---|---|---|---|---|---|---|---|---|
+| US | WILDCARD | S x1 | 4.2h | +0.97 | +1.16 | −0.19 | −44.1% | +23.1% | $21.42 → $21.20 (regime ×1.0) |
+
+Trough −0.66R. FX90 not armed (needs peak +2.0R). Server SL resting (stop_book_state 1).
+
+### 1-bis. Trials
+
+Trial 25 closed 10-11 (66 closes, −$4.87, ungraded). Trial 26: 0 closes, 1 open; interim at 100 closes.
+
+### 1a-bis / 1b
+
+Feature store 309 rows; ledger reconciles (8 = 8). Conditional-expectancy: no actionable split (hold/exit-kind rows are
+post-hoc; regime_trimmed/chop AVOID, roc>=12% FAVOR — propose-only, no authority today). Shadow ledger 10-10+: random_tick
+opened 12 / slot_full 5 / min_vol 4; 0 resolved slot_occupied rows. Detector scans 15:33–16:13Z: 29–32 movers, 0–1
+candidates (`roc_below_min` 26–27, `no_pullback_resume` 3–4); no [SIZE_TRIM].
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Machine healthy; INVESTIGATE closed as no defect.** 10-10: +$1.10 / +0.67R exit-dated (−1.80R entry-dated). Trial 26
+running clean, no closes yet.
+
+---
+
 # Daily Audit — 2026-10-09
 
 ---

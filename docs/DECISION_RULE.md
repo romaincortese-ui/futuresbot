@@ -19664,3 +19664,22 @@ the two WILDCARD lists opens (natural side); vs trial 26 (up to 2 per tick).
   = -$24.88. WILDCARD 5.25 -> 3.36/day; the dropped pick did as well as the kept one (no skill in "bigger 3h move").
 - Unseen MEXC year: -$2.21/month adverse-first (needed >= 0), +$4.72 favourable - a volume cut whose sign follows WILDCARD's
   own ~0 edge. LONGONLY -$14.82 Sept; SHORTONLY -$22.57; ONE with 2 slots -$34.69. Trial 26 unchanged.
+
+## 2026-10-11 - INVESTIGATE (daily card 10-10, M4): KAIA +104 bps, JCT +194 bps entry slippage - NOT A DEFECT
+
+**Fills (both trial 25, random-mode WILDCARD LONG x1, rank-1 fallback picks, closed 10-10):**
+- KAIA_USDT, 10-09 12:00Z tick (scan 12:00:38-12:01:19Z): ref 0.05378, fill 0.05434 = +104 bps; closed CONVEX_TIME_STOP
+  +0.11R / +$0.24. Notional $10.87 -> slippage cost ~$0.11.
+- JCT_USDT, 10-10 06:00Z tick (scan 06:00:12-06:00:42Z): ref 0.002892, fill 0.002948 = +194 bps; stopped -1.03R / -$1.18
+  (in band, server stop present). Notional $8.84 -> slippage cost ~$0.17.
+
+**Mechanism: tick-to-fill latency inside a fast minute - the MARSCOIN (09-24) mechanism, not book impact or pricing.**
+Min1: JCT ran 0.002759 -> 0.002906 in the 05:58 minute (+5.3%), then 0.002885-0.00295 (06:00) and 0.00294-0.00299
+(06:01); the fill sits inside that range ~30 s after the ref quote. KAIA's 12:00 minute spanned 0.05323-0.05514 and
+12:01 0.05363-0.05457; the fill (0.05434) is inside 12:01. Minute turnover $14k-$620k vs our $9-11 notional: no impact.
+Risk was stamped at the fill (risk% 1.15 / 0.62, inside [0.35, 3.0]) so 1R and the stop were correct.
+
+**Aggregate ($ test):** WILDCARD entry slippage now n=100, mean +11.7 bps (median +7.7, SE 7.6), 4 of 100 above 100 bps;
+random-mode subset n=48 mean +14.5 (SE 5.9). TREND n=80 mean +0.3. At ~$15 WILDCARD notional x ~5 fills/day the mean
+costs ~$3-4/month at the current stake, below the $10/month bar. The 09-24 reopen condition (mean > +15 bps at n >= 90)
+is NOT met (+11.7 at n=100). **Verdict: no defect. Nothing changed.**
