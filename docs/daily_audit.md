@@ -1,3 +1,75 @@
+# Daily Audit — 2026-10-11
+
+---
+
+## Automated Assessment (run 2026-10-12 ~16:20Z)
+
+**Window: 2026-10-11T00:00:00Z – 23:59:59Z by exit time. 8 closes (5 trial 25, incl. 3 owner MANUAL_CLOSE at the
+09:08Z switchover; 3 trial 26).** No skipped day.
+
+**Budget floor (0-bis):** equity **$182.42** (+$0.45 unrealised, 1 open) > $140. Bot NOT paused.
+
+**Trial 26 alerts (0-ter): none.** Ticks processed 10-11 12:00, 18:00, 10-12 00:00, 06:00, 12:00Z, all prereg
+cbbff32d4bf5d887; decisions opened / held / slot_full / min_vol / event_time_only only (no error, not_filled,
+contract_error). 125 TREND evaluations 10-11 09:15Z – 10-12 16:15Z every 15m, no gap > 20 min, all cbbff32d4bf5d887.
+TREND opens ZEC 10-11 16:30Z and 10-12 04:30Z, both LONG at a logged firing 15m close, neither at a 6h tick. Max
+concurrency 1 TREND / 3 WILDCARD. Trial-26 stops -1.05/-1.05/-1.02R, stop_book_state 1 on all 8 closes (no bare stop).
+No Traceback / "invalid settings" / 5003 / 2015 in the last 3000 log lines.
+Trial 26 so far: **8 closes, +1.67R (ex-best -0.25R); net +$1.48, SE ~$5.6 (SE > total: not a result)**; ~7
+positions/day; TREND trigger fires ~11 firing evals (2 opened, 9 BTW min_vol refusals); FX90 (RECORD_TP_FLOOR) exits 2
+(US +1.92R, W +1.84R).
+
+**Daily card 10-11: INVESTIGATE** — 1/6 tripwires: M1 stop -1.26R (XRP). Stops -1.26 / -1.01 / -1.10; risk% 0.46–1.24;
+slippage -9 to +37 bps; ledger 8 = 8; exits CONVEX_RETENTION_TRAIL / EXCHANGE_CLOSE / MANUAL_CLOSE / RECORD_TP_FLOOR
+(all sanctioned). -0.08R entry / -1.61R exit, 51st pct at 8 fills; breadth 0.41; decay meter 7%.
+Root-cause in DECISION_RULE.md: price leg 1.049R (0.049R past trigger), remaining ~0.21R is round-trip fee on a tight
+x10 stop — the 10-08 mechanism. **NOT A DEFECT, nothing changed.**
+
+### 1. Closed trades 10-11 (ledger -$1.20 / exchange realised -$1.21; 3W/5L)
+
+| sym | trial | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|---|
+| XRP | 25 | TREND | L x10 | 1.4109 → 1.3997 | −2.17 | −1.30 | stop |
+| LUMIA | 25 | WILDCARD | S x3 | 0.10249 → 0.10766 | −1.23 | −1.02 | stop |
+| ZEC | 25 | TREND | L x10 | 1221.36 → 1227.68 | +0.31 | +0.36 | retention trail |
+| CAP | 25 | WILDCARD | S x1 | 0.08778 → 0.09349 | −0.59 | −0.66 | manual (owner) |
+| JCT | 25 | WILDCARD | L x1 | 0.001841 → 0.001982 | +0.63 | +0.37 | manual (owner) |
+| LUMIA | 25 | WILDCARD | L x1 | 0.17197 → 0.16723 | −0.31 | −0.16 | manual (owner) |
+| US | 26 | WILDCARD | S x1 | 0.014828 → 0.011927 | +4.12 | +1.92 | FX90 RECORD_TP_FLOOR |
+| ZEC | 26 | TREND | L x8 | 1284.39 → 1253.57 | −1.97 | −1.05 | stop |
+
+SL review: XRP -1.30R = fee-on-tight-x10-stop (above). LUMIA -1.02R = random-mode short on a mover that kept rising,
+stop in band. ZEC -1.05R = trial-26 natural trigger long, stopped at 21:15Z, server stop present, in band.
+
+### 1-OPEN (16:15Z 10-12; trial 26)
+
+| sym | sleeve | side x | held | R now | peak R | giveback | to TP | to SL | margin intended → actual |
+|---|---|---|---|---|---|---|---|---|---|
+| W | WILDCARD | S x1 | 4.2h | +0.45 | +0.50 | −0.05 | −46.0% | +24.9% | $13.10 → $6.51 (regime ×0.5, SIZE_TRIM) |
+
+Trough -0.26R. FX90 not armed (needs peak +2.0R).
+
+### 1a-bis / 1b
+
+Feature store 317 rows; ledger reconciles (8 = 8). Detector scans 16:06–16:14Z: 54–56 movers, 0 candidates
+(`roc_below_min` 52–54, `no_pullback_resume` 2). One [SIZE_TRIM]: W_USDT ×0.50 (open, not yet a winner). No 5003/2015.
+Proposal steps skipped per card verdict (INVESTIGATE carries no lever).
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Machine healthy; INVESTIGATE closed as no defect.** 10-11: -$1.20 / -1.61R exit-dated (-0.08R entry-dated). Trial 26
+clean, 8 closes, no alerts.
+
+---
+
 # Daily Audit — 2026-10-10
 
 ---

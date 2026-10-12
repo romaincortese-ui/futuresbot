@@ -19683,3 +19683,20 @@ Risk was stamped at the fill (risk% 1.15 / 0.62, inside [0.35, 3.0]) so 1R and t
 random-mode subset n=48 mean +14.5 (SE 5.9). TREND n=80 mean +0.3. At ~$15 WILDCARD notional x ~5 fills/day the mean
 costs ~$3-4/month at the current stake, below the $10/month bar. The 09-24 reopen condition (mean > +15 bps at n >= 90)
 is NOT met (+11.7 at n=100). **Verdict: no defect. Nothing changed.**
+
+## 2026-10-12 - INVESTIGATE (daily card 10-11, M1): XRP_USDT TREND LONG stop at -1.26R - NOT A DEFECT
+
+**Fill:** XRP_USDT TREND LONG x10, trial-25 tick 10-10 06:00Z (rank-1 fallback), filled 1.4109 (ref 1.4106, +2 bps),
+server stop 1.40022 (stop_book_state 1, 219 checks, 0 bps gap, never bare), closed 10-11 00:27Z at 1.3997
+(EXCHANGE_CLOSE / exit_kind STOP), realised -$2.18 incl. -$0.36 trade fees and -$0.01 funding, risk $1.72. R -1.26
+(ledger -1.30) vs band floor -1.22.
+
+**Mechanism: the 10-08 one - round-trip fee on a tight x10 stop, not execution.** Price leg = (1.4109-1.3997) /
+(1.4109-1.40022) = 1.049R, so the fill was 0.049R past the trigger (below the 0.10R reopen condition). The rest
+(~0.21R) is the round-trip fee on ~$227 notional over a 0.76% stop distance (fee_share_of_gross 0.20). Ledger 8 = 8
+exchange closes; slippage -9/+37 bps; the other two stops of the day (LUMIA -1.01, ZEC -1.10) sit in band.
+
+**$ test:** excess beyond band 0.04R x $1.72 = $0.07; TREND x10 major stops are a trial-25 design now superseded by
+trial 26 (natural trigger, 3.5x ATR). Nothing approaches $10/month.
+**Verdict: no defect. Nothing changed.** Reopen condition unchanged (price leg > 0.10R or a stop without a resting
+server order).
