@@ -1,3 +1,70 @@
+# Daily Audit — 2026-10-12
+
+---
+
+## Automated Assessment (run 2026-10-13 ~16:20Z)
+
+**Window: 2026-10-12T00:00:00Z – 23:59:59Z by exit time. 8 closes, all trial 26.** No skipped day.
+
+**Budget floor (0-bis):** equity **$182.21** (+$0.31 unrealised, 2 open) > $140. Bot NOT paused.
+
+**Trial 26 alerts (0-ter): none.** Ticks 10-12 00/06/12/18Z and 10-13 00/06/12Z processed, all prereg cbbff32d4bf5d887.
+One `error` decision: DOS_USDT short at 10-13 00:00Z, MEXC 7008 "minimum order amount 5 USDT" (a min-size refusal
+logged as error; isolated - the 06:00Z tick opened cleanly, so rule (a) not met). 221 TREND evaluations since start,
+max gap 15 min, all cbbff32d4bf5d887. TREND opens ZEC 10-12 04:30Z and TIA 10-13 06:30Z, LONG at a logged firing 15m
+close, not at a tick. Max concurrency within limits. Stops -1.05/-1.02/-0.99/-1.05R, stop_book_state 1 on every close.
+No Traceback / "invalid settings" / 5003 / 2015 in the last 3000 log lines.
+Trial 26 so far: **15 closes, +3.38R (ex-best +1.46R); net +$1.42, SE ~$7.45 (SE > total: not a result)**; ~7
+positions/day; TREND trigger ~11 fires (3 opened, 8 BTW min_vol); FX90 (RECORD_TP_FLOOR) exits 3.
+
+**Daily card 10-12: NO ACTION** — 0/6 tripwires. Stops -1.03/-1.07/-1.03/-1.04; risk% 0.56–1.18; slippage -90 to +42
+bps; ledger 8 = 8; exits CONVEX_EARLY_STOP / CONVEX_RETENTION_TRAIL / EXCHANGE_CLOSE / RECORD_TP_FLOOR (sanctioned).
++0.67R / -$1.11 entry-dated, -1.36R / -$3.83 exit-dated, 59th pct at 7 fills; breadth 0.31; decay meter 16%.
+Proposal steps (1a-bis(a), 1b(c), 3, 4) skipped per verdict.
+
+### 1. Closed trades 10-12 (ledger -$3.83; 3W/5L)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| W | WILDCARD | L x2 | 0.02206 → 0.026019 | +1.85 | +1.84 | FX90 RECORD_TP_FLOOR |
+| ZEC | TREND | L x9 | 1294.4 → 1320.98 | +1.47 | +0.90 | retention trail |
+| S | WILDCARD | L x1 | 0.06424 → 0.05674 | −1.88 | −1.05 | stop |
+| RSR | WILDCARD | L x1 | 0.002428 → 0.00206 | −1.78 | −1.02 | stop |
+| LUMIA | WILDCARD | S x1 | 0.12661 → 0.1176 | +0.86 | +0.67 | retention trail |
+| PYTH | WILDCARD | L x3 | 0.08948 → 0.08706 | −1.18 | −0.54 | early stop |
+| US | WILDCARD | S x2 | 0.010548 → 0.011557 | −2.02 | −0.99 | stop |
+| STRK | WILDCARD | L x3 | 0.09793 → 0.09203 | −1.14 | −1.05 | stop |
+
+SL review: all four stops are random-mode tick entries (by trial design) on movers that went the other way; server stop
+present, fills in band. No machine defect.
+
+### 1-OPEN (16:13Z 10-13; trial 26)
+
+| sym | side x | held | R now | peak R | giveback | to TP | to SL | margin intended → actual |
+|---|---|---|---|---|---|---|---|---|
+| MAGIC | S x1 | 10.2h | +0.15 | +0.46 | −0.31 | −49% | +12% | $19.28 → $8.59 (regime ×0.5) |
+| 1000RATS | S x1 | 4.2h | +0.15 | +0.29 | −0.14 | −49% | +24% | $9.42 → $5.70 (regime ×0.67, contract step) |
+
+### 1a-bis / 1b (recording only)
+
+Feature store 324 rows; ledger reconciles (8 = 8). Shadow ledger slot_occupied: 47 resolved, net +19.2R (directional
+paper only); veto 59 resolved -13.5R (vetoes saving). Detector scans 15:44–16:09Z: 67–68 movers, 0 candidates
+(`roc_below_min` 64–66, `no_pullback_resume` 2). No 5003/2015.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**Machine healthy, NO ACTION.** 10-12: -$3.83 / -1.36R exit-dated (+0.67R entry-dated). Trial 26 clean, 15 closes.
+
+---
+
 # Daily Audit — 2026-10-11
 
 ---
