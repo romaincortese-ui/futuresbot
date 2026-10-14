@@ -1,3 +1,78 @@
+# Daily Audit — 2026-10-13
+
+---
+
+## Automated Assessment (run 2026-10-14 ~16:25Z)
+
+**OPS ALERT: MEXC API key EXPIRED.** Every private call returns `402 API Key expired, please apply again` since
+**2026-10-14 15:31:26Z** (streak >830 by 16:21Z). The bot cannot read balance, positions or history and cannot close
+anything; the 3 open positions run only on their resting server-side stop/TP. Owner sent `/pause` at 15:33:21Z.
+Owner action: issue a new key and set it on Futures-bot. Nothing changed by this run.
+
+**Window: 2026-10-13T00:00:00Z – 23:59:59Z by exit time. 6 closes, all trial 26.** No skipped day.
+
+**Budget floor (0-bis): UNVERIFIABLE** (exchange unreadable). Last real reading $183.66 at 15:31Z (> $140). The bot's
+`[ACCOUNT] equity=77.85 available=48.88` appears only after the auth failure (available jumped 155.98 → 48.88 at the
+onset) — most likely a fallback figure, not a reading; I don't know for certain. Bot PAUSED (owner).
+
+**Trial 26 alerts (0-ter): none.** Ticks through 10-14 12:00Z processed, all prereg cbbff32d4bf5d887; decisions since
+start: opened 19, event_time_only 13, min_vol 3, held 3, slot_full 3, error 1 (the 10-13 00Z DOS 7008, isolated).
+317 TREND evaluations, max gap 15 min, all cbbff32d4bf5d887; paused rows only 10-11 09:15–09:30 and 10-14 15:45+.
+TREND opens TIA 10-13 06:30Z, ZEC 10-14 00:45Z and 02:00Z: LONG at a logged firing 15m close. Stops in band.
+Trial 26 so far: **21 closes, +4.34R (ex-best +2.42R); net +$1.71, SE ~$8.02 (SE > total: not a result)**; ~7
+positions/day; FX90 (RECORD_TP_FLOOR) exits 3.
+
+**Daily card 10-13: NO ACTION** — 0/6 tripwires. Stop -1.04; risk% 0.55–1.03; slippage -11 to +30 bps; exits
+CONVEX_RETENTION_TRAIL / CONVEX_TIME_STOP / EXCHANGE_CLOSE / RECORD_TP_FLOOR (sanctioned). +4.18R / +$3.70 entry-dated,
++$3.72 exit-dated, 86th pct at 7 fills; breadth 0.33. **Ledger vs exchange NOT checked** (key expired).
+Proposal steps (1a-bis(a), 1b(c), 3, 4) skipped per verdict.
+
+### 1. Closed trades 10-13 (ledger +$3.72; 5W/1L)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| BAT | WILDCARD | L x5 | 0.15319 → 0.16029 | +1.84 | +1.78 | FX90 RECORD_TP_FLOOR |
+| OGN | WILDCARD | L x2 | 0.03704 → 0.0386 | +0.62 | +0.59 | retention trail |
+| W | WILDCARD | S x1 | 0.025549 → 0.018854 | +1.70 | +1.67 | time stop |
+| TIA | TREND | L x3 | 0.6264 → 0.5891 | −1.95 | −1.04 | stop |
+| S | WILDCARD | L x3 | 0.06159 → 0.06424 | +0.89 | +0.75 | retention trail |
+| ATOM | WILDCARD | L x5 | 1.856 → 1.874 | +0.61 | +0.37 | retention trail |
+
+SL review: TIA — TREND natural-trigger long (new 24h closing high) that reversed; server stop filled at -1.04R,
+stop_book_state 1. Random-by-design entry; no machine defect.
+
+### 1-OPEN (16:23Z 10-14, public marks; trial 26)
+
+| sym | side x | held | R now | peak R | giveback | to TP | to SL | margin intended → actual |
+|---|---|---|---|---|---|---|---|---|
+| US | S x2 | 10.4h | +1.98 | +2.13 | −0.15 | −25% | +24% | $14.47 → $7.24 (regime ×0.5) |
+| WAL | L x1 | 4.4h | +0.21 | +0.43 | −0.22 | +54% | −14% | $18.16 → $13.10 (regime ×0.74) |
+| RLC | S x3 | 4.4h | +0.58 | +0.89 | −0.31 | −26% | +9% | $11.71 → $5.79 (regime ×0.5) |
+
+US: FX90 armed 16:01Z (floor 0.90 × peak ≈ +1.92R) — the floor exit **cannot execute** while the key is dead; the
+position can round-trip to the -1R server stop (~$2.9 swing).
+
+### 1a-bis / 1b (recording only)
+
+Feature store 330 rows (+6 = 10-13 closes). Shadow ledger 770 rows: slot_occupied 47 resolved, net +28.1R; veto 59
+resolved -10.6R (vetoes saving) — directional paper only; summed from the numeric `outcome` field, which may differ from
+the 10-12 method (+19.2R / -13.5R). Scan/execution diagnostics not run: exchange unreadable.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**10-13: machine healthy, NO ACTION** (+$3.72 / +4.18R). **10-14: OPS — expired MEXC API key since 15:31Z; owner must
+renew.** Trial 26 clean, 21 closes.
+
+---
+
 # Daily Audit — 2026-10-12
 
 ---
