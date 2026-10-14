@@ -19713,3 +19713,15 @@ The repeated "[EXIT_FAILED] ... close failed AND the stop could not be restored"
 with one live stop at breakeven (US 0.008451, WAL 0.05249, RLC 0.8662) + target; no 24h clock due during the outage (due
 10-15 06:01Z / 12:01Z). Trial 26 continues (a pause/outage does not end it); the 18:00Z tick of 10-14 was not processed.
 Trial 26 at the outage: 21 closes, +$1.71. Next key expiry ~2027-01-12 unless an IP is linked.
+
+### 2026-10-14 - OUTSIDE REVIEW (probability + economics, wc/OUTSIDE) and BTC-DAY WILDCARD SIZE TILT (wc/BTCTILT): REJECTED
+
+Two independent reviewers (no project context) scored trials 25-26: entry 4/10 and 3/10, exits 5/10 and 6/10; both found the
+book flat (-$1.12 over 88 trades), TREND the drag, exits value-neutral (21 and 17 variants within +/-0.05R), and recommended
+recording WILDCARD #1-vs-list before any change. Asked for safer alternatives: both rank "don't trade" first, then a slow
+long-or-flat BTC/ETH trend at <=1x (~$0-2/month at $185); funding carry ~$0.2-0.4/month; both flag the FCA retail
+crypto-derivatives ban (PS20/10) and MEXC's UK prohibition as the largest risk (fact, not legal advice). Economist flags MEXC
+public contract taker fees 0-0.04% vs ~0.08%/side booked - unverified.
+BTC tilt (pre-registered sha256 7723bed3...; WILDCARD x1.25 against BTC's 24h sign, x0.75 with it): Sept -$14.50 at $190
+[-33.51, +5.18] (needed > $0); unseen +$0.40 / -$1.37 per month (needed >= 0 under both orderings) -> REJECT. In Sept the
+"against BTC" side made -0.20R vs +0.31R for "with BTC". Trial 26 unchanged.
