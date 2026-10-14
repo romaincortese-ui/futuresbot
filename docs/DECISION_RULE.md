@@ -19700,3 +19700,16 @@ exchange closes; slippage -9/+37 bps; the other two stops of the day (LUMIA -1.0
 trial 26 (natural trigger, 3.5x ATR). Nothing approaches $10/month.
 **Verdict: no defect. Nothing changed.** Reopen condition unchanged (price leg > 0.10R or a stop without a resting
 server order).
+
+### 2026-10-14 - OUTAGE: MEXC API KEY EXPIRED (trial 26 operations record)
+
+From 2026-10-14T15:31:26Z every private MEXC call returned 402 "API Key expired, please apply again" (MEXC expires keys with
+no linked IP after 90 days). The bot could not read, amend or close; the bot was paused (no entries). Three trial-26
+positions were open throughout (US_USDT short WC_SHORT 06:01Z, WAL_USDT long WC_LONG 12:01Z, RLC_USDT short WC_SHORT 12:01Z);
+their breakeven stops and targets placed before the expiry stayed resting on MEXC (the bot's cancel attempts also failed).
+The repeated "[EXIT_FAILED] ... close failed AND the stop could not be restored" lines were the bare-stop REPAIR loop
+(_repair_bare_stop -> _restore_exchange_tpsl), not exit attempts. The owner created a new key and updated Railway; restart
+20:10Z (main 94709c5 = d6a8977 code + docs). Read-only check 20:11Z: equity $187.50, 3 positions on MEXC = bot state, each
+with one live stop at breakeven (US 0.008451, WAL 0.05249, RLC 0.8662) + target; no 24h clock due during the outage (due
+10-15 06:01Z / 12:01Z). Trial 26 continues (a pause/outage does not end it); the 18:00Z tick of 10-14 was not processed.
+Trial 26 at the outage: 21 closes, +$1.71. Next key expiry ~2027-01-12 unless an IP is linked.
