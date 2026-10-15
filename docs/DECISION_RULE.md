@@ -19725,3 +19725,14 @@ public contract taker fees 0-0.04% vs ~0.08%/side booked - unverified.
 BTC tilt (pre-registered sha256 7723bed3...; WILDCARD x1.25 against BTC's 24h sign, x0.75 with it): Sept -$14.50 at $190
 [-33.51, +5.18] (needed > $0); unseen +$0.40 / -$1.37 per month (needed >= 0 under both orderings) -> REJECT. In Sept the
 "against BTC" side made -0.20R vs +0.31R for "with BTC". Trial 26 unchanged.
+
+### 2026-10-15 - CORROBORATED NEWS FEATURE reviewed by the two outside reviewers: 2/10 each, NOT A TRADING INPUT
+
+3,086 headlines (09-02..10-15). Both: no direction signal at any horizon (BTC after a BTC story -0.09% at 4h, +0.45% at 24h,
+SE 0.30; small caps +1.61%/24h vs +1.53% at random times); only effect = higher volatility for a few hours. Third outlet a
+median ~2h after first (fetch ~4h15m after first publish); 31 of 35 WILDCARD coins traded in trials 25-26 had zero headlines;
+none of the 88 WILDCARD trades had a story on its coin within 24h. rare_df defect still present and worse (ratio -> 154-doc
+cap at 3,086 headlines; ~30% of 3-outlet clusters clean); the 09-04 "df <= 3" fix is wrong at this size - use a +/-24h
+window with cap 6 and seed-only matching (~50% clean). Shadow-only rules proposed (economist: 12h veto of WILDCARD-long/TREND
+after a regulatory-crackdown story, >= 20 events, 12-24 months; mathematician: skip a TREND trigger if its coin had a 3-outlet
+story in the prior 6h, ~2-4 years). Keep capture as an owner alert only.
