@@ -19736,3 +19736,13 @@ cap at 3,086 headlines; ~30% of 3-outlet clusters clean); the 09-04 "df <= 3" fi
 window with cap 6 and seed-only matching (~50% clean). Shadow-only rules proposed (economist: 12h veto of WILDCARD-long/TREND
 after a regulatory-crackdown story, >= 20 events, 12-24 months; mathematician: skip a TREND trigger if its coin had a 3-outlet
 story in the prior 6h, ~2-4 years). Keep capture as an owner alert only.
+
+### 2026-10-15 - TRIAL-26 CONFIG BY MARKET REGIME (wc/REGIME, unseen MEXC 15m year, descriptive)
+
+Neither super-bullish nor super-bearish markets make the whole bot much more profitable; regime mostly moves money between
+sleeves. Real (both orderings): TREND +0.47/+0.45R per position better in top vs bottom BTC 7d quintile (fires ~2x as often,
+60% vs 41% winners; ~+$25-33/month in strong BTC weeks; sits out bear weeks); WILDCARD-short -0.21R (~-$20/month) in BTC 30d
+up-trends (squeezes), no significant gain in bear markets; WILDCARD-long follows small-cap breadth (+0.30R top vs bottom) and
+loses in small-cap crash weeks and high-vol BTC weeks. Whole bot: bullish BTC weeks +0.12R/position vs normal; small-cap crash
+weeks -0.12R; bearish BTC no significant difference; volatility alone nothing. 25-29 of 144 contrasts exclude 0 (~7 by chance).
+Caveats: survivorship, 15m, one year (~10 weeks per quintile). Labels are descriptive, not forward filters (none tested).
