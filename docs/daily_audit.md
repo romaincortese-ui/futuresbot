@@ -1,3 +1,70 @@
+# Daily Audit — 2026-10-14
+
+---
+
+## Automated Assessment (run 2026-10-15 ~16:30Z)
+
+**Window: 2026-10-14T00:00:00Z – 23:59:59Z by exit time. 7 closes, all trial 26.** No skipped day.
+
+**Budget floor (0-bis): OK** — exchange equity **$188.15** (no open positions, unrealised 0) > $140. Key renewal
+10-14 ~20:08Z confirmed working (all private reads OK). Owner paused 10-14 15:33Z and sent `/resume` 10-15 14:23:01Z —
+bot is NOT paused now.
+
+**Trial 26 alerts (0-ter): none.** 13 ticks processed, all prereg cbbff32d4bf5d887; last processed 10-14 12:00Z. Ticks
+10-14 18Z and 10-15 00/06/12Z were *not processed: entries paused* (owner pause, so rule (c) not breached); next tick
+10-15 18:00Z. 412 TREND evaluations, all cbbff32d4bf5d887, last 10-15 16:15Z; only gap >15 min was 30 min at 10-14
+16:30Z (paused). TREND opens on 10-14: ZEC 00:45Z and 02:00Z, LONG at logged firing closes (checked 10-14 run). No
+>2 TREND / >3 WC concurrency, no bare stop, worst stop -1.10R. No "invalid settings"/Traceback in recent logs.
+Trial 26 so far: **24 closes, +9.06R (ex-best +6.87R); net +$7.59, SE ~$8.82 (SE > total: not a result)**; ~5.6
+positions/calendar day; TREND trigger opens 3 in 4.3 days (~0.7/day); FX90 (RECORD_TP_FLOOR) exits 5. Interim at 100.
+
+**Daily card 10-14: NO ACTION** — 0/6 tripwires. Stops -1.10 (band [-1.22,-0.92]); risk% 0.50–1.16; slippage -30 to
++13 bps; exits CONVEX_EARLY_STOP / RETENTION_TRAIL / TIME_STOP / EXCHANGE_CLOSE / RECORD_TP_FLOOR (sanctioned);
+**ledger 7 = 7 exchange closes**. +3.86R / +$3.87 entry-dated, +4.97R / +$5.07 exit-dated, 85th pct at 6 fills;
+breadth 0.68. Proposal steps (1a-bis(a), 1b(c), 3, 4) skipped per verdict.
+
+### 1. Closed trades 10-14 (ledger +$5.07; 5W/2L)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| SYRUP | WILDCARD | S x5 | 0.2311 → 0.2341 | −1.21 | −0.57 | early stop |
+| ZEC | TREND | L x10 | 1244.6 → 1262.97 | +1.31 | +0.70 | retention trail |
+| MAGIC | WILDCARD | S x1 | 0.1227 → 0.11298 | +0.67 | +0.74 | time stop |
+| ZEC | TREND | L x6 | 1267.41 → 1227.45 | −2.10 | −1.10 | stop |
+| 1000RATS | WILDCARD | S x1 | 0.01899 → 0.01557 | +1.02 | +0.89 | time stop |
+| US | WILDCARD | S x2 | 0.008468 → 0.007262 | +2.04 | +2.13 | FX90 RECORD_TP_FLOOR |
+| WAL | WILDCARD | L x1 | 0.05239 → 0.06587 | +3.35 | +2.19 | FX90 RECORD_TP_FLOOR |
+
+SL review: ZEC (2nd) — TREND natural-trigger long at 02:00Z, 75 min after the first ZEC long, reversed; server stop
+filled -1.10R (inside band), stop_book_state 1. Random-by-design entry, no machine defect. SYRUP — sanctioned early
+stop at -0.57R. US/WAL FX90 floors executed 20:18Z/21:31Z, after the key renewal (the 10-14 run's round-trip risk on
+US did not materialise).
+
+### 1-OPEN (16:30Z 10-15)
+
+None (exchange 0 open). RLC closed 10-15 (next day's window).
+
+### 1a-bis / 1b (recording only)
+
+Feature store 333 rows. All-time exit_kind: TP 9 | STOP 115 | OTHER 168 | none 41; trial 26: TP 0 | STOP 7 | OTHER 17.
+Shadow ledger 772 rows: slot_occupied 47 resolved +28.1R; veto 59 resolved -10.6R (vetoes saving) — directional paper
+only. Scan 10-15 16:00Z: 64 movers, 0 candidates (roc_below_min ~43, no_pullback_resume ~20) — dormancy, correct.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**10-14: machine healthy, NO ACTION** (+$5.07 / +4.97R exit-dated). Key renewed and verified; owner resumed 10-15
+14:23Z. Trial 26 clean, 24 closes.
+
+---
+
 # Daily Audit — 2026-10-13
 
 ---
