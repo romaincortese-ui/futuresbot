@@ -1,3 +1,60 @@
+# Daily Audit — 2026-10-15
+
+---
+
+## Automated Assessment (run 2026-10-16 ~16:20Z)
+
+**Window: 2026-10-15T00:00:00Z – 23:59:59Z by exit time. 1 close, trial 26.** No skipped day.
+
+**Budget floor (0-bis): OK** — exchange equity **$187.27** (incl. +$0.20 unrealised, 3 open) > $140. Bot NOT paused
+(owner `/resume` 10-15 14:23Z; 58 paused TREND evaluations before that).
+
+**Trial 26 alerts (0-ter): none.** 17 ticks, all prereg cbbff32d4bf5d887; 10-15 18Z and 10-16 00/06/12Z processed
+(opened / slot_full / event_time_only only — no error/not_filled/contract_error). 507 TREND evaluations, all
+cbbff32d4bf5d887, last 10-16 16:00Z, no gap >15 min since 10-14 16:30Z. TREND opens: ZEC LONG 10-15 17:15Z and ETH LONG
+10-16 10:45Z, each at a logged firing evaluation (no short, none at a tick); max 2 TREND / 3 WILDCARD concurrent. All 3
+open positions have a resting exchange SL+TP. No "invalid settings"/Traceback/AUTH_FAILURE in recent logs.
+Trial 26 so far: **28 closes, +8.62R (ex-best +6.44R); net +$6.60, SE ~$9.03 (SE > total: not a result)**; ~5.8
+positions/day; TREND trigger opens 5 in 5.3 days (~0.9/day); FX90 (RECORD_TP_FLOOR) exits 5. Interim at 100.
+
+**Daily card 10-15: NO ACTION** — 0/6 tripwires. No stops; risk% 0.51; slippage -18 bps; exit CONVEX_RETENTION_TRAIL
+(sanctioned); **ledger 1 = 1 exchange close**. 0 entry-dated fills; +0.53R / +$0.49 exit-dated. Proposal steps
+(1a-bis(a), 1b(c), 3, 4) skipped per verdict.
+
+### 1. Closed trades 10-15 (ledger +$0.49; 1W/0L)
+
+| sym | sleeve | side x | entry → exit | $ | R | exit |
+|---|---|---|---|---|---|---|
+| RLC | WILDCARD | S x3 | 0.8679 → 0.8421 | +0.49 | +0.53 | retention trail (00:05Z) |
+
+### 1-OPEN (~16:15Z 10-16)
+
+| sym | sleeve | side x | held | R now | peak | giveback | to TP | to SL | sizing |
+|---|---|---|---|---|---|---|---|---|---|
+| ZEC | TREND | L x3 | 23.0h | −0.42 | +0.57 | −0.99 | 20.0% | 3.4% | regime 1.0; $12.15 of $13.26 |
+| AGT | WILDCARD | L x1 | 22.2h | +0.29 | +0.72 | −0.43 | 86.8% | 25.3% | regime 1.0; $7.36 of $10.60 (contract step) |
+| RLC | WILDCARD | S x2 | 22.2h | +0.65 | +0.72 | −0.07 | 37.3% | 14.1% | regime 0.5; $6.19 of $12.52 |
+
+### 1a-bis / 1b (recording only)
+
+Feature store 337 rows. All-time exit_kind: TP 9 | STOP 116 | OTHER 171 | none 41; trial 26: TP 0 | STOP 8 | OTHER 20.
+Shadow ledger 794 rows: slot_occupied 47 resolved +28.1R; veto 59 resolved -10.6R (vetoes saving) — directional paper
+only, unchanged.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**10-15: machine healthy, NO ACTION** (+$0.49 / +0.53R exit-dated, 1 close). Trial 26 clean, 28 closes.
+
+---
+
 # Daily Audit — 2026-10-14
 
 ---
