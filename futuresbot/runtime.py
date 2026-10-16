@@ -8778,8 +8778,9 @@ class FuturesRuntime:
         now = time.time()
         cfg = random_mode.config()
         cap = random_mode.next_tick(now, cfg.tick_seconds) - now + 1.0
-        if cfg.valid and cfg.trend_natural:
-            # Trial 26: TREND is decided at every 15m close - wake 1 s after each one.
+        if cfg.valid and cfg.trend_event:
+            # Trial 26: TREND is decided at every 15m close - wake 1 s after each one
+            # (trial 27, TREND off: still evaluated and logged there).
             cap = min(cap, random_mode.next_tick(now, random_mode.TREND_EVAL_SECONDS) - now + 1.0)
         if self._random_tick_pending is not None or getattr(self, "_random_trend_pending", None) is not None:
             cap = min(cap, 5.0)
@@ -8825,13 +8826,16 @@ class FuturesRuntime:
         side = ("side by coin flip" if cfg.side_mode == "coin"
                 else "natural side (TREND long, WILDCARD-long long, WILDCARD-short short)")
         when = (f"WILDCARD entries only at {hours}, TREND at every 15m close" if cfg.trend_natural
+                else f"WILDCARD entries only at {hours}, TREND off (logged only)" if cfg.trend_off
                 else f"entries only at {hours}")
         parts = [f"🎲 <b>RANDOM MODE</b> ({cfg.trial}): {when}, {side}",
                  f"every {cfg.tick_hours}h · {cfg.side_mode} · TREND stop {cfg.trend_sl_mult:g}x ATR"
                  f" · WILDCARD turnover ≥ ${cfg.wc_min_turnover:,.0f} · PREREG {cfg.prereg}",
                  (f"TREND source natural: L0 at every 15m close, LONG only, never at the ticks"
-                  if cfg.trend_natural else f"TREND source {cfg.trend_source}") + f" · FX90 {cfg.fx90}"]
-        if cfg.trend_natural:
+                  if cfg.trend_natural
+                  else "TREND source off: TREND off (logged only), L0 at every 15m close, never traded"
+                  if cfg.trend_off else f"TREND source {cfg.trend_source}") + f" · FX90 {cfg.fx90}"]
+        if cfg.trend_event:
             tstate = getattr(self, "_random_trend_state", None) or {}
             if tstate.get("last_eval"):
                 stamp = random_mode.utc(tstate.get("last_eval")) or ""
@@ -9088,6 +9092,10 @@ class FuturesRuntime:
                              "natural_side": random_mode.NATURAL[bucket], "symbol": sym,
                              "rank": rank_, "status": cand.get("status"), "coin": coin_, "side": side,
                              "held_skipped": list(held)}
+        if sleeve == "TREND" and getattr(cfg, "trend_off", False):
+            # Trial 27 (TREND off): never traded - the last guard on every TREND entry path.
+            d["decision"] = "trend_off"
+            return d
         sig = None
         ref = regime = None
         btc = plan.get("btc_flag") if sleeve == "TREND" else None
@@ -9165,10 +9173,12 @@ class FuturesRuntime:
             if cands is None:
                 decisions.append({**base, "decision": "sleeve_disabled"})
                 continue
-            if bucket == "TREND" and getattr(cfg, "trend_natural", False):
+            if bucket == "TREND" and getattr(cfg, "trend_event", False):
                 # Trial 26 (C3): TREND opens only at the 15m closes (_maybe_random_trend_eval,
                 # which ran before this tick); the ranking above is journalled, never traded.
-                decisions.append({**base, "decision": "event_time_only"})
+                # Trial 27 (TREND off): never traded anywhere.
+                decisions.append({**base, "decision": "trend_off" if getattr(cfg, "trend_off", False)
+                                                      else "event_time_only"})
                 continue
             field = len(cands)
             skipped: list[tuple[int, dict]] = []
@@ -9277,6 +9287,12 @@ class FuturesRuntime:
         if not firing:
             return []
         base = {"tick": s, "bucket": "TREND", "sleeve": "TREND", "natural_side": "LONG"}
+        if getattr(ev.get("config") or random_mode.config(), "trend_off", False):
+            # Trial 27 (TREND off): every firing is logged, nothing opens.
+            for r in firing:
+                r["decision"] = "trend_off"
+            return [{**base, "decision": "trend_off", "symbol": r["symbol"], "rank": i, "status": "trigger"}
+                    for i, r in enumerate(firing, 1)]
         if count["TREND"] >= cap:
             for r in firing:
                 r["decision"] = "slot_full"
@@ -9336,12 +9352,14 @@ class FuturesRuntime:
         order, as the tick), at the first cycle after it; it waits (bounded) for positions
         whose 24h clock from their own decision time ends at it. Paused or retired: the
         evaluation is still logged, nothing opens, and it is never re-run on resume.
-        A no-op unless the random mode is on with valid settings and TREND source natural."""
+        A no-op unless the random mode is on with valid settings and TREND source natural.
+        Trial 27 (TREND source off): the same evaluation and log, every firing "trend_off"
+        (paused or not), nothing opens."""
         if not random_mode.enabled():
             self._random_trend_pending = None
             return
         cfg = cfg if cfg is not None else (getattr(self, "_random_cycle_cfg", None) or random_mode.config())
-        if not cfg.valid or not cfg.trend_natural or not trend_enabled():
+        if not cfg.valid or not cfg.trend_event or not trend_enabled():
             self._random_trend_pending = None
             return
         now = time.time()
@@ -9377,7 +9395,7 @@ class FuturesRuntime:
             return
         self._random_trend_state = {"last_eval": int(s), "processed_at": round(time.time(), 1)}
         self._save_state()                         # marked BEFORE any order
-        if paused:
+        if paused and not cfg.trend_off:
             for r in ev["rows"]:
                 r["decision"] = "paused" if r.get("fire") else ("no_fire" if r.get("usable") else "unusable")
             decisions = ([{"tick": int(s), "bucket": "TREND", "decision": "paused"}]
@@ -9418,11 +9436,14 @@ class FuturesRuntime:
                     "shadow rows only. Last processed tick: %s", rcfg.trial, rcfg.prereg,
                     rcfg.describe(),
                     random_mode.utc((self._random_mode_state or {}).get("last_tick")) or "none")
-        if rcfg.trend_natural or rcfg.fx90_on:
-            log.warning("[RANDOM_MODE] trial-26 settings: TREND source %s%s; FX90 %s%s. Last TREND "
-                        "evaluation: %s", rcfg.trend_source,
+        if rcfg.trend_event or rcfg.fx90_on:
+            log.warning("[RANDOM_MODE] %s settings: TREND source %s%s; FX90 %s%s. Last TREND "
+                        "evaluation: %s", "trial-27" if rcfg.trend_off else "trial-26", rcfg.trend_source,
                         " (L0 at every 15m close, LONG only, event time, never at the ticks)"
-                        if rcfg.trend_natural else " (TREND at the ticks)", rcfg.fx90,
+                        if rcfg.trend_natural else
+                        " - TREND off (logged only): L0 evaluated at every 15m close, decision trend_off, "
+                        "no TREND entry at the ticks or in event time" if rcfg.trend_off
+                        else " (TREND at the ticks)", rcfg.fx90,
                         " (exit at 0.90 x peak R once the peak reaches +2.0R, every position)"
                         if rcfg.fx90_on else "",
                         random_mode.utc((self._random_trend_state or {}).get("last_eval")) or "none")
@@ -9493,7 +9514,7 @@ class FuturesRuntime:
         # Trial 26 (C3): at a tick, TREND (the 15m evaluation at this close) goes before
         # WILDCARD. Wait for it, bounded like the 24h-clock wait.
         last_eval = (getattr(self, "_random_trend_state", None) or {}).get("last_eval")
-        if (cfg.trend_natural and trend_enabled() and now - tick < random_mode.TICK_DEFER_SECONDS
+        if (cfg.trend_event and trend_enabled() and now - tick < random_mode.TICK_DEFER_SECONDS
                 and (last_eval is None or float(last_eval) < tick)):
             if self._random_tick_pending != tick:
                 log.info("[RANDOM_TICK] %s waits for the TREND evaluation of this 15m close",

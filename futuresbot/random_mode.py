@@ -20,6 +20,10 @@ stamped with the effective values and the tag of the PREREG they match:
     the runtime's _maybe_random_trend_eval). FUTURES_RANDOM_FX90=on: every position also
     exits at 0.90 x its running peak R once that peak has reached +2.0R (RECORD_TP_FLOOR,
     the runtime's retention-trail poll). Unset = tick / off = trial 25 exactly.
+  - TRIAL 27 = wc/TRIAL27/PREREG.md (sha256 28ea4eadd078f6ba...): trial 26 with
+    FUTURES_RANDOM_TREND_SOURCE=off - TREND is not traded: the 15m L0 evaluation and its
+    log run as under natural, every firing is logged with decision "trend_off" and
+    nothing opens (neither at the ticks nor in event time). WILDCARD and FX90 as trial 26.
   - Any other valid combination runs, stamped "unregistered", and the owner is alerted;
     an invalid value stops the ticks (not processed) and alerts - never a silent fallback.
 This module is the backtest's selection code moved into the package: `wildcard_row`,
@@ -69,13 +73,15 @@ PREREG25_SHA256 = "23840ce65807b549a406a531c0b05d4b677ead981c84ad0c8fc4f5ecc4a8e
 PREREG25_TAG = PREREG25_SHA256[:16]                                # trial 25
 PREREG26_SHA256 = "cbbff32d4bf5d8870e3fd08010709525d42af634203bb0524047e262a03801d9"
 PREREG26_TAG = PREREG26_SHA256[:16]                                # trial 26
+PREREG27_SHA256 = "28ea4eadd078f6baffaeb80c72dfd5e89f496bcbf3708f68246306590983c9de"
+PREREG27_TAG = PREREG27_SHA256[:16]                                # trial 27
 UNREGISTERED = "unregistered"
 
 # ---- the frozen definition ---------------------------------------------------------
 TICK_SECONDS = 12 * 3600            # default (trial 24): 00:00Z and 12:00Z (the epoch is 00:00Z, 43200 | 86400)
 TICK_HOURS_ALLOWED = (12, 6)        # FUTURES_RANDOM_TICK_HOURS; 6 = 00:00Z, 06:00Z, 12:00Z, 18:00Z
 SIDE_MODES = ("coin", "natural")    # FUTURES_RANDOM_SIDE_MODE
-TREND_SOURCES = ("tick", "natural")  # FUTURES_RANDOM_TREND_SOURCE (trial 26: natural)
+TREND_SOURCES = ("tick", "natural", "off")  # FUTURES_RANDOM_TREND_SOURCE (trial 26: natural; 27: off)
 FX90_MODES = ("off", "on")          # FUTURES_RANDOM_FX90 (trial 26: on)
 FX90_ARM_R = 2.0                    # C2: arms at the first new-peak poll whose R >= +2.0R ...
 FX90_FRAC = 0.90                    # ... and exits when R <= 0.90 x the running peak R
@@ -133,8 +139,10 @@ REGISTERED = {
     (12, "coin", 3.0, 2_000_000.0, "tick", "off"): PREREG_TAG,
     (6, "natural", 3.5, 2_000_000.0, "tick", "off"): PREREG25_TAG,
     (6, "natural", 3.5, 2_000_000.0, "natural", "on"): PREREG26_TAG,
+    (6, "natural", 3.5, 2_000_000.0, "off", "on"): PREREG27_TAG,
 }
-TRIAL_OF_TAG = {PREREG_TAG: "trial 24", PREREG25_TAG: "trial 25", PREREG26_TAG: "trial 26"}
+TRIAL_OF_TAG = {PREREG_TAG: "trial 24", PREREG25_TAG: "trial 25", PREREG26_TAG: "trial 26",
+                PREREG27_TAG: "trial 27"}
 
 
 def enabled() -> bool:
@@ -172,6 +180,16 @@ class TickConfig:
         return self.trend_source == "natural"
 
     @property
+    def trend_off(self) -> bool:
+        """Trial 27: TREND is never traded; the 15m evaluation still runs and is logged."""
+        return self.trend_source == "off"
+
+    @property
+    def trend_event(self) -> bool:
+        """The 15m TREND evaluation runs and the ticks never open TREND (natural or off)."""
+        return self.trend_source in ("natural", "off")
+
+    @property
     def fx90_on(self) -> bool:
         return self.fx90 == "on"
 
@@ -201,6 +219,7 @@ class TickConfig:
         """One line: the effective values (boot log, /status, alerts)."""
         hours = " / ".join(f"{h:02d}:00Z" for h in range(0, 24, int(self.tick_hours)))
         trend = ("natural (L0 at every 15m close, LONG only, never at the ticks)" if self.trend_natural
+                 else "off (TREND off (logged only): L0 at every 15m close, never traded)" if self.trend_off
                  else self.trend_source)
         return (f"ticks every {int(self.tick_hours)}h ({hours}), side {self.side_mode}, "
                 f"TREND stop {float(self.trend_sl_mult):g}x ATR, WILDCARD turnover >= "
@@ -221,7 +240,7 @@ def config() -> TickConfig:
     natural, default coin), FUTURES_RANDOM_WC_MIN_TURNOVER (> 0, default 2000000), the
     TREND stop multiple the order uses (FUTURES_TREND_SL_ATR_MULT, default 3.0, read as
     trend.py reads it; a set value that is not a number > 0 is an error here), and trial
-    26's FUTURES_RANDOM_TREND_SOURCE (tick | natural, default tick) and FUTURES_RANDOM_FX90
+    26's FUTURES_RANDOM_TREND_SOURCE (tick | natural | off (trial 27), default tick) and FUTURES_RANDOM_FX90
     (off | on, default off). Unset or blank = the default; surrounding spaces are ignored;
     values are case-sensitive. Any other value is an error: the caller does not process the
     tick (nor the 15m TREND evaluation) and alerts. Never a silent fallback. An invalid
@@ -268,7 +287,7 @@ def config() -> TickConfig:
         if raw in TREND_SOURCES:
             source = raw
         else:
-            errors.append(f"FUTURES_RANDOM_TREND_SOURCE={raw!r} (allowed: tick, natural)")
+            errors.append(f"FUTURES_RANDOM_TREND_SOURCE={raw!r} (allowed: tick, natural, off)")
     fx90 = "off"
     raw = _setting("FUTURES_RANDOM_FX90")
     if raw is not None:
