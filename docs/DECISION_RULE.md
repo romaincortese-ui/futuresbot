@@ -19746,3 +19746,19 @@ up-trends (squeezes), no significant gain in bear markets; WILDCARD-long follows
 loses in small-cap crash weeks and high-vol BTC weeks. Whole bot: bullish BTC weeks +0.12R/position vs normal; small-cap crash
 weeks -0.12R; bearish BTC no significant difference; volatility alone nothing. 25-29 of 144 contrasts exclude 0 (~7 by chance).
 Caveats: survivorship, 15m, one year (~10 weeks per quintile). Labels are descriptive, not forward filters (none tested).
+
+### 2026-10-16 - TRIAL 26 CLOSED, TRIAL 27 LIVE: WILDCARD ONLY, TREND LOGGED NOT TRADED (owner decision)
+
+Owner: "Let's stop trend trading please. Let's start trial 27 with wildcards only, same settings as currently."
+- TRIAL 26 FINAL (ended early at the switch, ungraded): 31 closes, +$6.09; TREND 7 trades -$4.83 (-0.31R), WILDCARD +.
+- TRIAL 27 PREREG wc/TRIAL27/PREREG.md sha256 28ea4eadd078f6ba...: trial 26 with TREND source "off" - L0 still evaluated
+  every 15m close and logged (decision trend_off), never traded. Primary at 250 closes or 2027-02-28: trial-27 replayed minus
+  trial-26 replayed on the same period, KEEP if >= $0 else REVERT to trial 26. TREND may return only after >= 40 shadow trades
+  averaging >= +0.15R after fees, under its own pre-registration.
+- BUILD 39952f7 (t27-build): new value FUTURES_RANDOM_TREND_SOURCE=off; FUTURES_TREND_MAX_POSITIONS=0 would NOT have worked
+  (trend.py clamps to >= 1). Unset == trial 25, natural == trial 26 (0 differences); under off 0 TREND entries possible from
+  any path, 257/257 Sept firings logged trend_off; suite 2,095 passed; 3-lens gate PASS, no fixes needed.
+- START: paused + flat verified 20:44Z; variables set with --skip-deploys (FUTURES_RANDOM_TREND_SOURCE=off,
+  FUTURES_TRIAL_LABEL=27, FUTURES_TRIAL_START_TS=1792183559 = 2026-10-16T20:45:59Z); t27-build pushed to main = one deploy,
+  SUCCESS 20:54:08Z; boot log "[RANDOM_MODE] ON (trial 27, PREREG 28ea4eadd078f6ba) ... TREND source off ... FX90 on";
+  paused, 0 open. Daily task step 0-ter now watches trial 27. REVERT = FUTURES_RANDOM_TREND_SOURCE=natural.
