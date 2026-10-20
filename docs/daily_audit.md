@@ -1,3 +1,80 @@
+# Daily Audit — 2026-10-19 (with catch-up 10-16, 10-17, 10-18)
+
+---
+
+## Automated Assessment (run 2026-10-20 ~17:30Z)
+
+**Windows (by exit time, fixed UTC days; runs for 10-16..10-18 were skipped, each day reported on its own):**
+catch-up 10-16 = 7 closes; catch-up 10-17 = 4; catch-up 10-18 = 1; **10-19 = 1 close**.
+
+**BUDGET FLOOR HIT: equity $34.48 < $140** (exchange, 0 open, 0 unrealised). Cause is a capital flow, not P&L: a
+**$150 USDT transfer OUT of the futures wallet 2026-10-17T11:17:38Z** (MEXC transfer_record). Flow-adjusted: $187.27 on
+10-16 -> $37.27 after the transfer -> $34.48 now (-$2.79 realised over the period). Bot NOT paused. Owner: send /pause per
+the rule; only the owner resumes. Notified, not acted on.
+
+**TRIAL 27 ALERT (0-ter a): consecutive error ticks.** Since the withdrawal, 8 of 13 WILDCARD tick decisions that reached
+an order are `error`, all MEXC **code 7008 "Cannot be less than the minimum order amount 5 USDT"** (SIREN 10-17 12Z, ICNT
+10-18 00Z, ICNT 10-18 06Z, AVA 10-18 18Z, CLAUDIA 10-19 00Z, APR 10-19 06Z, ICNT 10-19 12Z, DNA 10-19 18Z, JCT 10-20 12Z);
+consecutive pairs from 10-18 00Z/06Z and 10-18 18Z..10-19 18Z. Mechanism: 12% x $35 x regime 0.5-1.0 at x1-x3 lands
+under MEXC's $5 notional floor; only S (10-18 12Z, x5) and SEI (10-19 12Z, x5) cleared it. Not a code fault - the stake is
+now below what the sleeve can place. Owner decides (pause, re-fund, or accept a starved sample). Also for the owner: does a
+$150 withdrawal mid-trial reset trial 27 (a deposit does)? Not decided here.
+Other 0-ter checks clean: (b) 0 TREND positions/records; 365 evaluations, decisions trend_off x4 / no-fire otherwise; (c)
+15 ticks processed through 10-20 12Z, evaluations to 16:00Z with no gap > 16 min; (d) stops -1.02..-1.15R, all
+stop_book_state 1, none > 0.5R past the stop, no bare stop; (e) all rows prereg 28ea4eadd078f6ba; no invalid settings /
+Traceback / AUTH_FAILURE in recent logs.
+Trial 27 so far: **6 closes, -3.00R (ex-best -4.90R); net -$2.14, SE $3.34 (SE > total: not a result)**; ~1.6
+positions/day; FX90 (RECORD_TP_FLOOR) exits 1 (AGT +1.89R); TREND trigger firings logged as trend_off: 4. Interim at 100.
+
+**Daily cards:** 10-16 **INVESTIGATE** (M4 AGT +101 bps -> written up in DECISION_RULE.md 2026-10-20: NOT A DEFECT,
+latency in a fast minute, ~$0.07); 10-17 NO ACTION; 10-18 NO ACTION; **10-19 NO ACTION** (0/6 tripwires; stop -1.15R in
+band; risk% 1.09; slippage -2 bps; ledger 1 = 1 exchange close). Proposal steps skipped on every day.
+
+### 1. Closed trades
+
+| day | sym | sleeve | side x | entry -> exit | $ | R | exit |
+|---|---|---|---|---|---|---|---|
+| 10-16 | ZEREBRO | WILDCARD | L x2 | 0.05184 -> 0.054856 | +0.67 | +0.71 | retention trail |
+| 10-16 | ZKSYNC | WILDCARD | L x4 | 0.018435 -> 0.017962 | -1.14 | -0.58 | early stop |
+| 10-16 | ETH | TREND | L x10 | 2462.66 -> 2477.61 | +0.55 | +0.50 | retention trail |
+| 10-16 | SYN | WILDCARD | L x5 | 0.1879 -> 0.1825 | -1.07 | -1.06 | stop |
+| 10-16 | ZEC | TREND | L x3 | 1214.51 -> 1145.02 | -2.14 | -1.03 | stop |
+| 10-16 | AGT | WILDCARD | L x1 | 0.036804 -> 0.041075 | +0.84 | +0.55 | time stop |
+| 10-16 | RLC | WILDCARD | S x2 | 0.884 -> 0.8263 | +0.79 | +0.79 | time stop |
+| 10-17 | AGT | WILDCARD | L x1 | 0.0622 -> 0.084932 | +2.26 | +1.89 | FX90 floor |
+| 10-17 | ZEREBRO | WILDCARD | S x3 | 0.032636 -> 0.034498 | -1.46 | -1.09 | stop |
+| 10-17 | ICNT | WILDCARD | S x1 | 0.2006 -> 0.2355 | -1.13 | -1.06 | stop |
+| 10-17 | DNA | WILDCARD | L x1 | 0.3064 -> 0.2612 | -1.14 | -1.02 | stop |
+| 10-18 | S | WILDCARD | L x5 | 0.05644 -> 0.05546 | -0.25 | -0.58 | early stop |
+| 10-19 | SEI | WILDCARD | S x5 | 0.05956 -> 0.06078 | -0.43 | -1.15 | stop |
+
+Day totals (ledger): 10-16 -$1.50 / -0.13R (4W/3L, all trial 26); 10-17 -$1.46 / -1.28R (1W/3L); 10-18 -$0.25 / -0.58R;
+10-19 -$0.43 / -1.15R. Ledger = exchange closes on every day.
+
+### 1-OPEN
+
+None (0 open on the exchange and in state).
+
+### 1a-bis / 1b (recording only)
+
+Feature store 346 rows; all-time exit_kind TP 9 | STOP 121 | OTHER 175 | none 41; trial 27: TP 0 | STOP 4 | OTHER 2.
+Shadow ledger 892 rows: slot_occupied 47 resolved +28.1R; veto 59 resolved -10.6R - unchanged, directional paper only.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**10-19: machine healthy, NO ACTION** (-$0.43 / -1.15R, 1 close). Owner items: budget floor hit after the $150
+withdrawal; trial-27 alert (a) - entries refused on MEXC's $5 minimum at the current stake.
+
+---
+
 # Daily Audit — 2026-10-15
 
 ---

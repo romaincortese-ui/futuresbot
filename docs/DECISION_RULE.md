@@ -19762,3 +19762,18 @@ Owner: "Let's stop trend trading please. Let's start trial 27 with wildcards onl
   FUTURES_TRIAL_LABEL=27, FUTURES_TRIAL_START_TS=1792183559 = 2026-10-16T20:45:59Z); t27-build pushed to main = one deploy,
   SUCCESS 20:54:08Z; boot log "[RANDOM_MODE] ON (trial 27, PREREG 28ea4eadd078f6ba) ... TREND source off ... FX90 on";
   paused, 0 open. Daily task step 0-ter now watches trial 27. REVERT = FUTURES_RANDOM_TREND_SOURCE=natural.
+
+## 2026-10-20 - INVESTIGATE (daily card 10-16, M4): AGT_USDT +101 bps entry slippage - NOT A DEFECT
+
+**Fill:** AGT_USDT WILDCARD LONG x1, trial-26 tick 10-15 18:00Z (scan 18:01:13-18:01:40Z), ref 0.036435, fill 0.036804 =
++101 bps (1 bps over the 100 limit); closed 10-16 18:01Z CONVEX_TIME_STOP +0.55R / +$0.82. Notional ~$7.4 -> slippage
+cost ~$0.07.
+
+**Mechanism: tick-to-fill latency inside a fast minute - the MARSCOIN (09-24) / KAIA-JCT (10-11) mechanism.** Min1: the
+18:00 minute ran 0.03566 -> 0.03668 (high 0.03719), 18:01 spanned 0.03620-0.03710; the fill sits inside 18:01, ~30 s after
+the ref quote. Minute turnover $34k-$55k vs our ~$7 notional: no impact. Risk stamped at the fill, so 1R and the stop were
+correct.
+
+**Aggregate ($ test):** WILDCARD entry slippage n=130, mean +10.8 bps (median +7.5, SE 6.0), 5 of 130 above 100 bps. The
+reopen condition (mean > +15 bps at n >= 90) is NOT met. Cost well below $10/month at any stake now possible.
+**Verdict: no defect. Nothing changed.**
