@@ -1,3 +1,60 @@
+# Daily Audit — 2026-10-20
+
+---
+
+## Automated Assessment (run 2026-10-21 ~16:30Z)
+
+**Window: 2026-10-20T00:00:00Z – 23:59:59Z by exit time. 0 closes.** No skipped day. Data: `railway ssh` refused
+connections this run, so the card and checks ran locally on the 10-21 08:39 evidence-archive snapshot (pulled
+07:39Z, covers all of 10-20) plus read-only exchange calls under `railway run`; 10-21 06Z/12Z ticks from logs.
+
+**BUDGET FLOOR HIT: equity $34.62 < $140** (exchange, 0 open, 0 unrealised). Unchanged cause: the $150 transfer OUT
+on 2026-10-17T11:17:38Z (no transfer since). Bot NOT paused. Owner: send /pause per the rule; only the owner resumes.
+
+**TRIAL 27 ALERT (0-ter a): consecutive error ticks persist.** 10-20 12Z (JCT LONG) and 10-20 18Z (JCT LONG) both
+`error`, MEXC code 7008 "minimum order amount 5 USDT"; again 10-21 06Z (IOST L, JCT S) and 10-21 12Z (DOOD L). Same
+mechanism as the 10-19 report: the $35 stake sizes most picks under MEXC's $5 notional floor. Not a code fault. Owner
+decides (pause, re-fund, or accept a starved sample).
+Other 0-ter checks clean: (b) 0 TREND positions/records; all 18 tick TREND decisions trend_off; 427 evaluations, row
+decisions no_fire 1696 / trend_off 12; (c) ticks processed through 10-21 12Z, last archived evaluation 07:30Z with no
+gap > 15 min on 10-20, logs show evaluations to 16:15Z; (d) no fills on 10-20; (e) all ticks/evaluations/rows prereg
+28ea4eadd078f6ba; no Traceback / invalid settings / AUTH_FAILURE in the last 5000 log lines.
+Trial 27 so far: **7 closes, -2.52R (ex-best -4.49R); net -$2.01, SE $3.33 (SE > total: not a result)**; ~1.5
+positions/day; FX90 (RECORD_TP_FLOOR) exits 1; TREND firings logged as trend_off: 12 evaluation rows. The 7th close is
+BR SHORT (opened 10-21 00Z, retention trail 10-21 02:00Z, +0.46R / +$0.13) and belongs to 10-21's report.
+
+**Daily card 10-20: NO ACTION** — 0/6 tripwires; 0 in / 0 out / 0 open / 20 refused; ledger 0 = 0 exchange closes;
+decay meter 2.90 of 10.48R (28%). Proposal steps (1a-bis(a), 1b(c), 3, 4) skipped per verdict.
+
+### 1. Closed trades 10-20
+
+None (exchange history: 0 closes dated 10-20). Scan context: 4 ticks, 0 opened — 2 refused on 7008, 6 on min_vol.
+
+### 1-OPEN
+
+None (0 open on the exchange).
+
+### 1a-bis / 1b (recording only)
+
+Feature store 347 rows; all-time exit_kind TP 9 | STOP 121 | OTHER 176 | none 41; trial 27: TP 0 | STOP 4 | OTHER 3.
+Shadow ledger 904 rows: slot_occupied 47 / veto 59 (no new rows; +28.1R / -10.6R unchanged, directional paper only).
+Scan: dominant rejection roc_below_min, then no_pullback_resume. Dormancy cause = stake below the $5 order minimum,
+not the gates.
+
+### 2. Champion vs shadow
+
+Shadow stale, comparison suppressed pending resync.
+
+### 5. Deploy
+
+None.
+
+### 7. Verdict
+
+**10-20: machine healthy, NO ACTION** (0 closes). Owner items carried: budget floor; trial-27 alert (a).
+
+---
+
 # Daily Audit — 2026-10-19 (with catch-up 10-16, 10-17, 10-18)
 
 ---
