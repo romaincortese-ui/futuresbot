@@ -19777,3 +19777,11 @@ correct.
 **Aggregate ($ test):** WILDCARD entry slippage n=130, mean +10.8 bps (median +7.5, SE 6.0), 5 of 130 above 100 bps. The
 reopen condition (mean > +15 bps at n >= 90) is NOT met. Cost well below $10/month at any stake now possible.
 **Verdict: no defect. Nothing changed.**
+
+### 2026-10-22 - OWNER WITHDRAWAL during trial 27 (segment boundary)
+
+Owner withdrew funds from the futures account (equity ~$188 at the trial-27 start -> $34.62 after the last close on 10-21;
+trial-27 trading itself -$2.01 over 7 closes). Exact amount/time not read (Railway CLI login expired). Per wc/TRIAL27/PREREG.md
+a cash flow closes the current SEGMENT; trial 27 continues as the next segment. At ~$35 most picks are refused (10-17..10-21:
+36 WILDCARD decisions = 7 opened, 17 min_vol, 12 MEXC 7008 "minimum order amount 5 USDT"), so the trial collects little data
+until the owner re-funds. Not a defect.
