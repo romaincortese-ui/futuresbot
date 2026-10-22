@@ -1,3 +1,34 @@
+# Daily Audit — 2026-10-21 (DATA GAPPED - aborted safely)
+
+---
+
+## Automated Assessment (run 2026-10-22 ~10:00Z)
+
+**Window: 2026-10-21T00:00:00Z – 23:59:59Z by exit time. Trade count NOT VERIFIABLE this run.** Three data paths
+failed at once, so the card was not run and no verdict is graded (ABORT SAFELY: deploy nothing, report only):
+1. `railway ssh` / `railway run`: CLI OAuth refresh failed ("invalid_grant ... run `railway login` again") - no
+   container files, no logs, no exchange calls (MEXC keys live only in Railway vars), no Telegram send.
+2. Evidence archive 2026-10-22 07:39Z run: **"ABORT: less than 1.5 GB free on C:" (1.3 GB free)** - no 10-22 folder,
+   so nothing covering 10-21 after 07:39Z. MEXC keeps 1m bars ~30 days, so the wrapper's backfill recovers this once
+   space is freed (before ~11-20).
+3. Hence no exchange equity read for 0-bis.
+
+**BUDGET FLOOR: last verified equity $34.62 < $140 (exchange read 2026-10-21 ~16:30Z); not re-read today.** Cause is
+the owner's withdrawal (capital flow, not P&L). Bot paused state unknown this run (last known: NOT paused).
+**TRIAL 27 ALERT (0-ter a): last known state persists** - 10-20 12Z/18Z, 10-21 06Z, 10-21 12Z ticks all `error`
+(MEXC 7008 $5 minimum order at a $35 stake). 10-21 18Z tick unverified. Owner decides.
+
+Partial evidence (10-21 snapshot, to 07:39Z): 1 close on 10-21 - BR_USDT SHORT, CONVEX_RETENTION_TRAIL 02:00Z,
++0.46R / +$0.13 (prereg 28ea4eadd078f6ba); feature store 347 rows; ticks 00Z processed, 06Z error. Trial 27 so far
+(through 07:39Z): 7 closes, -2.52R, net -$2.01, SE $3.33 (SE > total: not a result).
+
+Shadow: stale, comparison suppressed pending resync. Deploy: none.
+
+**Owner actions to restore the daily task:** run `railway login`; free >= 1.5 GB on C: (the archive then backfills
+10-22). The 10-21 card is re-run on the next day with data (as a dated catch-up block, not merged).
+
+---
+
 # Daily Audit — 2026-10-20
 
 ---
