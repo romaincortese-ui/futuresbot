@@ -1,3 +1,30 @@
+# Daily Audit — 2026-10-22 (DATA GAPPED - aborted safely; 10-21 catch-up still pending)
+
+---
+
+## Automated Assessment (run 2026-10-23)
+
+**Window: 2026-10-22T00:00:00Z – 23:59:59Z by exit time. Trade count NOT VERIFIABLE this run** (second consecutive
+day). Card not run, no verdict graded; ABORT SAFELY (deploy nothing, report only).
+1. `railway whoami/ssh/run` still fail: OAuth "invalid_grant ... run `railway login` again". No container files, no
+   logs, no exchange reads (MEXC keys only in Railway vars), no Telegram send.
+2. Evidence archive 2026-10-23 07:39Z: disk had 1.6 GB free (passed the 1.5 GB floor) but `pull_container` failed on
+   the same railway auth; `daily --day 2026-10-22 --no-container` ran: 36 symbols, 103,680 bars, 0 holes. So 10-22 has
+   market bars but NO ledger/ticks/feature-store snapshot. C: now 2.5 GB free (476 GB disk, 100% used).
+
+**BUDGET FLOOR: last verified equity $34.62 < $140 (exchange read 2026-10-21 ~16:30Z); not re-read.** Cause: owner
+withdrawal (capital flow, not P&L). Paused state unknown (last known: NOT paused).
+**TRIAL 27 ALERT (0-ter a): last known state persists, unverified** - consecutive `error` ticks (MEXC 7008 $5 minimum
+order at a ~$35 stake) through 10-21 12Z. Owner decides.
+Trial 27 last known (through 10-21 07:39Z): 7 closes, -2.52R, net -$2.01, SE $3.33 (SE > total: not a result).
+
+Shadow: stale, comparison suppressed pending resync. Deploy: none. Steps 1-4 and 6's change verdicts: not run (no data).
+
+**Owner actions:** run `railway login`. The next run with auth re-runs 10-21 and 10-22 as separate dated catch-up blocks
+(MEXC history covers them; container snapshot for 10-22 recoverable while the files are still on /data).
+
+---
+
 # Daily Audit — 2026-10-21 (DATA GAPPED - aborted safely)
 
 ---
