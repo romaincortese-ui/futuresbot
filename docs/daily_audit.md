@@ -1,3 +1,30 @@
+# Daily Audit — 2026-11-02 (DATA GAPPED - aborted safely; 10-21..11-01 catch-ups pending)
+
+---
+
+## Automated Assessment (run 2026-11-03)
+
+**Window: 2026-11-02T00:00:00Z – 23:59:59Z by exit time. Trade count NOT VERIFIABLE this run.** Card not run, no
+verdict graded; ABORT SAFELY (deploy nothing, report only).
+1. `railway whoami` still fails: OAuth "invalid_grant ... run `railway login` again" (expired since ~10-21, now ~13
+   days). No container files, no logs, no exchange reads (MEXC keys only in Railway vars), no Telegram send.
+2. Evidence archive 2026-11-03 07:57Z: disk now 21 GB free (space issue resolved), but `pull_container` failed on the
+   same auth; it fell back to `daily --day 2026-11-02 --no-container` (market bars only, NO ledger/ticks/feature store).
+3. No audit entries exist for 10-23..11-01 runs; those days stay ungraded and are NOT merged into this block.
+
+**BUDGET FLOOR: last verified equity $34.62 < $140 (exchange read 2026-10-21 ~16:30Z); not re-read.** Cause: owner
+withdrawal (capital flow, not P&L). Paused state unknown (last known: NOT paused).
+**TRIAL 27 ALERT (0-ter a): last known state persists, unverified** - consecutive `error` ticks (MEXC 7008 $5 minimum
+order at a ~$35 stake) through 10-21 12Z. If unchanged, trial 27 has been unable to open trades for ~13 days. Owner decides.
+Trial 27 last known (through 10-21 07:39Z): 7 closes, -2.52R, net -$2.01, SE $3.33 (SE > total: not a result).
+
+Shadow: stale, comparison suppressed pending resync. Deploy: none. Steps 1-4 and 6's change verdicts: not run (no data).
+
+**Owner actions:** run `railway login`. Catch-up deadline: MEXC 1m bars are kept ~30 days, so 10-21 market bars are lost
+after ~11-20; exchange position history and /data files are the remaining sources for 10-21..11-02.
+
+---
+
 # Daily Audit — 2026-10-22 (DATA GAPPED - aborted safely; 10-21 catch-up still pending)
 
 ---
