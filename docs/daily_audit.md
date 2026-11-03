@@ -23,6 +23,8 @@ Shadow: stale, comparison suppressed pending resync. Deploy: none. Steps 1-4 and
 **Owner actions:** run `railway login`. Catch-up deadline: MEXC 1m bars are kept ~30 days, so 10-21 market bars are lost
 after ~11-20; exchange position history and /data files are the remaining sources for 10-21..11-02.
 
+Re-run 2026-11-03 17:13Z: `railway whoami` still "invalid_grant"; nothing changed, nothing re-read. Same ABORT; no Telegram.
+
 ---
 
 # Daily Audit — 2026-10-22 (DATA GAPPED - aborted safely; 10-21 catch-up still pending)
