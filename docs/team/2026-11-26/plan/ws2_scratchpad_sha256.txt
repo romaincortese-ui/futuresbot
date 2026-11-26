@@ -1,0 +1,19 @@
+# sha256 of scratchpad assets, taken 2026-11-26 by WS2 (Dev 1 + QA 1). holdout_LOCKED.json deliberately not read or hashed.
+# Paths relative to the session scratchpad: /tmp/claude-0/-home-user-futuresbot/b7320ff0-05a5-5b6b-aac4-d653804aadfc/scratchpad/
+649119876451b6fbe6c496858416195f09603fd8de94d19b28fc63e45a47f841  hist_all.json
+2a1de1ad6cc6182369befee5e3fa3beba45b4ac0fa0839abb4d8e55aab49fa47  hist.json
+3b4f8340f10246502e55e2099356f2dacd8c6cb5394021abc4ca6d929cce93c6  transfers.json
+2fe66ea058bfa6230612ffc9b5b5da0c70926fb49e884c06297ff49ff6eff802  pull_all.py
+286bad70c6665757eacb8a9c86481a9f28cf733258083503ae9d0bebb2613221  pull_history.py
+50e17ae3f613f34e6b7425991515dedf32efab01e16075204e8b66c9070b519f  probe_sym.py
+0b9fb76132f164dbf271594908e83c2243b1331b4c9733e590c568effb007874  a1/build_features.py
+8b7e45cce15494c9395ac67ec46d787d79610afc0cb77ecbf6976d9f4218b983  a1/analyze.py
+94a04c573591fd23c48ed92fce1da8e13447b8cd215786e7eaebfbcbe72c9694  a1/report.txt
+2506a207d65661edf2da4da5842f73ce13bab940b068dfb1631240bed1dd7295  a1/discovery.json
+cef3060e1d0367836fafb6a15c4002e68ef1b6951092d900d71be897517abfbb  a1/discovery_with_outcomes.csv
+485c4d5c28fc9051c012c2ba942c8486577b5baa48dcde58be5e64d82231d24a  a1/features_all.csv
+8905023492ae39a9ec0970a6e3f86db36c718c5ebc510302a6ad7c7464a431dc  team/qa2_stats.py
+6595621047ef9815221ea3b20e78a2324e8f5696e44ee13470f9b0a1515c8f1b  team/qa2_verify.py
+8795a99ab09ad1b363f2f43c4e8d4aae86fbfc7db915efbdafbd596c16cfc11f  team/qa1_funccov.py
+# a1/cache: 199 files; combined hash of sorted per-file hashes:
+a9163a9035a7c972fdcbaa49d8868873bc56f0f58c222cf45e595a361ff9ba05  -
